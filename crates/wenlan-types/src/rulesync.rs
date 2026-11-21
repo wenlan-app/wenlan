@@ -19,6 +19,8 @@ pub struct AdoptionSkill {
     pub path: String,
     #[serde(flatten)]
     pub outcome: AdoptionSkillOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_copy_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

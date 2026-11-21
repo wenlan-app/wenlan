@@ -3,12 +3,17 @@
 
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
+use std::cell::OnceCell;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Seek};
+use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub const PINNED_VERSION: &str = "43.11.0";
+
+#[derive(Debug, thiserror::Error)]
+#[error("rulesync rejected the skill's frontmatter")]
+pub struct SkillRejected;
 
 struct Pin {
     name: &'static str,
@@ -61,6 +66,67 @@ pub fn new_stage(parent: &Path) -> Result<tempfile::TempDir> {
         .context("create private rulesync stage")
 }
 
+/// Renders in one operation can execute the same verified private snapshot.
+/// The installed executable is opened on first use. Each invocation still
+/// uses fresh input, output, and writable scratch directories.
+pub struct RenderSession<'a> {
+    source: &'a Path,
+    verified: OnceCell<Result<VerifiedBinary, String>>,
+}
+
+struct VerifiedBinary {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl<'a> RenderSession<'a> {
+    pub fn new(source: &'a Path) -> Self {
+        Self {
+            source,
+            verified: OnceCell::new(),
+        }
+    }
+
+    pub fn render(
+        &self,
+        stage: &Path,
+        input_roots: &[PathBuf],
+        output: &Path,
+        global: bool,
+        targets: &[String],
+        features: &[&str],
+    ) -> Result<()> {
+        validate_selection(targets, features)?;
+        render_staged(
+            self,
+            stage,
+            input_roots,
+            output,
+            Selection {
+                global,
+                targets,
+                features,
+            },
+        )
+    }
+
+    fn binary(&self, parent: &Path) -> Result<&Path> {
+        self.verified
+            .get_or_init(|| self.verify(parent).map_err(|error| format!("{error:#}")))
+            .as_ref()
+            .map(|binary| binary.path.as_path())
+            .map_err(|error| anyhow::anyhow!(error.clone()))
+    }
+
+    fn verify(&self, parent: &Path) -> Result<VerifiedBinary> {
+        let pin = pin_for(std::env::consts::OS, std::env::consts::ARCH)?;
+        let dir = new_stage(parent)?;
+        let path = dir.path().join(pin.name);
+        copy_verified_binary(self.source, &path, &pin)?;
+        Ok(VerifiedBinary { _dir: dir, path })
+    }
+}
+
 /// Render one or more staged source trees into an empty staged output directory.
 /// `stage` must be a private directory owned by the caller for this operation.
 /// Its disjoint input and output trees must already exist. Discard the output
@@ -74,18 +140,7 @@ pub fn render(
     targets: &[String],
     features: &[&str],
 ) -> Result<()> {
-    validate_selection(targets, features)?;
-    render_staged(
-        binary,
-        stage,
-        input_roots,
-        output,
-        Selection {
-            global,
-            targets,
-            features,
-        },
-    )
+    RenderSession::new(binary).render(stage, input_roots, output, global, targets, features)
 }
 
 /// The explicit local settings preview is the only caller that can render
@@ -105,7 +160,7 @@ pub(crate) fn render_settings(
         "expected explicit settings features"
     );
     render_staged(
-        binary,
+        &RenderSession::new(binary),
         stage,
         &[input.to_owned()],
         output,
@@ -124,7 +179,7 @@ struct Selection<'a> {
 }
 
 fn render_staged(
-    binary: &Path,
+    renderer: &RenderSession<'_>,
     stage: &Path,
     input_roots: &[PathBuf],
     output: &Path,
@@ -135,13 +190,11 @@ fn render_staged(
         .prefix("rulesync-runtime-")
         .tempdir_in(&stage)
         .context("create private rulesync runtime directory")?;
-    let pin = pin_for(std::env::consts::OS, std::env::consts::ARCH)?;
-    let verified = runtime.path().join(pin.name);
     let work = runtime.path().join("work");
     fs::create_dir(&work).context("create rulesync scratch directory")?;
-    copy_verified_binary(binary, &verified, &pin)?;
+    let binary = renderer.binary(stage.parent().context("rulesync stage has no parent")?)?;
 
-    let mut command = renderer_command(&verified, &stage, &output, &work)?;
+    let mut command = renderer_command(binary, &stage, &output, &work)?;
     configure_generate(
         &mut command,
         &input_roots,
@@ -151,20 +204,41 @@ fn render_staged(
         selection.targets,
         selection.features,
     );
-    run_generate(&mut command)?;
+    run_generate(&mut command, selection.features)?;
     validate_tree(&output)?;
     Ok(())
 }
 
-fn run_generate(command: &mut Command) -> Result<()> {
-    // Either stream can contain source text, including on successful runs.
-    let status = command
+const INVALID_FRONTMATTER: &[u8] = b"Invalid frontmatter in ";
+
+fn run_generate(command: &mut Command, features: &[&str]) -> Result<()> {
+    // Only recognize the pin's package diagnostic. The renderer and the
+    // sandbox launcher can both exit nonzero, and their text stays private.
+    let mut child = command
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .spawn()
         .context("launch the staged rulesync renderer")?;
+    let mut diagnostic = Vec::new();
+    let mut stderr = child.stderr.take().context("read renderer diagnostics")?;
+    let read = (&mut stderr)
+        .take(INVALID_FRONTMATTER.len() as u64)
+        .read_to_end(&mut diagnostic)
+        .and_then(|_| io::copy(&mut stderr, &mut io::sink()));
+    drop(stderr);
+    let status = child
+        .wait()
+        .context("wait for the staged rulesync renderer")?;
+    read.context("read renderer diagnostics")?;
+    if features == ["skills"] && is_skill_rejection(status.code(), &diagnostic) {
+        return Err(SkillRejected.into());
+    }
     ensure!(status.success(), "rulesync generation failed ({status})");
     Ok(())
+}
+
+fn is_skill_rejection(code: Option<i32>, diagnostic: &[u8]) -> bool {
+    code == Some(1) && diagnostic.starts_with(INVALID_FRONTMATTER)
 }
 
 fn validate_selection(targets: &[String], features: &[&str]) -> Result<()> {
@@ -394,6 +468,8 @@ fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) 
         (deny process-exec (require-not (literal (param \"RENDERER\"))))
         (deny file-read* (require-all
             (require-not (subpath (param \"STAGE_ROOT\")))
+            (require-not (literal (param \"RENDERER\")))
+            (require-not (literal (param \"RENDERER_DIR\")))
             (require-not (subpath \"/usr/lib\"))
             (require-not (subpath \"/System/Library/dyld\"))
             (require-not (subpath \"/private/var/db/dyld\"))
@@ -437,6 +513,10 @@ fn renderer_command(binary: &Path, stage: &Path, output: &Path, runtime: &Path) 
         ("OUTPUT_ROOT=", output),
         ("RUNTIME_ROOT=", runtime),
         ("RENDERER=", binary),
+        (
+            "RENDERER_DIR=",
+            binary.parent().context("staged renderer has no parent")?,
+        ),
     ] {
         let mut param = OsString::from(name);
         param.push(path);
@@ -576,9 +656,54 @@ mod tests {
             .env_clear()
             .args(["-c", "/bin/cat \"$1\"; /bin/cat \"$1\" >&2; exit 7", "sh"])
             .arg(input);
-        let error = run_generate(&mut command).unwrap_err().to_string();
+        let error = run_generate(&mut command, &["rules"])
+            .unwrap_err()
+            .to_string();
         assert!(error.contains('7'), "{error}");
         assert!(!error.contains(source), "{error}");
+    }
+
+    #[test]
+    fn only_pinned_package_errors_are_recoverable() {
+        assert!(is_skill_rejection(
+            Some(1),
+            b"Invalid frontmatter in SKILL.md"
+        ));
+        assert!(!is_skill_rejection(Some(1), b"unshare: unshare failed"));
+        assert!(!is_skill_rejection(
+            Some(71),
+            b"sandbox-exec: sandbox_apply"
+        ));
+        assert!(!is_skill_rejection(
+            None,
+            b"Invalid frontmatter in SKILL.md"
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires the local pinned rulesync binary"]
+    fn render_session_reuses_only_its_verified_snapshot() {
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let parent = new_stage(&std::env::temp_dir()).unwrap();
+        let installed = parent.path().join("test-rulesync");
+        fs::copy(&binary, &installed).unwrap();
+        let session = RenderSession::new(&installed);
+        let verified = session.binary(parent.path()).unwrap().to_owned();
+        assert_ne!(verified, installed);
+
+        fs::remove_file(&installed).unwrap();
+        fs::write(&installed, b"different executable").unwrap();
+        assert_eq!(session.binary(parent.path()).unwrap(), verified);
+        assert_eq!(
+            fs::metadata(&verified).unwrap().len(),
+            fs::metadata(&binary).unwrap().len()
+        );
+        let err = RenderSession::new(&installed)
+            .binary(parent.path())
+            .unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
+        drop(session);
+        assert!(!verified.exists());
     }
 
     #[cfg(target_os = "macos")]
@@ -636,10 +761,7 @@ mod tests {
         let data = home.path().join("Wenlan \"測試\"").join("rulesync");
         fs::create_dir_all(&data).unwrap();
         let rule = "Keep the personal rules fixture in staging.";
-        for (target, destination) in [
-            ("claudecode", ".claude/CLAUDE.md"),
-            ("codexcli", ".codex/AGENTS.md"),
-        ] {
+        for target in crate::rulesync_personal::PERSONAL_TARGETS {
             let stage = new_stage(&data).unwrap();
             let input = stage.path().join("master");
             let output = stage.path().join("output");
@@ -651,11 +773,11 @@ mod tests {
                 &[input],
                 &output,
                 true,
-                &[target.into()],
+                &[target.rules.renderer.into()],
                 &["rules"],
             )
-            .unwrap_or_else(|error| panic!("{target}: {error:#}"));
-            assert!(fs::read_to_string(output.join(destination))
+            .unwrap_or_else(|error| panic!("{}: {error:#}", target.id));
+            assert!(fs::read_to_string(output.join(target.rules.staged))
                 .unwrap()
                 .contains(rule));
         }

@@ -60,8 +60,13 @@ pub struct Adoption {
     pub files: BTreeMap<PathBuf, AdoptionFile>,
     pub links: BTreeMap<PathBuf, AdoptionLink>,
     pub skill_locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
+    pub skill_byte_copies: BTreeMap<PathBuf, String>,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
+    /// Linked rule files that stay in place outside delivery.
+    pub skipped_rules: BTreeMap<PathBuf, String>,
+    pub skipped_tools: Vec<String>,
+    pub added_tools: Vec<String>,
     pub worktree_writes: BTreeMap<PathBuf, PathBuf>,
     pub worktree_notes: Vec<String>,
 }
@@ -100,7 +105,13 @@ pub struct AdoptionFile {
 /// Resolved content and permissions approved for a link to be detached.
 /// The tool file applier separately records the raw link for exact restore.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AdoptionLink(ResolvedLink);
+pub struct AdoptionLink {
+    resolved: ResolvedLink,
+    // The equivalent target spelling may change between preview and apply.
+    // Only the resolved bytes and modes are part of the approval.
+    #[serde(skip)]
+    symlink_hops: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 enum ResolvedLink {
@@ -128,28 +139,50 @@ impl ResolvedFile {
 }
 
 impl AdoptionLink {
-    fn rule(bytes: &[u8], mode: u32) -> Self {
-        Self(ResolvedLink::Rule(ResolvedFile::new(bytes, mode)))
+    fn rule(bytes: &[u8], mode: u32, symlink_hops: usize) -> Self {
+        Self {
+            resolved: ResolvedLink::Rule(ResolvedFile::new(bytes, mode)),
+            symlink_hops,
+        }
+    }
+
+    pub fn symlink_hops(&self) -> usize {
+        self.symlink_hops
     }
 
     pub fn file_mode(&self, relative: &Path) -> Option<u32> {
-        match &self.0 {
+        match &self.resolved {
             ResolvedLink::Rule(file) => relative.as_os_str().is_empty().then_some(file.mode),
             ResolvedLink::Skill { files, .. } => files.get(relative).map(|file| file.mode),
         }
     }
 
+    pub fn directory_mode(&self, relative: &Path) -> Option<u32> {
+        match &self.resolved {
+            ResolvedLink::Skill {
+                mode, directories, ..
+            } => {
+                if relative.as_os_str().is_empty() {
+                    Some(*mode)
+                } else {
+                    directories.get(relative).copied()
+                }
+            }
+            ResolvedLink::Rule(_) => None,
+        }
+    }
+
     pub fn matches(&self, home: &Path, path: &Path) -> Result<bool> {
         let home = Home::open(home)?;
-        let current = match &self.0 {
+        let current = match &self.resolved {
             ResolvedLink::Rule(_) => {
                 let mut sources = BTreeSet::new();
-                let Some(file) =
-                    load_text(&home, path, &mut sources)?.filter(|file| file.node.link.is_some())
+                let Some(file) = load_text(&home, path, &mut sources, false)?
+                    .filter(|file| file.node.link.is_some())
                 else {
                     return Ok(false);
                 };
-                Self::rule(file.text.as_bytes(), file.mode)
+                Self::rule(file.text.as_bytes(), file.mode, file.node.symlink_hops)
             }
             ResolvedLink::Skill { .. } => {
                 let Some(node) = home
@@ -158,16 +191,37 @@ impl AdoptionLink {
                 else {
                     return Ok(false);
                 };
-                SkillTree::read(&home, &node, "")?.link(&node)
+                let tree = SkillTree::read(&home, &node, "", false)?;
+                if tree.nested_link {
+                    return Ok(false);
+                }
+                tree.link(&node)
             }
         };
-        Ok(current == *self)
+        Ok(current.resolved == self.resolved)
     }
 }
 
 /// Discover rules, source references, and current skill subsets without writing
 /// to the home, data root, or a renderer's staging folder.
 pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
+    discover_with_platform(home, targets, None, cfg!(windows))
+}
+
+pub(super) fn discover_with_shared(
+    home: &Path,
+    targets: &[AdoptionTarget],
+    shared: &str,
+) -> Result<Adoption> {
+    discover_with_platform(home, targets, Some(shared), cfg!(windows))
+}
+
+fn discover_with_platform(
+    home: &Path,
+    targets: &[AdoptionTarget],
+    saved_shared: Option<&str>,
+    is_windows: bool,
+) -> Result<Adoption> {
     for target in targets {
         for path in [&target.rules_path, &target.skills_path]
             .into_iter()
@@ -182,12 +236,19 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
     }
     let home = Home::open(home)?;
     let mut sources = BTreeSet::new();
-    let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources)?;
-    let shared = shared_file.as_ref().map_or("", |file| file.text.as_str());
+    let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources, false)?;
+    let shared =
+        saved_shared.unwrap_or_else(|| shared_file.as_ref().map_or("", |file| file.text.as_str()));
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
-    let (overlays, mut files, mut links, codex_sync_replaced) =
-        discover_rules(&home, targets, shared, shared_path, &mut sources)?;
-    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links);
+    let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules) = discover_rules(
+        &home,
+        targets,
+        shared,
+        shared_path,
+        &mut sources,
+        is_windows,
+    )?;
+    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links, is_windows);
     skills.scan(Path::new(SHARED_SKILLS), None)?;
     for target in targets {
         if let Some(dir) = target
@@ -209,7 +270,11 @@ pub fn discover(home: &Path, targets: &[AdoptionTarget]) -> Result<Adoption> {
         files,
         links,
         skill_locations,
+        skill_byte_copies: BTreeMap::new(),
         skipped,
+        skipped_rules,
+        skipped_tools: Vec::new(),
+        added_tools: Vec::new(),
         worktree_writes: BTreeMap::new(),
         worktree_notes: Vec::new(),
     })
@@ -233,7 +298,7 @@ struct Node {
     path: PathBuf,
     metadata: Metadata,
     link: Option<PathBuf>,
-    through_link: bool,
+    symlink_hops: usize,
 }
 
 impl Home {
@@ -319,7 +384,7 @@ impl Home {
                         path: candidate,
                         metadata,
                         link,
-                        through_link: link_count != 0,
+                        symlink_hops: link_count,
                     }));
                 }
                 ensure!(metadata.is_dir(), "{} is not a folder", candidate.display());
@@ -336,7 +401,7 @@ impl Home {
             path: resolved,
             metadata,
             link,
-            through_link: link_count != 0,
+            symlink_hops: link_count,
         }))
     }
 
@@ -355,12 +420,33 @@ impl Home {
         Ok(names)
     }
 
+    #[cfg(windows)]
+    fn windows_tool_directory(&self, path: &Path) -> std::io::Result<Option<Dir>> {
+        use crate::rulesync_personal::open_windows_tool_dir;
+
+        let mut dir = self.dir.try_clone()?;
+        for part in path {
+            match open_windows_tool_dir(&dir, Path::new(part)) {
+                Ok(child) => dir = child,
+                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(Some(dir))
+    }
+
     fn bytes(&self, node: &Node, limit: u64, limit_label: &str) -> Result<Vec<u8>> {
-        self.read_file(node, limit, limit_label)
+        self.read_file(node, limit, limit_label, false)
             .map(|(bytes, _)| bytes)
     }
 
-    fn read_file(&self, node: &Node, limit: u64, limit_label: &str) -> Result<(Vec<u8>, u32)> {
+    fn read_file(
+        &self,
+        node: &Node,
+        limit: u64,
+        limit_label: &str,
+        check_destination_access: bool,
+    ) -> Result<(Vec<u8>, u32)> {
         ensure!(
             node.metadata.is_file(),
             "{} is not a regular file",
@@ -378,15 +464,26 @@ impl Home {
             use cap_std::fs::OpenOptionsExt as _;
             options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
         }
-        let file = self
-            .dir
-            .open_with(&node.path, &options)
-            .with_context(|| format!("open {}", node.path.display()))?;
+        let file = self.dir.open_with(&node.path, &options);
+        #[cfg(windows)]
+        let file = if check_destination_access {
+            file.map_err(crate::rulesync_personal::windows_access_error)
+        } else {
+            file
+        };
+        let file = file.with_context(|| format!("open {}", node.path.display()))?;
         ensure!(
             file.metadata()?.is_file(),
             "{} changed while reading",
             node.path.display()
         );
+        #[cfg(windows)]
+        if check_destination_access {
+            crate::rulesync_personal::check_windows_replacement(&file)
+                .with_context(|| format!("check permissions on {}", node.path.display()))?;
+        }
+        #[cfg(not(windows))]
+        let _ = check_destination_access;
         let mut bytes = Vec::new();
         (&file).take(limit + 1).read_to_end(&mut bytes)?;
         ensure!(
@@ -441,6 +538,7 @@ fn load_text(
     home: &Home,
     path: &Path,
     sources: &mut BTreeSet<PathBuf>,
+    check_destination_access: bool,
 ) -> Result<Option<LoadedText>> {
     let relative = home.relative_target(path)?;
     let mut format = None;
@@ -455,7 +553,12 @@ fn load_text(
     let Some(node) = home.resolve_checked(relative, check)? else {
         return Ok(None);
     };
-    let (bytes, mode) = home.read_file(&node, MAX_RULE_BYTES, "the rule file import size limit")?;
+    let (bytes, mode) = home.read_file(
+        &node,
+        MAX_RULE_BYTES,
+        "the rule file import size limit",
+        check_destination_access,
+    )?;
     let text = String::from_utf8(bytes)
         .with_context(|| format!("{} is not readable UTF-8", path.display()))?;
     if let Some(format) = format {
@@ -558,6 +661,7 @@ type RuleDiscovery = (
     BTreeMap<PathBuf, AdoptionFile>,
     BTreeMap<PathBuf, AdoptionLink>,
     bool,
+    BTreeMap<PathBuf, String>,
 );
 
 fn discover_rules(
@@ -566,25 +670,62 @@ fn discover_rules(
     shared: &str,
     shared_path: Option<&Path>,
     sources: &mut BTreeSet<PathBuf>,
+    is_windows: bool,
 ) -> Result<RuleDiscovery> {
     let mut overlays = BTreeMap::new();
     let mut previous = BTreeMap::new();
     let mut links = BTreeMap::new();
+    let mut skipped_rules = BTreeMap::new();
     let mut codex_sync_replaced = false;
     for target in targets {
         let Some(path) = &target.rules_path else {
             continue;
         };
+        #[cfg(windows)]
+        if let Err(error) =
+            home.windows_tool_directory(path.parent().context("tool file has no parent")?)
+        {
+            if error.kind() != ErrorKind::Unsupported {
+                return Err(error.into());
+            }
+            skipped_rules.insert(path.clone(), error.to_string());
+            overlays.entry(target.tool.clone()).or_default();
+            continue;
+        }
         if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
             if let Some(node) = home.resolve(parent)? {
                 ensure!(
-                    !node.through_link,
+                    node.symlink_hops == 0,
                     "{} has a symlinked parent",
                     path.display()
                 );
             }
         }
-        let current = load_text(home, path, sources)?;
+        if !symlink_replacement_supported(is_windows)
+            && home
+                .resolve(path)?
+                .is_some_and(|node| node.link.is_some() && node.metadata.is_file())
+        {
+            skipped_rules.insert(
+                path.clone(),
+                "Windows cannot replace a linked rule file; this rule stays in place".into(),
+            );
+            overlays.entry(target.tool.clone()).or_default();
+            continue;
+        }
+        let current = load_text(home, path, sources, true);
+        #[cfg(windows)]
+        if let Err(error) = &current {
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::Unsupported)
+            {
+                skipped_rules.insert(path.clone(), format!("{error:#}"));
+                overlays.entry(target.tool.clone()).or_default();
+                continue;
+            }
+        }
+        let current = current?;
         let bootstrap = match target.tool.as_str() {
             "claudecode" | "claude-code" => Some((Path::new(CLAUDE_OVERLAY), true)),
             "codexcli" | "codex" => Some((Path::new(CODEX_OVERLAY), false)),
@@ -598,7 +739,7 @@ fn discover_rules(
             .unwrap_or_default();
         let mut overlay = current_overlay;
         if let Some((adapter, _)) = bootstrap {
-            if let Some(file) = load_text(home, adapter, sources)? {
+            if let Some(file) = load_text(home, adapter, sources, false)? {
                 if current
                     .as_ref()
                     .is_none_or(|existing| existing.text != file.text)
@@ -634,7 +775,10 @@ fn discover_rules(
             current.map_or(AdoptionEntry::Missing, |file| match file.node.link {
                 Some(target) => {
                     let bytes = file.text.into_bytes();
-                    links.insert(path.clone(), AdoptionLink::rule(&bytes, file.mode));
+                    links.insert(
+                        path.clone(),
+                        AdoptionLink::rule(&bytes, file.mode, file.node.symlink_hops),
+                    );
                     AdoptionEntry::Symlink {
                         target,
                         bytes: Some(bytes),
@@ -656,7 +800,11 @@ fn discover_rules(
             },
         )?;
     }
-    Ok((overlays, files, links, codex_sync_replaced))
+    Ok((overlays, files, links, codex_sync_replaced, skipped_rules))
+}
+
+fn symlink_replacement_supported(is_windows: bool) -> bool {
+    !is_windows
 }
 
 pub(super) fn personal_rule_body(
@@ -689,6 +837,7 @@ fn rule_overlay(
     }
     let mut imports = Imports {
         home,
+        shared,
         shared_path,
         sources,
         stack: BTreeSet::new(),
@@ -705,6 +854,7 @@ fn rule_overlay(
 
 struct Imports<'a> {
     home: &'a Home,
+    shared: &'a str,
     shared_path: Option<&'a Path>,
     sources: &'a mut BTreeSet<PathBuf>,
     stack: BTreeSet<PathBuf>,
@@ -763,7 +913,7 @@ impl Imports<'_> {
                 Some(path) => PathBuf::from(path),
                 None => path.parent().unwrap_or(Path::new("")).join(import),
             };
-            let Some(imported) = load_text(self.home, &imported_path, self.sources)? else {
+            let Some(imported) = load_text(self.home, &imported_path, self.sources, false)? else {
                 // A bare @mention can be plain prose. A path-shaped directive must resolve.
                 ensure!(
                     !import.contains(['/', '\\']) && Path::new(import).extension().is_none(),
@@ -783,6 +933,11 @@ impl Imports<'_> {
             };
             if self.shared_path == Some(&imported.node.path) {
                 self.included_shared = true;
+                let extra = without_shared(self.shared, &imported.text);
+                body.push_str(&extra);
+                if !extra.is_empty() && !extra.ends_with('\n') {
+                    body.push_str(ending);
+                }
             } else {
                 let expanded = self.expand(&imported_path, &imported, depth + 1)?;
                 body.push_str(&expanded);
@@ -931,6 +1086,7 @@ struct SkillDiscovery<'a> {
     sources: &'a mut BTreeSet<PathBuf>,
     files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
     links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
+    is_windows: bool,
     skills: BTreeMap<(String, PathBuf), SkillTree>,
     locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     skipped: BTreeMap<PathBuf, String>,
@@ -942,12 +1098,14 @@ impl<'a> SkillDiscovery<'a> {
         sources: &'a mut BTreeSet<PathBuf>,
         files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
         links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
+        is_windows: bool,
     ) -> Self {
         Self {
             home,
             sources,
             files,
             links,
+            is_windows,
             skills: BTreeMap::new(),
             locations: BTreeMap::new(),
             skipped: BTreeMap::new(),
@@ -955,8 +1113,15 @@ impl<'a> SkillDiscovery<'a> {
     }
 
     fn scan(&mut self, path: &Path, tool: Option<&str>) -> Result<()> {
+        #[cfg(windows)]
+        if tool.is_some() {
+            if let Err(error) = self.home.windows_tool_directory(path) {
+                self.skipped.insert(path.to_owned(), error.to_string());
+                return Ok(());
+            }
+        }
         let node = match self.home.resolve(path) {
-            Ok(Some(node)) if !node.through_link => node,
+            Ok(Some(node)) if node.symlink_hops == 0 => node,
             Ok(None) => return Ok(()),
             Ok(Some(_)) => {
                 self.skipped.insert(
@@ -997,7 +1162,26 @@ impl<'a> SkillDiscovery<'a> {
         let Some(node) = self.home.resolve(path)? else {
             return Ok(());
         };
-        if !node.metadata.is_dir() || self.home.resolve(&node.path.join("SKILL.md"))?.is_none() {
+        if !symlink_replacement_supported(self.is_windows) && tool.is_some() && node.link.is_some()
+        {
+            self.skipped.insert(
+                path.to_owned(),
+                "Windows cannot replace a linked skill directory; this skill stays in place".into(),
+            );
+            return Ok(());
+        }
+        if !node.metadata.is_dir() {
+            return Ok(());
+        }
+        if self.home.resolve(&node.path.join("SKILL.md"))?.is_none() {
+            // A later SKILL.md must not make the existing contents look
+            // like paths created after adoption.
+            if tool.is_some() {
+                self.skipped.insert(
+                    path.to_owned(),
+                    "This directory existed before adoption without a SKILL.md".into(),
+                );
+            }
             return Ok(());
         }
         let mut key = (name.to_owned(), node.path.clone());
@@ -1014,7 +1198,7 @@ impl<'a> SkillDiscovery<'a> {
         let tree = match self.skills.entry(key) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                let mut tree = SkillTree::read(self.home, &node, name)?;
+                let mut tree = SkillTree::read(self.home, &node, name, tool.is_some())?;
                 tree.skill.upstream = skill_origin::discover(self.home, &node.path);
                 entry.insert(tree)
             }
@@ -1031,9 +1215,18 @@ impl<'a> SkillDiscovery<'a> {
         };
         let copying_link = node.link.is_some();
         ensure!(
-            copying_link || !tree.nested_link,
+            !tree.nested_link,
             "the skill folder contains linked assets; replace those links with regular files before adopting it"
         );
+        #[cfg(unix)]
+        if copying_link {
+            ensure!(
+                std::iter::once(permission_mode(&node.metadata))
+                    .chain(tree.dirs.values().copied())
+                    .all(|mode| mode & 0o700 == 0o700),
+                "a directory's permissions would prevent managing its copied skill files"
+            );
+        }
         tree.skill.targets.insert(tool.to_owned());
         tree.skill
             .locations
@@ -1056,17 +1249,19 @@ impl<'a> SkillDiscovery<'a> {
                 after: AdoptionEntry::Directory,
             },
         )?;
-        if copying_link {
-            for dir in tree.dirs.keys() {
-                record_file(
-                    self.files,
-                    path.join(dir),
-                    AdoptionFile {
-                        before: AdoptionEntry::Missing,
-                        after: AdoptionEntry::Directory,
+        for dir in tree.dirs.keys() {
+            record_file(
+                self.files,
+                path.join(dir),
+                AdoptionFile {
+                    before: if copying_link {
+                        AdoptionEntry::Missing
+                    } else {
+                        AdoptionEntry::Directory
                     },
-                )?;
-            }
+                    after: AdoptionEntry::Directory,
+                },
+            )?;
         }
         for (relative, bytes) in &tree.skill.files {
             record_file(
@@ -1110,10 +1305,11 @@ struct SkillTree {
     sources: BTreeSet<PathBuf>,
     remaining_bytes: u64,
     nested_link: bool,
+    check_destination_access: bool,
 }
 
 impl SkillTree {
-    fn read(home: &Home, node: &Node, name: &str) -> Result<Self> {
+    fn read(home: &Home, node: &Node, name: &str, check_destination_access: bool) -> Result<Self> {
         let mut tree = Self {
             skill: AdoptedSkill {
                 name: name.to_owned(),
@@ -1128,6 +1324,7 @@ impl SkillTree {
             sources: BTreeSet::new(),
             remaining_bytes: MAX_ADOPTED_SKILL_BYTES,
             nested_link: false,
+            check_destination_access,
         };
         tree.visit(home, &node.path, node, Path::new(""), &mut BTreeSet::new())?;
         let entry = tree
@@ -1140,21 +1337,24 @@ impl SkillTree {
     }
 
     fn link(&self, node: &Node) -> AdoptionLink {
-        AdoptionLink(ResolvedLink::Skill {
-            mode: permission_mode(&node.metadata),
-            directories: self.dirs.clone(),
-            files: self
-                .skill
-                .files
-                .iter()
-                .map(|(path, bytes)| {
-                    (
-                        path.clone(),
-                        ResolvedFile::new(bytes, self.file_modes[path]),
-                    )
-                })
-                .collect(),
-        })
+        AdoptionLink {
+            resolved: ResolvedLink::Skill {
+                mode: permission_mode(&node.metadata),
+                directories: self.dirs.clone(),
+                files: self
+                    .skill
+                    .files
+                    .iter()
+                    .map(|(path, bytes)| {
+                        (
+                            path.clone(),
+                            ResolvedFile::new(bytes, self.file_modes[path]),
+                        )
+                    })
+                    .collect(),
+            },
+            symlink_hops: node.symlink_hops,
+        }
     }
 
     fn visit(
@@ -1174,6 +1374,12 @@ impl SkillTree {
             "skill symlink cycle at {}",
             node.path.display()
         );
+        #[cfg(windows)]
+        if self.check_destination_access {
+            home.windows_tool_directory(&node.path)
+                .with_context(|| format!("check permissions on {}", node.path.display()))?
+                .context("skill directory disappeared")?;
+        }
         for name in home.names(node)? {
             let name = name
                 .to_str()
@@ -1189,7 +1395,7 @@ impl SkillTree {
             let entry = home.resolve(&source)?.with_context(|| {
                 format!("{} disappeared during skill discovery", source.display())
             })?;
-            self.nested_link |= entry.through_link;
+            self.nested_link |= entry.symlink_hops != 0;
             ensure!(
                 entry.path.starts_with(root),
                 "{} points outside its skill folder",
@@ -1209,6 +1415,7 @@ impl SkillTree {
                         "the {} MiB total import limit for a skill",
                         MAX_ADOPTED_SKILL_BYTES / (1024 * 1024)
                     ),
+                    self.check_destination_access,
                 )?;
                 self.remaining_bytes -= bytes.len() as u64;
                 self.file_modes.insert(relative.clone(), mode);
@@ -1237,6 +1444,111 @@ mod tests {
             rules_path: rules.map(PathBuf::from),
             skills_path: skills.map(PathBuf::from),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_leaves_linked_rule_and_skill_replacements_unmanaged() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/rules.md", "Tool rule\n");
+        put(home, "source/skill/SKILL.md", "Skill content\n");
+        link(home, ".claude/AGENTS.md", home.join("source/rules.md"));
+        link(home, ".claude/skills/linked", home.join("source/skill"));
+
+        let adoption = discover_with_platform(
+            home,
+            &[target(
+                "claudecode",
+                Some(".claude/AGENTS.md"),
+                Some(".claude/skills"),
+            )],
+            None,
+            true,
+        )
+        .unwrap();
+
+        assert!(adoption
+            .skipped_rules
+            .contains_key(Path::new(".claude/AGENTS.md")));
+        assert!(adoption
+            .skipped
+            .contains_key(Path::new(".claude/skills/linked")));
+        assert!(!adoption.files.contains_key(Path::new(".claude/AGENTS.md")));
+        assert!(!adoption
+            .files
+            .contains_key(Path::new(".claude/skills/linked")));
+        assert!(!adoption.links.contains_key(Path::new(".claude/AGENTS.md")));
+        assert!(!adoption
+            .links
+            .contains_key(Path::new(".claude/skills/linked")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1d_checks_link_assets_again_before_detaching() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/skill/SKILL.md", "Skill content\n");
+        put(home, "source/skill/guide.txt", "Same contents\n");
+        put(home, "source/skill/alias.txt", "Same contents\n");
+        let destination = Path::new(".claude/skills/example");
+        link(home, ".claude/skills/example", home.join("source/skill"));
+        let adoption =
+            discover(home, &[target("claudecode", None, Some(".claude/skills"))]).unwrap();
+        let expected = &adoption.links[destination];
+        assert!(expected.matches(home, destination).unwrap());
+
+        fs::remove_file(home.join("source/skill/alias.txt")).unwrap();
+        link(home, "source/skill/alias.txt", Path::new("guide.txt"));
+        assert!(!expected.matches(home, destination).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_step1d_windows_link_skip_still_enrolls_the_tool() {
+        use crate::rulesync_personal::{additional_targets, PersonalMaster};
+
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/rules.md", "Tool rule\n");
+        link(home, ".claude/CLAUDE.md", home.join("source/rules.md"));
+        put(home, ".claude/skills/example/SKILL.md", "Skill content\n");
+        let adoption = discover_with_platform(
+            home,
+            &[target(
+                "claudecode",
+                Some(".claude/CLAUDE.md"),
+                Some(".claude/skills"),
+            )],
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(adoption
+            .skipped_rules
+            .contains_key(Path::new(".claude/CLAUDE.md")));
+        assert!(adoption
+            .files
+            .contains_key(Path::new(".claude/skills/example/SKILL.md")));
+        let mut master = PersonalMaster::new(&adoption);
+        assert!(
+            master.overlays.contains_key("claudecode"),
+            "the tool must stay enrolled for pull-back"
+        );
+        assert!(additional_targets(home, &master).unwrap().is_empty());
+
+        // Older journals already tracked the adopted skills even when the
+        // linked rule left no overlay entry for this tool.
+        master.overlays.remove("claudecode");
+        assert!(master.enrolls_target("claudecode"));
+        assert!(additional_targets(home, &master).unwrap().is_empty());
+    }
+
+    #[test]
+    fn symlink_replacement_policy_is_platform_independent() {
+        assert!(!symlink_replacement_supported(true));
+        assert!(symlink_replacement_supported(false));
     }
 
     #[cfg(unix)]
@@ -1488,6 +1800,34 @@ mod tests {
             actual
         );
         assert!(!home.join(".rulesync").exists());
+    }
+
+    #[test]
+    fn later_claude_import_keeps_rules_outside_the_saved_master() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let shared = "Originally adopted.\n";
+        put(
+            home,
+            ".agents/AGENTS.md",
+            format!("{shared}After adoption.\n"),
+        );
+        put(
+            home,
+            ".claude/CLAUDE.md",
+            "@~/.agents/AGENTS.md\nClaude overlay.\n",
+        );
+        let adoption = discover_with_shared(
+            home,
+            &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
+            shared,
+        )
+        .unwrap();
+        assert_eq!(adoption.shared, shared);
+        assert_eq!(
+            adoption.overlays["claudecode"],
+            "After adoption.\nClaude overlay.\n"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! Private, checkout-specific renders. The repository and its Git index are never the destination.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
@@ -18,7 +19,7 @@ use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileRoot, Snapshot};
 use crate::rulesync_layers;
 use crate::rulesync_routes::{
     prepare_checkout_displaced, read_stage, rendered_skill_with_assets, report,
-    require_local_person, text, with_bytes, write_skill_files, Setup,
+    require_local_person, text, with_bytes, write_skill_files, Setup, UnsupportedRulesyncState,
 };
 use crate::state::SharedState;
 
@@ -40,19 +41,41 @@ async fn checkout(
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))?
         .map(Json)
-        .map_err(|error| ServerError::Conflict(error.to_string()))
+        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
 #[derive(Default, Serialize, Deserialize)]
 struct Checkout {
     repo: PathBuf,
     files: BTreeMap<PathBuf, Snapshot>,
-    #[serde(default)]
     skills: BTreeMap<PathBuf, SkillDelivery>,
-    #[serde(default)]
     pending: Option<PendingDelivery>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     unresolved: Vec<PendingDelivery>,
+}
+
+const CHECKOUT_FORMAT: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckoutRecord<State> {
+    format: u32,
+    checkout: State,
+}
+
+fn read_checkout(bytes: &[u8]) -> Result<Checkout> {
+    let stored: CheckoutRecord<Checkout> =
+        serde_json::from_slice(bytes).context(UnsupportedRulesyncState)?;
+    ensure!(stored.format == CHECKOUT_FORMAT, UnsupportedRulesyncState);
+    ensure!(
+        stored
+            .checkout
+            .pending
+            .iter()
+            .chain(&stored.checkout.unresolved)
+            .all(|pending| pending.stage.is_some()),
+        UnsupportedRulesyncState
+    );
+    Ok(stored.checkout)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,9 +89,7 @@ struct PendingDelivery {
     path: PathBuf,
     digest: String,
     skill_source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     stage: Option<CheckoutStage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     rules_baseline: Option<Snapshot>,
 }
 
@@ -78,6 +99,22 @@ struct CheckoutStage {
     displaced: Option<PathBuf>,
     seen: Snapshot,
     desired: Snapshot,
+}
+
+enum DeliveryOutcome {
+    Applied,
+    Changed,
+    Refused(io::Error),
+}
+
+impl DeliveryOutcome {
+    fn conflict(self, changed: &str) -> Option<String> {
+        match self {
+            Self::Applied => None,
+            Self::Changed => Some(changed.into()),
+            Self::Refused(error) => Some(error.to_string()),
+        }
+    }
 }
 
 impl CheckoutStage {
@@ -228,12 +265,13 @@ pub(crate) fn open(
             repo,
             ..Checkout::default()
         },
-        Snapshot::File { bytes, .. } => serde_json::from_slice(bytes)?,
+        Snapshot::File { bytes, .. } => read_checkout(bytes)?,
         _ => anyhow::bail!("checkout record must be a regular file"),
     };
     let directory = PathBuf::from(format!("checkouts/{key}/rules"));
     let job = Job {
         setup,
+        session: &rulesync_renderer::RenderSession::new(&setup.binary),
         settings: shared_space::settings_path(),
         root: &root,
         directory: &directory,
@@ -247,75 +285,97 @@ pub(crate) fn open(
 
 pub(crate) fn refresh(
     setup: &Setup,
+    session: &rulesync_renderer::RenderSession<'_>,
     settings: &Path,
     master: Option<&PersonalMaster>,
     generated: &[String],
-) {
-    fn refresh_inner(
-        setup: &Setup,
-        settings: &Path,
-        master: Option<&PersonalMaster>,
-        generated: &[String],
-    ) -> Result<()> {
+) -> Vec<String> {
+    let result = (|| {
         let entries = match std::fs::read_dir(setup.data.join("checkouts")) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error.into()),
         };
-        let root = setup.data_files()?;
-        for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let leaf = PathBuf::from(entry.file_name());
-            let Some(key) = leaf
-                .file_stem()
-                .and_then(|key| key.to_str())
-                .filter(|key| key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            else {
-                continue;
-            };
-            if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let state_path = Path::new("checkouts").join(&leaf);
-            let state = root.read(&state_path, false)?;
-            let Snapshot::File { bytes, .. } = &state else {
-                continue;
-            };
-            let checkout: Checkout = serde_json::from_slice(bytes)?;
-            let directory = PathBuf::from(format!("checkouts/{key}/rules"));
-            let job = Job {
-                setup,
-                settings: settings.to_path_buf(),
-                root: &root,
-                directory: &directory,
-            };
-            match job.run(&state_path, state, checkout, master, generated) {
-                Err(error) => tracing::warn!(%error, "[rules setup] checkout rules refresh failed"),
-                Ok(report) if !report.blocked.is_empty() => tracing::warn!(
-                    files = report.blocked.len(),
-                    "[rules setup] some checkout deliveries need attention"
-                ),
-                Ok(_) => {}
-            }
+        refresh_entries(setup, session, settings, master, generated, entries)
+    })();
+    match result {
+        Ok(blocked) => blocked,
+        Err(error) => {
+            tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
+            Vec::new()
         }
-        Ok(())
     }
-    if let Err(error) = refresh_inner(setup, settings, master, generated) {
-        tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
+}
+
+fn refresh_entries(
+    setup: &Setup,
+    session: &rulesync_renderer::RenderSession<'_>,
+    settings: &Path,
+    master: Option<&PersonalMaster>,
+    generated: &[String],
+    entries: impl IntoIterator<Item = std::io::Result<std::fs::DirEntry>>,
+) -> Result<Vec<String>> {
+    let root = setup.data_files()?;
+    let mut blocked = Vec::new();
+    for entry in entries {
+        let refresh_entry =
+            || -> Result<()> {
+                let entry = entry?;
+                if !entry.file_type()?.is_file() {
+                    return Ok(());
+                }
+                let leaf = PathBuf::from(entry.file_name());
+                let Some(key) = leaf.file_stem().and_then(|key| key.to_str()).filter(|key| {
+                    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }) else {
+                    return Ok(());
+                };
+                if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    return Ok(());
+                }
+                let state_path = Path::new("checkouts").join(&leaf);
+                let read_context = || format!("read checkout receipt {}", state_path.display());
+                let state = root.read(&state_path, false).with_context(read_context)?;
+                let Snapshot::File { bytes, .. } = &state else {
+                    return Ok(());
+                };
+                let checkout = read_checkout(bytes).with_context(read_context)?;
+                let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+                let job = Job {
+                    setup,
+                    session,
+                    settings: settings.to_path_buf(),
+                    root: &root,
+                    directory: &directory,
+                };
+                let problems = match job.run(&state_path, state, checkout, master, generated) {
+                    Ok(report) => report.blocked,
+                    Err(error) => vec![format!("{error:#}")],
+                };
+                let checkout_dir = setup.data.join(directory);
+                for problem in problems {
+                    let problem = format!("Checkout {} — {problem}", checkout_dir.display());
+                    tracing::warn!(%problem, "[rules setup] checkout delivery needs attention");
+                    blocked.push(problem);
+                }
+                Ok(())
+            };
+        if let Err(error) = refresh_entry() {
+            tracing::warn!(error = %format_args!("{error:#}"), "[rules setup] checkout rules refresh failed");
+        }
     }
+    Ok(blocked)
 }
 
 struct Job<'a> {
     setup: &'a Setup,
+    session: &'a rulesync_renderer::RenderSession<'a>,
     settings: PathBuf,
     root: &'a FileRoot,
     directory: &'a Path,
 }
 
-fn report_blocks(result: &mut RulesSyncReport, blocked: BTreeMap<PathBuf, &'static str>) {
+fn report_blocks(result: &mut RulesSyncReport, blocked: BTreeMap<PathBuf, String>) {
     result.blocked.extend(
         blocked
             .into_iter()
@@ -388,10 +448,19 @@ impl Job<'_> {
             if blocked.contains_key(path) {
                 continue;
             }
-            let current = self.root.read(&self.directory.join(path), false)?;
             let before = text(delivered)?;
             let remaining = rulesync_layers::remove_inaccessible(before, &keys)?;
             if remaining != before {
+                let current = match self.root.read(&self.directory.join(path), false) {
+                    Ok(current) => current,
+                    Err(error) => {
+                        blocked.insert(
+                            path.clone(),
+                            format!("Could not read the file to remove revoked rules. {error}"),
+                        );
+                        continue;
+                    }
+                };
                 if current == Snapshot::Absent {
                     *delivered = current;
                     continue;
@@ -401,7 +470,7 @@ impl Job<'_> {
                     rulesync_layers::remove_inaccessible(current, &keys)
                 });
                 let Ok(after) = after else {
-                    blocked.insert(path.clone(), "Cannot remove a shared rules section because its markers changed. Reconcile the checkout rules and sync again.");
+                    blocked.insert(path.clone(), "Could not remove revoked rules because the section markers changed. Reconcile the checkout rules and sync again.".into());
                     continue;
                 };
                 let desired = with_bytes(&current, after.into_bytes());
@@ -418,18 +487,22 @@ impl Job<'_> {
         record = self.save(state_path, &record, &checkout)?;
         for (pending, current, desired) in withdrawals {
             let path = pending.path.clone();
-            if !self.deliver(
-                state_path,
-                &mut record,
-                &mut checkout,
-                pending,
-                &current,
-                desired,
-            )? {
-                blocked.insert(
-                    path,
-                    "Changed while Wenlan was removing a layer. Sync again to finish removing it.",
-                );
+            let outcome = self
+                .deliver(
+                    state_path,
+                    &mut record,
+                    &mut checkout,
+                    pending,
+                    &current,
+                    desired,
+                )
+                .with_context(|| {
+                    format!("Could not remove revoked rules from {}", path.display())
+                })?;
+            if let Some(reason) =
+                outcome.conflict("The file changed during withdrawal. Sync again.")
+            {
+                blocked.insert(path, format!("Could not remove revoked rules. {reason}"));
             }
         }
         let Some(master) = master else {
@@ -464,7 +537,7 @@ impl Job<'_> {
                         }
                     }
                     _ => {
-                        blocked.insert(path.clone(), "The checkout rules or their section markers changed. Reconcile the edits with the Rules page and sync again.");
+                        blocked.insert(path.clone(), "The checkout rules or their section markers changed. Reconcile the edits with the Rules page and sync again.".into());
                     }
                 }
             }
@@ -502,22 +575,20 @@ impl Job<'_> {
                 stage: None,
                 rules_baseline: None,
             };
-            if self.deliver(
+            let outcome = self.deliver(
                 state_path,
                 &mut record,
                 &mut checkout,
                 pending,
                 current,
                 desired,
-            )? {
-                if changed {
-                    result.written.push(path.display().to_string());
-                }
-            } else {
-                blocked.insert(
-                    path,
-                    "Changed during delivery. Sync again to collect the latest edits.",
-                );
+            )?;
+            if let Some(reason) =
+                outcome.conflict("Changed during delivery. Sync again to collect the latest edits.")
+            {
+                blocked.insert(path, reason);
+            } else if changed {
+                result.written.push(path.display().to_string());
             }
         }
         for (path, file) in rendered.skills {
@@ -534,22 +605,20 @@ impl Job<'_> {
                 stage: None,
                 rules_baseline: None,
             };
-            if self.deliver(
+            let outcome = self.deliver(
                 state_path,
                 &mut record,
                 &mut checkout,
                 pending,
                 &current,
                 desired,
-            )? {
-                if changed {
-                    result.written.push(path.display().to_string());
-                }
-            } else {
-                blocked.insert(
-                    path,
-                    "Changed during delivery. Check the skill files and sync again.",
-                );
+            )?;
+            if let Some(reason) =
+                outcome.conflict("Changed during delivery. Check the skill files and sync again.")
+            {
+                blocked.insert(path, reason);
+            } else if changed {
+                result.written.push(path.display().to_string());
             }
         }
         report_blocks(&mut result, blocked);
@@ -559,7 +628,7 @@ impl Job<'_> {
     fn recover_pending(
         &self,
         checkout: &mut Checkout,
-        blocked: &mut BTreeMap<PathBuf, &'static str>,
+        blocked: &mut BTreeMap<PathBuf, String>,
     ) -> Result<()> {
         if let Some(pending) = checkout.pending.take() {
             checkout.unresolved.push(pending);
@@ -567,17 +636,16 @@ impl Job<'_> {
         for pending in std::mem::take(&mut checkout.unresolved) {
             let path = &pending.path;
             let destination = self.directory.join(path);
+            let stage = pending.stage.as_ref().context(UnsupportedRulesyncState)?;
             let recovered = self.root.read(&destination, false).and_then(|current| {
-                if let Some(stage) = &pending.stage {
-                    self.root.recover_stage(
-                        &destination,
-                        &stage.seen,
-                        &stage.desired,
-                        &current,
-                        stage.options(self.root),
-                    )?;
-                    self.sync_parents(&destination)?;
-                }
+                self.root.recover_stage(
+                    &destination,
+                    &stage.seen,
+                    &stage.desired,
+                    &current,
+                    stage.options(self.root),
+                )?;
+                self.sync_parents(&destination)?;
                 Ok(current)
             });
             if let Ok(current) = recovered {
@@ -586,16 +654,11 @@ impl Job<'_> {
                     checkout.settle(pending, current);
                     continue;
                 }
-                if current == Snapshot::Absent
-                    || pending
-                        .stage
-                        .as_ref()
-                        .is_some_and(|stage| current == stage.seen)
-                {
+                if current == Snapshot::Absent || current == stage.seen {
                     continue;
                 }
             }
-            blocked.insert(path.clone(), "Interrupted checkout delivery needs review. Reconcile the local file and sync again.");
+            blocked.insert(path.clone(), "Interrupted checkout delivery needs review. Reconcile the local file and sync again.".into());
             checkout.unresolved.push(pending);
         }
         Ok(())
@@ -609,17 +672,17 @@ impl Job<'_> {
         mut pending: PendingDelivery,
         current: &Snapshot,
         desired: Snapshot,
-    ) -> Result<bool> {
+    ) -> Result<DeliveryOutcome> {
         let destination = self.directory.join(&pending.path);
         if current == &desired {
             if self.root.apply(&destination, current, &desired, false)?
                 == ApplyOutcome::ChangedSincePlan
             {
-                return Ok(false);
+                return Ok(DeliveryOutcome::Changed);
             }
             checkout.settle(pending, desired);
             *record = self.save(state_path, record, checkout)?;
-            return Ok(true);
+            return Ok(DeliveryOutcome::Applied);
         }
         // Persist the exact plan and recovery names before modifying the
         // destination. The archive keeps the displaced inode reachable to
@@ -641,9 +704,24 @@ impl Job<'_> {
             .context("missing checkout journal")?;
         let stage = pending.stage.as_ref().context("missing checkout stage")?;
         let applied =
-            self.root
-                .apply_with(&destination, current, &desired, stage.options(self.root))?
-                == ApplyOutcome::Applied;
+            match self
+                .root
+                .apply_with(&destination, current, &desired, stage.options(self.root))
+            {
+                Ok(outcome) => outcome == ApplyOutcome::Applied,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+                    ) =>
+                {
+                    // Preserve the journal in case the stage still holds an entry.
+                    checkout.unresolved.push(pending);
+                    *record = self.save(state_path, record, checkout)?;
+                    return Ok(DeliveryOutcome::Refused(error));
+                }
+                Err(error) => return Err(error.into()),
+            };
         if let Some(directory) = stage.displaced.as_deref().and_then(Path::parent) {
             self.root.sync_directory(directory)?;
         }
@@ -652,7 +730,11 @@ impl Job<'_> {
             checkout.settle(pending, desired);
         }
         *record = self.save(state_path, record, checkout)?;
-        Ok(applied)
+        Ok(if applied {
+            DeliveryOutcome::Applied
+        } else {
+            DeliveryOutcome::Changed
+        })
     }
 
     fn prune_skills(
@@ -661,7 +743,7 @@ impl Job<'_> {
         record: &mut Snapshot,
         checkout: &mut Checkout,
         allowed: &BTreeSet<&str>,
-        blocked: &mut BTreeMap<PathBuf, &'static str>,
+        blocked: &mut BTreeMap<PathBuf, String>,
     ) -> Result<BTreeMap<PathBuf, Snapshot>> {
         let mut retired = Vec::new();
         let mut observed = BTreeMap::new();
@@ -674,14 +756,14 @@ impl Job<'_> {
                 current == Snapshot::Absent || fingerprint(&current)? == delivery.digest;
             if !allowed.contains(delivery.source.as_str()) {
                 if !matches_delivery {
-                    blocked.insert(path.clone(), "The removed skill was edited. Reconcile the local file and sync again to finish removing it.");
+                    blocked.insert(path.clone(), "The removed skill was edited. Reconcile the local file and sync again to finish removing it.".into());
                 } else {
                     retired.push((path.clone(), delivery.source.clone(), current));
                 }
             } else if matches_delivery {
                 observed.insert(path.clone(), current);
             } else {
-                blocked.insert(path.clone(), "The installed skill was edited. Reconcile the change with the Space's approved skill and sync again.");
+                blocked.insert(path.clone(), "The installed skill was edited. Reconcile the change with the Space's approved skill and sync again.".into());
             }
         }
         for (path, source, current) in retired {
@@ -693,18 +775,24 @@ impl Job<'_> {
                 stage: None,
                 rules_baseline: None,
             };
-            if !self.deliver(state_path, record, checkout, pending, &current, desired)? {
-                blocked.insert(
-                    path,
-                    "Changed while Wenlan was removing a skill. Sync again to finish removing it.",
-                );
+            let outcome = self.deliver(state_path, record, checkout, pending, &current, desired)?;
+            if let Some(reason) = outcome.conflict(
+                "Changed while Wenlan was removing a skill. Sync again to finish removing it.",
+            ) {
+                blocked.insert(path, reason);
             }
         }
         Ok(observed)
     }
 
     fn save(&self, path: &Path, seen: &Snapshot, checkout: &Checkout) -> Result<Snapshot> {
-        let desired = with_bytes(seen, serde_json::to_vec(checkout)?);
+        let desired = with_bytes(
+            seen,
+            serde_json::to_vec(&CheckoutRecord {
+                format: CHECKOUT_FORMAT,
+                checkout,
+            })?,
+        );
         ensure!(
             self.root.apply(path, seen, &desired, false)? == ApplyOutcome::Applied,
             "checkout receipt changed during sync"
@@ -744,7 +832,7 @@ impl Job<'_> {
         } else {
             &["rules", "skills"]
         };
-        for target in rulesync_personal::adoption_inputs() {
+        for target in ["claudecode", "codexcli"] {
             let stage = rulesync_renderer::new_stage(&self.setup.data)?;
             let output = stage.path().join("output");
             let mut roots = Vec::new();
@@ -757,16 +845,15 @@ impl Job<'_> {
             }
             skills.stage(&stage.path().join("project"))?;
             let personal = stage.path().join("personal");
-            write_root_rule(&personal, &master.rule_text(&target.tool, generated)?)?;
+            write_root_rule(&personal, &master.rule_text(target, generated)?)?;
             roots.push(personal);
             std::fs::create_dir(&output)?;
-            rulesync_renderer::render(
-                &self.setup.binary,
+            self.session.render(
                 stage.path(),
                 &roots,
                 &output,
                 false,
-                &[target.tool],
+                &[target.into()],
                 features,
             )?;
             let mut files = BTreeMap::new();
@@ -782,6 +869,179 @@ impl Job<'_> {
 mod tests {
     use super::*;
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
+
+    #[cfg(not(windows))]
+    #[test]
+    fn rulesync_step1j_first_checkout_delivery_skips_the_windows_replacement_check() {
+        check_checkout_windows_acl_refusal(true);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn rulesync_step1j_refused_checkout_withdrawal_names_the_live_file() {
+        check_checkout_windows_acl_refusal(false);
+    }
+
+    #[cfg(not(windows))]
+    fn check_checkout_windows_acl_refusal(first_delivery: bool) {
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().to_owned(),
+            binary: scratch.path().join("unavailable-renderer"),
+        };
+        let mut root = FileRoot::open(&setup.data).unwrap();
+        root.refuse_windows_acl_in_test = true;
+        let job = Job {
+            setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
+            settings: scratch.path().join("settings.toml"),
+            root: &root,
+            directory: Path::new("checkouts/example/rules"),
+        };
+        let path = PathBuf::from("AGENTS.md");
+        let destination = job.directory.join(&path);
+        let state_path = Path::new("checkouts/example.json");
+        let approved = Snapshot::file(
+            format!(
+                "<!-- WENLAN SHARED RULES {} {} -->\n## Project rules\n\nLast synced date.\n\nRevoked advice.\n<!-- END WENLAN SHARED RULES -->\nPersonal advice.\n",
+                "a".repeat(64),
+                "b".repeat(64),
+            )
+            .into_bytes(),
+        );
+        let mut checkout = Checkout::default();
+        if first_delivery {
+            let pending = PendingDelivery {
+                path: path.clone(),
+                digest: fingerprint(&approved).unwrap(),
+                skill_source: None,
+                rules_baseline: None,
+                stage: None,
+            };
+            let mut state = Snapshot::Absent;
+            let outcome = job
+                .deliver(
+                    state_path,
+                    &mut state,
+                    &mut checkout,
+                    pending,
+                    &Snapshot::Absent,
+                    approved,
+                )
+                .unwrap();
+            assert!(outcome.conflict("Unexpected file change").is_none());
+            assert_eq!(
+                root.read(&destination, false).unwrap(),
+                checkout.files[&path]
+            );
+        } else {
+            assert!(job.replace(&path, &Snapshot::Absent, &approved).unwrap());
+            checkout.files.insert(path.clone(), approved.clone());
+            let state = job.save(state_path, &Snapshot::Absent, &checkout).unwrap();
+            let report = job.run(state_path, state, checkout, None, &[]).unwrap();
+            assert!(report.written.is_empty(), "{report:?}");
+            assert!(
+                report.blocked.iter().any(|reason| {
+                    reason.contains("AGENTS.md")
+                        && reason.contains("revoked")
+                        && reason.contains(
+                            "the Windows owner is not the process user or one of its owner groups",
+                        )
+                }),
+                "{report:?}"
+            );
+            assert_eq!(root.read(&destination, false).unwrap(), approved);
+            let stored = root.read(state_path, false).unwrap();
+            let saved = read_checkout(text(&stored).unwrap().as_bytes()).unwrap();
+            assert_eq!(saved.files[&path], approved);
+            let default_access = FileRoot::open(&setup.data).unwrap();
+            let retry = Job {
+                root: &default_access,
+                ..job
+            };
+            let report = retry.run(state_path, stored, saved, None, &[]).unwrap();
+            assert!(report.blocked.is_empty(), "{report:?}");
+            let current = default_access.read(&destination, false).unwrap();
+            assert_eq!(text(&current).unwrap(), "Personal advice.\n");
+        }
+    }
+
+    #[test]
+    fn rulesync_step1g_refresh_continues_after_an_incompatible_checkout_receipt() {
+        use std::fs;
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: scratch.path().join("unavailable-renderer"),
+        };
+        let checkouts = setup.data.join("checkouts");
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir_all(&checkouts).unwrap();
+        let legacy = checkouts.join(format!("{}.json", "a".repeat(64)));
+        let key = "b".repeat(64);
+        let valid = checkouts.join(format!("{key}.json"));
+        fs::write(&legacy, b"{}").unwrap();
+        let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let settings = scratch.path().join("settings.toml");
+        let root = setup.data_files().unwrap();
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings: settings.clone(),
+            root: &root,
+            directory: &directory,
+        };
+        let rule = PathBuf::from("AGENTS.md");
+        let original = "Personal advice.\n";
+        let delivered = Snapshot::file(
+            format!(
+                "<!-- WENLAN SHARED RULES {} {} -->\n## Project rules\n\nLast synced date.\n\nRevoked advice.\n<!-- END WENLAN SHARED RULES -->\n{original}",
+                "a".repeat(64),
+                "b".repeat(64),
+            )
+            .into_bytes(),
+        );
+        assert!(job.replace(&rule, &Snapshot::Absent, &delivered).unwrap());
+        fs::write(
+            &valid,
+            serde_json::to_vec(&CheckoutRecord {
+                format: CHECKOUT_FORMAT,
+                checkout: Checkout {
+                    files: BTreeMap::from([(rule.clone(), delivered)]),
+                    ..Checkout::default()
+                },
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut entries = fs::read_dir(&checkouts)
+            .unwrap()
+            .collect::<std::io::Result<Vec<_>>>()
+            .unwrap();
+        entries.retain(|entry| entry.path() == legacy || entry.path() == valid);
+        entries.sort_by_key(|entry| entry.file_name());
+        assert_eq!(entries[0].path(), legacy, "the bad receipt must be first");
+        assert_eq!(entries[1].path(), valid);
+        refresh_entries(
+            &setup,
+            &session,
+            &settings,
+            None,
+            &[],
+            entries.into_iter().map(Ok),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(legacy).unwrap(), b"{}");
+        let actual = fs::read_to_string(setup.data.join(directory).join(rule)).unwrap();
+        assert!(!actual.contains("Revoked advice"), "{actual}");
+        assert!(actual.contains(original), "{actual}");
+    }
 
     #[test]
     fn rulesync_checkout_splits_skill_output_and_blocks_colliding_sources() {
@@ -831,6 +1091,7 @@ mod tests {
         let root = FileRoot::open(&setup.data).unwrap();
         let job = Job {
             setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
@@ -891,7 +1152,7 @@ mod tests {
                 .any(|item| item.starts_with(path.to_str().unwrap())));
         }
         let record = root.read(state_path, false).unwrap();
-        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        let saved = read_checkout(text(&record).unwrap().as_bytes()).unwrap();
         assert_eq!(saved.files[&rule_path], approved_rule);
         assert_eq!(
             saved.skills[&skill_path].digest,
@@ -919,6 +1180,7 @@ mod tests {
         let root = FileRoot::open(data).unwrap();
         let job = Job {
             setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
             settings: data.join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
@@ -971,11 +1233,11 @@ mod tests {
         };
 
         let state = root.read(state_path, false).unwrap();
-        let checkout = serde_json::from_str(text(&state).unwrap()).unwrap();
+        let checkout = read_checkout(text(&state).unwrap().as_bytes()).unwrap();
         let report = job.run(state_path, state, checkout, None, &[]).unwrap();
         assert!(report.blocked.is_empty(), "{report:?}");
         let record = root.read(state_path, false).unwrap();
-        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        let saved = read_checkout(text(&record).unwrap().as_bytes()).unwrap();
         assert_eq!(text(&saved.files[&path]).unwrap(), personal);
         let current = root.read(&job.directory.join(&path), false).unwrap();
         assert_eq!(
@@ -1033,6 +1295,7 @@ mod tests {
         let root = FileRoot::open(&setup.data).unwrap();
         let job = Job {
             setup: &setup,
+            session: &rulesync_renderer::RenderSession::new(&setup.binary),
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
@@ -1046,7 +1309,12 @@ mod tests {
                 path: path.clone(),
                 digest: digest.clone(),
                 skill_source: Some("lost-access".to_owned()),
-                stage: None,
+                stage: Some(CheckoutStage {
+                    id: uuid::Uuid::new_v4().simple().to_string(),
+                    displaced: None,
+                    seen: Snapshot::Absent,
+                    desired: approved.clone(),
+                }),
                 rules_baseline: None,
             }),
             ..Checkout::default()
@@ -1078,7 +1346,7 @@ mod tests {
                 .blocked
                 .iter()
                 .any(|warning| warning.starts_with(path.to_str().unwrap())));
-            let saved = serde_json::from_str(recorded).unwrap();
+            let saved = read_checkout(recorded.as_bytes()).unwrap();
             std::fs::write(&destination, text(&approved).unwrap()).unwrap();
             job.run(state_path, record, saved, Some(&master), &[])
                 .unwrap();
@@ -1089,7 +1357,7 @@ mod tests {
         );
         let record = root.read(state_path, false).unwrap();
         assert!(!text(&record).unwrap().contains(&digest));
-        let saved: Checkout = serde_json::from_str(text(&record).unwrap()).unwrap();
+        let saved = read_checkout(text(&record).unwrap().as_bytes()).unwrap();
         assert!(saved.skills.is_empty());
         assert!(saved.pending.is_none());
     }

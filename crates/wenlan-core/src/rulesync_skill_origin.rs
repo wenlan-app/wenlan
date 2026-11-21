@@ -18,7 +18,7 @@ pub(super) fn discover(home: &Home, skill: &Path) -> Option<SkillUpstream> {
 
 fn read_metadata(home: &Home, path: &Path) -> Option<Value> {
     let node = home.resolve(path).ok()??;
-    if node.through_link {
+    if node.symlink_hops != 0 {
         return None;
     }
     serde_json::from_slice(
@@ -131,7 +131,7 @@ fn npm_lock(home: &Home, skill: &Path) -> Option<SkillUpstream> {
 fn git(home: &Home, checkout: &Path, args: &[&str]) -> Option<String> {
     let repo = home.resolve(checkout).ok()??;
     let control = home.resolve(&checkout.join(".git")).ok()??;
-    if repo.through_link || control.through_link {
+    if repo.symlink_hops != 0 || control.symlink_hops != 0 {
         return None;
     }
     read_only_git_at(&home.canonical.join(checkout), args)

@@ -11,9 +11,12 @@ use wenlan_types::{rulesync::RulesSyncReport, skill_registry::LocalSkill};
 
 #[path = "rulesync_skill_routes.rs"]
 mod saved_skills;
+#[cfg(test)]
+pub(crate) use saved_skills::{accept_only_tool_proposal, review_only_tool_proposal};
 pub(crate) use saved_skills::{
-    approved_local_folders, approved_skill_sources, authored_rows, collect_tool_proposals,
-    register, remove_saved_source, ManagedSkill,
+    authored_rows, check_skill_format, clear_delivery_state, collect_tool_proposals, register,
+    remove_saved_source, saved_skill_deliveries, ApprovedSkills, ManagedSkill,
+    SavedSkillDeliveries, SkillHome, SkillModes,
 };
 
 // The registry swaps source directories in place. A snapshot taken during
@@ -32,13 +35,11 @@ pub(crate) fn installed_sources() -> Result<BTreeMap<String, BTreeMap<PathBuf, V
     with_sources_lock(|| registry::personal_sources(&registry::default_wenlan_root()))?
 }
 
-/// The migration input paths are also the known locations a person can take
-/// skills in from. The renderer independently chooses delivery destinations.
+/// A person can also take skills in from each of the delivery folders.
 pub(crate) fn scan_sources(root: &Path, home: &Path) -> Vec<LocalSkill> {
-    let mut dirs: Vec<_> = rulesync_personal::adoption_inputs()
-        .into_iter()
-        .filter_map(|input| input.skills_path)
-        .map(|path| home.join(path))
+    let mut dirs: Vec<_> = rulesync_personal::PERSONAL_TARGETS
+        .iter()
+        .map(|target| home.join(target.skills.destination))
         .collect();
     dirs.push(home.join(".agents/skills"));
     registry::scan_local_in_home(root, &dirs, home)

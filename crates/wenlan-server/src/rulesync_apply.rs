@@ -7,22 +7,29 @@ use cap_std::fs::{Dir, DirBuilder, Metadata, OpenOptions};
 #[cfg(unix)]
 use cap_std::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
-use wenlan_core::rulesync_personal::{is_harness_path, HarnessGuard};
+use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
+#[cfg(windows)]
+use wenlan_core::rulesync_personal::{
+    check_windows_replacement, copy_windows_dacl, open_windows_tool_dir,
+    prepare_windows_file_replacement, read_windows_owner, windows_access_error,
+    windows_permissions_error,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
 
 impl FileMode {
     #[cfg(unix)]
-    fn of(metadata: &Metadata) -> Self {
+    pub(crate) fn of(metadata: &Metadata) -> Self {
         Self(metadata.permissions().mode() & 0o7777)
     }
 
     #[cfg(windows)]
-    fn of(metadata: &Metadata) -> Self {
+    pub(crate) fn of(metadata: &Metadata) -> Self {
         Self(u32::from(metadata.permissions().readonly()))
     }
 
@@ -37,11 +44,44 @@ impl FileMode {
         Ok(())
     }
 
+    pub(crate) fn permits_child_writes(self) -> bool {
+        !cfg!(unix) || self.0 & 0o700 == 0o700
+    }
+
+    pub(crate) fn with_child_writes(self) -> Self {
+        Self(if cfg!(unix) { self.0 | 0o700 } else { 0 })
+    }
+
+    #[cfg(unix)]
+    fn set_directory(self, dir: &Dir) -> io::Result<()> {
+        let file = dir.open(".")?;
+        self.set(&file)?;
+        file.sync_all()
+    }
+
+    #[cfg(windows)]
+    fn set_directory(self, dir: &Dir) -> io::Result<()> {
+        let mut permissions = dir.dir_metadata()?.permissions();
+        permissions.set_readonly(self.0 != 0);
+        dir.set_permissions(".", permissions)
+    }
+
     #[cfg(windows)]
     fn set(self, file: &cap_std::fs::File) -> io::Result<()> {
         let mut permissions = file.metadata()?.permissions();
         permissions.set_readonly(self.0 != 0);
         file.set_permissions(permissions)
+    }
+}
+
+impl std::fmt::Display for FileMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(unix)]
+        {
+            write!(f, "{:04o}", self.0)
+        }
+        #[cfg(windows)]
+        f.write_str(if self.0 != 0 { "read-only" } else { "writable" })
     }
 }
 
@@ -62,13 +102,16 @@ pub(crate) enum Snapshot<Content = Vec<u8>> {
     },
     /// Directory entry only. The applier can create or replace an empty
     /// directory. Its children are planned and applied independently.
-    Directory,
+    Directory {
+        mode: FileMode,
+    },
 }
 
 impl<Content: PartialEq> PartialEq for Snapshot<Content> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Absent, Self::Absent) | (Self::Directory, Self::Directory) => true,
+            (Self::Absent, Self::Absent) => true,
+            (Self::Directory { mode }, Self::Directory { mode: other }) => mode == other,
             (
                 Self::File { bytes, mode },
                 Self::File {
@@ -97,10 +140,27 @@ impl Snapshot {
     }
 
     pub(crate) fn file_with_mode(bytes: Vec<u8>, mode: u32) -> Self {
-        Self::File {
-            bytes,
-            mode: FileMode(mode),
-        }
+        Self::file_with_permissions(bytes, FileMode(mode))
+    }
+
+    pub(crate) fn file_with_permissions(bytes: Vec<u8>, mode: FileMode) -> Self {
+        Self::File { bytes, mode }
+    }
+
+    pub(crate) fn private_directory() -> Self {
+        Self::directory_with_mode(if cfg!(unix) { 0o700 } else { 0 })
+    }
+
+    pub(crate) fn directory_with_mode(mode: u32) -> Self {
+        Self::directory_with_permissions(FileMode(mode))
+    }
+
+    pub(crate) fn directory_with_permissions(mode: FileMode) -> Self {
+        Self::Directory { mode }
+    }
+
+    pub(crate) fn is_directory(&self) -> bool {
+        matches!(self, Self::Directory { .. })
     }
 }
 
@@ -164,6 +224,8 @@ pub(crate) struct FileRoot {
     harness: Option<HarnessGuard>,
     tool_home: bool,
     private_directories: bool,
+    #[cfg(all(test, not(windows)))]
+    pub(crate) refuse_windows_acl_in_test: bool,
 }
 
 impl FileRoot {
@@ -182,6 +244,8 @@ impl FileRoot {
             harness: None,
             tool_home: false,
             private_directories: false,
+            #[cfg(all(test, not(windows)))]
+            refuse_windows_acl_in_test: false,
         })
     }
 
@@ -264,9 +328,116 @@ impl FileRoot {
 
     pub(crate) fn read(&self, path: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
         let (relative_parent, name) = entry_path(path)?;
-        match self.open_parent(relative_parent, false)? {
-            Some(parent) => read_leaf(&parent, name, allow_symlink),
-            None => Ok(Snapshot::Absent),
+        let Some(parent) = self.open_parent(relative_parent, false)? else {
+            return Ok(Snapshot::Absent);
+        };
+        #[cfg(windows)]
+        if self.tool_home {
+            self.check_directory_leaf(&parent, name)?;
+        }
+        self.read_entry(&parent, name, allow_symlink)
+    }
+
+    fn read_entry(&self, parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
+        #[cfg(not(windows))]
+        let _ = self;
+        #[cfg(windows)]
+        if self.tool_home {
+            return read_leaf_with(parent, name, allow_symlink, |file, _| {
+                check_windows_replacement(file)?;
+                read_file_contents(file)
+            })
+            .map_err(windows_access_error);
+        }
+        read_leaf(parent, name, allow_symlink)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn windows_entry_owner(&self, path: &Path) -> io::Result<Vec<u8>> {
+        let (relative_parent, name) = entry_path(path)?;
+        let parent = self
+            .open_parent(relative_parent, false)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        read_windows_owner(&open_windows_entry(&parent, name)?)
+    }
+
+    /// Resolve only the components below the configured tool path. Tool
+    /// roots use their configured spelling even if listed differently.
+    pub(crate) fn case_alias(&self, path: &Path, scope: &Path) -> io::Result<Option<PathBuf>> {
+        let (parent, leaf) = entry_path(path)?;
+        let Some(directory) = self.open_parent(parent, false)? else {
+            return Ok(None);
+        };
+        match directory.symlink_metadata(leaf) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let mut resolved = scope.to_owned();
+        let components = path
+            .ancestors()
+            .take_while(|part| *part != scope)
+            .collect::<Vec<_>>();
+        for component in components.into_iter().rev() {
+            let (parent, name) = entry_path(component)?;
+            let directory = self.open_parent(parent, false)?.ok_or_else(invalid_path)?;
+            let name = name.as_os_str();
+            resolved.push(case_alias_in(&directory, name)?.as_deref().unwrap_or(name));
+        }
+        Ok((resolved != path).then_some(resolved))
+    }
+
+    /// Check the journaled spelling from the home down, even if the leaf
+    /// is absent. Only restore planning can account for a missing parent.
+    pub(crate) fn restore_leaf_alias(
+        &self,
+        path: &Path,
+        can_restore_parent: impl Fn(&Path) -> bool,
+    ) -> io::Result<Option<std::ffi::OsString>> {
+        let (parents, leaf) = entry_path(path)?;
+        self.check_tool_path(path)?;
+        let mut directory = Some(self.dir.try_clone()?);
+        let mut prefix = PathBuf::new();
+        for part in parents {
+            prefix.push(part);
+            if let Some(parent) = directory.take() {
+                if let Some(alias) = case_alias_in(&parent, part)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!(
+                            "the parent spelling changed from {} to {}",
+                            prefix.display(),
+                            Path::new(&alias).display()
+                        ),
+                    ));
+                }
+                directory = match parent.open_dir_nofollow(part) {
+                    Ok(directory) => Some(directory),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(error),
+                };
+            }
+            if directory.is_none() && !can_restore_parent(&prefix) {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("the parent {} is missing", prefix.display()),
+                ));
+            }
+        }
+        match directory {
+            Some(parent) => case_alias_in(&parent, leaf.as_os_str()),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) fn children(&self, path: &Path) -> io::Result<BTreeSet<PathBuf>> {
+        entry_path(path)?;
+        match self.open_parent(path, false)? {
+            Some(directory) => directory
+                .entries()?
+                .map(|entry| Ok(path.join(entry?.file_name())))
+                .collect(),
+            None => Ok(BTreeSet::new()),
         }
     }
 
@@ -341,6 +512,16 @@ impl FileRoot {
         {
             return Err(symlink_denied());
         }
+        #[cfg(windows)]
+        if self.tool_home
+            && (matches!(seen, Snapshot::Symlink { .. })
+                || matches!(desired, Snapshot::Symlink { .. }))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "left unmanaged: Windows tool links cannot be safely replaced",
+            ));
+        }
         let create = *seen == Snapshot::Absent
             && *desired != Snapshot::Absent
             && !(self.tool_home && options.stage_id.is_some());
@@ -354,15 +535,51 @@ impl FileRoot {
             );
         };
         self.check_directory_leaf(&parent, name)?;
-        if read_leaf(&parent, name, true)? != *seen {
+        if *seen != self.read_entry(&parent, name, true)? {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
-        if seen == desired {
+        if desired == seen {
+            return Ok(ApplyOutcome::Applied);
+        }
+        if let (Snapshot::Directory { .. }, Snapshot::Directory { mode }) = (seen, desired) {
+            // Change metadata on the open directory without replacing its subtree.
+            let directory = parent.open_dir_nofollow(name)?;
+            let Some(current_parent) = self.open_parent(relative_parent, false)? else {
+                return Ok(ApplyOutcome::ChangedSincePlan);
+            };
+            if !same_directory(&parent, &current_parent)?
+                || !same_directory(&directory, &current_parent.open_dir_nofollow(name)?)?
+                || *seen
+                    != Snapshot::directory_with_permissions(FileMode::of(
+                        &directory.dir_metadata()?,
+                    ))
+            {
+                return Ok(ApplyOutcome::ChangedSincePlan);
+            }
+            if let Some(verify) = options.verify_source {
+                if !verify()? {
+                    return Ok(ApplyOutcome::ChangedSincePlan);
+                }
+            }
+            self.check_directory_leaf(&current_parent, name)?;
+            #[cfg(windows)]
+            check_windows_replacement(&directory)?;
+            mode.set_directory(&directory)?;
             return Ok(ApplyOutcome::Applied);
         }
         let displaced = recovery_location(&parent, options.displaced)?;
         let mut staged = Stage::new(&parent, options.stage_id)?;
         let result = (|| {
+            #[cfg(all(test, not(windows)))]
+            if self.refuse_windows_acl_in_test
+                && *seen != Snapshot::Absent
+                && (self.tool_home || options.stage_id.is_some() || displaced.is_some())
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "left unmanaged: could not preserve Windows permissions (the Windows owner is not the process user or one of its owner groups)",
+                ));
+            }
             staged.write(desired)?;
             if options.stage_id.is_some() && matches!(desired, Snapshot::File { .. }) {
                 staged.dir.hard_link(STAGED, &staged.dir, INCOMING)?;
@@ -397,7 +614,8 @@ impl FileRoot {
         })();
         if !staged.preserve {
             staged.preserve = true;
-            staged.clean()?;
+            let cleanup = staged.clean();
+            return result.and_then(|outcome| cleanup.map(|()| outcome));
         }
         result
     }
@@ -414,17 +632,67 @@ impl FileRoot {
         let Some(id) = options.stage_id else {
             return Ok(());
         };
-        let (relative_parent, _) = entry_path(path)?;
+        let (relative_parent, leaf) = entry_path(path)?;
         let Some(parent) = self.open_parent(relative_parent, false)? else {
             return Ok(());
         };
+        #[cfg(not(windows))]
+        let _ = leaf;
+        #[cfg(windows)]
+        let check_recovery_file = |held_dir: &Dir, held: &Path| {
+            if self.tool_home && self.restore_leaf_alias(path, |_| false)?.is_some() {
+                return Err(io::Error::other("the destination spelling changed"));
+            }
+            check_windows_replacement(&open_windows_entry(held_dir, held)?)?;
+            Ok::<_, io::Error>(())
+        };
+        #[cfg(windows)]
+        if *desired == Snapshot::Absent && *actual == Snapshot::Absent {
+            if let Some((saved_dir, saved)) = recovery_location(&parent, options.displaced)? {
+                let entry = read_leaf(&saved_dir, saved, true)?;
+                if matches!(entry, Snapshot::File { .. }) && *seen != entry {
+                    check_recovery_file(&saved_dir, saved)?;
+                    return keep_changed_deletion(&saved_dir, saved, &parent, leaf, actual);
+                }
+            }
+        }
         let name = stage_name(id)?;
         let dir = match parent.open_dir_nofollow(&name) {
             Ok(dir) => dir,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         };
-        let entry = read_leaf(&dir, Path::new(STAGED), true)?;
+        let stage = Stage {
+            parent: &parent,
+            dir,
+            name,
+            preserve: true,
+        };
+        let dir = &stage.dir;
+        #[cfg(windows)]
+        match dir.symlink_metadata(HELD) {
+            Ok(_) => {
+                return recover_windows_entry(
+                    &stage,
+                    leaf,
+                    seen,
+                    desired,
+                    actual,
+                    options.displaced,
+                );
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+        let entry = read_leaf(dir, Path::new(STAGED), true)?;
+        #[cfg(windows)]
+        if *desired == Snapshot::Absent && matches!(entry, Snapshot::File { .. }) && *seen != entry
+        {
+            if *actual == Snapshot::Absent {
+                check_recovery_file(dir, Path::new(STAGED))?;
+            }
+            return keep_changed_deletion(dir, Path::new(STAGED), &parent, leaf, actual);
+        }
         let incoming = match dir.symlink_metadata(INCOMING) {
             Ok(metadata) if metadata.is_file() => dir
                 .symlink_metadata(STAGED)
@@ -434,7 +702,7 @@ impl FileRoot {
                 // The incoming hardlink is created before replacement. If
                 // the original is still in place, a partial incoming write
                 // may be the only entry.
-                entry == *desired || (*actual == *seen && matches!(desired, Snapshot::File { .. }))
+                *desired == entry || (seen == actual && matches!(desired, Snapshot::File { .. }))
             }
             Err(error) => return Err(error),
         };
@@ -442,21 +710,28 @@ impl FileRoot {
             if matches!(entry, Snapshot::File { .. }) {
                 let displaced = recovery_location(&parent, options.displaced)?
                     .ok_or_else(|| io::Error::other("a displaced file requires manual recovery"))?;
-                move_displaced(&dir, &displaced)?;
+                #[cfg(windows)]
+                let put_back = *actual == Snapshot::Absent
+                    && matches!(seen, Snapshot::File { .. })
+                    && matches!(desired, Snapshot::File { .. });
+                #[cfg(windows)]
+                if put_back {
+                    check_recovery_file(dir, Path::new(STAGED))?;
+                }
+                move_displaced(dir, &displaced)?;
+                #[cfg(windows)]
+                if put_back {
+                    restore_windows_held(&displaced.0, displaced.1, &parent, leaf)?;
+                }
                 #[cfg(unix)]
                 displaced.0.open(".")?.sync_all()?;
-            } else if !matches_leaf(&dir, Path::new(STAGED), seen)? || actual != desired {
+            } else if !matches_leaf(dir, Path::new(STAGED), seen)? || desired != actual {
                 return Err(io::Error::other(format!(
-                    "an unexpected entry is saved in {name}/{STAGED}. Check it before retrying"
+                    "an unexpected entry is saved in {}/{STAGED}. Check it before retrying",
+                    stage.name,
                 )));
             }
         }
-        let stage = Stage {
-            parent: &parent,
-            dir,
-            name,
-            preserve: true,
-        };
         stage.clean()
     }
 
@@ -474,7 +749,14 @@ impl FileRoot {
                 return Err(invalid_path());
             };
             let part = Path::new(part);
-            parent = match parent.open_dir_nofollow(part) {
+            let open = |directory: &Dir| {
+                #[cfg(windows)]
+                if self.tool_home {
+                    return open_windows_tool_dir(directory, part);
+                }
+                directory.open_dir_nofollow(part)
+            };
+            parent = match open(&parent) {
                 Ok(dir) => dir,
                 Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
                     match create_directory(&parent, part) {
@@ -482,7 +764,7 @@ impl FileRoot {
                         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                         Err(error) => return Err(error),
                     }
-                    parent.open_dir_nofollow(part)?
+                    open(&parent)?
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(error),
@@ -511,11 +793,27 @@ impl FileRoot {
         if let Some(guard) = &self.harness {
             match parent.symlink_metadata(name) {
                 Ok(metadata) if metadata.is_dir() => {
-                    guard.check(&parent.open_dir_nofollow(name)?.dir_metadata()?)?;
+                    #[cfg(windows)]
+                    let directory = if self.tool_home {
+                        open_windows_tool_dir(parent, name)?
+                    } else {
+                        parent.open_dir_nofollow(name)?
+                    };
+                    #[cfg(not(windows))]
+                    let directory = parent.open_dir_nofollow(name)?;
+                    guard.check(&directory.dir_metadata()?)?;
                 }
                 Ok(_) => (),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-                Err(error) => return Err(error),
+                Err(error) => {
+                    #[cfg(windows)]
+                    let error = if self.tool_home {
+                        windows_access_error(error)
+                    } else {
+                        error
+                    };
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -559,6 +857,11 @@ fn create_directory(parent: &Dir, name: &Path) -> io::Result<()> {
     #[cfg(unix)]
     builder.mode(0o700);
     parent.create_dir_with(name, &builder)
+}
+
+fn create_planned_directory(parent: &Dir, name: &Path, mode: FileMode) -> io::Result<()> {
+    create_directory(parent, name)?;
+    mode.set_directory(&parent.open_dir_nofollow(name)?)
 }
 
 fn require_private_permissions(metadata: &Metadata, description: &str) -> io::Result<()> {
@@ -611,7 +914,9 @@ fn read_leaf_with(
         });
     }
     if metadata.is_dir() {
-        return Ok(Snapshot::Directory);
+        return Ok(Snapshot::Directory {
+            mode: FileMode::of(&metadata),
+        });
     }
     if !metadata.is_file() {
         return Err(io::Error::new(
@@ -662,10 +967,10 @@ fn check_file_size(len: u64) -> io::Result<()> {
 }
 
 fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bool> {
-    if read_leaf(parent, name, true)? != *expected {
+    if *expected != read_leaf(parent, name, true)? {
         return Ok(false);
     }
-    if *expected == Snapshot::Directory {
+    if expected.is_directory() {
         let directory = parent.open_dir_nofollow(name)?;
         return Ok(directory.entries()?.next().transpose()?.is_none());
     }
@@ -674,6 +979,12 @@ fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bo
 
 const STAGED: &str = "entry";
 const INCOMING: &str = "incoming";
+#[cfg(windows)]
+const MERGED: &str = "merged";
+#[cfg(windows)]
+const REPLACEMENT: &str = "replacement";
+#[cfg(windows)]
+const HELD: &str = "held";
 
 fn stage_name(id: &str) -> io::Result<String> {
     if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -702,23 +1013,21 @@ fn recovery_location<'a>(
 }
 
 fn move_displaced(dir: &Dir, displaced: &(Dir, &Path)) -> io::Result<()> {
+    move_displaced_entry(dir, Path::new(STAGED), displaced)
+}
+
+fn move_displaced_entry(dir: &Dir, leaf: &Path, displaced: &(Dir, &Path)) -> io::Result<()> {
     let (directory, name) = displaced;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     rustix::fs::renameat_with(
         dir,
-        STAGED,
+        leaf,
         directory,
         *name,
         rustix::fs::RenameFlags::NOREPLACE,
     )?;
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    match directory.symlink_metadata(name) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            dir.rename(STAGED, directory, *name)?
-        }
-        Err(error) => return Err(error),
-        Ok(_) => return Err(io::Error::from(io::ErrorKind::AlreadyExists)),
-    }
+    #[cfg(windows)]
+    windows_paths::move_entry(dir, leaf, directory, name)?;
     Ok(())
 }
 
@@ -764,7 +1073,9 @@ impl<'a> Stage<'a> {
     fn write(&self, data: &Snapshot) -> io::Result<()> {
         match data {
             Snapshot::Absent => Ok(()),
-            Snapshot::Directory => create_directory(&self.dir, Path::new(STAGED)),
+            Snapshot::Directory { mode } => {
+                create_planned_directory(&self.dir, Path::new(STAGED), *mode)
+            }
             Snapshot::File { bytes, mode } => {
                 let mut options = OpenOptions::new();
                 options
@@ -795,7 +1106,11 @@ impl<'a> Stage<'a> {
     }
 
     fn clean(&self) -> io::Result<()> {
-        for leaf in [STAGED, INCOMING] {
+        #[cfg(windows)]
+        let leaves = [MERGED, REPLACEMENT, HELD, STAGED, INCOMING];
+        #[cfg(not(windows))]
+        let leaves = [STAGED, INCOMING];
+        for leaf in leaves {
             match self.dir.symlink_metadata(leaf) {
                 Ok(metadata) if metadata.is_dir() => self.dir.remove_dir(leaf)?,
                 Ok(_) => self.dir.remove_file_or_symlink(leaf)?,
@@ -890,23 +1205,58 @@ fn commit(
     desired: &Snapshot,
     displaced: Option<&(Dir, &Path)>,
 ) -> io::Result<ApplyOutcome> {
-    if let Some((directory, recovery)) = displaced {
-        // Link the original before replacing the Windows destination.
-        // Existing handles retain the same object even after replacement.
-        stage.parent.hard_link(name, directory, recovery)?;
-        if !matches_leaf(stage.parent, name, seen)? {
-            return Ok(ApplyOutcome::ChangedSincePlan);
+    commit_windows(stage, name, seen, desired, displaced, || {})
+}
+
+#[cfg(any(windows, test))]
+fn commit_windows(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+    desired: &Snapshot,
+    displaced: Option<&(Dir, &Path)>,
+    before_replace: impl FnOnce(),
+) -> io::Result<ApplyOutcome> {
+    if let Some(displaced) = displaced {
+        if matches!(seen, Snapshot::File { .. })
+            && matches!(desired, Snapshot::Absent | Snapshot::File { .. })
+        {
+            return commit_windows_personal_file(
+                stage,
+                name,
+                seen,
+                desired,
+                displaced,
+                before_replace,
+            );
         }
     }
     match (seen, desired) {
         (Snapshot::Absent, Snapshot::File { .. }) => {
             stage.dir.hard_link(STAGED, stage.parent, name)?;
         }
-        (Snapshot::Absent, Snapshot::Directory) => create_directory(stage.parent, name)?,
-        (Snapshot::Directory, Snapshot::Absent) => stage.parent.remove_dir(name)?,
-        (_, Snapshot::Absent) => stage.parent.remove_file_or_symlink(name)?,
+        (Snapshot::Absent, Snapshot::Directory { mode }) => {
+            create_planned_directory(stage.parent, name, *mode)?
+        }
+        (_, Snapshot::Absent) => {
+            #[cfg(windows)]
+            check_windows_replacement(&open_windows_entry(stage.parent, name)?)?;
+            if seen.is_directory() {
+                stage.parent.remove_dir(name)?;
+            } else {
+                stage.parent.remove_file_or_symlink(name)?;
+            }
+        }
         (Snapshot::File { .. }, Snapshot::File { .. }) => {
+            #[cfg(windows)]
+            return replace_windows_live_file(stage, name, seen);
+            #[cfg(not(windows))]
             stage.dir.rename(STAGED, stage.parent, name)?;
+        }
+        #[cfg(windows)]
+        (Snapshot::Directory { .. }, Snapshot::File { .. })
+        | (Snapshot::File { .. }, Snapshot::Directory { .. }) => {
+            return replace_windows_entry(stage, name, seen, displaced);
         }
         _ => {
             return Err(io::Error::new(
@@ -916,6 +1266,426 @@ fn commit(
         }
     }
     Ok(ApplyOutcome::Applied)
+}
+
+#[cfg(any(windows, test))]
+fn commit_windows_personal_file(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+    desired: &Snapshot,
+    displaced: &(Dir, &Path),
+    before_replace: impl FnOnce(),
+) -> io::Result<ApplyOutcome> {
+    let expected = stage.parent.symlink_metadata(name)?;
+    #[cfg(windows)]
+    check_windows_replacement(&open_windows_entry(stage.parent, name)?)?;
+    if !matches_leaf(stage.parent, name, seen)? {
+        return Ok(ApplyOutcome::ChangedSincePlan);
+    }
+    let replacing = matches!(desired, Snapshot::File { .. });
+    if replacing {
+        if let Err(error) = stage.dir.hard_link(STAGED, &stage.dir, INCOMING) {
+            if error.kind() != io::ErrorKind::AlreadyExists
+                || !same_identity(
+                    &stage.dir.symlink_metadata(STAGED)?,
+                    &stage.dir.symlink_metadata(INCOMING)?,
+                )
+            {
+                return Err(error);
+            }
+        }
+        stage.dir.remove_file(STAGED)?;
+    }
+    before_replace();
+
+    // Take the actual destination into the journaled stage so a save that
+    // landed after the check stays reachable. Publish only at a vacant name.
+    stage.parent.rename(name, &stage.dir, STAGED)?;
+    stage.preserve = true;
+    #[cfg(test)]
+    crash_at("displaced", name);
+    let held = stage.dir.symlink_metadata(STAGED)?;
+    if !held.is_file() {
+        return Err(io::Error::other(format!(
+            "The path changed type during delivery. Its entry is preserved at {}/{STAGED}",
+            stage.name,
+        )));
+    }
+    if !same_identity(&expected, &held)
+        || !matches!(matches_leaf(&stage.dir, Path::new(STAGED), seen), Ok(true))
+    {
+        finish_windows_displacement(stage, name, displaced, true)?;
+        return Ok(ApplyOutcome::ChangedSincePlan);
+    }
+    #[cfg(windows)]
+    if let Err(error) = prepare_held_windows_file(stage, replacing) {
+        finish_windows_displacement(stage, name, displaced, true)?;
+        return Err(error);
+    }
+    if replacing {
+        #[cfg(windows)]
+        if !matches!(matches_leaf(&stage.dir, Path::new(STAGED), seen), Ok(true)) {
+            finish_windows_displacement(stage, name, displaced, true)?;
+            return Ok(ApplyOutcome::ChangedSincePlan);
+        }
+        if let Err(error) = stage.dir.hard_link(INCOMING, stage.parent, name) {
+            finish_windows_displacement(stage, name, displaced, true)?;
+            return if error.kind() == io::ErrorKind::AlreadyExists {
+                Ok(ApplyOutcome::ChangedSincePlan)
+            } else {
+                Err(error)
+            };
+        }
+    }
+    finish_windows_displacement(stage, name, displaced, false)?;
+    Ok(ApplyOutcome::Applied)
+}
+
+#[cfg(any(windows, test))]
+fn finish_windows_displacement(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    displaced: &(Dir, &Path),
+    rollback: bool,
+) -> io::Result<()> {
+    if rollback {
+        restore_windows_held(&stage.dir, Path::new(STAGED), stage.parent, name)?;
+    }
+    // Keep the held inode even when rollback filled the live name. An
+    // editor can replace that name again before the stage is cleaned.
+    move_displaced(&stage.dir, displaced)?;
+    stage.preserve = false;
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn restore_windows_held(
+    held_dir: &Dir,
+    held: &Path,
+    parent: &Dir,
+    name: &Path,
+) -> io::Result<bool> {
+    match held_dir.hard_link(held, parent, name) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn open_windows_entry(directory: &Dir, name: &Path) -> io::Result<cap_std::fs::File> {
+    use cap_std::fs::{MetadataExt as _, OpenOptionsExt as _};
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    let file = directory
+        .open_with(name, &options)
+        .map_err(windows_access_error)?;
+    let metadata = file.metadata()?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "left unmanaged: Windows reparse points cannot be safely replaced",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn prepare_held_windows_file(stage: &Stage<'_>, replacing: bool) -> io::Result<()> {
+    let held = open_windows_entry(&stage.dir, Path::new(STAGED))?;
+    if !replacing {
+        check_windows_replacement(&held)?;
+        return Ok(());
+    }
+    let incoming = open_windows_entry(&stage.dir, Path::new(INCOMING))?;
+    prepare_windows_file_replacement(&held, &incoming)?;
+    drop(incoming);
+    drop(held);
+
+    // Merge the two file identities while they are in the stage. ReplaceFileW
+    // consumes its source name, so use aliases to leave both journal names
+    // available. The live name is still published without overwriting a save.
+    stage.dir.hard_link(STAGED, &stage.dir, MERGED)?;
+    stage.dir.hard_link(INCOMING, &stage.dir, REPLACEMENT)?;
+    windows_paths::replace_file(
+        &stage.dir,
+        Path::new(MERGED),
+        &stage.dir,
+        Path::new(REPLACEMENT),
+    )
+    .map_err(windows_permissions_error)
+}
+
+#[cfg(windows)]
+fn replace_windows_live_file(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+) -> io::Result<ApplyOutcome> {
+    let old = open_windows_entry(stage.parent, name)?;
+    let incoming = open_windows_entry(&stage.dir, Path::new(STAGED))?;
+    prepare_windows_file_replacement(&old, &incoming)?;
+    drop(incoming);
+    let expected = old.metadata()?;
+    drop(old);
+
+    // The no-backup form of ReplaceFileW can fail after removing the live
+    // name. Keep a link to its original inode until the call has completed.
+    stage.parent.hard_link(name, &stage.dir, HELD)?;
+    let held = Path::new(HELD);
+    if !same_identity(&expected, &stage.dir.symlink_metadata(held)?)
+        || !same_identity(&expected, &stage.parent.symlink_metadata(name)?)
+        || !matches_leaf(stage.parent, name, seen)?
+    {
+        return Ok(ApplyOutcome::ChangedSincePlan);
+    }
+
+    stage.preserve = true;
+    if let Err(error) =
+        windows_paths::replace_file(stage.parent, name, &stage.dir, Path::new(STAGED))
+    {
+        let recovered = match stage.parent.symlink_metadata(name) {
+            Ok(metadata) => same_identity(&expected, &metadata),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                matches!(
+                    restore_windows_held(&stage.dir, held, stage.parent, name),
+                    Ok(true)
+                )
+            }
+            Err(_) => false,
+        };
+        if recovered {
+            stage.preserve = false;
+            return Err(windows_permissions_error(error));
+        }
+        return Err(windows_permissions_error(io::Error::other(format!(
+            "{error}. The original file is preserved at {}/{HELD}",
+            stage.name,
+        ))));
+    }
+    stage.preserve = false;
+    Ok(ApplyOutcome::Applied)
+}
+
+#[cfg(windows)]
+fn replace_windows_entry(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+    displaced: Option<&(Dir, &Path)>,
+) -> io::Result<ApplyOutcome> {
+    let original = open_windows_entry(stage.parent, name)?;
+    check_windows_replacement(&original)?;
+    let expected = original.metadata()?;
+    drop(original);
+
+    let held = Path::new(HELD);
+    windows_paths::move_entry(stage.parent, name, &stage.dir, held)?;
+    stage.preserve = true;
+    #[cfg(test)]
+    crash_at("displaced", name);
+    let applied = (|| {
+        let original = open_windows_entry(&stage.dir, held)?;
+        if !same_identity(&expected, &original.metadata()?)
+            || !matches_leaf(&stage.dir, held, seen)?
+        {
+            return Ok(ApplyOutcome::ChangedSincePlan);
+        }
+        let incoming = Path::new(STAGED);
+        copy_windows_dacl(&original, &open_windows_entry(&stage.dir, incoming)?)?;
+        windows_paths::move_entry(&stage.dir, incoming, stage.parent, name)?;
+        Ok(ApplyOutcome::Applied)
+    })();
+    if matches!(applied, Ok(ApplyOutcome::Applied)) {
+        if let Some(displaced) = displaced {
+            move_displaced_entry(&stage.dir, held, displaced)?;
+        }
+    } else if let Err(error) = windows_paths::move_entry(&stage.dir, held, stage.parent, name) {
+        return Err(io::Error::other(format!(
+            "{error}. The displaced entry is preserved at {}/{HELD}",
+            stage.name,
+        )));
+    }
+    stage.preserve = false;
+    applied
+}
+
+#[cfg(windows)]
+fn recover_windows_entry(
+    stage: &Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+    desired: &Snapshot,
+    actual: &Snapshot,
+    displaced: Option<(&FileRoot, &Path)>,
+) -> io::Result<()> {
+    let held = Path::new(HELD);
+    let matches_original = matches_leaf(&stage.dir, held, seen)?;
+    let live_is_held = stage.parent.symlink_metadata(name).is_ok_and(|live| {
+        stage
+            .dir
+            .symlink_metadata(held)
+            .is_ok_and(|saved| same_identity(&live, &saved))
+    });
+    if live_is_held {
+        // A direct replacement stopped before it removed the live name.
+        return stage.clean();
+    }
+    if *actual == Snapshot::Absent {
+        windows_paths::move_entry(&stage.dir, held, stage.parent, name)?;
+        return stage.clean();
+    }
+    if matches_original
+        && actual == desired
+        && stage
+            .dir
+            .symlink_metadata(STAGED)
+            .is_err_and(|err| err.kind() == io::ErrorKind::NotFound)
+    {
+        if let Some(displaced) = recovery_location(stage.parent, displaced)? {
+            move_displaced_entry(&stage.dir, held, &displaced)?;
+        }
+        return stage.clean();
+    }
+    Err(io::Error::other(format!(
+        "The displaced entry is preserved at {}/{HELD}. Check it before retrying",
+        stage.name,
+    )))
+}
+
+#[cfg(windows)]
+mod windows_paths {
+    use cap_std::fs::Dir;
+    use std::ffi::c_void;
+    use std::io;
+    use std::os::windows::{
+        ffi::OsStrExt,
+        io::{AsRawHandle, RawHandle},
+    };
+    use std::path::Path;
+    use std::ptr::{null, null_mut};
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFinalPathNameByHandleW(
+            handle: RawHandle,
+            path: *mut u16,
+            length: u32,
+            flags: u32,
+        ) -> u32;
+        fn ReplaceFileW(
+            replaced: *const u16,
+            replacement: *const u16,
+            backup: *const u16,
+            flags: u32,
+            exclude: *mut c_void,
+            reserved: *mut c_void,
+        ) -> i32;
+        fn MoveFileW(from: *const u16, to: *const u16) -> i32;
+    }
+
+    fn leaf_path(parent: &Dir, name: &Path) -> io::Result<Vec<u16>> {
+        // Use the opened directory, which cap-std keeps open without delete
+        // sharing. Win32 returns an extended-length path for this handle.
+        let leaf = name.as_os_str();
+        if name.file_name() != Some(leaf)
+            || leaf
+                .as_encoded_bytes()
+                .iter()
+                .any(|byte| matches!(byte, b':' | 0))
+        {
+            return Err(super::invalid_path());
+        }
+        let mut path = vec![0; 512];
+        loop {
+            // SAFETY: parent stays open and the buffer is writable.
+            let n = unsafe {
+                GetFinalPathNameByHandleW(
+                    parent.as_raw_handle(),
+                    path.as_mut_ptr(),
+                    path.len() as u32,
+                    0,
+                )
+            } as usize;
+            if n == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if n < path.len() {
+                path.truncate(n);
+                break;
+            }
+            path.resize(n + 1, 0);
+        }
+        if !path.ends_with(&[u16::from(b'\\')]) {
+            path.push(u16::from(b'\\'));
+        }
+        path.extend(leaf.encode_wide());
+        path.push(0);
+        Ok(path)
+    }
+
+    pub(super) fn replace_file(
+        parent: &Dir,
+        name: &Path,
+        source: &Dir,
+        incoming: &Path,
+    ) -> io::Result<()> {
+        let replaced = leaf_path(parent, name)?;
+        let replacement = leaf_path(source, incoming)?;
+        // SAFETY: both paths are NUL-terminated and the directory handles
+        // remain open. Backup and the reserved pointers are optional.
+        // Zero flags require Windows to report an ACL merge failure.
+        if unsafe {
+            ReplaceFileW(
+                replaced.as_ptr(),
+                replacement.as_ptr(),
+                null(),
+                0,
+                null_mut(),
+                null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub(super) fn move_entry(from: &Dir, old: &Path, to: &Dir, new: &Path) -> io::Result<()> {
+        let old = leaf_path(from, old)?;
+        let new = leaf_path(to, new)?;
+        // SAFETY: both paths are NUL-terminated and the directory handles
+        // remain open. MoveFileW requires the new name to be vacant.
+        if unsafe { MoveFileW(old.as_ptr(), new.as_ptr()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn keep_changed_deletion(
+    held_dir: &Dir,
+    held: &Path,
+    parent: &Dir,
+    name: &Path,
+    actual: &Snapshot,
+) -> io::Result<()> {
+    if *actual == Snapshot::Absent && restore_windows_held(held_dir, held, parent, name)? {
+        return Err(io::Error::other(
+            "A newer file was put back and retained in recovery after an interrupted deletion. The deletion is still pending.",
+        ));
+    }
+    Err(io::Error::other(
+        "A newer file is retained in recovery after an interrupted deletion. The deletion is still pending.",
+    ))
 }
 
 #[cfg(test)]
@@ -937,6 +1707,117 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let root = FileRoot::open(scratch.path()).unwrap();
         (scratch, root)
+    }
+
+    #[test]
+    fn rulesync_step1g_windows_keeps_a_save_after_the_final_check() {
+        let (scratch, root) = root();
+        let name = Path::new("rules.md");
+        let path = scratch.path().join(name);
+        fs::write(&path, b"Checked rules\n").unwrap();
+        let seen = root.read(name, false).unwrap();
+        let incoming = scratch.path().join("editor-save.md");
+        let saved = b"Editor saved after the last check\n";
+        fs::write(&incoming, saved).unwrap();
+        let recovery = Path::new("rules.previous");
+        let desired = Snapshot::file(b"Generated rules\n".to_vec());
+        let mut stage = Stage::new(&root.dir, None).unwrap();
+        stage.write(&desired).unwrap();
+        let result = commit_windows(
+            &mut stage,
+            name,
+            &seen,
+            &desired,
+            Some(&(root.dir.try_clone().unwrap(), recovery)),
+            || fs::rename(&incoming, &path).unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            fs::read(&path).is_ok_and(|bytes| bytes == saved)
+                || fs::read(scratch.path().join(recovery)).is_ok_and(|bytes| bytes == saved),
+            "the editor's save vanished from the live path and the recovery copy"
+        );
+        assert_eq!(result, ApplyOutcome::ChangedSincePlan);
+
+        // A second atomic save can displace the restored live link before
+        // cleanup. The first save must remain reachable in recovery.
+        let second = scratch.path().join("second-save.md");
+        fs::write(&second, b"Second editor save\n").unwrap();
+        fs::rename(&second, &path).unwrap();
+        drop(stage);
+        assert_eq!(fs::read(scratch.path().join(recovery)).unwrap(), saved);
+        assert_eq!(fs::read(path).unwrap(), b"Second editor save\n");
+    }
+
+    #[cfg(windows)]
+    fn icacls(path: &Path, args: &[&str]) -> Vec<u8> {
+        let output = std::process::Command::new("icacls.exe")
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        output.stdout
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rulesync_step1j_windows_preserves_explicit_file_permissions() {
+        for journaled in [false, true] {
+            let (scratch, root) = root();
+            let name = Path::new("rules.md");
+            let path = scratch.path().join(name);
+            fs::write(&path, b"Original rules\n").unwrap();
+            icacls(&path, &["/grant", "*S-1-1-0:(R)"]);
+            let permissions = icacls(&path, &[]);
+            let seen = root.read(name, false).unwrap();
+            let desired = Snapshot::file(b"Updated rules\n".to_vec());
+            let previous = Path::new("previous");
+            let options = ApplyOptions {
+                displaced: journaled.then_some((&root, previous)),
+                stage_id: journaled.then_some("00000000000000000000000000000000"),
+                ..direct(false)
+            };
+
+            assert_eq!(
+                root.apply_with(name, &seen, &desired, options).unwrap(),
+                ApplyOutcome::Applied
+            );
+            assert_eq!(root.read(name, false).unwrap(), desired);
+            assert_eq!(icacls(&path, &[]), permissions);
+            if journaled {
+                assert_eq!(root.read(previous, false).unwrap(), seen);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rulesync_step1j_windows_copies_directory_permissions_onto_its_replacement() {
+        let (scratch, root) = root();
+        let name = Path::new("skill");
+        let path = scratch.path().join(name);
+        fs::create_dir(&path).unwrap();
+        icacls(&path, &["/grant", "*S-1-1-0:(R)"]);
+        let seen = root.read(name, false).unwrap();
+        let desired = Snapshot::file(b"Replacement\n".to_vec());
+
+        assert_eq!(
+            root.apply(name, &seen, &desired, false).unwrap(),
+            ApplyOutcome::Applied
+        );
+        assert_eq!(root.read(name, false).unwrap(), desired);
+        // The directory and file can inherit different rules. Granting R
+        // again leaves the ACL unchanged only if that explicit ACE survived.
+        let copied = icacls(&path, &[]);
+        icacls(&path, &["/grant", "*S-1-1-0:(R)"]);
+        assert_eq!(icacls(&path, &[]), copied);
     }
 
     #[test]
@@ -1222,14 +2103,21 @@ mod tests {
         symlink(referent, &path).unwrap();
         let seen = root.read(name, true).unwrap();
         assert_eq!(
-            root.apply(name, &seen, &Snapshot::Directory, true).unwrap(),
+            root.apply(name, &seen, &Snapshot::private_directory(), true)
+                .unwrap(),
             ApplyOutcome::Applied
         );
-        assert_eq!(root.read(name, false).unwrap(), Snapshot::Directory);
+        assert!(root.read(name, false).unwrap().is_directory());
         let late_child = path.join("personal-notes");
-        let result = root.apply_inner(name, &Snapshot::Directory, &seen, direct(true), || {
-            fs::write(&late_child, b"new skill notes").unwrap();
-        });
+        let result = root.apply_inner(
+            name,
+            &Snapshot::private_directory(),
+            &seen,
+            direct(true),
+            || {
+                fs::write(&late_child, b"new skill notes").unwrap();
+            },
+        );
         assert_eq!(result.unwrap(), ApplyOutcome::ChangedSincePlan);
         assert_eq!(fs::read(&late_child).unwrap(), b"new skill notes");
         assert_eq!(
@@ -1239,7 +2127,8 @@ mod tests {
 
         fs::remove_file(late_child).unwrap();
         assert_eq!(
-            root.apply(name, &Snapshot::Directory, &seen, true).unwrap(),
+            root.apply(name, &Snapshot::private_directory(), &seen, true)
+                .unwrap(),
             ApplyOutcome::Applied
         );
         assert_eq!(fs::read_link(path).unwrap(), referent);

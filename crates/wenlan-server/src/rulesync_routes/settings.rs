@@ -103,17 +103,12 @@ impl Setup {
         });
         let operations = writes
             .into_iter()
-            .map(|(path, seen, desired)| {
-                if !manifest.delivered.contains_key(&path) {
-                    manifest.backup.insert(path.clone(), seen.clone());
-                }
-                Pending {
-                    path,
-                    seen,
-                    desired,
-                    kind: Some(Kind::Settings),
-                    allow_link: false,
-                }
+            .map(|(path, seen, desired)| Pending {
+                path,
+                seen,
+                desired,
+                kind: Some(Kind::Settings),
+                allow_link: false,
             })
             .collect();
         let applied = self

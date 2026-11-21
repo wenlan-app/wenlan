@@ -200,8 +200,8 @@ test host. Run it on each supported platform to verify native launch and output.
 
 In a macOS session that permits `sandbox-exec`, run the personal rules fixture
 with the pinned rulesync executable for your architecture. The test uses the
-same renderer and staging layout as adoption and checks the generated Claude
-Code and Codex files.
+same renderer and staging layout as adoption and checks the staged root rule
+for every personal delivery target.
 
 ```bash
 WENLAN_NO_AUTOSTART=1 WENLAN_TEST_RULESYNC_BINARY=/path/to/rulesync-darwin-arm64 \

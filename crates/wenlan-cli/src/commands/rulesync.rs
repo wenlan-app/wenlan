@@ -22,7 +22,7 @@ use crate::{client::WenlanClient, output::ResolvedFormat};
 pub enum RulesSetupCmd {
     /// Bring your existing personal rules and skills under Wenlan management.
     Adopt {
-        /// Show the files and changes without contacting Wenlan or writing to disk.
+        /// Preview the changes, or list the installed files while offline.
         #[arg(long)]
         dry_run: bool,
     },
@@ -85,10 +85,26 @@ async fn run_inner(
     names_an_agent: bool,
     explicit_session: Option<&str>,
 ) -> Result<()> {
+    let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
     if matches!(command, RulesSetupCmd::Adopt { dry_run: true }) {
+        if rulesync_personal::enabled() && !names_an_agent && session.session.is_none() {
+            if let Ok(client) = WenlanClient::for_local_rules() {
+                let request = AdoptPreviewRequest {
+                    home: rulesync_personal::system_home()?.canonicalize()?,
+                };
+                match client.preview_adoption_as_person(&request).await {
+                    Ok(plan) => return show(format, quiet, &plan, plan_for_a_person),
+                    Err(error) => {
+                        let mut plan = adoption_plan()?;
+                        plan.notes
+                            .push(format!("Rendered preview unavailable ({error:#})."));
+                        return show(format, quiet, &plan, plan_for_a_person);
+                    }
+                }
+            }
+        }
         return show(format, quiet, &adoption_plan()?, plan_for_a_person);
     }
-    let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
     ensure!(
         !names_an_agent && session.session.is_none(),
         "Only you can change your personal tool setup. Run this from your own terminal outside an AI session."
@@ -112,7 +128,9 @@ async fn run_inner(
             let plan = client.preview_adoption_as_person(&expected).await?;
             // The person must see the same plan even with --quiet or --format json.
             println!("{}", plan_for_a_person(&plan));
-            if !confirm("Back up these files and links and let Wenlan manage them?")? {
+            if plan.files.is_empty()
+                || !confirm("Back up these files and links and let Wenlan manage them?")?
+            {
                 return Ok(());
             }
             client
@@ -193,7 +211,7 @@ async fn run_inner(
 }
 
 fn adoption_plan() -> Result<AdoptionPlan> {
-    rulesync_personal::plan_adoption(&rulesync_personal::system_home()?)
+    rulesync_personal::plan_adoption_offline(&rulesync_personal::system_home()?)
 }
 
 fn confirm(question: &str) -> Result<bool> {
@@ -248,7 +266,7 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
     if !plan.skills.is_empty() {
         out.push_str("\nSkill folders\n");
         for skill in &plan.skills {
-            let status = match &skill.outcome {
+            let mut status = match &skill.outcome {
                 AdoptionSkillOutcome::TrackedUpstream { upstream } => {
                     format!("tracked upstream from {}", upstream_label(upstream))
                 }
@@ -260,6 +278,14 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
                     )
                 }
             };
+            if let Some(reason) = &skill.byte_copy_reason {
+                write!(
+                    &mut status,
+                    ". Deliver byte-for-byte from the master ({})",
+                    one_line(reason)
+                )
+                .unwrap();
+            }
             writeln!(&mut out, "  {} — {status}", file_label(&skill.path)).unwrap();
         }
     }

@@ -10,12 +10,14 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup};
+use super::{
+    AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup, UnsupportedRulesyncState,
+};
 use crate::rulesync_apply::{ApplyOutcome, Snapshot};
 
 const MANIFEST: &str = "personal.json";
 const BLOBS: &str = "personal-blobs";
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -63,14 +65,9 @@ impl Setup {
             Snapshot::Absent => return Ok(None),
             _ => bail!("unexpected personal rules master file type"),
         };
-        let stored: StoredSetup = serde_json::from_slice(&bytes).context(
-            "unsupported or damaged personal rules state. For an earlier format, run wenlan rules restore with the earlier build and the same tool home and data directory",
-        )?;
-        ensure!(
-            stored.format == FORMAT,
-            "unsupported personal rules state format {}",
-            stored.format
-        );
+        let stored: StoredSetup =
+            serde_json::from_slice(&bytes).context(UnsupportedRulesyncState)?;
+        ensure!(stored.format == FORMAT, UnsupportedRulesyncState);
 
         let mut cache = BTreeMap::<String, Vec<u8>>::new();
         let loaded = map_contents(&stored.state, |hash| {
@@ -184,7 +181,7 @@ fn map_contents<From, To>(
     let mut map_snapshot = |snapshot: &Snapshot<From>| {
         Ok::<_, anyhow::Error>(match snapshot {
             Snapshot::Absent => Snapshot::Absent,
-            Snapshot::Directory => Snapshot::Directory,
+            Snapshot::Directory { mode } => Snapshot::Directory { mode: *mode },
             Snapshot::File { bytes, mode } => Snapshot::File {
                 bytes: map(bytes)?,
                 mode: *mode,
@@ -208,6 +205,8 @@ fn map_contents<From, To>(
             .iter()
             .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
             .collect::<Result<_>>()?,
+        #[cfg(windows)]
+        windows_backup_owners: manifest.windows_backup_owners.clone(),
         delivered: manifest
             .delivered
             .iter()
@@ -244,6 +243,7 @@ fn map_contents<From, To>(
         stages: manifest.stages.clone(),
         recovery_issues: manifest.recovery_issues.clone(),
         adopted: manifest.adopted,
+        extension_paths: manifest.extension_paths.clone(),
         settings_only: manifest.settings_only,
         settings_batch: manifest.settings_batch.clone(),
         registry_skipped: manifest.registry_skipped.clone(),

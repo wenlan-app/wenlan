@@ -10,8 +10,9 @@ use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
-    SkillProposal, SkillProposalOrigin, SkillProposalsResponse, SkillReviewAction,
-    SkillReviewRequest, MAX_SAVED_SKILL_BYTES, MAX_SAVED_SKILL_FILES, MAX_SAVED_SKILL_FILE_BYTES,
+    SkillDeliveryPreview, SkillProposal, SkillProposalChanges, SkillProposalOrigin,
+    SkillProposalsResponse, SkillReviewAction, SkillReviewRequest, MAX_SAVED_SKILL_BYTES,
+    MAX_SAVED_SKILL_FILES, MAX_SAVED_SKILL_FILE_BYTES,
 };
 use wenlan_types::skill_registry::{
     InstalledSkillsResponse, LocalSkillsResponse, Scope, SkillImportResult, SkillInstallRequest,
@@ -111,6 +112,13 @@ pub struct SaveSkillArgs {
 pub enum SavedSkillToolArg {
     ClaudeCode,
     Codex,
+    GeminiCli,
+    Antigravity,
+    CopilotCli,
+    Cursor,
+    #[value(name = "opencode")]
+    OpenCode,
+    MuseCode,
 }
 
 impl From<SavedSkillToolArg> for SavedSkillScope {
@@ -119,6 +127,12 @@ impl From<SavedSkillToolArg> for SavedSkillScope {
             tool: match tool {
                 SavedSkillToolArg::ClaudeCode => SavedSkillTool::ClaudeCode,
                 SavedSkillToolArg::Codex => SavedSkillTool::Codex,
+                SavedSkillToolArg::GeminiCli => SavedSkillTool::GeminiCli,
+                SavedSkillToolArg::Antigravity => SavedSkillTool::Antigravity,
+                SavedSkillToolArg::CopilotCli => SavedSkillTool::CopilotCli,
+                SavedSkillToolArg::Cursor => SavedSkillTool::Cursor,
+                SavedSkillToolArg::OpenCode => SavedSkillTool::OpenCode,
+                SavedSkillToolArg::MuseCode => SavedSkillTool::MuseCode,
             },
         }
     }
@@ -324,21 +338,45 @@ async fn review_saved_skill(
         accept || scope.is_none(),
         "Choose a scope only when you accept a skill."
     );
-    let proposal = client
-        .pending_saved_skills()
-        .await
-        .map_err(terminal_error)?
-        .proposals
-        .into_iter()
-        .find(|proposal| proposal.id == id)
-        .context("This skill proposal is no longer waiting for review.")?;
-    let mut preview = skill_proposal_summary(&proposal);
-    push_skill_preview_files(&mut preview, &proposal.files);
-    println!("{preview}");
+    let (proposal, delivery) = if accept {
+        let response = client
+            .review_saved_skill(&SkillReviewRequest {
+                id: id.to_owned(),
+                action: SkillReviewAction::Preview,
+                scope,
+                token: None,
+            })
+            .await
+            .map_err(terminal_error)?;
+        let SaveSkillResult::ReviewPreview { proposal, delivery } = response else {
+            bail!("Wenlan returned an unexpected skill review result.");
+        };
+        (proposal, Some(delivery))
+    } else {
+        let proposal = client
+            .pending_saved_skills()
+            .await
+            .map_err(terminal_error)?
+            .proposals
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .context("This skill proposal is no longer waiting for review.")?;
+        (proposal, None)
+    };
+    println!(
+        "{}",
+        skill_review_for_a_person(&proposal, delivery.as_ref())
+    );
     let question = if accept {
         ensure!(
-            complete_skill_preview(&proposal.files),
+            complete_skill_proposal(&proposal),
             "Wenlan needs a complete preview to accept this skill."
+        );
+        ensure!(
+            delivery
+                .as_ref()
+                .is_none_or(|delivery| delivery.blocked.is_empty()),
+            "Resolve the blocked paths and review this skill again."
         );
         format!(
             "Accept {} as a {} skill?",
@@ -365,6 +403,7 @@ async fn review_saved_skill(
                 SkillReviewAction::Dismiss
             },
             scope,
+            token: delivery.map(|delivery| delivery.token),
         })
         .await
         .map_err(terminal_error)?;
@@ -385,33 +424,155 @@ fn complete_skill_preview(files: &[SkillPreviewFile]) -> bool {
             .any(|file| file.path == "SKILL.md" && file.text.is_some())
 }
 
-fn saved_skill_scope_words(scope: SavedSkillScope) -> &'static str {
+fn complete_skill_proposal(proposal: &SkillProposal) -> bool {
+    if matches!(proposal.origin, SkillProposalOrigin::Delivery { .. }) || proposal.changes.is_some()
+    {
+        proposal.files.iter().all(|file| !file.cut)
+    } else {
+        complete_skill_preview(&proposal.files)
+    }
+}
+
+fn skill_review_for_a_person(
+    proposal: &SkillProposal,
+    delivery: Option<&SkillDeliveryPreview>,
+) -> String {
+    let mut out = skill_proposal_summary(proposal);
+    push_skill_preview_files(&mut out, &proposal.files);
+    if let Some(changes) = &proposal.changes {
+        push_skill_changes(&mut out, changes);
+    }
+    if let Some(delivery) = delivery {
+        if !delivery.files.is_empty() {
+            out.push_str("\nTool paths affected\n");
+            for file in &delivery.files {
+                let mut path = file_label(&file.path);
+                if file
+                    .before
+                    .iter()
+                    .chain(&file.after)
+                    .any(|entry| entry.directory)
+                {
+                    path.push_str(" (directory)");
+                }
+                let change = match (&file.renamed_from, &file.before, &file.after) {
+                    (Some(from), before, after) => {
+                        let mut label = format!("Rename {} to {path}", file_label(from));
+                        if let (Some(before), Some(after)) = (before, after) {
+                            if before.digest != after.digest {
+                                label.push_str(" and update its contents");
+                            }
+                            if before.permissions != after.permissions {
+                                label.push_str(&format!(
+                                    " and change permissions from {} to {}",
+                                    one_line(&before.permissions),
+                                    one_line(&after.permissions)
+                                ));
+                            }
+                        }
+                        label
+                    }
+
+                    (None, None, Some(_)) => format!("Create {path}"),
+                    (None, Some(_), None) => format!("Remove {path}"),
+                    (None, Some(before), Some(after)) if before.digest == after.digest => {
+                        format!(
+                            "Change permissions for {path} from {} to {}",
+                            one_line(&before.permissions),
+                            one_line(&after.permissions)
+                        )
+                    }
+                    (None, Some(before), Some(after)) => {
+                        let mut label = format!("Overwrite {path}");
+                        if before.permissions != after.permissions {
+                            label.push_str(&format!(
+                                ", mode {} → {}",
+                                one_line(&before.permissions),
+                                one_line(&after.permissions)
+                            ));
+                        }
+                        label
+                    }
+                    (None, None, None) => continue,
+                };
+                out.push_str(&format!("- {change}\n"));
+            }
+        }
+        for tool in &delivery.cleared_overrides {
+            out.push_str(&format!(
+                "\nReplace the saved {} version with the shared version.\n",
+                tool.display_name()
+            ));
+        }
+        if !delivery.blocked.is_empty() {
+            out.push_str("\nDelivery blocked\n");
+            for reason in &delivery.blocked {
+                out.push_str(&format!("- {}\n", one_line(reason)));
+            }
+        }
+    }
+    out
+}
+
+fn push_skill_changes(out: &mut String, changes: &SkillProposalChanges) {
+    for change in &changes.permissions {
+        out.push_str(&format!(
+            "\n{} permissions change from {} to {}.\n",
+            file_label(&change.path),
+            one_line(&change.before),
+            one_line(&change.after)
+        ));
+    }
+    for file in &changes.oversized {
+        out.push_str(&format!(
+            "\n{} is too large to preview.\n",
+            file_label(&file.path)
+        ));
+        if let Some(before) = &file.before {
+            out.push_str(&format!(
+                "  Before: {} bytes, SHA-256 {}\n",
+                before.bytes,
+                one_line(&before.sha256)
+            ));
+        }
+        out.push_str(&format!(
+            "  After: {} bytes, SHA-256 {}\n",
+            file.after.bytes,
+            one_line(&file.after.sha256)
+        ));
+    }
+    if changes.removed.is_empty() {
+        return;
+    }
+    out.push_str("Removed files\n");
+    for path in &changes.removed {
+        out.push_str(&format!("- {}\n", one_line(path)));
+    }
+}
+
+fn saved_skill_scope_words(scope: SavedSkillScope) -> String {
     match scope {
-        SavedSkillScope::Shared => "shared",
-        SavedSkillScope::Tool {
-            tool: SavedSkillTool::ClaudeCode,
-        } => "Claude Code-only",
-        SavedSkillScope::Tool {
-            tool: SavedSkillTool::Codex,
-        } => "Codex-only",
+        SavedSkillScope::Shared => "shared".into(),
+        SavedSkillScope::Tool { tool } => format!("{}-only", tool.display_name()),
     }
 }
 
 fn skill_proposal_summary(proposal: &SkillProposal) -> String {
     let origin = match &proposal.origin {
         SkillProposalOrigin::Agent { agent } => one_line(agent),
-        SkillProposalOrigin::Tool {
-            tool: SavedSkillTool::ClaudeCode,
-        } => "the Claude Code skills folder".into(),
-        SkillProposalOrigin::Tool {
-            tool: SavedSkillTool::Codex,
-        } => "the Codex skills folder".into(),
+        SkillProposalOrigin::Tool { tool } => format!("the {} skills folder", tool.display_name()),
+        SkillProposalOrigin::Delivery { tool } => format!("Wenlan for {}", tool.display_name()),
     };
     format!(
-        "{}  {} ({})\nFrom {origin}\n",
+        "{}  {} ({})\nFrom {origin}\n{}",
         one_line(&proposal.id),
         one_line(&proposal.name),
-        saved_skill_scope_words(proposal.scope)
+        saved_skill_scope_words(proposal.scope),
+        if proposal.changes.is_some() {
+            "Changes since the last managed copy.\n"
+        } else {
+            ""
+        }
     )
 }
 
@@ -440,6 +601,9 @@ fn saved_skill_result_for_a_person(result: &SaveSkillResult) -> String {
             out
         }
         SaveSkillResult::Proposed { proposal } => skill_proposal_summary(proposal),
+        SaveSkillResult::ReviewPreview { proposal, delivery } => {
+            skill_review_for_a_person(proposal, Some(delivery))
+        }
         SaveSkillResult::Dismissed { name } => {
             format!("Dismissed the proposal for {}.\n", one_line(name))
         }
@@ -1272,6 +1436,101 @@ mod tests {
         files[0].cut = false;
         files[0].text = None;
         assert!(!complete_skill_preview(&files));
+    }
+
+    #[test]
+    fn ux_skill_16_managed_delta_review_shows_deletions_without_skill_md() {
+        let proposal = SkillProposal {
+            id: "delta".into(),
+            name: "meeting-notes".into(),
+            origin: SkillProposalOrigin::Tool {
+                tool: SavedSkillTool::Cursor,
+            },
+            scope: SavedSkillScope::Tool {
+                tool: SavedSkillTool::Cursor,
+            },
+            files: Vec::new(),
+            changes: Some(SkillProposalChanges {
+                removed: vec!["examples/old.md".into()],
+                permissions: Vec::new(),
+                oversized: vec![wenlan_types::rulesync_skill::OversizedSkillFile {
+                    path: "helper.py".into(),
+                    before: None,
+                    after: wenlan_types::rulesync_skill::SkillFileDigest {
+                        bytes: 83_000,
+                        sha256: "a".repeat(64),
+                    },
+                }],
+            }),
+        };
+        assert!(complete_skill_proposal(&proposal));
+        let mut preview = skill_proposal_summary(&proposal);
+        push_skill_changes(&mut preview, proposal.changes.as_ref().unwrap());
+        assert!(preview.contains("Changes since the last managed copy."));
+        assert!(preview.contains("Removed files\n- examples/old.md\n"));
+        assert!(
+            preview.contains("helper.py is too large to preview.\n  After: 83000 bytes, SHA-256 ")
+        );
+
+        use wenlan_types::rulesync_skill::{
+            SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
+        };
+        let file = |contents: &str| SkillDeliveryFile {
+            digest: SkillFileDigest {
+                bytes: contents.len(),
+                sha256: contents.into(),
+            },
+            permissions: "0644".into(),
+            directory: false,
+        };
+        let delivery = SkillDeliveryPreview {
+            token: "token".into(),
+            files: vec![
+                SkillDeliveryChange {
+                    renamed_from: None,
+                    path: ".claude/skills/meeting-notes/helper.py".into(),
+                    before: Some(SkillDeliveryFile {
+                        permissions: "0600".into(),
+                        ..file("Old variant")
+                    }),
+                    after: Some(SkillDeliveryFile {
+                        permissions: "0666".into(),
+                        ..file("Shared version")
+                    }),
+                },
+                SkillDeliveryChange {
+                    renamed_from: None,
+                    path: ".codex/skills/meeting-notes/examples/old.md".into(),
+                    before: Some(file("Old asset")),
+                    after: None,
+                },
+                SkillDeliveryChange {
+                    renamed_from: None,
+                    path: ".codex/skills/meeting-notes/examples".into(),
+                    before: Some(SkillDeliveryFile {
+                        directory: true,
+                        permissions: "0755".into(),
+                        ..file("directory")
+                    }),
+                    after: None,
+                },
+                SkillDeliveryChange {
+                    renamed_from: Some(".claude/skills/meeting-notes/guide.md".into()),
+                    path: ".claude/skills/meeting-notes/Guide.md".into(),
+                    before: Some(file("Before")),
+                    after: Some(file("After")),
+                },
+            ],
+            blocked: Vec::new(),
+            cleared_overrides: vec![SavedSkillTool::ClaudeCode],
+        };
+        let rendered = skill_review_for_a_person(&proposal, Some(&delivery));
+        assert!(rendered
+            .contains("- Overwrite .claude/skills/meeting-notes/helper.py, mode 0600 → 0666\n"));
+        assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples/old.md\n"));
+        assert!(rendered.contains("- Remove .codex/skills/meeting-notes/examples (directory)\n"));
+        assert!(rendered.contains("Replace the saved Claude Code version with the shared version."));
+        assert!(rendered.contains("- Rename .claude/skills/meeting-notes/guide.md to .claude/skills/meeting-notes/Guide.md and update its contents"));
     }
 
     fn line(text: &str, title: &str, general: bool) -> SkillLine {

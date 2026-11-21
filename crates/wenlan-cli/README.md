@@ -516,7 +516,7 @@ wenlan rules adopt [OPTIONS]
 
 Options:
 
-- `--dry-run`: Show the files and changes without contacting Wenlan or writing to disk.
+- `--dry-run`: Preview the changes, or list the installed files while offline.
 
 #### `wenlan rules restore`
 
@@ -1101,7 +1101,7 @@ Options:
 - `--description <DESCRIPTION>`: When an AI tool should use the skill.
 - `--body <FILE>`: Markdown file containing the SKILL.md body without YAML front matter.
 - `--extra <PATH>`: A UTF-8 file relative to the body file's folder. Repeat for each extra file.
-- `--tool <TOOL>`: Use the skill for one tool. Omit to share across tools. Possible values: `claude-code`, `codex`.
+- `--tool <TOOL>`: Use the skill for one tool. Omit to share across tools. Possible values: `claude-code`, `codex`, `gemini-cli`, `antigravity`, `copilot-cli`, `cursor`, `opencode`, `muse-code`.
 
 #### `wenlan skills pending`
 
@@ -1126,7 +1126,7 @@ Arguments:
 
 Options:
 
-- `--tool <TOOL>`: Keep an accepted skill for one tool. Possible values: `claude-code`, `codex`.
+- `--tool <TOOL>`: Keep an accepted skill for one tool. Possible values: `claude-code`, `codex`, `gemini-cli`, `antigravity`, `copilot-cli`, `cursor`, `opencode`, `muse-code`.
 - `--shared`: Share an accepted skill across tools.
 
 ### `wenlan memories`

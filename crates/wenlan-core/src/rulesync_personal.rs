@@ -2,8 +2,9 @@
 //! The personal master and the read-only side of adopting an existing setup.
 
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -12,6 +13,7 @@ use cap_std::fs::{Dir, Metadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome};
+use wenlan_types::rulesync_skill::SavedSkillTool;
 
 use crate::rulesync_adopt::{
     self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionTarget,
@@ -23,8 +25,728 @@ mod delivery_worktrees;
 mod skill_preview;
 pub use delivery_worktrees::DeliveryWorktrees;
 
+/// Identify a single directory entry. Hard links share a file identity but
+/// represent distinct entries.
+pub fn directory_entry_identity(metadata: &Metadata) -> Option<(u64, u64)> {
+    let inode = metadata.ino();
+    (inode != 0 && (metadata.is_dir() || metadata.nlink() == 1)).then(|| (metadata.dev(), inode))
+}
+
+/// Return the listed spelling when a lookup opens a differently spelled
+/// entry. The volume determines which spellings resolve together.
+pub fn case_alias_in(directory: &Dir, name: &OsStr) -> io::Result<Option<OsString>> {
+    let path = Path::new(name);
+    if path.file_name() != Some(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected a directory entry name",
+        ));
+    }
+    let requested = match directory.symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    for entry in directory.entries()? {
+        if entry?.file_name() == name {
+            return Ok(None);
+        }
+    }
+    // No literal name was listed. Match the entry only when its identity
+    // distinguishes it from every hard link, including links in this folder.
+    let identity = directory_entry_identity(&requested)
+        .ok_or_else(|| io::Error::other("cannot identify an alternate directory spelling"))?;
+    for entry in directory.entries()? {
+        let other = entry?.file_name();
+        if directory_entry_identity(&directory.symlink_metadata(&other)?) == Some(identity) {
+            return Ok((other != name).then_some(other));
+        }
+    }
+    Err(io::Error::other(
+        "directory entry changed while checking its spelling",
+    ))
+}
+
 pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";
+
+#[cfg(any(windows, test))]
+const WINDOWS_INHERITED_ACE: u8 = 0x10;
+
+#[cfg(any(windows, test))]
+fn windows_replacement_problem(
+    owner: &[u8],
+    assignable_owners: &[Vec<u8>],
+    has_security_policy: bool,
+) -> Option<&'static str> {
+    // An elevated administrator's files are owned by its default owner
+    // (BUILTIN\Administrators), not its user SID. Accept any owner the
+    // process may assign itself, so the owner it keeps is the one it can set.
+    if !assignable_owners.iter().any(|sid| sid == owner) {
+        return Some("the Windows owner is not the process user or one of its owner groups");
+    }
+    windows_policy_problem(has_security_policy)
+}
+
+#[cfg(any(windows, test))]
+fn windows_policy_problem(has_security_policy: bool) -> Option<&'static str> {
+    has_security_policy.then_some("the Windows entry has an integrity label or security policy")
+}
+
+#[cfg(any(windows, test))]
+fn windows_sacl_problem(protected: bool, ace_flags: &[u8]) -> Option<&'static str> {
+    if protected {
+        return Some("the Windows system access list is protected");
+    }
+    ace_flags
+        .iter()
+        .any(|flags| flags & WINDOWS_INHERITED_ACE == 0)
+        .then_some("the Windows system access list contains an explicit entry")
+}
+
+#[cfg(any(windows, test))]
+struct WindowsDacl<'a> {
+    protected: bool,
+    revision: Option<u8>,
+    aces: Vec<&'a [u8]>,
+}
+
+#[cfg(any(windows, test))]
+impl WindowsDacl<'_> {
+    fn matches(&self, other: &Self) -> bool {
+        if self.protected != other.protected || self.revision.is_some() != other.revision.is_some()
+        {
+            return false;
+        }
+        if self.protected {
+            return self.revision == other.revision && self.aces == other.aces;
+        }
+
+        // An unprotected set can re-merge ACEs inherited from the staging
+        // folder. Verify the ordered bytes of the explicit ACEs and the
+        // protection bit. A null DACL is distinct from an empty DACL.
+        let explicit = |ace: &&[u8]| ace[1] & WINDOWS_INHERITED_ACE == 0;
+        self.aces
+            .iter()
+            .copied()
+            .filter(explicit)
+            .eq(other.aces.iter().copied().filter(explicit))
+    }
+}
+
+#[cfg(test)]
+mod rulesync_windows_descriptor_tests {
+    use super::{windows_replacement_problem, windows_sacl_problem, WindowsDacl};
+
+    #[test]
+    fn replacement_requires_an_assignable_owner_and_no_security_policy() {
+        let owners = [b"user".to_vec(), b"admins".to_vec()];
+        assert_eq!(windows_replacement_problem(b"user", &owners, false), None);
+        // An elevated process's files are owned by its owner group.
+        assert_eq!(windows_replacement_problem(b"admins", &owners, false), None);
+        assert_eq!(
+            windows_replacement_problem(b"other", &owners, false),
+            Some("the Windows owner is not the process user or one of its owner groups"),
+        );
+        assert_eq!(
+            windows_replacement_problem(b"group", &[b"user".to_vec()], false),
+            Some("the Windows owner is not the process user or one of its owner groups"),
+        );
+        assert_eq!(
+            windows_replacement_problem(b"user", &owners, true),
+            Some("the Windows entry has an integrity label or security policy"),
+        );
+    }
+
+    #[test]
+    fn explicit_auditing_and_protected_sacls_are_refused() {
+        assert_eq!(windows_sacl_problem(false, &[]), None);
+        assert_eq!(windows_sacl_problem(false, &[0x50, 0x90]), None);
+        assert_eq!(
+            windows_sacl_problem(true, &[]),
+            Some("the Windows system access list is protected"),
+        );
+        assert_eq!(
+            windows_sacl_problem(false, &[0x50, 0x80]),
+            Some("the Windows system access list contains an explicit entry"),
+        );
+    }
+
+    #[test]
+    fn readback_preserves_ace_bytes_order_and_protection() {
+        let allow = &[0, 0, 8, 0, 1, 0, 0, 0][..];
+        let deny = &[1, 0, 8, 0, 1, 0, 0, 0][..];
+        let different_deny = &[1, 0, 8, 0, 2, 0, 0, 0][..];
+        let inherited = &[0, 0x10, 8, 0, 2, 0, 0, 0][..];
+        let remerged = &[0, 0x10, 8, 0, 4, 0, 0, 0][..];
+        let read = |protected, aces| WindowsDacl {
+            protected,
+            revision: Some(2),
+            aces,
+        };
+        let original = read(false, vec![deny, allow, inherited]);
+        assert!(original.matches(&read(false, vec![deny, allow, remerged])));
+        assert!(!original.matches(&read(false, vec![allow, deny, inherited])));
+        assert!(!original.matches(&read(false, vec![deny, inherited])));
+        assert!(!original.matches(&read(false, vec![different_deny, allow, inherited])));
+        assert!(!original.matches(&read(true, vec![deny, allow, inherited])));
+        let protected = read(true, vec![deny, allow, inherited]);
+        assert!(protected.matches(&read(true, vec![deny, allow, inherited])));
+        assert!(!protected.matches(&read(true, vec![deny, allow, remerged])));
+    }
+
+    #[test]
+    fn readback_distinguishes_a_null_dacl_from_an_empty_dacl() {
+        let null = WindowsDacl {
+            protected: false,
+            revision: None,
+            aces: Vec::new(),
+        };
+        let empty = WindowsDacl {
+            revision: Some(2),
+            aces: Vec::new(),
+            ..null
+        };
+        assert!(!null.matches(&empty));
+    }
+}
+
+#[cfg(windows)]
+pub use windows_acl::{
+    check_windows_replacement, copy_windows_dacl, open_windows_tool_dir,
+    prepare_windows_file_replacement, read_windows_owner, windows_access_error,
+    windows_owner_is_assignable, windows_permissions_error,
+};
+
+#[cfg(windows)]
+mod windows_acl {
+    use super::{
+        windows_policy_problem, windows_replacement_problem, windows_sacl_problem, WindowsDacl,
+    };
+    use cap_fs_ext::DirExt as _;
+    use cap_std::fs::Dir;
+    use std::{
+        ffi::c_void,
+        io,
+        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle},
+        path::Path,
+        ptr::null_mut,
+        slice,
+    };
+
+    const SE_FILE_OBJECT: u32 = 1;
+    const OWNER_SECURITY_INFORMATION: u32 = 1;
+    const DACL_SECURITY_INFORMATION: u32 = 4;
+    const SACL_SECURITY_INFORMATION: u32 = 8;
+    const LABEL_SECURITY_INFORMATION: u32 = 0x10;
+    const ATTRIBUTE_SECURITY_INFORMATION: u32 = 0x20;
+    const SCOPE_SECURITY_INFORMATION: u32 = 0x40;
+    const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x8000_0000;
+    const UNPROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x2000_0000;
+    const SE_DACL_PROTECTED: u16 = 0x1000;
+    const SE_SACL_PROTECTED: u16 = 0x2000;
+    const READ_CONTROL: u32 = 0x0002_0000;
+    const WRITE_DAC: u32 = 0x0004_0000;
+    const WRITE_OWNER: u32 = 0x0008_0000;
+    const ACCESS_SYSTEM_SECURITY: u32 = 0x0100_0000;
+    const SHARE_READ_WRITE_DELETE: u32 = 0x7;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER: u32 = 1;
+    const TOKEN_GROUPS: u32 = 2;
+    const TOKEN_OWNER: u32 = 4;
+    const SE_GROUP_ENABLED: u32 = 0x4;
+    const SE_GROUP_OWNER: u32 = 0x8;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
+    const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+
+    #[repr(C)]
+    struct AclHeader {
+        revision: u8,
+        reserved: u8,
+        size: u16,
+        ace_count: u16,
+        reserved2: u16,
+    }
+
+    #[repr(C)]
+    struct AceHeader {
+        kind: u8,
+        flags: u8,
+        size: u16,
+    }
+
+    // TOKEN_USER contains a single SID_AND_ATTRIBUTES.
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut c_void,
+        attributes: u32,
+    }
+
+    // TOKEN_GROUPS is a count followed by that many SID_AND_ATTRIBUTES.
+    #[repr(C)]
+    struct TokenGroups {
+        count: u32,
+        groups: [SidAndAttributes; 1],
+    }
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn GetSecurityInfo(
+            handle: RawHandle,
+            object_type: u32,
+            security_info: u32,
+            owner: *mut *mut c_void,
+            group: *mut *mut c_void,
+            dacl: *mut *mut AclHeader,
+            sacl: *mut *mut AclHeader,
+            descriptor: *mut *mut c_void,
+        ) -> u32;
+        fn SetSecurityInfo(
+            handle: RawHandle,
+            object_type: u32,
+            security_info: u32,
+            owner: *mut c_void,
+            group: *mut c_void,
+            dacl: *mut AclHeader,
+            sacl: *mut AclHeader,
+        ) -> u32;
+        fn GetSecurityDescriptorControl(
+            descriptor: *mut c_void,
+            control: *mut u16,
+            revision: *mut u32,
+        ) -> i32;
+        fn GetSecurityDescriptorSacl(
+            descriptor: *mut c_void,
+            present: *mut i32,
+            sacl: *mut *mut AclHeader,
+            defaulted: *mut i32,
+        ) -> i32;
+        fn GetAce(acl: *mut AclHeader, index: u32, ace: *mut *mut c_void) -> i32;
+        fn GetLengthSid(sid: *mut c_void) -> u32;
+        fn OpenProcessToken(process: RawHandle, access: u32, token: *mut RawHandle) -> i32;
+        fn GetTokenInformation(
+            token: RawHandle,
+            class: u32,
+            buffer: *mut c_void,
+            length: u32,
+            needed: *mut u32,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> RawHandle;
+        fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        fn ReOpenFile(handle: RawHandle, access: u32, share: u32, flags: u32) -> RawHandle;
+    }
+
+    struct SecurityDescriptor {
+        ptr: *mut c_void,
+        owner: *mut c_void,
+        dacl: *mut AclHeader,
+    }
+
+    impl SecurityDescriptor {
+        fn read(entry: &impl AsRawHandle, flags: u32) -> io::Result<Self> {
+            let mut sd = Self {
+                ptr: null_mut(),
+                owner: null_mut(),
+                dacl: null_mut(),
+            };
+            let owner = if flags & OWNER_SECURITY_INFORMATION != 0 {
+                &mut sd.owner
+            } else {
+                null_mut()
+            };
+            let dacl = if flags & DACL_SECURITY_INFORMATION != 0 {
+                &mut sd.dacl
+            } else {
+                null_mut()
+            };
+            // SAFETY: the handle stays open and the output pointers are writable.
+            // The owner and ACL are stored inside the owned descriptor.
+            let status = unsafe {
+                GetSecurityInfo(
+                    entry.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    flags,
+                    owner,
+                    null_mut(),
+                    dacl,
+                    null_mut(),
+                    &mut sd.ptr,
+                )
+            };
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            if sd.ptr.is_null() || (flags & OWNER_SECURITY_INFORMATION != 0 && sd.owner.is_null()) {
+                return Err(io::Error::other(
+                    "the Windows security descriptor is unavailable",
+                ));
+            }
+            Ok(sd)
+        }
+
+        fn owner(&self) -> &[u8] {
+            // SAFETY: the caller requested OWNER_SECURITY_INFORMATION and
+            // GetSecurityInfo supplied a SID in the live descriptor.
+            unsafe { slice::from_raw_parts(self.owner.cast(), GetLengthSid(self.owner) as usize) }
+        }
+
+        fn control(&self) -> io::Result<u16> {
+            let mut control = 0;
+            let mut revision = 0;
+            // SAFETY: the descriptor is live and both outputs are writable.
+            if unsafe { GetSecurityDescriptorControl(self.ptr, &mut control, &mut revision) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(control)
+        }
+
+        fn sacl(&self) -> io::Result<*mut AclHeader> {
+            let mut present = 0;
+            let mut list = null_mut();
+            let mut defaulted = 0;
+            // SAFETY: the descriptor is live and all outputs are writable.
+            if unsafe {
+                GetSecurityDescriptorSacl(self.ptr, &mut present, &mut list, &mut defaulted)
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(if present != 0 { list } else { null_mut() })
+        }
+
+        fn dacl(&self) -> io::Result<WindowsDacl<'_>> {
+            let protected = self.control()? & SE_DACL_PROTECTED != 0;
+            let mut dacl = WindowsDacl {
+                protected,
+                revision: None,
+                aces: Vec::new(),
+            };
+            // SAFETY: any returned ACL is owned by this live descriptor.
+            if let Some(list) = unsafe { self.dacl.as_ref() } {
+                dacl.revision = Some(list.revision);
+                for index in 0..u32::from(list.ace_count) {
+                    let ace = ace_at(self.dacl, index)?;
+                    // SAFETY: GetAce points to an ACE whose header gives the
+                    // length within the live descriptor.
+                    let bytes = unsafe {
+                        slice::from_raw_parts(ace.cast::<u8>(), usize::from((*ace).size))
+                    };
+                    dacl.aces.push(bytes);
+                }
+            }
+            Ok(dacl)
+        }
+
+        fn set_staged_owner(&self, staged: &impl AsRawHandle) -> io::Result<()> {
+            if SecurityDescriptor::read(staged, OWNER_SECURITY_INFORMATION)?.owner() == self.owner()
+            {
+                return Ok(());
+            }
+            // The process token can have a default owner different from its
+            // user SID. ReplaceFileW documents DACL preservation, so ensure
+            // the replacement starts with the owner we intend to retain.
+            let writable = reopen(staged, READ_CONTROL | WRITE_OWNER)?;
+            // SAFETY: writable is live and self owns the owner SID.
+            let status = unsafe {
+                SetSecurityInfo(
+                    writable.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION,
+                    self.owner,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                )
+            };
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for SecurityDescriptor {
+        fn drop(&mut self) {
+            if !self.ptr.is_null() {
+                // SAFETY: GetSecurityInfo allocates this buffer for LocalFree.
+                unsafe { LocalFree(self.ptr) };
+            }
+        }
+    }
+
+    fn ace_at(list: *mut AclHeader, index: u32) -> io::Result<*const AceHeader> {
+        let mut ace = null_mut();
+        // SAFETY: the caller holds the descriptor with this ACL and bounds
+        // index by its ACE count. The output pointer is writable.
+        if unsafe { GetAce(list, index, &mut ace) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let ace = ace.cast::<AceHeader>();
+        // SAFETY: GetAce returned an entry starting with an ACE_HEADER.
+        let header = unsafe { ace.as_ref() }
+            .ok_or_else(|| io::Error::other("a Windows access rule is unavailable"))?;
+        if usize::from(header.size) < std::mem::size_of::<AceHeader>() {
+            return Err(io::Error::other("invalid Windows access rule length"));
+        }
+        Ok(ace)
+    }
+
+    pub fn windows_permissions_error(error: io::Error) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("left unmanaged: could not preserve Windows permissions ({error})"),
+        )
+    }
+
+    pub fn windows_access_error(error: io::Error) -> io::Error {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            windows_permissions_error(error)
+        } else {
+            error
+        }
+    }
+
+    pub fn open_windows_tool_dir(parent: &Dir, name: &Path) -> io::Result<Dir> {
+        parent.open_dir_nofollow(name).map_err(windows_access_error)
+    }
+
+    /// Whether the process may keep `owner` as the owner of a file it writes.
+    pub fn windows_owner_is_assignable(owner: &[u8]) -> io::Result<bool> {
+        assignable_owners()
+            .map(|owners| owners.iter().any(|sid| sid == owner))
+            .map_err(windows_permissions_error)
+    }
+
+    fn token_information(
+        token: &OwnedHandle,
+        class: u32,
+        minimum: usize,
+    ) -> io::Result<Vec<usize>> {
+        let mut length = 0;
+        // SAFETY: a null buffer and zero size query the required byte count.
+        if unsafe { GetTokenInformation(token.as_raw_handle(), class, null_mut(), 0, &mut length) }
+            == 0
+        {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER) {
+                return Err(error);
+            }
+        }
+        if (length as usize) < minimum {
+            return Err(io::Error::other("the Windows process token is unavailable"));
+        }
+        let mut buffer = vec![0usize; (length as usize).div_ceil(std::mem::size_of::<usize>())];
+        // SAFETY: the buffer is pointer-aligned and has at least length bytes.
+        if unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                class,
+                buffer.as_mut_ptr().cast(),
+                length,
+                &mut length,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(buffer)
+    }
+
+    fn copy_sid(sid: *mut c_void) -> Vec<u8> {
+        // SAFETY: the SID stays valid while its token buffer lives and is copied here.
+        unsafe { slice::from_raw_parts(sid.cast(), GetLengthSid(sid) as usize) }.to_vec()
+    }
+
+    /// The owners the process may assign: its user, its default owner, and
+    /// enabled groups marked as owner groups.
+    fn assignable_owners() -> io::Result<Vec<Vec<u8>>> {
+        let mut token = null_mut();
+        // SAFETY: GetCurrentProcess is a valid pseudo-handle and token is writable.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: OpenProcessToken returned a new owned handle.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let user = token_information(&token, TOKEN_USER, std::mem::size_of::<SidAndAttributes>())?;
+        // SAFETY: GetTokenInformation wrote a TOKEN_USER whose SID is in user.
+        let mut owners = vec![copy_sid(unsafe {
+            (*user.as_ptr().cast::<SidAndAttributes>()).sid
+        })];
+        let owner = token_information(&token, TOKEN_OWNER, std::mem::size_of::<*mut c_void>())?;
+        // SAFETY: GetTokenInformation wrote a TOKEN_OWNER whose SID is in owner.
+        owners.push(copy_sid(unsafe { *owner.as_ptr().cast::<*mut c_void>() }));
+        let groups = token_information(&token, TOKEN_GROUPS, std::mem::size_of::<u32>())?;
+        let list = groups.as_ptr().cast::<TokenGroups>();
+        // SAFETY: GetTokenInformation wrote a TOKEN_GROUPS with count entries in groups.
+        let count = unsafe { (*list).count } as usize;
+        // SAFETY: the entries follow the count inside the same buffer.
+        let entries = unsafe {
+            slice::from_raw_parts(
+                std::ptr::addr_of!((*list).groups).cast::<SidAndAttributes>(),
+                count,
+            )
+        };
+        let owner_group = SE_GROUP_ENABLED | SE_GROUP_OWNER;
+        owners.extend(
+            entries
+                .iter()
+                .filter(|group| group.attributes & owner_group == owner_group)
+                .map(|group| copy_sid(group.sid)),
+        );
+        Ok(owners)
+    }
+
+    fn reopen(entry: &impl AsRawHandle, access: u32) -> io::Result<OwnedHandle> {
+        // SAFETY: reopen the same live object without a new pathname lookup.
+        let handle = unsafe {
+            ReOpenFile(
+                entry.as_raw_handle(),
+                access,
+                SHARE_READ_WRITE_DELETE,
+                FILE_FLAG_BACKUP_SEMANTICS,
+            )
+        };
+        if handle as isize == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: ReOpenFile returned a new owned handle.
+        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    }
+
+    fn check_windows_audit(entry: &impl AsRawHandle) -> io::Result<()> {
+        let handle = match reopen(entry, READ_CONTROL | ACCESS_SYSTEM_SECURITY) {
+            Ok(handle) => handle,
+            // Reading audit entries requires an enabled SeSecurityPrivilege.
+            // The ordinary READ_CONTROL checks still apply when it is unavailable.
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(ERROR_ACCESS_DENIED | ERROR_PRIVILEGE_NOT_HELD)
+                ) =>
+            {
+                return Ok(())
+            }
+            Err(error) => return Err(error),
+        };
+        let audit = SecurityDescriptor::read(&handle, SACL_SECURITY_INFORMATION)?;
+        let protected = audit.control()? & SE_SACL_PROTECTED != 0;
+        let sacl = audit.sacl()?;
+        let mut flags = Vec::new();
+        // SAFETY: any returned SACL is owned by the live descriptor.
+        if let Some(list) = unsafe { sacl.as_ref() } {
+            for index in 0..u32::from(list.ace_count) {
+                // SAFETY: ace_at returned a header from the live descriptor.
+                let ace = unsafe { &*ace_at(sacl, index)? };
+                // Security-policy ACE types start with SYSTEM_MANDATORY_LABEL_ACE_TYPE.
+                if let Some(problem) = windows_policy_problem(ace.kind >= 0x11) {
+                    return Err(io::Error::other(problem));
+                }
+                flags.push(ace.flags);
+            }
+        }
+        if let Some(problem) = windows_sacl_problem(protected, &flags) {
+            return Err(io::Error::other(problem));
+        }
+        Ok(())
+    }
+
+    fn replacement_descriptor(
+        entry: &impl AsRawHandle,
+        extra: u32,
+    ) -> io::Result<SecurityDescriptor> {
+        // READ_CONTROL lets us inspect security policy entries without
+        // requesting access to the audit portion of the SACL.
+        let sd = SecurityDescriptor::read(
+            entry,
+            OWNER_SECURITY_INFORMATION
+                | LABEL_SECURITY_INFORMATION
+                | ATTRIBUTE_SECURITY_INFORMATION
+                | SCOPE_SECURITY_INFORMATION
+                | extra,
+        )?;
+        let policy = sd.sacl()?;
+        // SAFETY: any returned SACL is owned by the live descriptor.
+        let has_security_policy =
+            unsafe { policy.as_ref() }.is_some_and(|list| list.ace_count != 0);
+        if let Some(problem) =
+            windows_replacement_problem(sd.owner(), &assignable_owners()?, has_security_policy)
+        {
+            return Err(io::Error::other(problem));
+        }
+        if let Some(problem) = windows_sacl_problem(sd.control()? & SE_SACL_PROTECTED != 0, &[]) {
+            return Err(io::Error::other(problem));
+        }
+        check_windows_audit(entry)?;
+        Ok(sd)
+    }
+
+    pub fn read_windows_owner(entry: &impl AsRawHandle) -> io::Result<Vec<u8>> {
+        SecurityDescriptor::read(entry, OWNER_SECURITY_INFORMATION)
+            .map(|sd| sd.owner().to_vec())
+            .map_err(windows_permissions_error)
+    }
+
+    pub fn check_windows_replacement(entry: &impl AsRawHandle) -> io::Result<()> {
+        replacement_descriptor(entry, 0)
+            .map(|_| ())
+            .map_err(windows_permissions_error)
+    }
+
+    pub fn prepare_windows_file_replacement(
+        old: &impl AsRawHandle,
+        staged: &impl AsRawHandle,
+    ) -> io::Result<()> {
+        replacement_descriptor(old, 0)
+            .and_then(|sd| sd.set_staged_owner(staged))
+            .map_err(windows_permissions_error)
+    }
+
+    pub fn copy_windows_dacl(old: &impl AsRawHandle, staged: &impl AsRawHandle) -> io::Result<()> {
+        (|| {
+            let original = replacement_descriptor(old, DACL_SECURITY_INFORMATION)?;
+            let expected = original.dacl()?;
+            let writable = reopen(staged, READ_CONTROL | WRITE_DAC)?;
+            original.set_staged_owner(staged)?;
+            let protection = if expected.protected {
+                PROTECTED_DACL_SECURITY_INFORMATION
+            } else {
+                UNPROTECTED_DACL_SECURITY_INFORMATION
+            };
+            // SAFETY: writable is live and the ACL (or null) is owned by original.
+            let status = unsafe {
+                SetSecurityInfo(
+                    writable.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | protection,
+                    null_mut(),
+                    null_mut(),
+                    original.dacl,
+                    null_mut(),
+                )
+            };
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            let copied = SecurityDescriptor::read(
+                &writable,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            )?;
+            if copied.owner() != original.owner() || !expected.matches(&copied.dacl()?) {
+                return Err(io::Error::other(
+                    "the copied Windows permissions differ on read-back",
+                ));
+            }
+            Ok(())
+        })()
+        .map_err(windows_permissions_error)
+    }
+}
 
 /// The harness is a migration source. Personal delivery owns paths in the
 /// tools' own directories and never owns any part of the harness checkout.
@@ -127,27 +849,209 @@ pub fn system_home() -> Result<PathBuf> {
     dirs::home_dir().context("cannot find the home directory")
 }
 
-/// These are migration inputs from the existing harness, not output path
-/// definitions. Renderer output paths come from the pinned rulesync process.
-pub fn adoption_inputs() -> [AdoptionTarget; 2] {
-    [
+/// One v43.11.0 global output, with a home-relative delivery path.
+#[derive(Clone, Copy)]
+pub struct GlobalOutput {
+    pub renderer: &'static str,
+    pub staged: &'static str,
+    pub destination: &'static str,
+}
+
+impl GlobalOutput {
+    const fn native(renderer: &'static str, path: &'static str) -> Self {
+        Self::mapped(renderer, path, path)
+    }
+
+    const fn mapped(
+        renderer: &'static str,
+        staged: &'static str,
+        destination: &'static str,
+    ) -> Self {
+        Self {
+            renderer,
+            staged,
+            destination,
+        }
+    }
+}
+
+pub struct PersonalTarget {
+    /// Stable key in the adoption master and delivery manifest.
+    pub id: &'static str,
+    pub agent: &'static str,
+    pub tool: SavedSkillTool,
+    pub rules: GlobalOutput,
+    pub skills: GlobalOutput,
+}
+
+impl PersonalTarget {
+    pub fn folder(&self) -> &Path {
+        Path::new(self.rules.destination)
+            .parent()
+            .expect("tool folder")
+    }
+
+    fn adoption_input(&self) -> AdoptionTarget {
         AdoptionTarget {
-            tool: "claudecode".into(),
-            rules_path: Some(".claude/CLAUDE.md".into()),
-            skills_path: Some(".claude/skills".into()),
-        },
-        AdoptionTarget {
-            tool: "codexcli".into(),
-            rules_path: Some(".codex/AGENTS.md".into()),
-            skills_path: Some(".codex/skills".into()),
-        },
-    ]
+            tool: self.id.into(),
+            rules_path: Some(self.rules.destination.into()),
+            skills_path: Some(self.skills.destination.into()),
+        }
+    }
+
+    fn skipped_note(&self) -> String {
+        format!(
+            "Skipped {} because ~/{} is absent.",
+            self.tool.display_name(),
+            plan_path(self.folder())
+        )
+    }
+}
+
+const CLAUDE_TARGET: PersonalTarget = PersonalTarget {
+    id: "claudecode",
+    agent: "claude-code",
+    tool: SavedSkillTool::ClaudeCode,
+    rules: GlobalOutput::native("claudecode", ".claude/CLAUDE.md"),
+    skills: GlobalOutput::native("claudecode", ".claude/skills"),
+};
+
+const CODEX_TARGET: PersonalTarget = PersonalTarget {
+    id: "codexcli",
+    agent: "codex",
+    tool: SavedSkillTool::Codex,
+    rules: GlobalOutput::native("codexcli", ".codex/AGENTS.md"),
+    skills: GlobalOutput::mapped("codexcli", ".agents/skills", ".codex/skills"),
+};
+
+pub const PERSONAL_TARGETS: &[PersonalTarget] = &[
+    CLAUDE_TARGET,
+    CODEX_TARGET,
+    PersonalTarget {
+        id: "geminicli",
+        agent: "gemini-cli",
+        tool: SavedSkillTool::GeminiCli,
+        rules: GlobalOutput::native("antigravity-ide", ".gemini/GEMINI.md"),
+        skills: GlobalOutput::mapped("opencode", ".config/opencode/skills", ".gemini/skills"),
+    },
+    PersonalTarget {
+        id: "antigravity-ide",
+        agent: "antigravity",
+        tool: SavedSkillTool::Antigravity,
+        rules: GlobalOutput::mapped(
+            "antigravity-ide",
+            ".gemini/GEMINI.md",
+            ".gemini/config/GEMINI.md",
+        ),
+        skills: GlobalOutput::native("antigravity-ide", ".gemini/config/skills"),
+    },
+    PersonalTarget {
+        id: "copilotcli",
+        agent: "copilot-cli",
+        tool: SavedSkillTool::CopilotCli,
+        rules: GlobalOutput::native("copilotcli", ".copilot/copilot-instructions.md"),
+        skills: GlobalOutput::native("copilotcli", ".copilot/skills"),
+    },
+    PersonalTarget {
+        id: "cursor",
+        agent: "cursor",
+        tool: SavedSkillTool::Cursor,
+        rules: GlobalOutput::mapped("codexcli", ".codex/AGENTS.md", ".cursor/AGENTS.md"),
+        skills: GlobalOutput::native("cursor", ".cursor/skills"),
+    },
+    PersonalTarget {
+        id: "opencode",
+        agent: "opencode",
+        tool: SavedSkillTool::OpenCode,
+        rules: GlobalOutput::native("opencode", ".config/opencode/AGENTS.md"),
+        skills: GlobalOutput::native("opencode", ".config/opencode/skills"),
+    },
+    PersonalTarget {
+        id: "musecode",
+        agent: "muse-code",
+        tool: SavedSkillTool::MuseCode,
+        rules: GlobalOutput::mapped("codexcli", ".codex/AGENTS.md", ".config/muse/AGENTS.md"),
+        skills: GlobalOutput::native("musecode", ".config/muse/skills"),
+    },
+];
+
+pub fn personal_target(id: &str) -> Option<&'static PersonalTarget> {
+    PERSONAL_TARGETS.iter().find(|target| target.id == id)
 }
 
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
-    let targets = adoption_inputs();
-    let mut adoption = rulesync_adopt::discover(home, &targets)?;
+    let (installed, skipped) = installed_targets(home, PERSONAL_TARGETS.iter())?;
+    let mut adoption = discover_targets(home, &installed, None)?;
+    adoption.skipped_tools = skipped;
+    Ok(adoption)
+}
+
+pub fn additional_targets(
+    home: &Path,
+    master: &PersonalMaster,
+) -> Result<Vec<&'static PersonalTarget>> {
+    let candidates = PERSONAL_TARGETS
+        .iter()
+        .filter(|target| !master.enrolls_target(target.id));
+    Ok(installed_targets(home, candidates)?.0)
+}
+
+pub fn discover_additional_adoption(home: &Path, master: &PersonalMaster) -> Result<Adoption> {
+    let installed = additional_targets(home, master)?;
+    let mut adoption = discover_targets(home, &installed, Some(master))?;
+    adoption.added_tools = installed
+        .iter()
+        .map(|target| target.tool.display_name().to_owned())
+        .collect();
+    Ok(adoption)
+}
+
+fn installed_targets<'a>(
+    home: &Path,
+    candidates: impl Iterator<Item = &'a PersonalTarget>,
+) -> Result<(Vec<&'a PersonalTarget>, Vec<String>)> {
+    let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
+    let mut targets = Vec::new();
+    let mut skipped_tools = Vec::new();
+    for target in candidates {
+        match root.symlink_metadata(target.folder()) {
+            Ok(_) => targets.push(target),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                skipped_tools.push(target.skipped_note());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect {}", target.folder().display()));
+            }
+        }
+    }
+    Ok((targets, skipped_tools))
+}
+
+fn discover_targets(
+    home: &Path,
+    installed: &[&PersonalTarget],
+    master: Option<&PersonalMaster>,
+) -> Result<Adoption> {
+    let targets: Vec<_> = installed
+        .iter()
+        .map(|target| target.adoption_input())
+        .collect();
+    let mut adoption = if let Some(master) = master {
+        rulesync_adopt::discover_with_shared(home, &targets, &master.shared)?
+    } else {
+        rulesync_adopt::discover(home, &targets)?
+    };
+    if master.is_some() {
+        adoption.skills.retain(|skill| !skill.locations.is_empty());
+        adoption.skipped.retain(|path, _| !is_harness_path(path));
+    }
     check_delivery_paths(home, adoption.files.keys().map(PathBuf::as_path))?;
+    delivery_worktrees::review_destinations(home, &mut adoption, &targets)?;
+    Ok(adoption)
+}
+
+fn legacy_skill_previews(adoption: &mut Adoption) {
     for skill in &mut adoption.skills {
         let entry = Path::new("SKILL.md");
         skill.locations.retain(|target, folders| {
@@ -178,14 +1082,16 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
             .targets
             .retain(|target| skill.locations.contains_key(target));
     }
-    delivery_worktrees::review_destinations(home, &mut adoption, &targets)?;
-    Ok(adoption)
 }
 
 /// Convert the installed metadata to rulesync's source representation when
 /// staging an adopted skill for this tool. The master retains the original.
 pub fn stage_adopted_skill(target: &str, skill_md: &[u8]) -> Result<Vec<u8>> {
     skill_preview::stage(target, skill_md)
+}
+
+pub fn check_skill_frontmatter(source: &[u8], rendered: &[u8]) -> Result<()> {
+    skill_preview::check_frontmatter(source, rendered)
 }
 
 pub fn fingerprint(value: &impl Serialize) -> Result<String> {
@@ -198,11 +1104,11 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-const ADOPTION_TOKEN_VERSION: &str = "adopt-3";
+const ADOPTION_TOKEN_VERSION: &str = "adopt-5";
 const ADOPTION_FIELDS: [&str; 6] = [
     "file entries",
     "skill locations and upstreams",
-    "skipped skills",
+    "skipped paths",
     "personal rules",
     "personal skill master",
     "Git worktree destinations",
@@ -232,8 +1138,13 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
     // matters because adoption authorizes future writes there.
     Ok([
         fingerprint(&files)?,
-        fingerprint(&adoption.skill_locations)?,
-        fingerprint(&adoption.skipped)?,
+        fingerprint(&(&adoption.skill_locations, &adoption.skill_byte_copies))?,
+        fingerprint(&(
+            &adoption.skipped,
+            &adoption.skipped_rules,
+            &adoption.skipped_tools,
+            &adoption.added_tools,
+        ))?,
         fingerprint(&(
             &adoption.shared,
             &adoption.overlays,
@@ -242,6 +1153,13 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
         fingerprint(&adoption.skills)?,
         fingerprint(&adoption.worktree_writes)?,
     ])
+}
+
+pub fn adoption_token(adoption: &Adoption) -> Result<String> {
+    Ok(format!(
+        "{ADOPTION_TOKEN_VERSION}:{}",
+        adoption_digests(adoption)?.join(":")
+    ))
 }
 
 pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
@@ -258,7 +1176,7 @@ pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
     {
         ensure!(
             actual == expected,
-            "The adoption plan changed in {field}. Review it again."
+            "The adoption plan changed in {field}. No tool files were written. Review it again."
         );
     }
     Ok(())
@@ -267,6 +1185,23 @@ pub fn verify_adoption_token(adoption: &Adoption, token: &str) -> Result<()> {
 /// No staging, renderer, daemon, database, or data-root lookup on this path.
 pub fn plan_adoption(home: &Path) -> Result<AdoptionPlan> {
     adoption_plan(&discover_adoption(home)?)
+}
+
+/// The standalone read-only plan also works before the opt-in writer is enabled.
+pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
+    if enabled() {
+        let mut plan = plan_adoption(home)?;
+        plan.token.clear();
+        plan.notes.insert(0, "Offline inventory from the installed files. Run `wenlan rules adopt` with the local daemon to see exact skill deliveries and added tools.".into());
+        Ok(plan)
+    } else {
+        let (installed, skipped) =
+            installed_targets(home, [&CLAUDE_TARGET, &CODEX_TARGET].into_iter())?;
+        let mut adoption = discover_targets(home, &installed, None)?;
+        adoption.skipped_tools = skipped;
+        legacy_skill_previews(&mut adoption);
+        adoption_plan(&adoption)
+    }
 }
 
 /// The home-relative path a person reads in the plan, with `/` between parts on
@@ -313,7 +1248,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             diff,
         });
     }
-    for (path, reason) in &adoption.skipped {
+    for (path, reason) in adoption.skipped.iter().chain(&adoption.skipped_rules) {
         files.push(AdoptionChange {
             path: plan_path(path),
             added: 0,
@@ -331,26 +1266,32 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                 .map_or(AdoptionSkillOutcome::PlainCopy, |upstream| {
                     AdoptionSkillOutcome::TrackedUpstream { upstream }
                 }),
+            byte_copy_reason: adoption.skill_byte_copies.get(path).cloned(),
         })
         .chain(adoption.skipped.iter().map(|(path, reason)| AdoptionSkill {
             path: plan_path(path),
             outcome: AdoptionSkillOutcome::Skipped {
                 reason: reason.clone(),
             },
+            byte_copy_reason: None,
         }))
         .collect::<Vec<_>>();
     skills.sort_by(|first, second| first.path.cmp(&second.path));
     let mut notes = Vec::new();
+    if !adoption.added_tools.is_empty() {
+        notes.push(format!(
+            "Add to the existing setup: {}.",
+            adoption.added_tools.join(", ")
+        ));
+    }
     if adoption.codex_sync_replaced {
         notes.push("~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into());
     }
     notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
+    notes.extend(adoption.skipped_tools.iter().cloned());
     notes.extend(adoption.worktree_notes.iter().cloned());
     Ok(AdoptionPlan {
-        token: format!(
-            "{ADOPTION_TOKEN_VERSION}:{}",
-            adoption_digests(adoption)?.join(":")
-        ),
+        token: adoption_token(adoption)?,
         files,
         skills,
         notes,
@@ -363,10 +1304,8 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
-    #[serde(default)]
     pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill<Content>>,
-    #[serde(default)]
     pub overrides: BTreeMap<String, LocalText>,
 }
 
@@ -377,6 +1316,14 @@ pub struct LocalText {
 }
 
 impl PersonalMaster {
+    pub fn enrolls_target(&self, target: &str) -> bool {
+        self.overlays.contains_key(target)
+            || self
+                .skills
+                .iter()
+                .any(|skill| skill.targets.contains(target))
+    }
+
     pub fn new(adoption: &Adoption) -> Self {
         Self {
             shared: adoption.shared.clone(),
@@ -413,6 +1360,26 @@ impl PersonalMaster {
             Some(local) => merge_rule_text(&local.base, &local.edited, &base),
             None => Ok(base),
         }
+    }
+
+    /// Promote a shared edit in place. For a tool overlay, move just the
+    /// edited lines into the shared master and leave its other rules local.
+    pub fn promote_tool_edit(&mut self, target: &str, before: &str, edited: &str) -> Result<bool> {
+        let original = self.overlays.get(target).map(String::as_str).unwrap_or("");
+        let (shared, overlay) = promote_changes(
+            target,
+            self.codex_sync_replaced,
+            &self.shared,
+            original,
+            before,
+            edited,
+        )?;
+        let moved_from_overlay = overlay != original;
+        self.shared = shared;
+        if moved_from_overlay {
+            self.overlays.insert(target.to_owned(), overlay);
+        }
+        Ok(moved_from_overlay)
     }
 }
 
@@ -550,34 +1517,90 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
     Ok(result)
 }
 
-/// Accept a tool's edit into the shared rules only while its original lines
-/// identify exactly one place there. Appended material is put at the end.
-pub fn promote_changes(shared: &str, before: &str, edited: &str) -> Result<String> {
-    let mut shared: Vec<String> = shared.split_inclusive('\n').map(str::to_owned).collect();
-    for change in line_changes(before, edited)? {
-        if change.removed.is_empty() {
-            if let Some(last) = shared.last_mut() {
-                if !last.ends_with('\n') {
-                    last.push('\n');
-                }
-            }
-            shared.extend(change.added);
-            continue;
+fn promote_changes(
+    target: &str,
+    codex_sync_replaced: bool,
+    shared: &str,
+    overlay: &str,
+    before: &str,
+    edited: &str,
+) -> Result<(String, String)> {
+    let base = rulesync_adopt::personal_rule_body(shared, overlay, target, codex_sync_replaced);
+    let header_line_count = rulesync_adopt::personal_rule_body("", "", target, codex_sync_replaced)
+        .split_inclusive('\n')
+        .count();
+    let shared_end = rulesync_adopt::personal_rule_body(shared, "", target, codex_sync_replaced)
+        .split_inclusive('\n')
+        .count();
+    let base_lines: Vec<_> = base.split_inclusive('\n').collect();
+    let before_lines: Vec<_> = before.split_inclusive('\n').collect();
+    let mut before_to_base = vec![None; before_lines.len()];
+    let mut base_at = 0;
+    let mut before_at = 0;
+    for change in line_changes(&base, before)? {
+        let unchanged = change.start - base_at;
+        for offset in 0..unchanged {
+            before_to_base[before_at + offset] = Some(base_at + offset);
         }
-        let mut matches = shared
-            .windows(change.removed.len())
-            .enumerate()
-            .filter_map(|(at, lines)| (lines == change.removed).then_some(at));
-        let at = matches
-            .next()
-            .context("this change has no matching shared rule")?;
-        ensure!(
-            matches.next().is_none(),
-            "this change matches multiple shared rules"
-        );
-        shared.splice(at..at + change.removed.len(), change.added);
+        base_at = change.start + change.removed.len();
+        before_at += unchanged + change.added.len();
     }
-    Ok(shared.concat())
+    for offset in 0..base_lines.len() - base_at {
+        before_to_base[before_at + offset] = Some(base_at + offset);
+    }
+    ensure!(before_at + base_lines.len() - base_at == before_lines.len());
+    let mut shared: Vec<String> = shared.split_inclusive('\n').map(str::to_owned).collect();
+    let mut overlay: Vec<String> = overlay.split_inclusive('\n').map(str::to_owned).collect();
+    let mut changes_to_shared = Vec::new();
+    for change in line_changes(before, edited)?.into_iter().rev() {
+        if !change.removed.is_empty() {
+            let mapped: Vec<_> = (change.start..change.start + change.removed.len())
+                .map(|before_at| before_to_base.get(before_at).copied().flatten())
+                .collect();
+            let base_at = mapped
+                .first()
+                .copied()
+                .flatten()
+                .context("this change includes text outside the authored rules")?;
+            ensure!(
+                mapped
+                    .iter()
+                    .enumerate()
+                    .all(|(offset, at)| *at == Some(base_at + offset)),
+                "this change does not map to one authored rule section"
+            );
+            let end = base_at + change.removed.len();
+            ensure!(
+                base_at >= header_line_count,
+                "this change targets the managed tool header"
+            );
+            if base_at < shared_end {
+                ensure!(
+                    end <= shared_end,
+                    "this change crosses the shared and tool overlay boundary"
+                );
+                let at = base_at - header_line_count;
+                ensure!(at + change.removed.len() <= shared.len());
+                shared.splice(at..at + change.removed.len(), change.added);
+                continue;
+            }
+            let at = base_at - shared_end;
+            ensure!(at + change.removed.len() <= overlay.len());
+            overlay.drain(at..at + change.removed.len());
+        }
+        if !change.added.is_empty() {
+            changes_to_shared.push(change.added);
+        }
+    }
+    for addition in changes_to_shared.into_iter().rev() {
+        if let Some(last) = shared.last_mut() {
+            if !last.ends_with('\n') {
+                last.push('\n');
+            }
+        }
+        shared.extend(addition);
+    }
+    Ok((shared.concat(), overlay.concat()))
 }
 
 pub fn write_root_rule(input: &Path, text: &str) -> Result<()> {
@@ -630,6 +1653,100 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rulesync_adoption_imports_installed_overlays_and_skips_missing_tools() {
+        let home = tempfile::tempdir().unwrap();
+        for (path, text) in [
+            (".agents/AGENTS.md", "Shared rule.\n"),
+            (".gemini/GEMINI.md", "Shared rule.\nGemini only.\n"),
+            (
+                ".gemini/config/GEMINI.md",
+                "Shared rule.\nAntigravity only.\n",
+            ),
+            (
+                ".copilot/copilot-instructions.md",
+                "Shared rule.\nCopilot only.\n",
+            ),
+        ] {
+            let path = home.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let adoption = discover_adoption(home.path()).unwrap();
+        assert_eq!(
+            adoption.overlays,
+            BTreeMap::from([
+                ("geminicli".into(), "Gemini only.\n".into()),
+                ("antigravity-ide".into(), "Antigravity only.\n".into()),
+                ("copilotcli".into(), "Copilot only.\n".into()),
+            ])
+        );
+        let plan = adoption_plan(&adoption).unwrap();
+        assert_eq!(plan.files.len(), 3);
+        for tool in ["Claude Code", "Codex", "Cursor", "OpenCode", "Muse Code"] {
+            assert!(plan
+                .notes
+                .iter()
+                .any(|note| note.starts_with(&format!("Skipped {tool} "))));
+        }
+        assert!(!home.path().join(".cursor").exists());
+        assert!(!home.path().join(".config").exists());
+    }
+
+    #[test]
+    fn rulesync_personal_destinations_are_portable_and_have_one_owner() {
+        let expected = [
+            ("claudecode", ".claude/CLAUDE.md", ".claude/skills"),
+            ("codexcli", ".codex/AGENTS.md", ".codex/skills"),
+            ("geminicli", ".gemini/GEMINI.md", ".gemini/skills"),
+            (
+                "antigravity-ide",
+                ".gemini/config/GEMINI.md",
+                ".gemini/config/skills",
+            ),
+            (
+                "copilotcli",
+                ".copilot/copilot-instructions.md",
+                ".copilot/skills",
+            ),
+            ("cursor", ".cursor/AGENTS.md", ".cursor/skills"),
+            (
+                "opencode",
+                ".config/opencode/AGENTS.md",
+                ".config/opencode/skills",
+            ),
+            ("musecode", ".config/muse/AGENTS.md", ".config/muse/skills"),
+        ];
+        assert_eq!(PERSONAL_TARGETS.len(), expected.len());
+        let mut destinations = std::collections::BTreeSet::new();
+        for (id, rules, skills) in expected {
+            let target = personal_target(id).unwrap();
+            for (actual, expected) in [
+                (target.rules.destination, rules),
+                (target.skills.destination, skills),
+            ] {
+                let path = Path::new(actual);
+                assert!(path.starts_with(target.folder()));
+                assert!(!is_harness_path(path));
+                assert!(destinations.insert(plan_path(path).to_ascii_lowercase()));
+                assert_eq!(plan_path(path), expected);
+                for home in ["/Users/Test User", "/home/test-user", "C:/Users/Test User"] {
+                    let home = Path::new(home);
+                    assert_eq!(home.join(path), home.join(expected));
+                    let resolved = home.join(path);
+                    let relative = resolved.strip_prefix(home).unwrap();
+                    assert_eq!(plan_path(relative), expected);
+                }
+            }
+        }
+        let gemini = personal_target("geminicli").unwrap();
+        let windows_relative = plan_path(Path::new(gemini.rules.destination)).replace('/', "\\");
+        assert_eq!(
+            format!("%USERPROFILE%\\{windows_relative}"),
+            r"%USERPROFILE%\.gemini\GEMINI.md"
+        );
+    }
+
+    #[test]
     fn line_changes_include_deletions_and_final_newline_changes() {
         let (added, removed, rendered) = describe_change("AGENTS.md", "a\nb\nc", "a\nc\n");
         assert_eq!((added, removed), (1, 2));
@@ -648,9 +1765,149 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_change_requires_an_unambiguous_anchor() {
-        assert!(promote_changes("x\nx\n", "x\n", "y\n").is_err());
-        assert_eq!(promote_changes("x\ny\n", "x\n", "z\n").unwrap(), "z\ny\n");
+    fn promotion_uses_edit_position_to_disambiguate_repeated_rules() {
+        assert_eq!(
+            promote_changes("cursor", false, "x\nx\n", "", "x\nx\n", "y\nx\n").unwrap(),
+            ("y\nx\n".into(), String::new())
+        );
+        assert_eq!(
+            promote_changes("cursor", false, "x\ny\n", "", "x\ny\n", "z\ny\n").unwrap(),
+            ("z\ny\n".into(), String::new())
+        );
+        assert_eq!(
+            promote_changes("cursor", false, "x\n", "y\ny\n", "x\ny\ny\n", "x\nz\ny\n").unwrap(),
+            ("x\nz\n".into(), "y\n".into())
+        );
+    }
+
+    #[test]
+    fn all_tools_promotion_targets_the_edited_overlay_occurrence() {
+        let mut master = PersonalMaster {
+            shared: "Repeated rule.\n".into(),
+            overlays: BTreeMap::from([("cursor".into(), "Repeated rule.\n".into())]),
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let before = master.base_rule_text("cursor", &[]);
+
+        assert!(master
+            .promote_tool_edit("cursor", &before, "Repeated rule.\nEdited tool rule.\n")
+            .unwrap());
+        assert_eq!(master.shared, "Repeated rule.\nEdited tool rule.\n");
+        assert_eq!(master.overlays.get("cursor").unwrap(), "");
+    }
+
+    #[test]
+    fn promotion_maps_codex_overlay_edits_past_the_managed_header() {
+        let mut master = PersonalMaster {
+            shared: "Shared rule.\n".into(),
+            overlays: BTreeMap::from([("codexcli".into(), "Codex rule.\n".into())]),
+            codex_sync_replaced: true,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let before = master.base_rule_text("codexcli", &[]);
+        let edited = before.replace("Codex rule.", "Edited Codex rule.");
+
+        assert!(master
+            .promote_tool_edit("codexcli", &before, &edited)
+            .unwrap());
+        assert_eq!(master.shared, "Shared rule.\nEdited Codex rule.\n");
+        assert_eq!(master.overlays.get("codexcli").unwrap(), "");
+    }
+
+    #[test]
+    fn promotion_maps_edits_after_an_accepted_local_insertion() {
+        let mut master = PersonalMaster {
+            shared: "Shared rule.\n".into(),
+            overlays: BTreeMap::from([("cursor".into(), "Cursor rule.\n".into())]),
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let base = master.base_rule_text("cursor", &[]);
+        let local = "Shared rule.\nAccepted local insertion.\nCursor rule.\n";
+        master.overrides.insert(
+            "cursor".into(),
+            LocalText {
+                base,
+                edited: local.into(),
+            },
+        );
+        let before = master.rule_text("cursor", &[]).unwrap();
+        let edited = before.replace("Cursor rule.", "Edited Cursor rule.");
+
+        assert!(master
+            .promote_tool_edit("cursor", &before, &edited)
+            .unwrap());
+        assert_eq!(master.shared, "Shared rule.\nEdited Cursor rule.\n");
+        assert_eq!(master.overlays.get("cursor").unwrap(), "");
+    }
+
+    #[test]
+    fn promotion_keeps_multiple_appended_overlay_edits_in_file_order() {
+        let mut master = PersonalMaster {
+            shared: "Shared rule.\n".into(),
+            overlays: BTreeMap::from([(
+                "cursor".into(),
+                "First rule.\nMiddle rule.\nLast rule.\n".into(),
+            )]),
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+        let before = master.base_rule_text("cursor", &[]);
+        let edited = before
+            .replace("First rule.", "Edited first rule.")
+            .replace("Last rule.", "Edited last rule.");
+
+        assert!(master
+            .promote_tool_edit("cursor", &before, &edited)
+            .unwrap());
+        assert_eq!(
+            master.shared,
+            "Shared rule.\nEdited first rule.\nEdited last rule.\n"
+        );
+        assert_eq!(master.overlays.get("cursor").unwrap(), "Middle rule.\n");
+    }
+
+    #[test]
+    fn promotion_refuses_edits_inside_unmanaged_text_but_keeps_new_additions() {
+        assert!(promote_changes(
+            "cursor",
+            false,
+            "Shared rule.\n",
+            "",
+            "Shared rule.\nGenerated or local text.\n",
+            "Shared rule.\nEdited generated or local text.\n",
+        )
+        .is_err());
+
+        assert_eq!(
+            promote_changes(
+                "cursor",
+                false,
+                "Shared rule.\n",
+                "",
+                "Shared rule.\n## How I work\n- generated rule\n",
+                "Shared rule.\n## How I work\n- generated rule\nNew rule\n",
+            )
+            .unwrap(),
+            ("Shared rule.\nNew rule\n".into(), String::new())
+        );
+        assert_eq!(
+            promote_changes(
+                "cursor",
+                false,
+                "",
+                "",
+                "## How I work\n- generated rule\n",
+                "## How I work\n- generated rule\nNew rule\n",
+            )
+            .unwrap(),
+            ("New rule\n".into(), String::new())
+        );
     }
 
     #[test]

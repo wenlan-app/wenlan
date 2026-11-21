@@ -765,7 +765,9 @@ and wait for evidence that people need them.
   replacement of an existing line stays with that tool by default. New text
   and conflicting edits to the same line wait for the person to review them
   using `wenlan rules review`. The person can accept a change for one tool or
-  share it across tools.
+  share it across tools. Sharing an edit to a uniquely matched overlay rule
+  moves the revised lines into the shared rules and keeps the rest of that
+  overlay local.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
@@ -897,14 +899,25 @@ and wait for evidence that people need them.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 - **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the
-  existing files and links and prints a per-file diff and line counts. It
-  can run with no daemon and creates no files. Interactive adoption shows
-  the daemon's read-only preview and asks the person to type `yes` at
+  existing files and links. With the opt-in writer and a running daemon it
+  prints the delivered diff and line counts. It can also list the installed
+  files offline. Interactive adoption shows the same delivered diff and
+  asks the person to type `yes` at
   their terminal. A changed plan names the part that changed and needs a
   fresh review. Wenlan backs up every destination before writing
   and replaces the adopted links with managed files or folders.
-  The skill diff shows the rendered `SKILL.md` the tool receives. Adoption
-  verifies that preview against pinned rulesync output before applying it.
+  The skill diff uses pinned rulesync's staged output for each tool.
+  If rulesync rejects a skill's frontmatter, or drops or changes a field,
+  Wenlan delivers that skill folder byte-for-byte, keeps the copied file and
+  directory modes, and says why. Skills with internal symlinks stay unmanaged.
+  Unsafe paths and links stay in place with a reason in the plan. Adoption
+  stages the files again and checks their bytes against the approved plan before writing.
+  On Windows, the plan lists linked rule files and skill folders as unmanaged.
+  On Windows, a replacement keeps the destination's access rules, including
+  custom rules. New entries inherit permissions from their folder. A different
+  owner from the account running Wenlan, an integrity label or other security
+  policy, a protected audit list or a detected explicit audit rule, or a failure
+  to preserve permissions leaves the path unmanaged.
   The preview names any Git worktree that contains a delivery destination.
   The preview says `~/.agents` is left untouched. Wenlan reads its shared
   sources and replaces adopted links at the tool paths. Personal Codex
@@ -915,22 +928,51 @@ and wait for evidence that people need them.
   Codex adoption replaces the legacy harness-generated header with a
   Wenlan-managed header. The preview says the old sync script becomes
   unused for this file and stays in place.
+  With `WENLAN_RULESYNC=1`, adoption also covers the personal folders for
+  Gemini CLI, Antigravity, GitHub Copilot CLI, Cursor, OpenCode, and Muse Code.
+  The initial plan names the tools it skips because their folders are
+  absent. When another tool appears, sync offers it for adoption. The next
+  adoption preview shows the added tool's rule overlay and skills. Approval
+  adds its files to the existing backup and leaves existing deliveries in place.
+  If an addition stops early, sync or restore rolls back that addition and
+  keeps earlier tools enrolled. Gemini
+  CLI owns the delivery to the legacy Gemini rule path and Antigravity's
+  own overlay goes to its config rule path. Cursor receives Markdown at
+  `~/.cursor/AGENTS.md`. Automatic loading by Cursor is unverified.
   A skill that exceeds 32 MiB total or 2048 files and directories stays
   where it is, unmanaged. The preview states the limit it exceeded.
   `wenlan rules restore` asks the person again and uses that backup to
   restore the original bytes and link targets. It keeps any destination
   that has changed since delivery available for review.
+  Restore keeps the backup when an unreviewed spelling differs at any point
+  in the path or when a needed parent disappeared outside an approved change.
+  On Windows, restore keeps the backup when it cannot verify its recorded owner
+  or preserve the permissions of the destination it would have to replace.
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
-  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement` and `rulesync_personal_lifecycle_keeps_the_harness_read_only`.
+  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
 
 - **UX-SKILL-16** `shipped` `save_skill` in a local AI tool proposes the
-  skill's text and files. `wenlan skills save` saves an approved local skill
-  directly when the person runs it. Wenlan also detects a new or edited skill
+  skill's text and files. `wenlan skills save` saves the source directly when
+  the person runs it. Wenlan offers delivery to enrolled tools for review.
+  Wenlan also detects a new or edited skill
   in a tool's folder. It offers that content for the current tool or all
   supported tools. The person's terminal shows the complete proposal and
-  asks for typed `yes` before accepting it. Only accepted source files are
-  eligible for delivery. Invisible characters and bidirectional controls
-  in new skill text are refused.
+  asks for typed `yes` before accepting it. The review for an edited skill
+  shows the changed files and lists the removed files. A changed adopted
+  file that is too large to preview shows its size and SHA-256 before and
+  after the edit. Existing invisible characters on unchanged lines appear
+  as code points in the preview. Newly introduced invisible characters
+  and bidirectional controls are refused. Only accepted source files
+  are eligible for delivery.
+  Before approval, the review lists each file or directory the chosen scope
+  will create, change, or remove. It also names any saved tool versions the
+  shared version will replace. Content edits keep each existing file's
+  permissions. The review shows any planned permission change per destination.
+  If a destination is blocked or the delivery
+  plan changes before confirmation, Wenlan asks for a fresh review. A tool
+  enrolled later gets its own delivery proposal for a previously reviewed
+  shared skill. On a case-insensitive volume, a case-only rename is shown
+  with both spellings. Restoring the setup brings back the original spelling.
   Tests `rulesync_skill_agent_proposal_survives_reopen_and_requires_review` and `ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag`.
 
 - **UX-SKILL-17** `shipped` `wenlan rules settings` asks the person to

@@ -1590,7 +1590,7 @@ pub fn is_invisible(c: char) -> bool {
 /// A character that must be written out to be seen: a control character
 /// (which can move the cursor, hide a line or recolour text) or one that
 /// does not show at all. Line breaks and tabs are neither.
-fn needs_a_mark(c: char) -> bool {
+pub(crate) fn needs_a_mark(c: char) -> bool {
     !matches!(c, '\n' | '\t') && (c.is_control() || is_invisible(c))
 }
 
@@ -1684,7 +1684,7 @@ pub fn preview_files(files: &[SkillFile]) -> Vec<ShownFile> {
 
 /// Files an AI tool reads as instructions or notes; they must be text a
 /// person can be shown.
-fn must_be_readable_text(path: &str) -> bool {
+pub(crate) fn must_be_readable_text(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower == "skill.md"
         || [".md", ".markdown", ".mdx", ".txt"]
