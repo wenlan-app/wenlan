@@ -85,6 +85,14 @@ pub(super) fn plan_deliveries(
             || "Adopt at this path. The rulesync output matches every original byte.".to_owned(),
             |reason| format!("Adopt at this path and deliver byte for byte because {reason}."),
         );
+        adoption.personal_file_codes.insert(
+            path.clone(),
+            if file.byte_copy_reason.is_some() {
+                Code::PersonalByteCopy
+            } else {
+                Code::PersonalImport
+            },
+        );
         adoption.personal_file_notes.insert(path, note);
     }
     Ok(())
@@ -127,8 +135,15 @@ pub(super) fn draft(
         "command and subagent text must be UTF-8 and at most 1 MiB"
     );
     let mut diff = describe_personal_file_change(&preview_path(path), before, after);
+    let mut diff_codes = Vec::new();
+    if (before.contains("\r\n") && before.replace("\r\n", "\n") == after)
+        || (after.contains("\r\n") && after.replace("\r\n", "\n") == before)
+    {
+        diff_codes.push(Code::LineEndingsChanged);
+    }
     let permissions = baseline.file_mode().zip(current.file_mode());
     if let Some((previous, edited)) = permissions.filter(|(previous, edited)| previous != edited) {
+        diff_codes.push(Code::PermissionsChanged);
         diff.push_str(&format!(
             "Permissions changed from {} to {}.\n",
             previous.description(),
@@ -137,8 +152,14 @@ pub(super) fn draft(
     }
     if diff.is_empty() {
         diff = match (&current, baseline) {
-            (Snapshot::Absent, _) => "Remove the empty file.",
-            (_, Snapshot::Absent) => "Create an empty file.",
+            (Snapshot::Absent, _) => {
+                diff_codes.push(Code::RemoveEmpty);
+                "Remove the empty file."
+            }
+            (_, Snapshot::Absent) => {
+                diff_codes.push(Code::CreateEmpty);
+                "Create an empty file."
+            }
             _ => bail!("the file changed without a readable text or permissions change"),
         }
         .into();
@@ -175,6 +196,7 @@ pub(super) fn draft(
         }),
         current,
         diff,
+        diff_codes,
         needs_review: true,
     })
 }
@@ -241,6 +263,71 @@ impl SharePlan {
         }
         lines.join("\n")
     }
+
+    fn notices(&self, draft: &Draft, scope: &Scope) -> Vec<RulesSetupNotice> {
+        let code = if self.operations.len() == 1 {
+            Code::PersonalOnly
+        } else {
+            Code::PersonalShare
+        };
+        let mut notices = vec![code.into(), source_notice(draft)];
+        notices.extend(
+            scope
+                .skipped
+                .keys()
+                .map(|tool| RulesSetupNotice::for_tool(Code::SkipIncompatible, tool_name(tool))),
+        );
+        for op in self
+            .operations
+            .iter()
+            .filter(|op| op.path != draft.path && !op.desired.is_directory())
+        {
+            let code = if op.desired == Snapshot::Absent {
+                Code::RemoveCopy
+            } else if op.seen == op.desired {
+                Code::KeepCopy
+            } else if op.seen == Snapshot::Absent {
+                Code::CreateCopy
+            } else {
+                Code::ReplaceCopy
+            };
+            notices.push(RulesSetupNotice::for_tool(code, tool_at(&op.path)));
+            if op
+                .desired
+                .file_mode()
+                .zip(draft.current.file_mode())
+                .is_some_and(|(mode, source)| mode.grants_more_read_access_than(source))
+            {
+                notices.push(RulesSetupNotice::for_tool(
+                    Code::WiderRead,
+                    tool_at(&op.path),
+                ));
+            }
+        }
+        notices.extend(
+            self.blocked
+                .keys()
+                .map(|path| RulesSetupNotice::for_tool(Code::SkipDestination, tool_at(path))),
+        );
+        notices.extend(
+            self.missing
+                .iter()
+                .map(|path| RulesSetupNotice::for_tool(Code::SkipNoCopy, tool_at(path))),
+        );
+        if !self.worktree_writes.is_empty() {
+            notices.push(Code::GitDelivery.into());
+        }
+        notices
+    }
+}
+
+fn source_notice(draft: &Draft) -> RulesSetupNotice {
+    let code = if draft.current == Snapshot::Absent {
+        Code::KeepRemoval
+    } else {
+        Code::KeepEdit
+    };
+    RulesSetupNotice::for_tool(code, tool_at(&draft.path))
 }
 
 fn describe_operation(op: &Pending, source_mode: Option<FileMode>) -> String {
@@ -308,23 +395,28 @@ impl Card {
         path: Option<&Path>,
         action: PullbackAction,
         worktrees: &DeliveryWorktrees,
-    ) -> Result<(String, String)> {
+    ) -> Result<(String, String, Vec<RulesSetupNotice>, Vec<Code>)> {
         let Some(path) = path else {
             return Ok((
                 self.wire.diff.clone(),
                 "Restore the last approved versions for these files.".into(),
+                vec![Code::RestoreReview.into()],
+                self.wire.diff_codes.clone(),
             ));
         };
         let draft = drafts
             .iter()
             .find(|draft| draft.path == path)
             .context("missing personal file edit")?;
-        let plan = match action {
-            PullbackAction::AllTools => self.share_plans[path].describe(draft, worktrees),
+        let DraftScope::PersonalFile(scope) = &draft.scope else {
+            bail!("expected a personal command or subagent");
+        };
+        let (plan, plan_codes) = match action {
+            PullbackAction::AllTools => {
+                let plan = &self.share_plans[path];
+                (plan.describe(draft, worktrees), plan.notices(draft, scope))
+            }
             PullbackAction::ToolOnly => {
-                let DraftScope::PersonalFile(scope) = &draft.scope else {
-                    bail!("expected a personal command or subagent");
-                };
                 let choice = format!("This review is for {} only.", tool_at(path));
                 let peers: BTreeSet<_> = scope
                     .skipped
@@ -338,7 +430,13 @@ impl Card {
                             .map(|peer| tool_at(peer)),
                     )
                     .collect();
-                std::iter::once(choice.clone())
+                let mut notices = vec![Code::PersonalOnly.into(), source_notice(draft)];
+                notices.extend(
+                    peers
+                        .iter()
+                        .map(|tool| RulesSetupNotice::for_tool(Code::SkipToolOnly, tool)),
+                );
+                let plan = std::iter::once(choice.clone())
                     .chain(std::iter::once(keep_source(draft, scope.previous_mode)))
                     .chain(
                         peers
@@ -346,11 +444,17 @@ impl Card {
                             .map(|tool| format!("  Skip {tool}. {choice}")),
                     )
                     .collect::<Vec<_>>()
-                    .join("\n")
+                    .join("\n");
+                (plan, notices)
             }
             PullbackAction::Dismiss => unreachable!("dismiss does not select a source"),
         };
-        Ok((draft.diff.clone(), plan))
+        Ok((
+            draft.diff.clone(),
+            plan,
+            plan_codes,
+            draft.diff_codes.clone(),
+        ))
     }
 }
 
@@ -544,11 +648,14 @@ impl Setup {
                 manifest
                     .worktree_writes
                     .extend(plan.worktree_writes.clone());
-                result.blocked.extend(
-                    plan.blocked
-                        .iter()
-                        .map(|(path, reason)| format!("{}: {reason}", path.display())),
-                );
+                for (path, reason) in &plan.blocked {
+                    block_path(
+                        &mut result,
+                        path,
+                        Code::SkipDestination,
+                        format!("{}: {reason}", path.display()),
+                    );
+                }
                 plan.operations.clone()
             }
             PullbackAction::ToolOnly => {

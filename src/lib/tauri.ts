@@ -1209,12 +1209,20 @@ export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
 
 export type PullbackAction = "tool_only" | "all_tools" | "dismiss";
 
+export interface RulesSetupNotice {
+  // The daemon can add codes before the app learns their localized copy.
+  code: string;
+  tools?: string[];
+}
+
 export interface PullbackCard {
   id: string;
   kind: "scope" | "conflict";
   files: string[];
   diff: string;
   reason: string;
+  reason_code?: string;
+  diff_codes?: string[];
 }
 
 export interface PullbackDecision {
@@ -1226,6 +1234,8 @@ export interface PullbackDecision {
 export interface PullbackPreview {
   diff: string;
   plan: string;
+  plan_codes?: RulesSetupNotice[];
+  diff_codes?: string[];
 }
 
 export interface RulesSetupTool {
@@ -1245,14 +1255,23 @@ export interface RulesSetupStatus {
 
 export interface RulesAdoptionPlan {
   token: string;
-  files: { path: string; added: number; removed: number; diff: string }[];
+  files: {
+    path: string; added: number; removed: number; diff: string;
+    tool?: RulesSetupTool; notice_codes?: string[];
+    text_diff?: { kind: "file_text" } | { kind: "extracted"; diff: string };
+  }[];
   notes?: string[];
+  note_codes?: RulesSetupNotice[];
   tools?: { name: string; rule_files: number; skills: number; other_files: number }[];
   skipped_files?: string[];
   skipped_tools?: string[];
+  skipped_tool_codes?: RulesSetupNotice[];
   skills: ({
     path: string;
+    tool?: RulesSetupTool;
+    reason_code?: string;
     byte_copy_reason?: string;
+    byte_copy_reason_code?: string;
   } & (
     | { outcome: "tracked_upstream"; upstream: SkillUpstream }
     | { outcome: "plain_copy" }
@@ -1273,6 +1292,7 @@ export interface AdoptedSkillUpdate {
 export interface RulesSyncReport {
   written: string[];
   blocked: string[];
+  blocked_codes?: RulesSetupNotice[];
   proposals: PullbackCard[];
   message: string;
 }

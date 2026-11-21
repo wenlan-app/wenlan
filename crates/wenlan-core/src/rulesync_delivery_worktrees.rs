@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Read-only discovery of Git worktrees containing personal delivery paths.
 
+use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSetupNotice};
+
+fn worktree_notice(code: Code, tool: &str) -> RulesSetupNotice {
+    super::personal_target(tool).map_or_else(
+        || code.into(),
+        |target| RulesSetupNotice::for_tool(code, target.tool.display_name()),
+    )
+}
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
@@ -134,6 +143,9 @@ pub(super) fn review_destinations(
         if let Some(path) = &target.rules_path {
             if let Some(root) = adoption.worktree_writes.get(path) {
                 let name = repository(root);
+                adoption
+                    .worktree_note_codes
+                    .push(worktree_notice(Code::GitRule, &target.tool));
                 adoption.worktree_notes.push(format!(
                     "~/{} is inside the Git repository {name}. Wenlan will manage this file there, and its writes can appear as changes in that repository.",
                     path.display()
@@ -162,6 +174,9 @@ pub(super) fn review_destinations(
                 format!("~/{}", scope.display())
             };
             let noun = if count == 1 { "folder" } else { "folders" };
+            adoption
+                .worktree_note_codes
+                .push(worktree_notice(Code::GitSkills, &target.tool));
             adoption.worktree_notes.push(format!(
                 "{location} is inside the Git repository {name}. Wenlan will manage {count} skill {noun} there, and its writes can appear as changes in that repository."
             ));
@@ -170,6 +185,12 @@ pub(super) fn review_destinations(
     for path in adoption.personal_files.keys() {
         if let Some(root) = adoption.worktree_writes.get(path) {
             let name = repository(root);
+            adoption.worktree_note_codes.push(
+                crate::rulesync_personal_files::location_of(path).map_or_else(
+                    || Code::GitPersonalFile.into(),
+                    |location| worktree_notice(Code::GitPersonalFile, location.tool),
+                ),
+            );
             adoption.worktree_notes.push(format!(
                 "~/{} is inside the Git repository {name}. Delivery can change this checkout.",
                 path.display()
@@ -180,6 +201,9 @@ pub(super) fn review_destinations(
     if adoption.skipped.keys().any(|path| path.starts_with(shared)) {
         if let Some(root) = worktrees.at(shared)? {
             let name = git_repository_name(&root).unwrap_or_else(|| worktrees.display(&root));
+            adoption
+                .worktree_note_codes
+                .push(Code::GitSharedSkills.into());
             adoption.worktree_notes.push(format!(
                 "~/{SHARED_SKILLS} is inside the Git repository {name}. Wenlan reads the shared skills there and leaves that directory in place."
             ));

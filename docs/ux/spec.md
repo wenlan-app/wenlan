@@ -1147,7 +1147,7 @@ and wait for evidence that people need them.
   only. A conflict card offers those choices and No. It says “No puts
   <tool> back to the earlier version” (“選「不要」，<tool> 改回原本的版本”)
   underneath, naming all affected source tools when there are competing
-  edits. The app shows the daemon’s reason, files, and diff. It previews
+  edits. The app shows the reason, files, and diff. It previews
   the selected choice and asks for confirmation before applying it.
 - **UX-SKILL-21** `shipped` An available adopted skill update adds a New
   version badge to the skill row and contributes to the status line on
@@ -1157,6 +1157,10 @@ and wait for evidence that people need them.
   items. The preview says the shared setup stays untouched and binds
   approval to that plan. Restore asks again and says later edits stay
   where they are for review.
+- **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
+  localized codes. A missing or unknown code shows a generic message.
+  Cards, previews, adoption details and feedback hide paths. A diff header
+  names the tool. A file name may appear beside its tool name.
 
 ## From the terminal
 

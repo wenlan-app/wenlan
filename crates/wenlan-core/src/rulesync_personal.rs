@@ -13,12 +13,13 @@ use cap_std::fs::{Dir, Metadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{
-    AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome, AdoptionTool,
+    AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome, AdoptionTextDiff,
+    AdoptionTool, RulesSetupCode as Code, RulesSetupNotice, RulesSetupTool,
 };
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
 use crate::rulesync_adopt::{
-    self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionTarget,
+    self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionSkip, AdoptionTarget,
 };
 
 #[path = "rulesync_delivery_worktrees.rs"]
@@ -986,7 +987,7 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
     let tools = installed.iter().map(|target| target.id);
     let files = rulesync_adopt::discover_personal_files(home, tools, &BTreeSet::new())?;
     let mut adoption = discover_targets(home, &installed, None, Some(files))?;
-    adoption.skipped_tools = skipped;
+    record_skipped_tools(&mut adoption, skipped);
     Ok(adoption)
 }
 
@@ -1037,7 +1038,7 @@ pub fn additional_personal_files(
 fn installed_targets<'a>(
     home: &Path,
     candidates: impl Iterator<Item = &'a PersonalTarget>,
-) -> Result<(Vec<&'a PersonalTarget>, Vec<String>)> {
+) -> Result<(Vec<&'a PersonalTarget>, Vec<&'a PersonalTarget>)> {
     let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
     let mut targets = Vec::new();
     let mut skipped_tools = Vec::new();
@@ -1045,7 +1046,7 @@ fn installed_targets<'a>(
         match root.symlink_metadata(target.folder()) {
             Ok(_) => targets.push(target),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                skipped_tools.push(target.skipped_note());
+                skipped_tools.push(target);
             }
             Err(error) => {
                 return Err(error)
@@ -1054,6 +1055,37 @@ fn installed_targets<'a>(
         }
     }
     Ok((targets, skipped_tools))
+}
+
+fn record_skipped_tools(adoption: &mut Adoption, tools: Vec<&PersonalTarget>) {
+    for target in tools {
+        adoption.skipped_tools.push(target.skipped_note());
+        adoption.skipped_tool_codes.push(RulesSetupNotice::for_tool(
+            Code::ToolMissing,
+            target.tool.display_name(),
+        ));
+    }
+}
+
+/// The catalog name for a home-relative adoption destination.
+pub fn adoption_tool(path: &Path) -> Option<RulesSetupTool> {
+    let personal_file = crate::rulesync_personal_files::LOCATIONS
+        .iter()
+        .find(|spec| path.starts_with(spec.directory));
+    PERSONAL_TARGETS
+        .iter()
+        .find(|target| {
+            path == Path::new(target.rules.destination)
+                || path.starts_with(target.skills.destination)
+                || personal_file.is_some_and(|file| file.tool == target.id)
+                || (target.id == "antigravity-ide"
+                    && (path.starts_with(".gemini/config/workflows")
+                        || path.starts_with(".gemini/antigravity/global_workflows")))
+        })
+        .map(|target| RulesSetupTool {
+            id: target.agent.into(),
+            name: target.tool.display_name().into(),
+        })
 }
 
 fn discover_targets(
@@ -1103,7 +1135,10 @@ fn legacy_skill_previews(adoption: &mut Adoption) {
                         adoption.skill_locations.remove(folder);
                         adoption.skipped.insert(
                             folder.clone(),
-                            format!("cannot preview the delivered SKILL.md ({error:#})"),
+                            AdoptionSkip::new(
+                                Code::SkillPreviewFailed,
+                                format!("cannot preview the delivered SKILL.md ({error:#})"),
+                            ),
                         );
                     }
                     false
@@ -1231,13 +1266,14 @@ pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
     if enabled() {
         let mut plan = plan_adoption(home)?;
         plan.token.clear();
+        plan.note_codes.insert(0, Code::OfflineInventory.into());
         plan.notes.insert(0, "Offline inventory from the installed files. Run `wenlan rules adopt` with the local daemon to see the exact deliveries and additions to your setup.".into());
         Ok(plan)
     } else {
         let (installed, skipped) =
             installed_targets(home, [&CLAUDE_TARGET, &CODEX_TARGET].into_iter())?;
         let mut adoption = discover_targets(home, &installed, None, None)?;
-        adoption.skipped_tools = skipped;
+        record_skipped_tools(&mut adoption, skipped);
         legacy_skill_previews(&mut adoption);
         adoption_plan(&adoption)
     }
@@ -1252,11 +1288,37 @@ fn plan_path(path: &Path) -> String {
         .join("/")
 }
 
+fn display_entry(entry: &AdoptionEntry) -> (Option<Code>, &str) {
+    match entry {
+        AdoptionEntry::File(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) if !text.contains('\0') => (None, text),
+            _ => (Some(Code::EntryBinary), ""),
+        },
+        AdoptionEntry::Symlink { bytes, .. } => (
+            Some(Code::EntryLink),
+            bytes
+                .as_deref()
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .filter(|text| !text.contains('\0'))
+                .unwrap_or_default(),
+        ),
+        AdoptionEntry::Directory => (Some(Code::EntryDirectory), ""),
+        AdoptionEntry::Missing => (None, ""),
+    }
+}
+
 pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     let mut files = Vec::new();
     for (path, file) in &adoption.files {
         let personal_source = adoption.personal_files.contains_key(path);
         let personal_note = adoption.personal_file_notes.get(path);
+        let tool = adoption_tool(path);
+        let mut notice_codes = adoption
+            .personal_file_codes
+            .get(path)
+            .copied()
+            .into_iter()
+            .collect::<Vec<_>>();
         let path = plan_path(path);
         let entry_text = |entry: &AdoptionEntry| match entry {
             AdoptionEntry::File(bytes) => match std::str::from_utf8(bytes) {
@@ -1282,10 +1344,26 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         let after = entry_text(&file.after);
         line_changes(&before, &after).with_context(|| format!("cannot fully preview {path}"))?;
         let (added, removed, mut diff) = describe_change(&path, &before, &after);
+        // The terminal diff also describes links, directories and binary
+        // entries in English. Preview only the underlying text in the app.
+        let (before_code, before_text) = display_entry(&file.before);
+        let (after_code, after_text) = display_entry(&file.after);
+        let text_diff = if before_code.is_some() || after_code.is_some() {
+            notice_codes.extend(before_code);
+            if after_code != before_code {
+                notice_codes.extend(after_code);
+            }
+            AdoptionTextDiff::Extracted {
+                diff: describe_change(&path, before_text, after_text).2,
+            }
+        } else {
+            AdoptionTextDiff::FileText
+        };
         if let Some(note) = personal_note {
             diff.push_str(note);
             diff.push('\n');
         } else if personal_source && diff.is_empty() {
+            notice_codes.push(Code::PersonalImport);
             diff.push_str("Import the file as a personal source at this path.\n");
         }
         files.push(AdoptionChange {
@@ -1293,6 +1371,9 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             added,
             removed,
             diff,
+            tool,
+            notice_codes,
+            text_diff: Some(text_diff),
         });
     }
     let mut skipped_files = Vec::new();
@@ -1303,9 +1384,12 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         .chain(&adoption.skipped_personal_files)
     {
         let diff = if adoption.skipped_personal_files.contains_key(path) {
-            format!("Skipped and left unmanaged: {reason}.\n")
+            format!("Skipped and left unmanaged: {}.\n", reason.reason)
         } else {
-            format!("Skipped ({reason}). Stays where it is, not managed.\n")
+            format!(
+                "Skipped ({}). Stays where it is, not managed.\n",
+                reason.reason
+            )
         };
         skipped_files.push(plan_path(path));
         files.push(AdoptionChange {
@@ -1313,6 +1397,9 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             added: 0,
             removed: 0,
             diff,
+            tool: adoption_tool(path),
+            notice_codes: vec![reason.code],
+            text_diff: None,
         });
     }
     let mut skills = adoption
@@ -1325,31 +1412,53 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                 .map_or(AdoptionSkillOutcome::PlainCopy, |upstream| {
                     AdoptionSkillOutcome::TrackedUpstream { upstream }
                 }),
+            tool: adoption_tool(path),
+            reason_code: None,
             byte_copy_reason: adoption.skill_byte_copies.get(path).cloned(),
+            byte_copy_reason_code: adoption
+                .skill_byte_copies
+                .contains_key(path)
+                .then_some(Code::SkillByteCopy),
         })
         .chain(adoption.skipped.iter().map(|(path, reason)| AdoptionSkill {
             path: plan_path(path),
             outcome: AdoptionSkillOutcome::Skipped {
-                reason: reason.clone(),
+                reason: reason.reason.clone(),
             },
+            tool: adoption_tool(path),
+            reason_code: Some(reason.code),
             byte_copy_reason: None,
+            byte_copy_reason_code: None,
         }))
         .collect::<Vec<_>>();
     skills.sort_by(|first, second| first.path.cmp(&second.path));
     let mut notes = Vec::new();
+    let mut note_codes = Vec::new();
     if !adoption.added_tools.is_empty() {
+        note_codes.push(RulesSetupNotice {
+            code: Code::AddTools,
+            tools: adoption.added_tools.clone(),
+        });
         notes.push(format!(
             "Add to the existing setup: {}.",
             adoption.added_tools.join(", ")
         ));
     }
     if adoption.codex_sync_replaced {
+        note_codes.push(Code::CodexScript.into());
         notes.push("~/.agents/scripts/sync-codex-agents.sh becomes unused for Codex AGENTS.md after adoption. The script stays in place for you to keep or remove.".into());
     }
+    note_codes.push(Code::SharedUntouched.into());
     notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
     notes.extend(adoption.skipped_tools.iter().cloned());
+    note_codes.extend(adoption.skipped_tool_codes.iter().cloned());
     notes.extend(adoption.worktree_notes.iter().cloned());
+    note_codes.extend(adoption.worktree_note_codes.iter().cloned());
     if adoption.includes_personal_files {
+        note_codes.extend([
+            Code::PersonalImportNotes.into(),
+            Code::IgnoreUnsupported.into(),
+        ]);
         notes.push("Commands and subagents are adopted at their native tool paths. All-tools review shares compatible files with enrolled tools. Tool-specific metadata and Codex TOML subagents stay with their own tool.".into());
         notes.push("Personal ignore: none supported by the eight tools in this setup.".into());
     }
@@ -1358,8 +1467,10 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         files,
         skills,
         notes,
+        note_codes,
         skipped_files,
         skipped_tools: adoption.skipped_tools.clone(),
+        skipped_tool_codes: adoption.skipped_tool_codes.clone(),
         tools: PERSONAL_TARGETS
             .iter()
             .filter_map(|target| {
@@ -1807,7 +1918,24 @@ mod tests {
         );
         let plan = adoption_plan(&adoption).unwrap();
         assert_eq!(plan.files.len(), 3);
+        assert_eq!(plan.notes.len(), plan.note_codes.len());
+        assert_eq!(plan.skipped_tools.len(), plan.skipped_tool_codes.len());
+        assert!(plan
+            .note_codes
+            .iter()
+            .any(|note| note.code == Code::SharedUntouched));
+        assert!(plan
+            .note_codes
+            .iter()
+            .any(|note| note.code == Code::PersonalImportNotes));
+        assert!(plan
+            .note_codes
+            .iter()
+            .any(|note| note.code == Code::IgnoreUnsupported));
         for tool in ["Claude Code", "Codex", "Cursor", "OpenCode", "Muse Code"] {
+            assert!(plan
+                .skipped_tool_codes
+                .contains(&RulesSetupNotice::for_tool(Code::ToolMissing, tool)));
             assert!(plan
                 .notes
                 .iter()
@@ -1815,6 +1943,53 @@ mod tests {
         }
         assert!(!home.path().join(".cursor").exists());
         assert!(!home.path().join(".config").exists());
+    }
+
+    #[test]
+    fn rulesync_adoption_plan_codes_keep_terminal_diagnostics_and_supply_tool_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        for (path, bytes) in [
+            (".agents/skills/shared/SKILL.md", &b"A shared skill.\n"[..]),
+            (".claude/skills/no-entry/local.txt", &b"Some file.\n"[..]),
+            (".claude/commands/確認.md", &b"A native command.\n"[..]),
+            (".gemini/config/workflows/old.md", &b"Old workflow.\n"[..]),
+        ] {
+            let path = home.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let plan = plan_adoption(home).unwrap();
+        for (path, code, tool) in [
+            (".agents/skills/shared", Code::SharedSkill, None),
+            (
+                ".claude/skills/no-entry",
+                Code::SkillEntryMissing,
+                Some("Claude Code"),
+            ),
+            (
+                ".claude/commands/確認.md",
+                Code::PersonalName,
+                Some("Claude Code"),
+            ),
+            (
+                ".gemini/config/workflows",
+                Code::LegacyWorkflow,
+                Some("Antigravity"),
+            ),
+        ] {
+            assert!(
+                plan.skipped_files.iter().any(|file| file == path),
+                "{plan:?}"
+            );
+            let file = plan.files.iter().find(|file| file.path == path).unwrap();
+            assert_eq!(file.notice_codes, [code]);
+            assert!(file.diff.starts_with("Skipped"));
+            assert_eq!(file.tool.as_ref().map(|tool| tool.name.as_str()), tool);
+            if let Some(skill) = plan.skills.iter().find(|skill| skill.path == path) {
+                assert_eq!(skill.reason_code, Some(code));
+            }
+        }
     }
 
     #[test]

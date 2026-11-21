@@ -26,6 +26,7 @@ import { useSavedRulesPageIds } from "./useSavedRulesPages";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
 import { RULES_DELIVERY_QUERY_KEY, useRulesSetup } from "./useRulesSetup";
 import "./howIWork.css";
+import { rulesSetupName } from "./rulesSetupText";
 import "./rulesSetup.css";
 
 export { RULES_DELIVERY_QUERY_KEY } from "./useRulesSetup";
@@ -136,6 +137,7 @@ function ToolChip({ shown, review }: { readonly shown: ShownTool; readonly revie
   const when = delivered && tool.delivered_at ? (locale.startsWith("en") ? formatTimeAgo(tool.delivered_at) : formatTimeAgo(tool.delivered_at, locale)) : null;
   // The daemon counts the rules in the tool's file, from every Space.
   const count = delivered && tool.rule_count > 0 ? t("howIWork.tools.rulesDelivered", { count: tool.rule_count }) : null;
+  const name = rulesSetupName(tool.display_name) || t("rulesSetup.thisTool");
   const detail = [count, when].filter(Boolean).join(" · ");
 
   useEffect(() => {
@@ -182,19 +184,19 @@ function ToolChip({ shown, review }: { readonly shown: ShownTool; readonly revie
         type="button"
         className="rules-tools-chip"
         aria-describedby={cardId}
-        aria-label={review ? t("rulesSetup.chipNeedsReview", { tool: tool.display_name }) : undefined}
+        aria-label={review ? t("rulesSetup.chipNeedsReview", { tool: name }) : undefined}
         data-pinned={pinned ? "true" : undefined}
         onFocus={() => { setFocused(true); setDismissed(false); }}
         onBlur={() => { setFocused(false); setDismissed(false); }}
         onClick={() => { setDismissed(false); setPinned((value) => !value); }}
       >
         <ToolMark id={tool.id} badge={badge} />
-        <span className="rules-tools-name">{tool.display_name}</span>
+        <span className="rules-tools-name">{name}</span>
         <ToolDotMark dot={review ? "problem" : dot} />
       </button>
       <span className="rules-tools-card" id={cardId} role="tooltip" hidden={!open} style={shift ? { transform: `translateX(${shift}px)` } : undefined}>
         <span className="rules-tools-card-surface mem-popover-surface" ref={surfaceRef}>
-          <span className="rules-tools-card-head"><ToolMark id={tool.id} badge={badge} />{tool.display_name}</span>
+          <span className="rules-tools-card-head"><ToolMark id={tool.id} badge={badge} />{name}</span>
           <span className="rules-tools-card-state" data-dot={dot}><ToolDotMark dot={dot} /><span className="rules-tools-card-state-text">{t(`howIWork.tools.${standing}`)}</span></span>
           {detail ? <span className="rules-tools-card-detail">{detail}</span> : null}
         </span>
@@ -234,10 +236,10 @@ export function RulesToolsHeader({ delivers, setupOnly = false, skillUpdates }: 
     .sort((a, b) => STANDING_ORDER.indexOf(a.standing) - STANDING_ORDER.indexOf(b.standing));
   // Only a tool with no logo shows a badge, so only those must differ.
   const unmarked = listed.filter((item) => !TOOL_LOGOS[item.tool.id]);
-  const badges = new Map(toolBadges(unmarked.map((item) => item.tool.display_name)).map((badge, index) => [unmarked[index].tool.id, badge] as const));
+  const badges = new Map(toolBadges(unmarked.map((item) => rulesSetupName(item.tool.display_name) || t("rulesSetup.thisTool"))).map((badge, index) => [unmarked[index].tool.id, badge] as const));
   const shown: ShownTool[] = listed.map((item) => ({ ...item, badge: badges.get(item.tool.id) ?? "" }));
   const pendingToolIds = new Set(Object.values(setup?.review_tools ?? {}).map((tool) => tool.id));
-  const toolNames = new Set(Object.values(setup?.review_tools ?? {}).map((tool) => tool.name));
+  const toolNames = new Set(Object.values(setup?.review_tools ?? {}).map((tool) => rulesSetupName(tool.name)).filter(Boolean));
   const [tool] = toolNames;
   const pendingCount = setup?.proposals.length ?? 0;
   let line: string | undefined;

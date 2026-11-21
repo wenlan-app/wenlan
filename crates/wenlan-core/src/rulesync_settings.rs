@@ -225,6 +225,9 @@ pub fn merge_file(
             added: additions.lines().count(),
             removed: 0,
             diff,
+            tool: None,
+            notice_codes: Vec::new(),
+            text_diff: None,
         },
     }))
 }

@@ -10,26 +10,12 @@ import {
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { Button } from "../settings/primitives";
 import { refreshRulesSetup } from "./useRulesSetup";
+import { RulesSetupDiff } from "./RulesSetupDiff";
+import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice } from "./rulesSetupText";
 import "./rulesSetup.css";
 
-export function rulesSetupFileName(path: string): string {
-  return path.split(/[\\/]/u).pop() ?? path;
-}
-
-export function RulesSetupDiff({ diff }: { readonly diff: string }) {
-  if (!diff.trim()) return null;
-  return (
-    <pre className="rules-setup-diff" dir="auto">
-      {diff.split("\n").map((line, index) => (
-        <span key={index} data-change={line.startsWith("+") && !line.startsWith("+++ ") ? "added"
-          : line.startsWith("-") && !line.startsWith("--- ") ? "removed" : undefined}>{line}{"\n"}</span>
-      ))}
-    </pre>
-  );
-}
-
 export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatus }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ decision: PullbackDecision; result: PullbackPreview; label: string } | null>(null);
@@ -77,11 +63,15 @@ export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatu
           tone="neutral"
           message={t("rulesSetup.reviewTitle")}
           details={<>
-            <p className="rules-setup-reason">{preview.result.plan}</p>
+            {preview.result.plan_codes?.length ? (
+              <ul className="rules-setup-files">{preview.result.plan_codes.map((notice, index) => (
+                <li key={index}>{rulesSetupNotice(t, i18n.language, notice)}</li>
+              ))}</ul>
+            ) : <p className="rules-setup-reason">{rulesSetupMessage(t)}</p>}
             <ul className="rules-setup-files">{(preview.decision.file ? [preview.decision.file] : currentReview.files).map((file) => (
-              <li key={file}>{rulesSetupFileName(file)}</li>
+              <li key={file}>{rulesSetupFileLabel(t, status.review_tools[file], file)}</li>
             ))}</ul>
-            <RulesSetupDiff diff={preview.result.diff} />
+            <RulesSetupDiff diff={preview.result.diff} tools={status.review_tools} codes={preview.result.diff_codes} />
           </>}
           confirmLabel={preview.decision.action === "dismiss" ? t("rulesSetup.restore") : preview.label}
           cancelLabel={t("rulesSetup.cancel")}
@@ -101,8 +91,8 @@ function ReviewCard({ card, tools, busy, onChoice }: {
   const { t, i18n } = useTranslation();
   const headingId = useId();
   const [source, setSource] = useState(card.files[0]);
-  const tool = tools[source]?.name ?? t("rulesSetup.thisTool");
-  const names = [...new Set(card.files.flatMap((file) => tools[file] ? [tools[file].name] : []))];
+  const tool = rulesSetupName(tools[source]?.name) || t("rulesSetup.thisTool");
+  const names = [...new Set(card.files.map((file) => rulesSetupName(tools[file]?.name)).filter(Boolean))];
   const scope = card.kind === "scope";
   const all = t("rulesSetup.allTools");
   const only = t("rulesSetup.toolOnly", { tool });
@@ -116,18 +106,18 @@ function ReviewCard({ card, tools, busy, onChoice }: {
         ? t(scope ? "rulesSetup.ruleChanged" : "rulesSetup.toolChanged", { tool: names[0] })
         : t("rulesSetup.reviewTitle")}</h2>
       {scope && <p>{t("rulesSetup.alreadyApplies", { tool })}</p>}
-      <p className="rules-setup-reason">{card.reason}</p>
+      <p className="rules-setup-reason">{rulesSetupMessage(t, card.reason_code)}</p>
       {card.files.length > 1 ? (
         <label className="rules-setup-source">
           {t("rulesSetup.chooseSource")}
           <select value={source} disabled={busy} onChange={(event) => setSource(event.target.value)}>
-            {card.files.map((file) => <option key={file} value={file}>{tools[file]?.name} · {rulesSetupFileName(file)}</option>)}
+            {card.files.map((file) => <option key={file} value={file}>{rulesSetupFileLabel(t, tools[file], file)}</option>)}
           </select>
         </label>
       ) : (
-        <ul className="rules-setup-files">{card.files.map((file) => <li key={file}>{rulesSetupFileName(file)}</li>)}</ul>
+        <ul className="rules-setup-files">{card.files.map((file) => <li key={file}>{rulesSetupFileLabel(t, tools[file], file)}</li>)}</ul>
       )}
-      <RulesSetupDiff diff={card.diff} />
+      <RulesSetupDiff diff={card.diff} tools={tools} codes={card.diff_codes} />
       <div className="rules-setup-actions">
         {scope && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
         <Button type="button" disabled={busy} onClick={() => choice("tool_only", only)}>{only}</Button>

@@ -9,7 +9,7 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_personal::PersonalMaster;
-use wenlan_types::rulesync::RulesSyncReport;
+use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSyncReport};
 
 use super::{report, BatchMode, Kind, Manifest, Pending, Setup};
 use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
@@ -62,7 +62,7 @@ impl Setup {
                     .iter()
                     .any(|path| path.starts_with(&op.path) || op.path.starts_with(path))
             {
-                result.blocked.push(format!(
+                result.block(Code::ChangedDuringSync, format!(
                     "{} changed while Wenlan was applying settings. Review the file before resuming.",
                     op.path.display()
                 ));
@@ -121,11 +121,13 @@ impl Setup {
             .collect();
         if let Some(batch) = &manifest.settings_batch {
             result.message = SETTINGS_RESUME_NOTICE.into();
-            result.blocked = batch
-                .remaining
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect();
+            result.extend_blocks(
+                Code::RecoveryNeeded,
+                batch
+                    .remaining
+                    .iter()
+                    .map(|path| path.display().to_string()),
+            );
         } else {
             result.message = "Applied the approved local settings".into();
         }
