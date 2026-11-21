@@ -98,6 +98,13 @@ pub struct TeamMemberSignIn {
     /// by the server (`a***@example.com`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_email: Option<String>,
+    /// How many AI tools (live tool keys) they have connected.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tools: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// `GET /api/team`: the member list and the Spaces this server hosts.
@@ -557,4 +564,100 @@ mod tests {
             r#""browser""#
         );
     }
+}
+
+/// One of a member's AI tools: a tool key, never the key itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamToolKey {
+    pub id: String,
+    /// The name the tool was connected under, as the person typed it.
+    pub name: String,
+    pub created_at: String,
+}
+
+/// `POST /auth/device`: an AI tool asks to be connected. `tool` is the
+/// name the person sees on the consent screen; whoever asks chose it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDeviceRequest {
+    pub tool: String,
+}
+
+/// The answer to [`TeamDeviceRequest`]: the long `device_code` only the
+/// asking program knows, and the short `user_code` the person types at
+/// `verification_uri`. The short code alone never yields a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDeviceStart {
+    pub device_code: String,
+    /// `ABCD-EFGH`.
+    pub user_code: String,
+    pub verification_uri: String,
+    /// Seconds until both codes stop working.
+    pub expires_in: u64,
+    /// Seconds to wait between polls.
+    pub interval: u64,
+}
+
+/// `POST /auth/device/token`: the asking program polls with its code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDevicePoll {
+    pub device_code: String,
+}
+
+/// The key, once the person allowed it. Given this once only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDeviceGrant {
+    pub key: String,
+    pub key_id: String,
+    /// The Spaces the member can use now, each at `/mcp/<Space>`.
+    pub spaces: Vec<TeamSpaceAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
+}
+
+/// `POST /auth/device/lookup` with a short code: which tool asks, and what
+/// it will be able to use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDeviceLookup {
+    pub tool: String,
+    pub spaces: Vec<TeamSpaceAccess>,
+}
+
+/// `POST /auth/device/approve` (and `deny`): the short code the person typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDeviceDecision {
+    pub user_code: String,
+}
+
+/// `POST /team/v1/account/desktop-link`: a one-time link with a new member
+/// key, for the desktop app. Given this once only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamDesktopLink {
+    pub link: String,
+}
+
+/// The shape of a short device code: 8 characters of [`DEVICE_CODE_ALPHABET`],
+/// with or without the dash after the fourth. Returns it without the dash.
+pub fn normalize_user_code(code: &str) -> Option<String> {
+    let bare: String = code
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    (bare.len() == 8 && bare.bytes().all(|b| DEVICE_CODE_ALPHABET.contains(&b))).then_some(bare)
+}
+
+/// The short code's characters: no `0 O 1 I L`, which are easy to misread.
+pub const DEVICE_CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+/// `GET /api/team/my-tools`: this person's AI tools on one team they joined.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamToolsOnServer {
+    /// The team server's address.
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
+    pub tools: Vec<TeamToolKey>,
+    /// Why the list could not be read from that server, when it could not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }

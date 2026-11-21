@@ -209,6 +209,8 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,
     },
+    /// Connect an AI tool on this computer to a team with a short code you allow in a browser.
+    Login(commands::login::LoginArgs),
     /// Work with a team: start one here, invite people, or join with an invite link (start, share, invite, join, status, leave, update, remove, new-key, stop).
     Team {
         #[command(subcommand)]
@@ -260,7 +262,7 @@ enum Commands {
 const HELP_GROUPS: &[(&str, &[&str])] = &[
     ("Start", &["setup", "init", "open", "status"]),
     ("Daily", &["capture", "recall", "brief", "rules", "pages"]),
-    ("Team", &["team"]),
+    ("Team", &["team", "login"]),
     (
         "Running",
         &["connect", "doctor", "start", "stop", "restart"],
@@ -495,6 +497,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             | Commands::Background { .. }
             | Commands::Restart
             | Commands::Connect(_)
+            | Commands::Login(_)
     );
     let resolved_session =
         wenlan_types::session_context::resolve_session_from_env(cli.session.as_deref());
@@ -855,6 +858,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Agents { cmd } => commands::agents::run(&client, format, cli.quiet, cmd).await?,
         Commands::Spaces { cmd } => commands::space::run(&client, format, cli.quiet, cmd).await?,
         Commands::Team { cmd } => commands::team::run(&client, format, cli.quiet, cmd).await?,
+        Commands::Login(args) => commands::login::run(args, cli.quiet).await?,
         Commands::Outbox { command } => {
             commands::outbox::run(&client, format, cli.quiet, command).await?
         }

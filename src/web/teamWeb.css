@@ -206,3 +206,90 @@
 .team-account-save .team-signin-button { min-height: 38px; margin-top: 8px; font-size: 14px; background: var(--mem-popover, var(--mem-surface)); }
 .team-account-save .team-signin-button:first-of-type { margin-top: 0; }
 .team-account-error { margin: 8px 0 0; color: var(--mem-danger); font-size: 12.5px; }
+
+/* `/app/device`: the short code, then what the AI tool asks for. */
+.team-device-code { display: block; margin: 0 0 14px; }
+.team-device-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.team-device-code input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-8);
+  background: var(--mem-surface);
+  color: var(--mem-text);
+  font-family: var(--mem-font-mono, ui-monospace, monospace);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-align: center;
+}
+.team-device-code input::placeholder { color: var(--mem-text-tertiary, var(--mem-text-secondary)); opacity: 0.45; }
+.team-device-code input:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
+.team-device-primary,
+.team-device-secondary {
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: var(--mem-r-8);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.team-device-primary {
+  border: 0;
+  background: var(--mem-accent-indigo);
+  color: var(--mem-text-on-accent);
+}
+.team-device-primary:disabled { opacity: 0.5; cursor: default; }
+.team-device-secondary {
+  border: 1px solid var(--mem-border);
+  background: var(--mem-surface);
+  color: var(--mem-text);
+}
+form > .team-device-primary { width: 100%; }
+.team-device-actions { display: flex; justify-content: flex-end; gap: 10px; margin: 6px 0 14px; }
+.team-device-spaces { margin: -16px 0 22px; padding-left: 20px; font-size: 15px; line-height: 1.7; }
+.team-device-quiet { margin: 14px 0 0; color: var(--mem-text-secondary); font-size: 13px; }
+h1 + .team-device-quiet { margin: -2px 0 18px; }
+
+/* The member's own dialogs: their AI tools, and a desktop link. */
+.team-own-dialog h2 { margin: 0 0 6px; font-family: var(--mem-font-heading, inherit); font-size: 20px; font-weight: 600; }
+.team-own-dialog p { margin: 0 0 14px; color: var(--mem-text-secondary); font-size: 14px; line-height: 1.5; }
+.team-own-list { margin: 0 0 14px; padding: 0; list-style: none; border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); }
+.team-own-list li { display: flex; align-items: center; gap: 10px; padding: 11px 14px; font-size: 14.5px; }
+.team-own-list li + li { border-top: 1px solid var(--mem-border); }
+.team-own-list .team-own-when { color: var(--mem-text-secondary); font-size: 13px; }
+.team-own-list button {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mem-accent-indigo);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.team-own-dialog code { font-family: var(--mem-font-mono, ui-monospace, monospace); font-size: 12.5px; }
+.team-own-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-r-8);
+}
+.team-own-link code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-own-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+.team-own-dialog .team-device-primary { min-height: 38px; font-size: 14px; }
+.team-own-dialog .team-signin-button { min-height: 40px; margin-bottom: 12px; font-size: 14px; }
+.team-account-count { margin-left: auto; color: var(--mem-text-secondary); font-size: 13px; }
+.team-own-dialog .team-device-quiet { display: flex; align-items: center; gap: 6px; }

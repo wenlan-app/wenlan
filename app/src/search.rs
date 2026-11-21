@@ -4136,6 +4136,39 @@ pub async fn team_member_compromised(
     client.post_empty(&path).await
 }
 
+/// A person's AI tools (their tool keys, never the keys), for the owner.
+#[tauri::command]
+pub async fn team_member_tools(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<Vec<team::TeamToolKey>, String> {
+    let client = daemon_client(&state).await;
+    client
+        .get_json(&format!(
+            "/api/team/members/{}/keys",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+/// Removes one of a person's AI tools; it is refused at its next request.
+/// Answers the tools left.
+#[tauri::command]
+pub async fn team_remove_member_tool(
+    state: tauri::State<'_, State>,
+    id: String,
+    key: String,
+) -> Result<Vec<team::TeamToolKey>, String> {
+    let client = daemon_client(&state).await;
+    client
+        .delete_path(&format!(
+            "/api/team/members/{}/keys/{}",
+            percent_encode_path_segment(&id),
+            percent_encode_path_segment(&key)
+        ))
+        .await
+}
+
 /// Hosts a local Space for the team.
 #[tauri::command]
 pub async fn team_host_space(
