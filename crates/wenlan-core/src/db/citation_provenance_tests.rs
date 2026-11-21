@@ -135,6 +135,19 @@ async fn lifecycle_cas_keeps_prose_and_references_across_repeated_null_invalidat
         assert_eq!(view.citations[1].status, "unevaluated");
         assert_eq!(view.citations[2].status, "verified");
         assert!(view.citations[0].pdf_target.is_some());
+        let projected = crate::citations::strip_member_citation_markers(BODY);
+        let (restored, citation_json) = restore_member_projection_on(&conn, "review", &projected)
+            .await
+            .unwrap()
+            .expect("saved source map should survive SQL NULL invalidation");
+        assert_eq!(
+            crate::citations::strip_member_citation_markers(&restored),
+            projected
+        );
+        let restored: Vec<PageCitation> = serde_json::from_str(&citation_json).unwrap();
+        assert_eq!(restored.len(), 3);
+        assert_eq!(restored[0].locator, "paper-a");
+        assert_eq!(restored[0].status, "unevaluated");
     }
     assert!(db
         .set_source_lifecycle(&id, request(0, SourceLifecycleState::Active), "human")
@@ -150,6 +163,49 @@ async fn lifecycle_cas_keeps_prose_and_references_across_repeated_null_invalidat
     assert_eq!(saved.citations[0].status, "verified");
     assert_eq!(saved.impacts.len(), 2);
     assert_eq!(stored.content, BODY);
+}
+
+#[tokio::test]
+async fn member_projected_edit_restores_unchanged_citations_in_the_page_transaction() {
+    let (db, _temp) = test_db().await;
+    let _space_id = seed(&db).await;
+    let before = db.get_page("review").await.unwrap().unwrap();
+    let projected = crate::citations::strip_member_citation_markers(&before.content);
+    let landed = db
+        .try_update_page_content_with_changelog_at_version_and_basis(
+            "review",
+            &format!("{projected}\n\nA new uncited observation."),
+            &["paper-a", "paper-b"],
+            "manual_edit",
+            "member edit",
+            None,
+            before.version,
+            None,
+            &crate::db::BasisWrite {
+                member_projected_body: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(landed.is_some());
+    let after = db.get_page("review").await.unwrap().unwrap();
+    assert!(after.content.contains("A new uncited observation."));
+    assert_eq!(crate::citations::marker_spans(&after.content).len(), 3);
+    assert_eq!(
+        crate::citations::strip_member_citation_markers(&after.content),
+        format!("{projected}\n\nA new uncited observation.")
+    );
+    assert_eq!(after.citations.len(), 3);
+    assert_eq!(after.citations[0].locator, "paper-a");
+    assert_eq!(after.citations[1].locator, "paper-b");
+    for (old, new) in before.citations.iter().zip(&after.citations) {
+        assert_eq!(old.status, new.status);
+    }
+    assert!(after.citations[0].pdf_target.is_some());
+    assert!(after.citations[1..]
+        .iter()
+        .all(|citation| citation.pdf_target.is_none()));
 }
 
 #[tokio::test]

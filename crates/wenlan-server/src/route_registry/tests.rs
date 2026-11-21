@@ -39,10 +39,12 @@ fn chained_methods_keep_each_identity_aligned_with_its_method() {
             RegisteredHandler {
                 method: RegisteredMethod::Get,
                 handler: "wenlan_server::routes::handle_health",
+                forwarded: false,
             },
             RegisteredHandler {
                 method: RegisteredMethod::Post,
                 handler: "wenlan_server::routes::handle_status",
+                forwarded: false,
             },
         ]
     );

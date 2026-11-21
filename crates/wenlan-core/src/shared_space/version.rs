@@ -129,6 +129,9 @@ pub struct VersionMeta {
     /// The library: the computer that wrote the version (its id in
     /// `space.json`). Older versions have none.
     pub device: Option<String>,
+    /// Host-issued witness for the page's current continuous stay in a
+    /// shared Space. Member edits inherit it from their parent version.
+    pub stay: Option<String>,
 }
 
 /// What two versions, or a version and the page here, are compared by.
@@ -176,6 +179,13 @@ impl PageVersion {
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Stable for one page incarnation's continuous membership in one Space.
+pub fn stay_token(incarnation: &str, space_id: &str, stay_start_version: i64) -> String {
+    sha256_hex(
+        format!("wenlan-space-stay-v1\0{incarnation}\0{space_id}\0{stay_start_version}").as_bytes(),
+    )
 }
 
 /// The digest two versions are compared by: the page's text.
@@ -267,6 +277,9 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     if let Some(device) = &meta.device {
         shared.insert(key("device"), text(device));
     }
+    if let Some(stay) = &meta.stay {
+        shared.insert(key("stay"), text(stay));
+    }
     if meta.archived {
         shared.insert(key("archived"), serde_yaml::Value::Bool(true));
     }
@@ -350,6 +363,7 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
         author,
         ts: scalar(&shared, "ts").unwrap_or_default(),
         device: scalar(&shared, "device"),
+        stay: scalar(&shared, "stay"),
         archived: match shared.get("archived") {
             None => false,
             Some(serde_yaml::Value::Bool(archived)) => *archived,

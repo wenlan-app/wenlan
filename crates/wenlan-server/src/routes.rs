@@ -20,14 +20,20 @@ use wenlan_types::responses::{
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
-        .route("/api/health", get(handle_health))
+        .route(
+            "/api/health",
+            crate::route_registry::member_get(handle_health),
+        )
         .route("/api/status", get(handle_status))
         .route("/api/search", post(handle_search))
         .route("/api/context", post(handle_context))
         .route("/api/llm/test", post(handle_test_llm))
         .route("/api/shutdown", post(handle_shutdown))
         .route("/api/retrievals/recent", get(handle_recent_retrievals))
-        .route("/api/pages/recent", get(handle_recent_pages))
+        .route(
+            "/api/pages/recent",
+            crate::route_registry::member_get(handle_recent_pages),
+        )
         .route("/api/steep", post(handle_steep))
         .route("/api/distill", post(handle_distill))
         .route("/api/distill/{page_id}", post(handle_redistill))
@@ -450,14 +456,18 @@ pub async fn handle_context(
     // `/api/context` reaches every page it serves through the Brief handler, so
     // the grant this route resolved travels with the call rather than being
     // re-derived there.
-    let Json(brief_response) = crate::brief_routes::handle_read_brief(
-        State(state),
-        headers,
-        crate::space_header::SpaceHeader(header_space),
-        view,
-        Json(request),
-    )
-    .await?;
+    let crate::page_routes::PageResponse::Local(brief_response) =
+        crate::brief_routes::handle_read_brief(
+            State(state),
+            headers,
+            crate::space_header::SpaceHeader(header_space),
+            view,
+            Json(request),
+        )
+        .await?
+    else {
+        return Err(ServerError::NotFound("Space not found".into()));
+    };
 
     let brief_context = render_brief_for_legacy(&brief_response);
     let relevant_memories = brief_response

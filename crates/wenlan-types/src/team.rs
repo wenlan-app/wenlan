@@ -358,6 +358,10 @@ pub struct TeamMe {
 pub struct TeamFileList {
     pub access: TeamAccess,
     pub files: Vec<String>,
+    /// Page identities deleted in this Space whose archived snapshot cannot
+    /// safely be shared. Older servers omit this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_pages: Vec<String>,
     /// The approved Rules page version in the team-wide Space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules: Option<TeamRulesManifest>,
@@ -563,6 +567,30 @@ mod tests {
             serde_json::to_string(&TeamSignedInWith::Browser).unwrap(),
             r#""browser""#
         );
+    }
+
+    #[test]
+    fn team_file_list_accepts_older_servers_and_carries_deleted_page_ids() {
+        let old: TeamFileList =
+            serde_json::from_str(r#"{"access":"write","files":["space.json"]}"#).unwrap();
+        assert!(old.deleted_pages.is_empty());
+
+        let current = TeamFileList {
+            access: TeamAccess::Write,
+            files: vec!["space.json".into()],
+            deleted_pages: vec!["page-gone".into()],
+            rules: None,
+        };
+        let value: serde_json::Value = serde_json::to_value(current).unwrap();
+        assert_eq!(value["deleted_pages"], serde_json::json!(["page-gone"]));
+        let empty = serde_json::to_value(TeamFileList {
+            access: TeamAccess::Write,
+            files: vec!["space.json".into()],
+            deleted_pages: Vec::new(),
+            rules: None,
+        })
+        .unwrap();
+        assert!(empty.get("deleted_pages").is_none());
     }
 }
 

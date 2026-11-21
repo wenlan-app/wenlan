@@ -107,7 +107,8 @@ async fn hosted_reads_skip_private_retrieval_and_library_onboarding() {
     let recall = post_as_member(&app, "/api/memory/search", json!({"query": "design"})).await;
     let brief = post_as_member(&app, "/api/brief", json!({"topic": "design"})).await;
     assert_eq!(recall["results"], json!([]));
-    assert_eq!(brief["brief"]["active"][0]["text"], "Review the design");
+    assert_eq!(brief["state"], "brief_not_created");
+    assert!(brief.get("brief").is_none());
     let searches = db.list_agent_activity(10, Some(AGENT), None).await.unwrap();
     assert_eq!(
         (searches.len(), brief.get("getting_started").is_some()),
@@ -329,7 +330,7 @@ async fn hosted_draft_publish_requires_a_real_publication_to_replay() {
 }
 
 #[tokio::test]
-async fn hosted_draft_publish_conflict_only_identifies_shared_pages() {
+async fn hosted_draft_publish_conflict_only_names_shared_pages() {
     let (app, db, _scratch) = fixture().await;
     for (title, hidden) in [("How I work", true), ("Team conventions", false)] {
         let page = post_as_member(
@@ -373,15 +374,17 @@ async fn hosted_draft_publish_conflict_only_identifies_shared_pages() {
             true,
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(conflict["code"], "page_title_conflict");
         if hidden {
+            // A member's title is compared only with pages they may see, so
+            // a hidden page's title is never reported as taken.
+            assert_eq!(status, StatusCode::OK, "{conflict}");
             assert!(
-                conflict.get("existing_page_id").is_none()
-                    && conflict.get("existing_page_title").is_none(),
-                "a hidden page's identity appeared in a title conflict: {conflict}"
+                !conflict.to_string().contains(id),
+                "a hidden page's identity appeared in a publish: {conflict}"
             );
         } else {
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(conflict["code"], "page_title_conflict");
             assert_eq!(conflict["existing_page_id"], id);
             assert_eq!(conflict["existing_page_title"], title);
         }

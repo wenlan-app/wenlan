@@ -910,6 +910,20 @@ pub(super) struct FileBefore {
     pub(super) bytes: Option<Vec<u8>>,
 }
 
+/// The file `state.json` records for a page: its file now, or the file it
+/// had when it was archived (where a restore puts it back). `None` when
+/// neither is recorded.
+pub fn recorded_page_file(path: &Path, page_id: &str) -> Result<Option<String>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let state = read_state_strict(&capabilities.wenlan)?;
+        Ok(state
+            .pages
+            .get(page_id)
+            .map(|entry| entry.file.clone())
+            .or_else(|| state.archived_from.get(page_id).cloned()))
+    })
+}
+
 pub(super) fn capture_page_file(path: &Path, page_id: &str) -> Result<FileBefore, WenlanError> {
     KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
         let entry = read_state_strict(&capabilities.wenlan)?

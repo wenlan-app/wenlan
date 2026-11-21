@@ -131,6 +131,261 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Remove numeric citation markers while preserving all unrelated formatting.
+/// Around a removed marker, consume one adjacent space when two would meet and
+/// remove a trailing space before punctuation, a line break, or end of input.
+/// Unlike `strip_markers`, this is suitable for a shared projection: it does
+/// not trim the page or normalize other whitespace.
+pub(crate) fn strip_member_citation_markers(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0;
+    for (start, end) in marker_spans(body) {
+        out.push_str(&body[cursor..start]);
+        cursor = end;
+        if out.ends_with(' ') {
+            match body[end..].chars().next() {
+                Some(' ') => cursor += 1,
+                None | Some('.' | ',' | ';' | ':' | '!' | '?' | '\n' | '\r') => {
+                    out.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    out.push_str(&body[cursor..]);
+    out
+}
+
+/// Why a member save is refused when its unchanged text cannot be matched to
+/// the host's cited text without guessing.
+pub const MEMBER_CITATION_CONFLICT: &str =
+    "This save repeats or moves cited text. Keep cited paragraphs in place and save again.";
+
+/// Restore source markers on a member's save of a marker-free projection.
+///
+/// Paragraphs that are unchanged and unique in both bodies are matched first
+/// and keep their markers and checked state. A cited sentence in any other
+/// paragraph keeps its source only when its text occurs once in the unmatched
+/// text of each body, and is re-checked. A cited sentence the member removed
+/// or reworded loses its source. Anything else would be a guess: matched
+/// paragraphs out of order, or a cited sentence that the save repeats or
+/// moves past a matched paragraph. Those saves are refused with a conflict.
+/// A malformed or stale source map restores nothing (`Ok(None)`).
+pub(crate) fn restore_unchanged_member_sentence_markers(
+    old_body: &str,
+    projected_body: &str,
+    old_citations: &[PageCitation],
+) -> Result<Option<(String, Vec<PageCitation>)>, WenlanError> {
+    use std::collections::HashMap;
+
+    let conflict = || WenlanError::Conflict(MEMBER_CITATION_CONFLICT.into());
+    let old_markers = marker_spans(old_body);
+    if old_citations.is_empty() {
+        return Ok(None);
+    }
+    let mut by_occurrence = vec![None; old_markers.len()];
+    for citation in old_citations {
+        let Some(index) = citation
+            .occurrence
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index).ok())
+        else {
+            return Ok(None);
+        };
+        let Some(slot) = by_occurrence.get_mut(index) else {
+            return Ok(None);
+        };
+        let (start, end) = old_markers[index];
+        let Ok(marker) = old_body[start + 1..end - 1].parse::<u32>() else {
+            return Ok(None);
+        };
+        if marker == 0
+            || marker != citation.marker
+            || slot.is_some()
+            || citation.locator.trim().is_empty()
+            || !matches!(
+                citation.source_kind.as_str(),
+                "memory" | "external_file" | "external_url" | "authored"
+            )
+        {
+            return Ok(None);
+        }
+        *slot = Some(citation);
+    }
+    let records_in = |start: usize, end: usize| {
+        let first = old_markers.partition_point(|&(s, _)| s < start);
+        let last = old_markers.partition_point(|&(_, e)| e <= end);
+        first..last
+    };
+
+    fn paragraphs(body: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let mut start = 0;
+        for boundary in RE_PARAGRAPH_BREAK.find_iter(body) {
+            spans.push((start, boundary.start()));
+            start = boundary.end();
+        }
+        spans.push((start, body.len()));
+        spans
+    }
+    fn paragraph_of(spans: &[(usize, usize)], offset: usize) -> usize {
+        spans
+            .partition_point(|&(_, end)| end < offset)
+            .min(spans.len() - 1)
+    }
+    let old_paragraphs = paragraphs(old_body);
+    let new_paragraphs = paragraphs(projected_body);
+    let old_keys: Vec<String> = old_paragraphs
+        .iter()
+        .map(|&(s, e)| strip_member_citation_markers(&old_body[s..e]))
+        .collect();
+    let new_keys: Vec<&str> = new_paragraphs
+        .iter()
+        .map(|&(s, e)| &projected_body[s..e])
+        .collect();
+    let mut old_key_counts = HashMap::new();
+    for key in &old_keys {
+        *old_key_counts.entry(key.as_str()).or_insert(0usize) += 1;
+    }
+    let mut new_key_index = HashMap::new();
+    for (index, key) in new_keys.iter().enumerate() {
+        new_key_index
+            .entry(*key)
+            .and_modify(|slot| *slot = None)
+            .or_insert(Some(index));
+    }
+    // Unchanged paragraphs unique in both bodies, by old paragraph index.
+    let mut old_anchor = vec![None; old_paragraphs.len()];
+    let mut new_anchored = vec![false; new_paragraphs.len()];
+    let mut previous = None;
+    for (old_index, key) in old_keys.iter().enumerate() {
+        if key.trim().is_empty() || old_key_counts.get(key.as_str()) != Some(&1) {
+            continue;
+        }
+        let Some(Some(new_index)) = new_key_index.get(key.as_str()).copied() else {
+            continue;
+        };
+        if previous.is_some_and(|previous| previous >= new_index) {
+            return Err(conflict());
+        }
+        previous = Some(new_index);
+        old_anchor[old_index] = Some(new_index);
+        new_anchored[new_index] = true;
+    }
+    // Matched paragraphs before a position: a sentence may not cross one.
+    let old_region = |paragraph: usize| old_anchor[..paragraph].iter().flatten().count();
+    let new_region = |paragraph: usize| new_anchored[..paragraph].iter().filter(|a| **a).count();
+
+    // (new start, new end, old start, old end, keep checked state)
+    let mut matches: Vec<(usize, usize, usize, usize, bool)> = Vec::new();
+    for (old_index, new_index) in old_anchor.iter().enumerate() {
+        let Some(new_index) = new_index else { continue };
+        let (old_start, old_end) = old_paragraphs[old_index];
+        if by_occurrence[records_in(old_start, old_end)]
+            .iter()
+            .any(Option::is_some)
+        {
+            let (new_start, new_end) = new_paragraphs[*new_index];
+            matches.push((new_start, new_end, old_start, old_end, true));
+        }
+    }
+
+    let sentence_key = |text: &str| strip_member_citation_markers(text).trim().to_owned();
+    let old_units: Vec<_> = crate::authorship::sentence_units(old_body)
+        .into_iter()
+        .filter(|unit| old_anchor[paragraph_of(&old_paragraphs, unit.start)].is_none())
+        .collect();
+    let new_units: Vec<_> = crate::authorship::sentence_units(projected_body)
+        .into_iter()
+        .filter(|unit| !new_anchored[paragraph_of(&new_paragraphs, unit.start)])
+        .collect();
+    let mut old_counts = HashMap::new();
+    for unit in &old_units {
+        *old_counts.entry(sentence_key(&unit.text)).or_insert(0usize) += 1;
+    }
+    let mut new_by_key: HashMap<String, Vec<_>> = HashMap::new();
+    for unit in &new_units {
+        new_by_key
+            .entry(sentence_key(&unit.text))
+            .or_default()
+            .push(unit);
+    }
+    for old_unit in &old_units {
+        if !by_occurrence[records_in(old_unit.start, old_unit.end)]
+            .iter()
+            .any(Option::is_some)
+        {
+            continue;
+        }
+        let key = sentence_key(&old_unit.text);
+        let Some(candidates) = new_by_key.get(&key) else {
+            // Removed or reworded by the member.
+            continue;
+        };
+        if old_counts.get(&key) != Some(&1) || candidates.len() != 1 {
+            return Err(conflict());
+        }
+        let new_unit = candidates[0];
+        if new_unit.text != key && new_unit.text != old_unit.text {
+            // The member changed the sentence's own markers.
+            continue;
+        }
+        if old_region(paragraph_of(&old_paragraphs, old_unit.start))
+            != new_region(paragraph_of(&new_paragraphs, new_unit.start))
+        {
+            return Err(conflict());
+        }
+        matches.push((
+            new_unit.start,
+            new_unit.end,
+            old_unit.start,
+            old_unit.end,
+            false,
+        ));
+    }
+    matches.sort_unstable();
+    if matches.windows(2).any(|pair| pair[0].2 >= pair[1].2) {
+        return Err(conflict());
+    }
+
+    let new_markers = marker_spans(projected_body);
+    let mut restored = String::with_capacity(projected_body.len());
+    let mut citations = Vec::new();
+    let mut cursor = 0;
+    let mut consumed_markers = 0;
+    let mut occurrence = 0;
+    for (new_start, new_end, old_start, old_end, keep_checked) in matches {
+        // Count member-supplied marks in the untouched slices as occurrences,
+        // without assigning a private target to them.
+        occurrence +=
+            new_markers.partition_point(|&(start, _)| start < new_start) - consumed_markers;
+        restored.push_str(&projected_body[cursor..new_start]);
+        restored.push_str(&old_body[old_start..old_end]);
+        for record in &by_occurrence[records_in(old_start, old_end)] {
+            occurrence += 1;
+            let Some(record) = record else { continue };
+            let mut citation = (*record).clone();
+            let Ok(position) = u32::try_from(occurrence) else {
+                return Ok(None);
+            };
+            citation.occurrence = position;
+            if !keep_checked {
+                citation.pdf_target = None;
+                if citation.scope != "sentence" {
+                    citation.status = "unevaluated".into();
+                    citation.score = 0.0;
+                    citation.disproven = false;
+                }
+            }
+            citations.push(citation);
+        }
+        cursor = new_end;
+        consumed_markers = new_markers.partition_point(|&(_, end)| end <= cursor);
+    }
+    restored.push_str(&projected_body[cursor..]);
+    Ok(Some((restored, citations)))
+}
+
 /// Carry citation records across a body refresh only when the exact sentence
 /// unit, including its markers, occurs once in each body. Occurrence numbers
 /// are positions in the new body's marker stream; marker numbers alone never
@@ -1826,6 +2081,116 @@ mod tests {
             &citations
         )
         .is_empty());
+    }
+
+    #[test]
+    fn member_projection_strips_markers_without_reformatting_unrelated_text() {
+        assert_eq!(
+            strip_member_citation_markers("  Claim [1]  stays.\n\nNext.[2]  "),
+            "  Claim  stays.\n\nNext.  "
+        );
+        assert_eq!(
+            strip_member_citation_markers("A  wide gap."),
+            "A  wide gap."
+        );
+    }
+
+    #[test]
+    fn member_projection_write_restores_only_unique_unchanged_sentence_markers() {
+        let old = "First cited claim.[7]\n\nSecond cited claim.[8]";
+        let citations = [
+            sentence_reference(1, 7, "file::first"),
+            sentence_reference(2, 8, "file::second"),
+        ];
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            old,
+            "A new claim.\n\nFirst cited claim.\n\nSecond cited claim.",
+            &citations,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            restored,
+            "A new claim.\n\nFirst cited claim.[7]\n\nSecond cited claim.[8]"
+        );
+        assert_eq!(
+            retained
+                .iter()
+                .map(|c| c.locator.as_str())
+                .collect::<Vec<_>>(),
+            ["file::first", "file::second"]
+        );
+        assert_eq!(
+            retained.iter().map(|c| c.occurrence).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert!(retained
+            .iter()
+            .all(|c| c.status == "verified" && c.pdf_target.is_some()));
+
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            "First cited claim [7].\n\nUnbound [9].\n\nSecond cited claim [8].",
+            "A member's new claim [7].\n\nFirst cited claim.\n\nSecond cited claim.",
+            &[
+                sentence_reference(1, 7, "file::first"),
+                sentence_reference(3, 8, "file::second"),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            restored,
+            "A member's new claim [7].\n\nFirst cited claim [7].\n\nSecond cited claim [8]."
+        );
+        assert_eq!(
+            retained.iter().map(|c| c.occurrence).collect::<Vec<_>>(),
+            [2, 3]
+        );
+
+        // Duplicating cited prose or moving a matched paragraph would make
+        // the sentence-to-source mapping a guess, so the save is refused.
+        for projected in [
+            "First cited claim.\n\nFirst cited claim.",
+            "Second cited claim.\n\nFirst cited claim.",
+            "First cited claim. First cited claim.\n\nSecond cited claim.",
+        ] {
+            assert!(
+                matches!(
+                    restore_unchanged_member_sentence_markers(old, projected, &citations),
+                    Err(WenlanError::Conflict(message)) if message == MEMBER_CITATION_CONFLICT
+                ),
+                "{projected}"
+            );
+        }
+
+        // A repeated sentence keeps its source when its paragraph is unchanged.
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            "A. Same.[1]\n\nEdit me.\n\nB. Same.[2]",
+            "A. Same.\n\nEdited.\n\nB. Same.",
+            &[
+                sentence_reference(1, 1, "file::a"),
+                sentence_reference(2, 2, "file::b"),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(restored, "A. Same.[1]\n\nEdited.\n\nB. Same.[2]");
+        assert_eq!(retained.len(), 2);
+
+        // A cited sentence the member reworded loses its source.
+        let (restored, retained) = restore_unchanged_member_sentence_markers(
+            old,
+            "First cited claim, reworded.\n\nSecond cited claim.",
+            &citations,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            restored,
+            "First cited claim, reworded.\n\nSecond cited claim.[8]"
+        );
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].occurrence, 1);
     }
 
     /// A refusal names the unreadable sources by position and the kind of

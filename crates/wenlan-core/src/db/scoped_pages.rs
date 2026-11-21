@@ -1042,26 +1042,116 @@ impl MemoryDB {
         let shared = shared_page_predicate("p.");
         let id_start = SHARED_PAGE_DELETION_PREFIX.len() + 1;
         let sql = format!(
-            "SELECT p.id, p.title, 0 FROM pages p WHERE p.workspace = ?1 AND {shared}
+            "SELECT p.id, p.title, 0, p.incarnation, s.id,
+                    COALESCE((SELECT MAX(h.version) FROM page_history h
+                               WHERE h.page_id=p.id AND h.edited_by='space_move'), 0)
+               FROM pages p JOIN spaces s ON s.name=p.workspace
+              WHERE p.workspace = ?1 AND {shared}
              UNION ALL
-             SELECT substr(m.key, {id_start}), '', 1
-               FROM app_metadata m JOIN spaces s ON s.id = m.value
+             SELECT substr(m.key, {id_start}), '', 1,
+                    CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.stay') END,
+                    NULL, NULL
+               FROM app_metadata m JOIN spaces s ON s.id =
+                    CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.space')
+                         ELSE m.value END
               WHERE s.name = ?1 AND m.key GLOB '{SHARED_PAGE_DELETION_PREFIX}*'
                 AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = substr(m.key, {id_start}))"
         );
         let error = |e| WenlanError::VectorDb(format!("shared folder pages: {e}"));
         let conn = self.conn.lock().await;
+        let receipts_key = format!("shared_space.member_view_receipts:{space}");
+        let mut stored_receipts = conn
+            .query(
+                "SELECT value FROM app_metadata WHERE key=?1",
+                [receipts_key.as_str()],
+            )
+            .await
+            .map_err(error)?;
+        let receipts = match stored_receipts.next().await.map_err(error)? {
+            Some(row) => row
+                .get::<String>(0)
+                .ok()
+                .and_then(|value| {
+                    serde_json::from_str::<
+                        std::collections::HashMap<String, crate::shared_space::MemberViewReceipt>,
+                    >(&value)
+                    .ok()
+                })
+                .unwrap_or_default(),
+            None => std::collections::HashMap::new(),
+        };
+        drop(stored_receipts);
         let mut rows = conn.query(&sql, [space]).await.map_err(error)?;
         let mut pages = crate::team::SharedFolderPages::default();
         while let Some(row) = rows.next().await.map_err(error)? {
-            let id = row.get(0).map_err(error)?;
+            let id = row.get::<String>(0).map_err(error)?;
             if row.get::<i64>(2).map_err(error)? == 1 {
-                pages.deleted.insert(id);
+                pages.deleted.insert(id.clone());
+                if let Some(stay) = row.get::<Option<String>>(3).map_err(error)? {
+                    if let Some(receipt) = receipts.get(&id).filter(|receipt| receipt.stay == stay)
+                    {
+                        pages.authorized.insert(id.clone(), receipt.hashes.clone());
+                        if let Some(archive) = &receipt.final_archive {
+                            pages.final_archives.insert(id.clone(), archive.clone());
+                        }
+                    }
+                    pages.stays.insert(id, stay);
+                }
             } else {
+                let incarnation = row.get::<String>(3).map_err(error)?;
+                let space_id = row.get::<String>(4).map_err(error)?;
+                let stay_start = row.get::<i64>(5).map_err(error)?;
+                let stay =
+                    crate::shared_space::version::stay_token(&incarnation, &space_id, stay_start);
+                pages.stays.insert(id.clone(), stay.clone());
+                if let Some(receipt) = receipts.get(&id).filter(|receipt| receipt.stay == stay) {
+                    pages.authorized.insert(id.clone(), receipt.hashes.clone());
+                }
                 pages.shared.insert(id, row.get(1).map_err(error)?);
             }
         }
+        pages.receipts = receipts;
         Ok(pages)
+    }
+
+    /// Current incarnation and continuous Space-stay witness for a shared
+    /// page. Snapshot exports use this token to break lineage across moves.
+    pub(crate) async fn shared_page_stay_token(
+        &self,
+        page: &Page,
+        space: &str,
+    ) -> Result<Option<String>, WenlanError> {
+        let shared = shared_page_predicate("p.");
+        let error = |e| WenlanError::VectorDb(format!("shared page stay: {e}"));
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT p.incarnation, s.id,
+                            COALESCE((SELECT MAX(h.version) FROM page_history h
+                                       WHERE h.page_id=p.id AND h.edited_by='space_move'), 0)
+                       FROM pages p JOIN spaces s ON s.name=p.workspace
+                      WHERE p.id=?1 AND p.workspace=?2 AND p.version=?3
+                            AND p.title=?4 AND p.content=?5 AND {shared}"
+                ),
+                libsql::params![
+                    page.id.as_str(),
+                    space,
+                    page.version,
+                    page.title.as_str(),
+                    page.content.as_str()
+                ],
+            )
+            .await
+            .map_err(error)?;
+        let Some(row) = rows.next().await.map_err(error)? else {
+            return Ok(None);
+        };
+        Ok(Some(crate::shared_space::version::stay_token(
+            &row.get::<String>(0).map_err(error)?,
+            &row.get::<String>(1).map_err(error)?,
+            row.get::<i64>(2).map_err(error)?,
+        )))
     }
 
     pub(super) async fn record_shared_page_deletion_on(
@@ -1076,10 +1166,12 @@ impl MemoryDB {
             .await
             .map_err(error)?;
         let shared = shared_page_predicate("p.");
-        conn.execute(
+        let mut rows = conn.query(
             &format!(
-                "INSERT INTO app_metadata(key, value)
-                 SELECT ?2, s.id FROM pages p
+                "SELECT p.incarnation, s.id,
+                        COALESCE((SELECT MAX(v.version) FROM page_history v
+                                  WHERE v.page_id=p.id AND v.edited_by='space_move'), 0)
+                   FROM pages p
                    JOIN spaces s ON s.name = p.workspace
                    JOIN app_metadata h ON h.key = 'shared_space.held:' || s.name
                   WHERE p.id = ?1 AND {shared}
@@ -1088,7 +1180,22 @@ impl MemoryDB {
                          WHERE key = p.id
                     )"
             ),
-            libsql::params![id, key],
+            libsql::params![id],
+        )
+        .await
+        .map_err(error)?;
+        let Some(row) = rows.next().await.map_err(error)? else {
+            return Ok(());
+        };
+        let incarnation: String = row.get(0).map_err(error)?;
+        let space_id: String = row.get(1).map_err(error)?;
+        let start: i64 = row.get(2).map_err(error)?;
+        drop(rows);
+        let stay = crate::shared_space::version::stay_token(&incarnation, &space_id, start);
+        let value = serde_json::json!({"space": space_id, "stay": stay}).to_string();
+        conn.execute(
+            "INSERT INTO app_metadata(key, value) VALUES (?1, ?2)",
+            libsql::params![key, value],
         )
         .await
         .map_err(error)?;

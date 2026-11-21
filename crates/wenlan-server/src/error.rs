@@ -35,6 +35,10 @@ pub enum ServerError {
         status: StatusCode,
         body: serde_json::Value,
     },
+    MemberProblem {
+        status: StatusCode,
+        body: crate::member_view::MemberProblem,
+    },
 }
 
 impl std::fmt::Display for ServerError {
@@ -55,6 +59,7 @@ impl std::fmt::Display for ServerError {
             }
             ServerError::ChatImport(msg) => write!(f, "Chat import failed: {}", msg),
             ServerError::Structured { body, .. } => write!(f, "{}", body),
+            ServerError::MemberProblem { body, .. } => f.write_str(body.message()),
         }
     }
 }
@@ -80,6 +85,9 @@ impl IntoResponse for ServerError {
         if let ServerError::Structured { status, body } = self {
             return (status, Json(body)).into_response();
         }
+        if let ServerError::MemberProblem { status, body } = self {
+            return crate::member_view::MemberResponse::json(status, body).into_response();
+        }
 
         let (status, error_message) = match self {
             ServerError::DbNotInitialized => (
@@ -96,7 +104,9 @@ impl IntoResponse for ServerError {
             ServerError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ServerError::ValidationError(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
             ServerError::ChatImport(msg) => (StatusCode::BAD_REQUEST, msg),
-            ServerError::QualityGateRejected { .. } | ServerError::Structured { .. } => {
+            ServerError::QualityGateRejected { .. }
+            | ServerError::Structured { .. }
+            | ServerError::MemberProblem { .. } => {
                 unreachable!()
             }
         };

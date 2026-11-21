@@ -574,6 +574,47 @@ pub async fn space_folder(db: &MemoryDB, root: &Path, space: &str) -> Option<Str
     layout(&input).get(space).cloned()
 }
 
+/// Whether a member write to page `page_id` in Space `space` stays inside
+/// that Space's folder: the page's recorded file (or, with none, the folder
+/// it was first placed in) must be inside it. A page whose file the host
+/// keeps elsewhere (a Markdown note from before the layout, say) is not.
+/// `true` while pages are not kept in their Spaces' folders: there is then
+/// no Space folder to stay in.
+pub async fn member_write_stays_in_space(
+    db: &MemoryDB,
+    root: &Path,
+    page_id: &str,
+    space: &str,
+) -> Result<bool, WenlanError> {
+    if !is_on(root) {
+        return Ok(true);
+    }
+    let Some(folder) = space_folder(db, root, space).await else {
+        return Ok(false);
+    };
+    let file = {
+        let root = root.to_owned();
+        let page_id = page_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::export::knowledge::recorded_page_file(&root, &page_id)
+        })
+        .await
+        .map_err(|e| WenlanError::Io(std::io::Error::other(e.to_string())))??
+    };
+    let place = match file {
+        Some(file) => dir_of(&file).to_string(),
+        None => {
+            let initial = db.page_initial_folder_path(page_id).await?;
+            if initial.is_empty() {
+                // Nothing placed yet: a new file goes to the Space's folder.
+                return Ok(true);
+            }
+            initial
+        }
+    };
+    Ok(inside_space(&folder, &place).is_some())
+}
+
 /// `path` (relative to the pages folder) as seen from inside the Space
 /// folder `folder`: `None` when it is not inside it.
 pub fn inside_space(folder: &str, path: &str) -> Option<String> {

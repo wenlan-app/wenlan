@@ -88,6 +88,69 @@ fn only_version_files_and_space_json_are_served() {
 }
 
 #[test]
+fn member_snapshot_must_match_the_current_page_stay() {
+    use crate::shared_space::version;
+    use crate::store::format::page::{PageFile, PageKind};
+
+    let page_id = "shared-page";
+    let mut page = PageFile::new("Shared", "Current body.");
+    page.id = Some(page_id.into());
+    page.kind = PageKind::Page;
+    let meta = version::VersionMeta {
+        parent: None,
+        merged: Vec::new(),
+        body_digest: version::body_digest(&page.body),
+        author: version::Author {
+            member: "member-a".into(),
+            kind: version::AuthorKind::Person,
+            agent: None,
+        },
+        ts: "2026-11-20T00:00:00Z".into(),
+        archived: false,
+        locked: false,
+        proposal: false,
+        decides: None,
+        device: None,
+        stay: Some("stay-current".into()),
+    };
+    let bytes = crate::member_view::MemberSnapshot::new(
+        &page,
+        &meta,
+        &std::collections::HashMap::from([(page_id.into(), "Shared".into())]),
+    )
+    .render()
+    .into_bytes();
+    let name = version::version_file_name(&version::sha256_hex(&bytes));
+    let mut pages = SharedFolderPages::default();
+    pages.shared.insert(page_id.into(), "Shared".into());
+    pages.stays.insert(page_id.into(), "stay-current".into());
+    pages.authorized.insert(
+        page_id.into(),
+        std::collections::HashSet::from([version::version_sha(&name).unwrap().to_string()]),
+    );
+
+    assert!(can_serve_version(page_id, &name, &bytes, &pages));
+    pages.authorized.clear();
+    assert!(!can_serve_version(page_id, &name, &bytes, &pages));
+    pages.authorized.insert(
+        page_id.into(),
+        std::collections::HashSet::from([version::version_sha(&name).unwrap().to_string()]),
+    );
+    pages
+        .stays
+        .insert(page_id.into(), "stay-after-reentry".into());
+    assert!(!can_serve_version(page_id, &name, &bytes, &pages));
+
+    // A legacy snapshot is not guessed into a new stay, even if its body is
+    // otherwise a valid member projection.
+    let mut legacy_meta = meta;
+    legacy_meta.stay = None;
+    let legacy = version::render(&page, &legacy_meta).into_bytes();
+    let legacy_name = version::version_file_name(&version::sha256_hex(&legacy));
+    assert!(!can_serve_version(page_id, &legacy_name, &legacy, &pages));
+}
+
+#[test]
 fn members_of_a_space_are_listed_in_its_space_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(TEAM_FILE);

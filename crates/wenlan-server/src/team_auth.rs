@@ -80,7 +80,7 @@ use axum::extract::{ConnectInfo, Path as UrlPath, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::{Extension, Json};
+use axum::Extension;
 use chrono::{DateTime, Utc};
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::{
@@ -663,18 +663,8 @@ enum Failure {
     Unavailable(&'static str),
 }
 
-fn text(status: StatusCode, body: &'static str) -> Response {
-    let mut response = (status, body).into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    response
+fn text(status: StatusCode, body: &'static str) -> crate::member_view::MemberResponse {
+    crate::member_view::team::auth_text(status, body)
 }
 
 fn cookie_attributes() -> &'static str {
@@ -693,70 +683,32 @@ fn clear_login_cookie() -> String {
     format!("{LOGIN_COOKIE}=; {}; Max-Age=0", cookie_attributes())
 }
 
-fn set_cookie(response: &mut Response, value: &str) {
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        HeaderValue::from_str(value).expect("cookie values are visible ASCII"),
-    );
-}
-
-/// A plain-text page that ends this browser's login too.
-fn plain_page(status: StatusCode, message: String) -> Response {
-    let mut response = (status, message).into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    set_cookie(&mut response, &clear_login_cookie());
-    response
-}
-
-fn refusal_message(reason: &team::InviteRefusal) -> String {
-    use team::InviteRefusal::*;
-    match reason {
-        Unknown => "This invite does not work. Ask the owner of the team for a new link.".into(),
-        Expired => "This invite has expired. Ask the owner of the team for a new link.".into(),
-        Used => {
-            "This invite has already been used. Ask the owner of the team for a new link.".into()
-        }
-        IdentityTaken => "This account already belongs to another member of this team.".into(),
-        EmailMismatch { invited } => format!(
-            "This invite is for {invited}. Go back to the link and sign in with that account."
-        ),
-    }
-}
-
 impl Failure {
-    fn into_response(self) -> Response {
-        let mut response = match self {
-            Failure::Off => return StatusCode::NOT_FOUND.into_response(),
+    fn into_response(self) -> crate::member_view::MemberResponse {
+        match self {
+            Failure::Off => crate::member_view::MemberResponse::status(StatusCode::NOT_FOUND),
             Failure::Refused(reason) => {
                 tracing::warn!("[team] sign-in refused: {reason}");
-                text(
-                    StatusCode::BAD_REQUEST,
-                    "Sign-in did not work. Go back and try again.",
+                crate::member_view::team::callback_failure(
+                    crate::member_view::team::CallbackFailure::Refused,
+                    &clear_login_cookie(),
                 )
             }
             Failure::NotInTeam => {
                 tracing::info!("[team] sign-in refused: the account is not in this team");
-                text(StatusCode::FORBIDDEN, "This account is not in this team.")
+                crate::member_view::team::callback_failure(
+                    crate::member_view::team::CallbackFailure::NotInTeam,
+                    &clear_login_cookie(),
+                )
             }
             Failure::Unavailable(reason) => {
                 tracing::warn!("[team] sign-in unavailable: {reason}");
-                text(
-                    StatusCode::BAD_GATEWAY,
-                    "Sign-in is not available right now. Try again later.",
+                crate::member_view::team::callback_failure(
+                    crate::member_view::team::CallbackFailure::Unavailable,
+                    &clear_login_cookie(),
                 )
             }
-        };
-        // Whatever went wrong, this browser's transaction is over.
-        set_cookie(&mut response, &clear_login_cookie());
-        response
+        }
     }
 }
 
@@ -790,11 +742,7 @@ pub(super) fn limited(state: &TeamState, req: &Request) -> Option<Response> {
     if state.auth.allow(peer) {
         return None;
     }
-    let mut response = text(StatusCode::TOO_MANY_REQUESTS, "Too many requests.");
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
-    Some(response)
+    Some(crate::member_view::team::rate_limited().into_response())
 }
 
 /// First the rate limit (before anything costly), then whether sign-in is
@@ -806,14 +754,10 @@ pub(super) async fn guard(State(state): State<TeamState>, req: Request, next: Ne
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip());
     if !state.auth.allow(peer) {
-        let mut response = text(StatusCode::TOO_MANY_REQUESTS, "Too many requests.");
-        response
-            .headers_mut()
-            .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
-        return response;
+        return crate::member_view::team::rate_limited().into_response();
     }
     if site(&state).await.is_none() {
-        return StatusCode::NOT_FOUND.into_response();
+        return crate::member_view::team::empty(StatusCode::NOT_FOUND).into_response();
     }
     next.run(req).await
 }
@@ -862,17 +806,16 @@ fn configured_with(
 /// no providers when sign-in is off (not a 404, so a page can tell "off"
 /// from "gone"). It is rate limited like the rest of sign-in, and says
 /// nothing the invite page does not already show anyone.
-pub(super) async fn providers(State(state): State<TeamState>, req: Request) -> Response {
+pub(super) async fn providers(
+    State(state): State<TeamState>,
+    req: Request,
+) -> crate::member_view::MemberResponse {
     let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip());
     if !state.auth.allow(peer) {
-        let mut response = text(StatusCode::TOO_MANY_REQUESTS, "Too many requests.");
-        response
-            .headers_mut()
-            .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
-        return response;
+        return crate::member_view::team::rate_limited();
     }
     let providers = offered(&state).await;
     let path = state.team_path.clone();
@@ -880,7 +823,7 @@ pub(super) async fn providers(State(state): State<TeamState>, req: Request) -> R
         .await
         .ok()
         .flatten();
-    Json(wenlan_types::team::TeamProviders { providers, team }).into_response()
+    crate::member_view::team::providers(wenlan_types::team::TeamProviders { providers, team })
 }
 
 /// Logs once, at start, whether sign-in is on and, if not, why.
@@ -993,20 +936,12 @@ pub(super) async fn start(
     UrlPath(provider): UrlPath<String>,
     Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     if query.get("purpose").map(String::as_str) != Some("signin") {
         return text(StatusCode::BAD_REQUEST, "purpose must be signin");
     }
     match begin(&state, &provider, Purpose::SignIn, &headers).await {
-        Ok((url, cookie)) => {
-            let mut response = StatusCode::FOUND.into_response();
-            response.headers_mut().insert(
-                header::LOCATION,
-                HeaderValue::from_str(&url).expect("an authorization URL is ASCII"),
-            );
-            set_cookie(&mut response, &cookie);
-            response
-        }
+        Ok((url, cookie)) => crate::member_view::team::redirect_to_provider(&url, &cookie),
         Err(failure) => failure.into_response(),
     }
 }
@@ -1017,13 +952,9 @@ async fn started(
     provider: &str,
     purpose: Purpose,
     headers: &HeaderMap,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     match begin(state, provider, purpose, headers).await {
-        Ok((url, cookie)) => {
-            let mut response = Json(serde_json::json!({ "url": url })).into_response();
-            set_cookie(&mut response, &cookie);
-            response
-        }
+        Ok((url, cookie)) => crate::member_view::team::started_url(url, &cookie),
         Err(failure) => failure.into_response(),
     }
 }
@@ -1037,7 +968,7 @@ pub(super) async fn link(
     Extension(member): Extension<Member>,
     Extension(credential): Extension<Credential>,
     headers: HeaderMap,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     if !same_origin(&state, &headers).await {
         return text(StatusCode::FORBIDDEN, "origin not allowed");
     }
@@ -1045,11 +976,10 @@ pub(super) async fn link(
         let fresh = team_session::cookie_token(&headers)
             .is_some_and(|token| state.sessions.fresh(&token, REAUTH_WINDOW));
         if !fresh {
-            return (
+            return crate::member_view::team::auth_error(
                 StatusCode::FORBIDDEN,
-                Json(serde_json::json!({ "error": "reauth_required" })),
-            )
-                .into_response();
+                crate::member_view::team::AuthErrorCode::ReauthRequired,
+            );
         }
     }
     started(
@@ -1070,16 +1000,15 @@ pub(super) async fn reauth(
     UrlPath(provider): UrlPath<String>,
     Extension(member): Extension<Member>,
     headers: HeaderMap,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     if !same_origin(&state, &headers).await {
         return text(StatusCode::FORBIDDEN, "origin not allowed");
     }
     if member.identities.is_empty() {
-        return (
+        return crate::member_view::team::auth_error(
             StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "no_linked_account" })),
-        )
-            .into_response();
+            crate::member_view::team::AuthErrorCode::NoLinkedAccount,
+        );
     }
     started(
         &state,
@@ -1102,7 +1031,7 @@ pub(super) async fn invite(
     UrlPath(provider): UrlPath<String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     if !same_origin(&state, &headers).await {
         return text(StatusCode::FORBIDDEN, "origin not allowed");
     }
@@ -1122,11 +1051,10 @@ pub(super) async fn invite(
     match blocking(move || team::invite_usable(&path, &hash)).await {
         Ok(true) => {}
         Ok(false) => {
-            return (
+            return crate::member_view::team::auth_error(
                 StatusCode::GONE,
-                Json(serde_json::json!({ "error": "invite_unusable" })),
-            )
-                .into_response()
+                crate::member_view::team::AuthErrorCode::InviteUnusable,
+            );
         }
         Err(_) => return Failure::Unavailable("the member list cannot be read").into_response(),
     }
@@ -1142,7 +1070,7 @@ pub(super) async fn callback(
     UrlPath(provider): UrlPath<String>,
     Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
-) -> Response {
+) -> crate::member_view::MemberResponse {
     match finish(&state, &provider, &query, &headers).await {
         Ok(response) => response,
         Err(failure) => failure.into_response(),
@@ -1162,7 +1090,7 @@ async fn finish(
     provider_name: &str,
     query: &HashMap<String, String>,
     headers: &HeaderMap,
-) -> Result<Response, Failure> {
+) -> Result<crate::member_view::MemberResponse, Failure> {
     let origin = site(state).await.ok_or(Failure::Off)?;
     let provider = state.auth.provider(provider_name).ok_or(Failure::Off)?;
 
@@ -1251,14 +1179,19 @@ async fn finish(
                 team::InviteOutcome::Linked(member) => member.id,
                 team::InviteOutcome::PendingApproval(_) => {
                     tracing::info!("[team] an invited account waits for the owner's approval");
-                    return Ok(plain_page(
+                    return Ok(crate::member_view::team::invite_page(
                         StatusCode::OK,
-                        "Thanks. The owner of this team needs to approve you before you can sign in. Ask them, then come back and sign in.".into(),
+                        crate::member_view::team::InvitePage::WaitingForApproval,
+                        &clear_login_cookie(),
                     ));
                 }
                 team::InviteOutcome::Refused(reason) => {
                     tracing::info!("[team] an invite was refused");
-                    return Ok(plain_page(StatusCode::FORBIDDEN, refusal_message(&reason)));
+                    return Ok(crate::member_view::team::invite_page(
+                        StatusCode::FORBIDDEN,
+                        crate::member_view::team::InvitePage::Refused(reason),
+                        &clear_login_cookie(),
+                    ));
                 }
             }
         }
@@ -1305,13 +1238,10 @@ async fn finish(
         .sessions
         .create_fresh(&member_id)
         .map_err(|_| Failure::Unavailable("no randomness"))?;
-    let mut response = StatusCode::FOUND.into_response();
-    response
-        .headers_mut()
-        .insert(header::LOCATION, HeaderValue::from_static("/app"));
-    set_cookie(&mut response, &team_session::set_cookie(&token));
-    set_cookie(&mut response, &clear_login_cookie());
-    Ok(response)
+    Ok(crate::member_view::team::redirect_to_app(
+        &team_session::set_cookie(&token),
+        &clear_login_cookie(),
+    ))
 }
 
 /// Exchanges the code and checks the id token: signature, issuer, audience,

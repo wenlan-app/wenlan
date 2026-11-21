@@ -880,7 +880,7 @@ impl MemoryDB {
             _db: db,
             conn: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
             entity_resolution_lock: tokio::sync::Mutex::new(()),
-            space_write_lock: tokio::sync::Mutex::new(()),
+            space_write_lock: tokio::sync::Mutex::new(()).into(),
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),

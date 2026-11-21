@@ -434,6 +434,7 @@ pub(crate) async fn stage_gate_proposals(
     plan: &GatePlan,
     edited_by: &str,
     agent: Option<&str>,
+    member_scope: Option<&crate::read_scope::ReadScope>,
 ) -> Result<StagedGate, WenlanError> {
     let existing = proposals_from(&db.list_sentence_history("page", page_id).await?, page_id);
     let pending: HashMap<(&str, &str), &str> = existing
@@ -470,6 +471,7 @@ pub(crate) async fn stage_gate_proposals(
             &proposal.after,
             Some("the facts behind a sentence that is yours changed, so it is a proposal"),
             proposal.reason,
+            member_scope,
         )
         .await?;
         report.push(not_applied(proposal, Some(id.clone())));
@@ -499,6 +501,7 @@ async fn append_proposal(
     after: &str,
     why: Option<&str>,
     reason: Option<WeakReason>,
+    member_scope: Option<&crate::read_scope::ReadScope>,
 ) -> Result<i64, WenlanError> {
     let mut data = serde_json::json!({
         "proposal_id": id,
@@ -510,19 +513,22 @@ async fn append_proposal(
     }
     let after_hash = (!after.is_empty())
         .then(|| authorship::sentence_hash(&authorship::normalize_sentence(after)));
-    db.append_sentence_history(NewHistoryEntry {
-        ts: chrono::Utc::now().timestamp(),
-        tx,
-        actor,
-        op: OP_SENTENCE_PROPOSE,
-        target: &page_target(page_id),
-        version: Some(version),
-        why,
-        text: Some(after),
-        digest_before: Some(sentence_hash),
-        digest_after: after_hash.as_deref(),
-        data: &data,
-    })
+    db.append_sentence_history_for(
+        NewHistoryEntry {
+            ts: chrono::Utc::now().timestamp(),
+            tx,
+            actor,
+            op: OP_SENTENCE_PROPOSE,
+            target: &page_target(page_id),
+            version: Some(version),
+            why,
+            text: Some(after),
+            digest_before: Some(sentence_hash),
+            digest_after: after_hash.as_deref(),
+            data: &data,
+        },
+        member_scope,
+    )
     .await
 }
 
@@ -662,6 +668,7 @@ async fn propose_as(
         after,
         req.why.as_deref(),
         req.reason,
+        None,
     )
     .await?;
     find_proposal(db, page_id, &id).await

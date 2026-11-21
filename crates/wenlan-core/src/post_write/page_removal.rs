@@ -379,6 +379,9 @@ mod tests {
                 expected_source_revision: None,
                 knowledge_path: None,
                 citations: None,
+
+                member_scope: None,
+                member_projected_body: false,
             },
         )
         .await

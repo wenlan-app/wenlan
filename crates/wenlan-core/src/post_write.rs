@@ -176,19 +176,38 @@ pub async fn update_links_to_renamed_headings(
     scope: &crate::read_scope::ReadScope,
     knowledge_path: Option<&Path>,
 ) -> (u32, u32, u32) {
+    update_links_to_renamed_headings_for(db, id, before, after, scope, knowledge_path, false).await
+}
+
+/// Member-scoped variant for a heading edit. Backlink writes re-check page
+/// eligibility immediately before cleanup or write and carry the Space into
+/// their transaction fence.
+pub async fn update_links_to_renamed_headings_for(
+    db: &MemoryDB,
+    id: &str,
+    before: &str,
+    after: &str,
+    scope: &crate::read_scope::ReadScope,
+    knowledge_path: Option<&Path>,
+    member: bool,
+) -> (u32, u32, u32) {
     let renames = page_link_rename::renamed_headings(before, after);
     if renames.is_empty() {
         return (0, 0, 0);
     }
-    let counts =
-        page_link_rename::update_links_to_renamed_headings(db, id, &renames, scope, knowledge_path)
-            .await
-            .unwrap_or_else(|error| {
-                log::warn!(
-                    "[heading_rename] {id} saved; updating links to its headings failed: {error}"
-                );
-                page_link_rename::LinkRenameCounts::default()
-            });
+    let counts = page_link_rename::update_links_to_renamed_headings(
+        db,
+        id,
+        &renames,
+        scope,
+        knowledge_path,
+        member,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        log::warn!("[heading_rename] {id} saved; updating links to its headings failed: {error}");
+        page_link_rename::LinkRenameCounts::default()
+    });
     (counts.updated, counts.pending_review, counts.not_updated)
 }
 

@@ -15,7 +15,9 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use wenlan_core::db::MemberPageTarget;
+use wenlan_core::db::{MemberPageTarget, MemoryDB};
+
+use crate::member_view::{self, MemberResponse};
 use wenlan_core::read_scope::ReadScope;
 use wenlan_core::shared_space::version::{Author, AuthorKind};
 
@@ -114,6 +116,71 @@ pub(crate) const MCP_CALLS: &[(&str, &str)] = &[
     ("DELETE", "/api/pages/{id}"),
 ];
 
+pub(crate) fn member_routes() -> impl Iterator<Item = (&'static str, &'static str)> {
+    crate::team_routes::member_app_calls().chain(MCP_CALLS.iter().copied())
+}
+
+pub(crate) fn page_parameters<'a>(
+    template: &'a str,
+    path: &'a str,
+) -> impl Iterator<Item = &'a str> {
+    template
+        .split('/')
+        .zip(path.split('/'))
+        .filter_map(|(segment, id)| matches!(segment, "{id}" | "{basis_id}").then_some(id))
+}
+
+pub(crate) async fn may_write_pages<'a>(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    target: MemberPageTarget<'_>,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<bool, wenlan_core::WenlanError> {
+    for id in ids {
+        if !db.member_can_access_page(id, scope, target).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Why a member cannot write a page the host keeps outside the Space's
+/// folder. It names no folder.
+pub(crate) const OUTSIDE_SPACE: &str =
+    "This page's file is kept outside the Space's folder, so team members cannot change it. The host can move it into the Space's folder.";
+
+/// Whether every page a member write names keeps its file inside the
+/// Space's folder ([`wenlan_core::space_folders::member_write_stays_in_space`]).
+pub(crate) async fn writes_stay_in_space<'a>(
+    db: &MemoryDB,
+    root: &std::path::Path,
+    space: &str,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<bool, wenlan_core::WenlanError> {
+    for id in ids {
+        if !wenlan_core::space_folders::member_write_stays_in_space(db, root, id, space).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn write_target<'a>(
+    method: &Method,
+    route: &str,
+    actor: Option<&'a str>,
+) -> Option<MemberPageTarget<'a>> {
+    if !route.starts_with("/api/pages/drafts/") {
+        return Some(MemberPageTarget::Published);
+    }
+    let actor = actor?;
+    Some(if method == Method::PUT {
+        MemberPageTarget::OwnedDraft(actor)
+    } else {
+        MemberPageTarget::PublishedOrOwnedDraft(actor)
+    })
+}
+
 /// Check the route template before exposing any row or entering a mutation.
 pub(crate) async fn guard_private_memory(
     State(state): State<crate::state::SharedState>,
@@ -144,9 +211,9 @@ pub(crate) async fn guard_private_memory(
     let draft_route = route.starts_with("/api/pages/drafts/");
     let refused = || {
         if draft_route {
-            crate::page_routes::draft_not_found().into_response()
+            MemberResponse::from_error(crate::page_routes::draft_not_found()).into_response()
         } else {
-            crate::error::ServerError::NotFound("page not found".into()).into_response()
+            MemberResponse::default_problem(StatusCode::NOT_FOUND).into_response()
         }
     };
     let member = from_headers(req.headers());
@@ -166,48 +233,66 @@ pub(crate) async fn guard_private_memory(
         return refused();
     }
     if req.method() != Method::GET {
-        let ids: Vec<_> = route
-            .split('/')
-            .zip(req.uri().path().split('/'))
-            .filter_map(|(segment, id)| matches!(segment, "{id}" | "{basis_id}").then_some(id))
-            .collect();
-        if !ids.is_empty() {
+        // The browser-only mutations need a real acting member. A caller
+        // without an actor is limited to the hosted MCP write contracts.
+        if member.is_none()
+            && !MCP_CALLS.contains(&(method, route))
+            && !matches!(route, "/api/pages/search")
+        {
+            return refused();
+        }
+        let mut ids = page_parameters(route, req.uri().path()).peekable();
+        if ids.peek().is_some() {
             let Some(pinned) = pinned else {
                 return refused();
             };
-            let target = if draft_route {
-                let Some(member) = member.as_ref() else {
-                    return refused();
-                };
-                if req.method() == Method::PUT {
-                    MemberPageTarget::OwnedDraft(&member.id)
-                } else {
-                    MemberPageTarget::PublishedOrOwnedDraft(&member.id)
-                }
-            } else {
-                MemberPageTarget::Published
+            let Some(target) = write_target(
+                req.method(),
+                route,
+                member.as_ref().map(|actor| actor.id.as_str()),
+            ) else {
+                return refused();
             };
-            let Some(db) = state.read().await.db.clone() else {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            let (db, root) = {
+                let state = state.read().await;
+                (
+                    state.db.clone(),
+                    state
+                        .lint_config
+                        .page_root()
+                        .map(std::path::Path::to_path_buf),
+                )
+            };
+            let Some(db) = db else {
+                return MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE).into_response();
             };
             let scope = ReadScope::Space(pinned.to_owned());
-            for id in ids {
-                match db.member_can_access_page(id, &scope, target).await {
+            match may_write_pages(&db, &scope, target, ids).await {
+                Ok(true) => {}
+                Ok(false) => return refused(),
+                Err(error) => {
+                    tracing::warn!("member page authorization failed: {error}");
+                    return MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE).into_response();
+                }
+            }
+            if let Some(root) = root {
+                let ids = page_parameters(route, req.uri().path());
+                match writes_stay_in_space(&db, &root, pinned, ids).await {
                     Ok(true) => {}
-                    Ok(false) => return refused(),
+                    Ok(false) => {
+                        return MemberResponse::problem(StatusCode::CONFLICT, OUTSIDE_SPACE)
+                            .into_response()
+                    }
                     Err(error) => {
-                        tracing::warn!("member page authorization failed: {error}");
-                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                        tracing::warn!("member page folder check failed: {error}");
+                        return MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                            .into_response();
                     }
                 }
             }
         }
     }
-    let response = next.run(req).await;
-    if response.status().is_server_error() {
-        return response.status().into_response();
-    }
-    response
+    member_view::verified_forwarded_response(next.run(req).await)
 }
 
 /// The member these headers name, when they carry this process's secret.

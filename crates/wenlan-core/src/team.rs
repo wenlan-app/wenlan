@@ -1420,11 +1420,22 @@ pub fn check_member_version(
 #[derive(Default)]
 pub struct SharedFolderPages {
     pub(crate) shared: std::collections::HashMap<String, String>,
+    /// Current host-issued stay witness for each shared page.
+    pub(crate) stays: std::collections::HashMap<String, String>,
+    /// Exact hashes issued publication receipts for in the current stay.
+    pub(crate) authorized: std::collections::HashMap<String, HashSet<String>>,
+    /// Receipts kept for pages deleted from the current database row, so a
+    /// safe final-stay archive remains available to the sync client.
+    pub(crate) receipts: std::collections::HashMap<String, crate::shared_space::MemberViewReceipt>,
     pub(crate) deleted: HashSet<String>,
+    /// For a deleted page, the one archive verified as its final version.
+    /// Members receive only it, and only it stands in for the deletion.
+    pub(crate) final_archives: std::collections::HashMap<String, String>,
 }
 
 /// Versions must belong to this Space and refer only to its shared pages.
-/// For a verified deletion, members still receive the archive. An old
+/// For a verified deletion, members still receive its final archive, and no
+/// older one. An old
 /// version with a private reference is withheld until it can be replaced.
 pub fn can_serve_version(page: &str, name: &str, bytes: &[u8], pages: &SharedFolderPages) -> bool {
     if crate::rulesync_team::is_master_page(page) {
@@ -1436,11 +1447,18 @@ pub fn can_serve_version(page: &str, name: &str, bytes: &[u8], pages: &SharedFol
     }
     version::parse(name, bytes).is_ok_and(|read| {
         read.page.id.as_deref() == Some(page)
+            && pages
+                .authorized
+                .get(page)
+                .is_some_and(|hashes| hashes.contains(&read.sha))
             && (shared
                 || (read.meta.archived
                     && read.meta.parent.is_some()
+                    && pages.final_archives.get(page) == Some(&read.sha)
                     && version::file_kind(&read.meta) == version::PAGES_DIR))
-            && crate::member_view::MemberSnapshot::matches(&read, &pages.shared)
+            && pages.stays.get(page).is_some_and(|stay| {
+                crate::member_view::MemberSnapshot::matches_in_stay(&read, &pages.shared, stay)
+            })
     })
 }
 

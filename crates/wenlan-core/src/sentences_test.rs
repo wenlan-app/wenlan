@@ -88,6 +88,9 @@ async fn write(
             expected_source_revision: None,
             knowledge_path: None,
             citations: None,
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
@@ -262,6 +265,9 @@ async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
             expected_source_revision: None,
             knowledge_path: None,
             citations: Some((citation("mem-ai", "verified"), "1 cited".to_string())),
+
+            member_scope: None,
+            member_projected_body: false,
         },
     )
     .await
