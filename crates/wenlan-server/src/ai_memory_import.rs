@@ -3,14 +3,15 @@
 //! (see `wenlan_core::ai_memory_import` for the gates). Reads the tools'
 //! memory files, never writes them.
 //!
-//! Each memory's owner is the tool's file. A pass compares the files with
-//! the ledger of memories already decided:
+//! Wenlan's memory is the record; the tool's file is a copy Wenlan reads.
+//! A pass compares the files with the ledger of memories already decided:
 //! - a new memory goes through the gates and may become a point;
 //! - an edited memory brings its point up to date (the new text supersedes
 //!   it, so pages built on it are rewritten and the old text stays in
 //!   history);
-//! - a memory gone from the tool takes its point with it (pages built on it
-//!   are rewritten);
+//! - a memory gone from the tool, or edited into something the gates leave
+//!   out, only stops being followed: its point stays, since a copy dropping
+//!   a line is not a decision that it no longer holds;
 //! - a point the person edited is theirs and is never changed or removed; a
 //!   point the person removed never comes back;
 //! - a tool whose memory folder is missing is left as it was.
@@ -18,7 +19,8 @@
 //! The person turns following on; after that a pass runs with the
 //! background reading of conversations, on the same model
 //! (`things_intake::models`, its grouping model), at most once an hour.
-//! Removals need no model; new and edited memories wait for one.
+//! Dropping what a tool no longer says needs no model; new and edited
+//! memories wait for one.
 
 use std::collections::{HashMap, HashSet};
 
@@ -199,15 +201,9 @@ pub async fn follow(
         }
     }
 
-    // Gone from the tool: its own point goes too, unless the person edited
-    // or removed it.
+    // Gone from the tool: only the copy changed. Its point stays in Wenlan,
+    // the record; it is just no longer followed.
     for row in gone.iter().filter(|r| !paired.contains(&r.key)) {
-        if let Decided::Point { id, hash } = &row.decided {
-            if db.ai_memory_point(id, hash).await.map_err(err)? == PointState::Untouched {
-                db.delete_by_source_id("memory", id).await.map_err(err)?;
-                counts.removed += 1;
-            }
-        }
         db.drop_ai_memory_decided(&row.key).await.map_err(err)?;
     }
 
@@ -411,22 +407,18 @@ async fn note(db: &MemoryDB, f: &Fresh, decided: Decided) -> Result<(), String> 
 }
 
 /// A memory left out: when it was an edit, the point of its earlier text
-/// goes, since the tool no longer says that.
+/// stays in Wenlan and is no longer followed.
 async fn settle(
     db: &MemoryDB,
     f: &Fresh,
     decided: Decided,
-    counts: &mut ImportCounts,
+    _counts: &mut ImportCounts,
 ) -> Result<(), String> {
     note(db, f, decided).await?;
-    if let Some((row, old)) = &f.replaces {
-        db.delete_by_source_id("memory", old)
-            .await
-            .map_err(|e| e.to_string())?;
+    if let Some((row, _)) = &f.replaces {
         db.drop_ai_memory_decided(&row.key)
             .await
             .map_err(|e| e.to_string())?;
-        counts.removed += 1;
     }
     Ok(())
 }

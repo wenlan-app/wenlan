@@ -362,10 +362,11 @@ async fn an_edited_memory_brings_its_own_point_up_to_date() {
     );
 }
 
-/// A memory gone from the tool takes its own point with it; a point the
-/// person edited stays theirs; a point the person removed does not come back.
+/// A memory gone from the tool keeps its point: Wenlan's memory is the
+/// record and the tool's file a copy. A point the person edited stays theirs;
+/// a point the person removed does not come back.
 #[tokio::test]
-async fn a_gone_memory_takes_only_its_own_untouched_point() {
+async fn a_gone_memory_keeps_its_point() {
     let _one = ONE_AT_A_TIME.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
@@ -412,8 +413,11 @@ async fn a_gone_memory_takes_only_its_own_untouched_point() {
     let pass = follow(&db, Some(model.as_ref()), &keep, seen(vec![c.clone()]))
         .await
         .unwrap();
-    assert_eq!(pass.counts.removed, 1, "{:?}", pass.counts);
-    assert!(db.get_memory_detail(&ids[0]).await.unwrap().is_none());
+    assert_eq!(pass.counts.removed, 0, "{:?}", pass.counts);
+    assert!(
+        db.get_memory_detail(&ids[0]).await.unwrap().is_some(),
+        "a copy dropping a line keeps the point"
+    );
     assert!(
         db.get_memory_detail(&ids[1]).await.unwrap().is_some(),
         "an edited point is the person's"
