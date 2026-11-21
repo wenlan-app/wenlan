@@ -451,7 +451,14 @@ fn select_startup_repair_fence(
 }
 
 fn optional_runtime_workers_allowed(startup_repair_claimed: bool) -> bool {
-    !startup_repair_claimed
+    !startup_repair_claimed && !cloud_tenant(|name| std::env::var_os(name))
+}
+
+/// One person's Wenlan in the personal cloud only keeps pages, syncs and
+/// searches: no background work (sorting memory, models, the scheduler,
+/// telemetry), so each person costs little while they are connected.
+fn cloud_tenant(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    env(wenlan_server::cloud_pass::ACCOUNT_ENV).is_some_and(|value| !value.is_empty())
 }
 
 fn on_device_model_working_set_bytes(model: &wenlan_core::on_device_models::OnDeviceModel) -> u64 {

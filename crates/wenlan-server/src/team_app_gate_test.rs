@@ -250,6 +250,7 @@ async fn fixture() -> Fixture {
             sessions: Arc::default(),
             auth: Arc::default(),
             device: Arc::default(),
+            cloud: None,
         },
         _dir: dir,
         log,
@@ -1775,6 +1776,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
         sessions: Arc::default(),
         auth: Arc::default(),
         device: Arc::default(),
+        cloud: None,
     };
     let folders = |answer: &Value| -> Vec<String> {
         answer["folders"]

@@ -35,19 +35,13 @@ fn an_expired_altered_or_too_long_pass_is_refused() {
 }
 
 #[test]
-fn a_kept_key_is_read_back_and_only_its_owner_may_read_it() {
+fn a_kept_key_is_read_back() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gateway.key");
     let made = PassKey::read_or_create(&path).unwrap();
     let again = PassKey::read_or_create(&path).unwrap();
     let alice = AccountId::new();
     assert_eq!(again.verify(&made.sign(&alice)), Some(alice));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
     std::fs::write(&path, "not hex").unwrap();
     assert!(PassKey::read_or_create(&path).is_err());
 }

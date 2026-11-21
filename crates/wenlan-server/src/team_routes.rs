@@ -1048,6 +1048,42 @@ struct TeamState {
     auth: Arc<auth::AuthState>,
     /// AI tools waiting for a member to type their short code.
     device: Arc<device::DeviceStore>,
+    /// Set when this is one person's Wenlan in the personal cloud.
+    cloud: Option<Arc<CloudTenant>>,
+}
+
+/// One person's Wenlan in the personal cloud: whose it is, and the key its
+/// entrance's passes are checked with.
+struct CloudTenant {
+    account: crate::cloud_locator::AccountId,
+    key: crate::cloud_pass::PassKey,
+}
+
+impl CloudTenant {
+    /// From [`crate::cloud_pass::ACCOUNT_ENV`] and the key in the data
+    /// folder. A tenant whose key cannot be read takes no pass at all.
+    fn from_env(team_path: &std::path::Path) -> Option<Self> {
+        let account = env_value(crate::cloud_pass::ACCOUNT_ENV)?;
+        let Some(account) = crate::cloud_locator::AccountId::parse(&account) else {
+            tracing::error!("[cloud] the account id is not one; every request is refused");
+            return Some(Self {
+                account: crate::cloud_locator::AccountId::new(),
+                key: crate::cloud_pass::PassKey::random().ok()?,
+            });
+        };
+        let key = match crate::cloud_pass::PassKey::read(
+            &team_path.with_file_name(crate::cloud_pass::ACCOUNT_KEY_FILE),
+        ) {
+            Ok(key) => key,
+            Err(error) => {
+                tracing::error!(
+                    "[cloud] the pass key cannot be read ({error}); every request is refused"
+                );
+                crate::cloud_pass::PassKey::random().ok()?
+            }
+        };
+        Some(Self { account, key })
+    }
 }
 
 /// MCP services by (member, Space, access).
@@ -1095,6 +1131,7 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
         sessions: LIVE_SESSIONS.clone(),
         auth: Arc::new(auth::AuthState::from_config(&team::team_path())),
         device: Arc::default(),
+        cloud: CloudTenant::from_env(&team::team_path()).map(Arc::new),
     };
     let kept = {
         let path = state.team_path.clone();
@@ -1105,7 +1142,9 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
             .flatten()
     };
     LISTEN.send_replace(kept);
-    if env_value(TEAM_ADDR_ENV).is_some() {
+    if state.cloud.is_some() {
+        cloud_owner(&state).await;
+    } else if env_value(TEAM_ADDR_ENV).is_some() {
         owner_link_for_headless_server(&state).await;
     }
     auth::announce(&state).await;
@@ -1159,6 +1198,24 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
             return;
         }
         // Turned off, or moved: the loop listens again as it says now.
+    }
+}
+
+/// A person's Wenlan in the personal cloud has one member, its owner, who
+/// only ever comes in with the entrance's pass: made on the first start,
+/// with a key nobody keeps.
+async fn cloud_owner(state: &TeamState) {
+    let path = state.team_path.clone();
+    let made =
+        tokio::task::spawn_blocking(move || -> Result<(), wenlan_core::error::WenlanError> {
+            if !team::has_owner(&path)? {
+                team::owner_key(&path, OWNER_STAND_IN)?;
+            }
+            Ok(())
+        })
+        .await;
+    if !matches!(made, Ok(Ok(()))) {
+        tracing::error!("[cloud] the owner could not be made");
     }
 }
 
@@ -2039,6 +2096,9 @@ const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
 /// 401 whatever cookie comes with it. Only without one is the session
 /// cookie read.
 async fn require_member(State(state): State<TeamState>, mut req: Request, next: Next) -> Response {
+    if let Some(cloud) = state.cloud.clone() {
+        return require_pass(state, &cloud, req, next).await;
+    }
     if !req.headers().contains_key(header::AUTHORIZATION)
         && crate::team_session::has_cookie(req.headers())
     {
@@ -2118,9 +2178,48 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
     next.run(req).await
 }
 
+/// A person's Wenlan in the personal cloud: the only way in is a pass the
+/// entrance signed for this account; no key or cookie is taken. The pass
+/// names the owner, the one person this Wenlan is for.
+async fn require_pass(state: TeamState, cloud: &CloudTenant, req: Request, next: Next) -> Response {
+    let refused = |status: StatusCode, text: &'static str| {
+        let mut response = crate::member_view::MemberResponse::text(status, text).into_response();
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
+    };
+    let passed = req
+        .headers()
+        .get(crate::cloud_pass::PASS_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|pass| cloud.key.verify(pass));
+    if passed.as_ref() != Some(&cloud.account) {
+        return refused(StatusCode::UNAUTHORIZED, "sign in again");
+    }
+    let path = state.team_path.clone();
+    let owner = tokio::task::spawn_blocking(move || {
+        team::read_team(&path).map(|file| {
+            file.members.into_iter().find(|member| {
+                member.role == wenlan_types::team::TeamRole::Owner && member.is_active()
+            })
+        })
+    })
+    .await;
+    let member = match owner {
+        Ok(Ok(Some(member))) => member,
+        Ok(Ok(None)) => return refused(StatusCode::SERVICE_UNAVAILABLE, "not ready"),
+        _ => {
+            return crate::member_view::MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                .into_response()
+        }
+    };
+    admit_browser(&state, member, req, next).await
+}
+
 /// A browser's request, by its session cookie. Every answer, refusals
 /// included, is `Cache-Control: no-store`.
-async fn require_session(state: TeamState, mut req: Request, next: Next) -> Response {
+async fn require_session(state: TeamState, req: Request, next: Next) -> Response {
     let no_store = |mut response: Response| {
         response
             .headers_mut()
@@ -2169,6 +2268,24 @@ async fn require_session(state: TeamState, mut req: Request, next: Next) -> Resp
             )
         }
     };
+    admit_browser(&state, member, req, next).await
+}
+
+/// The checks every browser request makes once its member is known (by a
+/// session cookie, or by the personal cloud entrance's pass): what a
+/// browser may reach, and a change only from this server's own page.
+async fn admit_browser(
+    state: &TeamState,
+    member: team::Member,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let no_store = |mut response: Response| {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
+    };
     let credential = team::Credential::BrowserSession;
     if !credential_may_reach(credential.kind(), req.uri().path()) {
         return no_store(
@@ -2187,7 +2304,7 @@ async fn require_session(state: TeamState, mut req: Request, next: Next) -> Resp
         .get(header::ORIGIN)
         .map(|value| value.to_str().ok());
     let own = if origin.is_some() || !safe_method {
-        own_origin(&state).await
+        own_origin(state).await
     } else {
         None
     };

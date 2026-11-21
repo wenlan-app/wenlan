@@ -150,13 +150,20 @@ impl Launcher for ProcessLauncher {
             .create(true)
             .append(true)
             .open(dir.join("server.log"))?;
-        let child = tokio::process::Command::new(&self.program)
+        let mut command = tokio::process::Command::new(&self.program);
+        command.env_clear();
+        // Where the machine keeps the shared libraries the program loads
+        // (the on-device model runtime), as the entrance itself was given.
+        for kept in ["PATH", "LD_LIBRARY_PATH"] {
+            if let Some(value) = std::env::var_os(kept) {
+                command.env(kept, value);
+            }
+        }
+        let child = command
             .arg("team")
             .arg(&self.public_url)
             .arg("--listen")
             .arg(listen.to_string())
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", dir)
             .env("WENLAN_DATA_DIR", dir)
             .env("WENLAN_PORT", daemon_port.to_string())

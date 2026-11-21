@@ -71,12 +71,7 @@ impl PassKey {
     pub fn write(&self, path: &Path) -> std::io::Result<()> {
         let dir = path.parent().unwrap_or(Path::new("."));
         let mut file = tempfile::NamedTempFile::new_in(dir)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.as_file()
-                .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        }
+        // A temp file is made readable by its owner only (0600 on Unix).
         std::io::Write::write_all(&mut file, hex::encode(self.0).as_bytes())?;
         file.as_file().sync_all()?;
         file.persist(path).map_err(|error| error.error)?;
