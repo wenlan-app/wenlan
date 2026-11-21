@@ -531,16 +531,19 @@ impl Setup {
         let mut advanced = Vec::new();
         for (location, file) in &view.files {
             let path = &location.path;
-            let Some(managed) = manifest.personal_settings.get(path) else {
-                continue;
-            };
             let display = location.display();
             let file = match file {
                 Ok(file) => file,
                 Err(reason) => {
-                    result.blocked.push(format!("{display}: {reason}."));
+                    if manifest.personal_settings.contains_key(path) {
+                        result.blocked.push(format!("{display}: {reason}."));
+                    }
                     continue;
                 }
+            };
+            result.blocked.extend(file.doc.refusal_notices(location));
+            let Some(managed) = manifest.personal_settings.get(path) else {
+                continue;
             };
             if reserved(manifest, path) {
                 result.blocked.push(format!(
@@ -551,17 +554,20 @@ impl Setup {
             let mut next = None;
             let mut updates = Vec::new();
             for state in managed {
-                let label = label(state);
                 let current = file.doc.entry(&state.key);
+                if current.is_some_and(|entry| !reviewable(location.tool, entry)) {
+                    continue;
+                }
+                let label = label(state);
                 if (current.is_none() && file.doc.has(&state.key))
-                    || current
-                        .into_iter()
-                        .chain(state.before.iter())
+                    || state
+                        .before
+                        .iter()
                         .chain(state.wanted.iter())
                         .any(|entry| !reviewable(location.tool, entry))
                 {
                     result.blocked.push(format!(
-                        "{display}: {label} is ambiguous or contains possible credentials."
+                        "{display}: a recorded entry is ambiguous or contains possible credentials."
                     ));
                 } else if current.is_some() && state.waiting_for_absent_entry() {
                     result.blocked.push(format!(

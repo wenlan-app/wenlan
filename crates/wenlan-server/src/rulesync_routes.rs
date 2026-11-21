@@ -4773,7 +4773,7 @@ mod tests {
         fs::create_dir_all(cursor.parent().unwrap()).unwrap();
         let original = r#"{ "mcpServers": {
             "held":{"command":"example","env":{"UNLABELED":"synthetic-sentinel-env"}},
-            "arg":{"command":"curl","args":["--user","u:q4"]},
+            "synthetic-sentinel-arg-name":{"command":"curl","args":["--user","u:q4"]},
             "password":{"command":"example","args":["--password=synthetic-sentinel-pass"]},
             "bare":{"command":"example","args":["synthetic-sentinel-bare"]},
             "header":{"url":"https://example.invalid/mcp","headers":{"X-Custom":"synthetic-sentinel-header"}},
@@ -4803,7 +4803,6 @@ mod tests {
             .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         let shown = serde_json::to_string(&preview).unwrap();
-        assert!(shown.contains("skipped MCP server held"));
         assert_eq!(
             preview
                 .notes
@@ -4851,8 +4850,16 @@ mod tests {
         let result = f.sync_with("");
         assert!(result.proposals.is_empty());
         let report = serde_json::to_string(&result).unwrap();
-        assert!(report.contains("possible credentials"));
+        assert_eq!(
+            result
+                .blocked
+                .iter()
+                .filter(|note| note.contains("possible credentials or unsafe text"))
+                .count(),
+            16
+        );
         assert!(!report.contains("synthetic-sentinel"));
+        assert!(!report.contains("u:q4") && !report.contains("SYNTHETIC_TOKEN"));
         assert!(!contains_sentinel(&f.setup.data));
 
         let safe_edit = original.replace("\"before\"", "\"after\"");

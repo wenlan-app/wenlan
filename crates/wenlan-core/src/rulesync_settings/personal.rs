@@ -753,6 +753,22 @@ impl Document {
             })
     }
 
+    pub fn refusal_notices<'a>(
+        &'a self,
+        location: &'a Location,
+    ) -> impl Iterator<Item = String> + 'a {
+        let path = location.display();
+        self.entries
+            .values()
+            .flatten()
+            .enumerate()
+            .filter(|(_, (entry, _))| !reviewable(location.tool, entry))
+            .map(move |(index, (entry, _))| format!(
+                "{path}: skipped {} (entry {}) because it contains possible credentials or unsafe text.",
+                entry.key.feature.label(), index + 1
+            ))
+    }
+
     fn extract(&mut self, location: &Location, feature: Feature, path: &[&str], shape: Shape) {
         let Some(value) = lookup(&self.raw, path.iter().copied()) else {
             return;
@@ -931,17 +947,13 @@ impl Adoption {
             };
             let mut accepted = Vec::new();
             let snapshot_safe = location.snapshot_safe(&bytes, &doc);
-            for (number, entries) in doc.entries.into_values().enumerate() {
+            adoption.notes.extend(doc.refusal_notices(&location));
+            for entries in doc.entries.into_values() {
                 for (entry, _) in &entries {
                     if !reviewable(location.tool, entry) {
-                        let label = entry
-                            .key
-                            .name
-                            .last()
-                            .filter(|name| safe_identifier(name) && !credential_key(name));
-                        let entry_label = label.map_or_else(String::new, |name| format!(" {name}"));
-                        adoption.notes.push(format!("{path}: skipped {}{entry_label} (entry {}) because it contains possible credentials or unsafe text.", entry.key.feature.label(), number + 1));
-                    } else if entries.len() > 1 {
+                        continue;
+                    }
+                    if entries.len() > 1 {
                         adoption.notes.push(format!(
                             "{path}: skipped {} because its native identity is ambiguous.",
                             entry.label()
@@ -1679,20 +1691,14 @@ mod tests {
         assert!(
             preview.contains("${env:EXAMPLE_TOKEN}") && preview.contains("{env:EXAMPLE_TOKEN}")
         );
-        for name in [
-            "bad-arg",
-            "bad-url",
-            "bad-key",
-            "bad-env",
-            "bad-header",
-            "wrong-syntax",
-            "held",
-        ] {
-            assert!(
-                notes.contains(&format!("skipped MCP server {name}")),
-                "{name}"
-            );
-        }
+        assert_eq!(
+            adoption
+                .notes
+                .iter()
+                .filter(|note| note.contains("skipped MCP server (entry"))
+                .count(),
+            7
+        );
         for serialized in [preview, notes, source] {
             assert!(!serialized.contains("-marker"));
         }

@@ -61,7 +61,7 @@ fn personal_rules_dry_run_previews_safe_settings_only_with_the_flag() {
         assert_eq!(
             plan.notes
                 .iter()
-                .any(|note| note.contains("skipped MCP server held")),
+                .any(|note| note.contains("skipped MCP server (entry")),
             enabled
         );
         assert!(!stdout.contains("synthetic-only-sentinel"));
