@@ -30,6 +30,11 @@ services:
       WENLAN_TEAM_URL: ${WENLAN_TEAM_URL:-${WENLAN_DOMAIN:+https://${WENLAN_DOMAIN}}}
       # Uncomment for one start to make a new owner link (the old one stops).
       # WENLAN_TEAM_NEW_OWNER_LINK: "1"
+    # Sign in with Google or GitHub (needs an https:// address; see
+    # docs/team-server.md). Keep the client ids and secrets in a file only
+    # you can read, with lines such as WENLAN_TEAM_GOOGLE_CLIENT_ID=…, and
+    # uncomment:
+    # env_file: wenlan.env
     # To keep the data in a folder on this box instead (a NAS share), swap the
     # volume line for the folder and uncomment `user`, set to the folder
     # owner's ids (`ls -n` shows them): the image's own user cannot write a

@@ -38,8 +38,10 @@ It serves only:
 | `GET /team/v1/spaces/{space}/files`, `…/file?path=` | the Space's page versions |
 | `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | the member's own new version |
 | `/mcp`, `/mcp/{space}` | MCP for AI tools, pinned to that Space |
+| `/app`, `/auth/…`, `/team/v1/account/…` | with sign-in on (see *Sign in with Google or GitHub*): the team's pages in a browser, signing in, a member's own AI tools |
 
-Every request except `/health` and `/join` needs `Authorization: Bearer <member key>`.
+Every request except `/health`, `/join` and signing in needs a member key
+(`Authorization: Bearer <key>`) or, in a browser, a signed-in session.
 A member can only see the Spaces given to them, can only send versions
 written as themselves, and cannot send anything to a Space they may only
 read. The daemon's own routes (settings, other Spaces, memories, shutdown)
@@ -171,6 +173,34 @@ need a person:
   up with the host's own snapshots, or copy the volume. Each member's
   computer also keeps a full copy of the Spaces open to them.
 
+### Going back to an older Wenlan
+
+The first time the team holds something older versions can't (a member who
+signed in with Google or GitHub, an email invite, an AI tool key), the
+server keeps a copy of `team.json` as `team.json.v1.bak` and writes the new
+format. Wenlan 0.22.2 and later read both. Wenlan 0.22.1 and older refuse
+the new one, and the team stops answering.
+
+To go back anyway: stop the server, put `team.json.v1.bak` in place of
+`team.json`, and start the older version. Everything since that copy is
+lost: members added after it, linked Google and GitHub accounts, email
+invites and AI tool keys. Pages are not affected.
+
+### If the owner loses access
+
+- **The owner's computer or invite link is lost** (a server nobody sits
+  at): start the container once with `-e WENLAN_TEAM_NEW_OWNER_LINK=1`. A
+  new owner link is printed and the old owner key stops working.
+- **The owner's Google or GitHub account was taken over**: first secure it
+  at Google or GitHub. Then restart the server with no sign-in set up
+  (move `team-auth.json` aside, or drop the variables): a restart ends every
+  browser session, and with sign-in off nobody can start a new one. Start it
+  once more with `WENLAN_TEAM_NEW_OWNER_LINK=1` and join with the new link.
+  Remove the owner's AI tools with `wenlan team keys` and
+  `wenlan team revoke-key`. Turn sign-in back on when the account is safe.
+  This version has no way to unlink the owner's own Google or GitHub
+  account.
+
 ### From a terminal
 
 Everything above can be done with commands on the computer that runs the
@@ -203,6 +233,130 @@ Space renames it for the whole team: access goes with it, and members'
 copies follow by themselves. A desktop install can also set
 `WENLAN_TEAM_ADDR` for the background service instead of `wenlan team start`.
 
+## Sign in with Google or GitHub
+
+Without this, people join with an invite link, and the link is their key.
+With it, they sign in with Google or GitHub instead: in a browser at
+`https://wenlan.example.com/app`, with no Wenlan installed; an owner can
+invite someone by email; and `wenlan login` connects an AI tool with a short
+code (see *Join*). People who joined with a link keep working, and can add
+Google or GitHub from their account menu.
+
+It needs two things, and is off until both are there:
+
+- **An `https://` address** for the team (`WENLAN_TEAM_URL`, or the address
+  it was started with). A Tailscale `http://` address is not enough: the
+  sign-in cookie only works over HTTPS. Behind Caddy (the `https` profile
+  above) this is already true. Google refuses a bare IP address, even over
+  HTTPS, so use a name.
+- **Google, GitHub or both** set up as below. Either one alone is enough.
+
+### Google
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), make
+   a project (or pick one), then open *APIs & Services › OAuth consent
+   screen*. Choose **External**, give the app a name people will recognize
+   (the team's), and add yourself as a test user while you try it.
+   Publish it when other people should sign in.
+2. Open *Credentials › Create credentials › OAuth client ID*. Choose **Web
+   application** and add this **authorized redirect URI**, with your own
+   address:
+
+   ```text
+   https://wenlan.example.com/auth/callback/google
+   ```
+
+3. Copy the client ID and the client secret.
+
+Wenlan asks Google only for `openid` and `email`.
+
+### GitHub
+
+1. On GitHub, open *Settings › Developer settings › OAuth Apps › New OAuth
+   App* (or the same under an organization).
+2. Homepage URL: `https://wenlan.example.com`. Authorization callback URL:
+
+   ```text
+   https://wenlan.example.com/auth/callback/github
+   ```
+
+3. Register it, then make a client secret. Copy the client ID and the
+   secret.
+
+Wenlan asks GitHub only to read the profile and the email addresses
+(`read:user user:email`). A GitHub account is kept by its number, so a
+renamed account still signs in.
+
+### Give them to the server
+
+Either way works; the environment wins when both are set.
+
+- **A file** next to `team.json` in the data folder, named
+  `team-auth.json` (in Docker: `/data/wenlan/team-auth.json` in the
+  volume). Make it readable by the server's user only (`chmod 600`); the
+  server warns when others can read it.
+
+  ```json
+  {
+    "google": { "client_id": "…apps.googleusercontent.com", "client_secret": "…" },
+    "github": { "client_id": "Ov23…", "client_secret": "…" }
+  }
+  ```
+
+- **Environment variables**: `WENLAN_TEAM_GOOGLE_CLIENT_ID`,
+  `WENLAN_TEAM_GOOGLE_CLIENT_SECRET`, `WENLAN_TEAM_GITHUB_CLIENT_ID`,
+  `WENLAN_TEAM_GITHUB_CLIENT_SECRET`. With Docker, keep them in a file
+  only you can read and pass `--env-file wenlan.env` (with the compose
+  file: `env_file: wenlan.env`), so the secrets are not on the command
+  line.
+
+Restart the server. Its log says `[team] sign-in is on`, and
+`https://wenlan.example.com/auth/providers` lists the ones it offers. If
+only one half of a pair is given, the log names the missing one. The
+invite page and `/app` then show the sign-in buttons, and the owner's
+**Invite someone…** asks for an email.
+
+### Try it on one computer first
+
+Google and GitHub both accept `https://localhost`, so a test needs no
+domain. With [mkcert](https://github.com/FiloSottile/mkcert) and Caddy:
+
+```bash
+mkcert -install && mkcert localhost      # makes localhost.pem and localhost-key.pem
+cat > Caddyfile <<'CADDY'
+localhost:8443 {
+	tls localhost.pem localhost-key.pem
+	reverse_proxy 127.0.0.1:7879
+}
+CADDY
+caddy run &
+```
+
+Start the team with `https://localhost:8443` as its address, and use
+`https://localhost:8443/auth/callback/google` (and `…/github`) as the
+redirect URIs of a separate test OAuth app. Then open
+`https://localhost:8443/app`.
+
+### What signing in does and doesn't do
+
+- A browser session lasts until sign-out, **Sign out everywhere**, or a
+  restart of the server: sessions are kept in memory, so a restart signs
+  everyone out of the browser (AI tools and desktop apps keep working).
+- Making something that lasts (an AI tool key, a desktop link) asks the
+  person to sign in again first if their last sign-in is more than five
+  minutes old. Google is asked to make them type their password again;
+  GitHub has no way to ask that, so with GitHub it only proves the account
+  is still theirs.
+- Signing in is rate limited per address. Behind a reverse proxy everyone
+  comes from the proxy's address and shares one limit.
+- Turning an account off at Google or GitHub does not remove the member.
+  Remove them in Wenlan.
+
+If a member's Google or GitHub account was taken over, the owner chooses
+**Account taken over…** in that member's menu: every browser session and AI
+tool key of theirs stops, their linked accounts are dropped, and the owner
+gets a new invite link to send them, so they can start again.
+
 ## Join
 
 - **Desktop app**: in Settings › Team, choose "Join with an invite link" and paste it:
@@ -215,7 +369,22 @@ copies follow by themselves. A desktop install can also set
   `--server-space Product --as <name>` takes one Space under another name,
   `wenlan team status` shows the teams this computer joined, and
   `wenlan team leave` leaves one (the pages already on the computer stay).
-- **AI tool only**: add a remote MCP server with URL
+- **An AI tool, with sign-in on**: in the AI tool's terminal, run
+
+  ```bash
+  wenlan login https://wenlan.example.com --tool claude-code   # or codex, cursor
+  ```
+
+  It prints a short code and the address to type it at,
+  `https://wenlan.example.com/app/device`. Open it, type the code, check what the tool asks for, and choose **Allow**.
+  Wenlan then writes the tool's MCP settings itself (`~/.claude.json`,
+  `~/.codex/config.toml` or `~/.cursor/mcp.json`) with a key for that tool
+  alone, kept in a file only you can read. Each tool has its own key: see or
+  remove them from the account menu (**AI tools**), or with
+  `wenlan team keys` and `wenlan team revoke-key <id>`. A removed key stops
+  at its next request. The owner sees how many AI tools each member has and
+  can remove them.
+- **AI tool only, with an invite link**: add a remote MCP server with URL
   `https://wenlan.example.com/mcp` (or `/mcp/<Space>` when you have more than
   one Space) and header `Authorization: Bearer wlt_…`. Members who may write
   get the web-write tools (search, read, write, rename and delete pages,
