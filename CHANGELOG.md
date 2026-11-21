@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.22.5](https://github.com/wenlan-app/wenlan/compare/v0.22.4...v0.22.5) (2026-11-21)
+
+
+### Features
+
+* **brief:** automatic handoff — one handoff verb, session-start Brief, 80% reminder, idle fill ([#1358](https://github.com/wenlan-app/wenlan/issues/1358)) ([d97dba5](https://github.com/wenlan-app/wenlan/commit/d97dba5d0c023f1af9cb5f0fd78ed40208c4b658))
+* **cli:** wenlan steep run does one Steep pass now ([#1346](https://github.com/wenlan-app/wenlan/issues/1346)) ([d082eca](https://github.com/wenlan-app/wenlan/commit/d082eca955a2ad6992ddfeb8a5c3e35da50b1e74))
+* **rules:** adopt and review personal commands and subagents ([#1354](https://github.com/wenlan-app/wenlan/issues/1354)) ([780a239](https://github.com/wenlan-app/wenlan/commit/780a239198793260b6c770c16ef9f2d1e7db6c3d))
+* **rules:** extend personal rules and skills to six more tools ([#1351](https://github.com/wenlan-app/wenlan/issues/1351)) ([48bb398](https://github.com/wenlan-app/wenlan/commit/48bb398ca3f89c833170d504cae0ea4c39a5c86b))
+* **rules:** one master and one writer for rules and skills across AI tools (personal, project, team) ([#1344](https://github.com/wenlan-app/wenlan/issues/1344)) ([89c835e](https://github.com/wenlan-app/wenlan/commit/89c835e60427a3f11d62c47656c3e93b25526d4f))
+* **team:** connect AI tools with a short code, and open the team in the desktop app ([#1353](https://github.com/wenlan-app/wenlan/issues/1353)) ([a81bf68](https://github.com/wenlan-app/wenlan/commit/a81bf68dbd298d42d2d64bfcde44c39321193031))
+* **team:** let members unlink Google or GitHub from the web ([#1359](https://github.com/wenlan-app/wenlan/issues/1359)) ([e332087](https://github.com/wenlan-app/wenlan/commit/e3320873c025f7c4f01eff927f23c478de573251))
+* **team:** sign in with Google or GitHub on the web, and owner tools for it ([#1342](https://github.com/wenlan-app/wenlan/issues/1342)) ([3a1ebcd](https://github.com/wenlan-app/wenlan/commit/3a1ebcdd0fe25e538c2c1046d0648de7980a9d10))
+
+
+### Bug Fixes
+
+* **brief:** keep queued handoff versions, count resends once, refresh the Space Brief ([#1348](https://github.com/wenlan-app/wenlan/issues/1348)) ([a5bd904](https://github.com/wenlan-app/wenlan/commit/a5bd9046810b195cc62f2422824694938e2ce125))
+* **mcp:** let web-write connections update the pinned Space's Brief ([#1349](https://github.com/wenlan-app/wenlan/issues/1349)) ([83d113f](https://github.com/wenlan-app/wenlan/commit/83d113faeeffad624e9434c684aa404e671f2cff))
+* **memory:** pages follow sources sentence by sentence, AI tools read only current decisions, nights keep Spaces apart ([#1356](https://github.com/wenlan-app/wenlan/issues/1356)) ([3fa75f2](https://github.com/wenlan-app/wenlan/commit/3fa75f207dfe9497c66f3d2790e9bcabb6e61f3c))
+* **memory:** pages keep their sources when a memory is replaced, undone or edited by a tool ([#1350](https://github.com/wenlan-app/wenlan/issues/1350)) ([e618761](https://github.com/wenlan-app/wenlan/commit/e6187615966ebc4c617a1a898993b712f585669f))
+* one-call themes for AI tools, and Page Info names the tool that made a page ([#1341](https://github.com/wenlan-app/wenlan/issues/1341)) ([6aa785b](https://github.com/wenlan-app/wenlan/commit/6aa785b373f3b7b09c50f22c275462c70f4e3f9f))
+* **plugin:** handoff changes the Brief only ([7beab4b](https://github.com/wenlan-app/wenlan/commit/7beab4bfbd894c223ac3fe3b936fc583f5bab4f2))
+* **plugin:** handoff changes the Brief only — no memories, no session log ([#1360](https://github.com/wenlan-app/wenlan/issues/1360)) ([7beab4b](https://github.com/wenlan-app/wenlan/commit/7beab4bfbd894c223ac3fe3b936fc583f5bab4f2))
+* **team:** keep a local-only team server on 127.0.0.1; rules delivery needs the person ([#1340](https://github.com/wenlan-app/wenlan/issues/1340)) ([c788a46](https://github.com/wenlan-app/wenlan/commit/c788a460452a704c7b179691c2168b74d3ee3c3e))
+* **team:** keep host memories out of member reads ([#1347](https://github.com/wenlan-app/wenlan/issues/1347)) ([d1c66f8](https://github.com/wenlan-app/wenlan/commit/d1c66f82816c56ef9abc99a251b1ca9aab22c04b))
+* **team:** keep team members inside their Space for replies, writes and MCP tools ([#1355](https://github.com/wenlan-app/wenlan/issues/1355)) ([e926e2c](https://github.com/wenlan-app/wenlan/commit/e926e2cd7e0e2ea034ac991391675a5916d9b69d))
+
 ## [0.22.4](https://github.com/wenlan-app/wenlan/compare/v0.22.3...v0.22.4) (2026-11-20)
 
 
