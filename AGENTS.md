@@ -41,6 +41,16 @@ selected explicitly with `-p wenlan-app`.
 - A missing fixture or unavailable gate is `unchecked`, never a pass. Follow
   `docs/ci-flake-policy.md` before rerunning or quarantining an intermittent CI failure.
 
+## Writing changes
+
+- A rare case the change cannot handle safely (a crash mid-write, an unusual permission,
+  a concurrent edit) is refused with a clear reason and left untouched, with one test for
+  the refusal. Add handling for it only when real use shows people hit it.
+- Do not add compatibility code for state that no release ever produced; refuse it and
+  say how to start over.
+- Put setup that tests repeat (a fake home, tool folders, a scratch daemon) in a shared
+  helper. Reuse or extend the helper instead of copying setup into a new test.
+
 Hooks install automatically via `package.json`'s `postinstall`
 (`scripts/install-git-hooks.mjs`) when you run `pnpm install`. The manual fallback for
 a checkout without `pnpm install` is `git config core.hooksPath .githooks`. Do not
