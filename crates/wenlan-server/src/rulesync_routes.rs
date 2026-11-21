@@ -1113,12 +1113,15 @@ impl Setup {
             );
             return Ok(restored);
         }
-        let actual = read_planned_path(
-            root,
-            &op.path,
-            op.allow_link,
-            op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
-        )?;
+        let read_path = || {
+            read_planned_path(
+                root,
+                &op.path,
+                op.allow_link,
+                op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
+            )
+        };
+        let mut actual = read_path()?;
         if let Some(stage) = manifest.stages.get(&op.path) {
             root.recover_stage(
                 &op.path,
@@ -1127,6 +1130,10 @@ impl Setup {
                 &actual,
                 stage.options(data, op.allow_link, None),
             )?;
+            if cfg!(windows) && actual == Snapshot::Absent {
+                // Recovery may have put the file back at the vacant name.
+                actual = read_path()?;
+            }
         }
         ensure!(
             op.desired == actual || op.seen == actual,

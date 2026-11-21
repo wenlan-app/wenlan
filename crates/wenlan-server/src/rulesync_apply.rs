@@ -523,10 +523,21 @@ impl FileRoot {
         let Some(id) = options.stage_id else {
             return Ok(());
         };
-        let (relative_parent, _) = entry_path(path)?;
+        let (relative_parent, leaf) = entry_path(path)?;
         let Some(parent) = self.open_parent(relative_parent, false)? else {
             return Ok(());
         };
+        #[cfg(not(windows))]
+        let _ = leaf;
+        #[cfg(windows)]
+        if *desired == Snapshot::Absent && *actual == Snapshot::Absent {
+            if let Some((saved_dir, saved)) = recovery_location(&parent, options.displaced)? {
+                let entry = read_leaf(&saved_dir, saved, true)?;
+                if matches!(entry, Snapshot::File { .. }) && *seen != entry {
+                    return keep_changed_deletion(&saved_dir, saved, &parent, leaf, actual);
+                }
+            }
+        }
         let name = stage_name(id)?;
         let dir = match parent.open_dir_nofollow(&name) {
             Ok(dir) => dir,
@@ -534,6 +545,11 @@ impl FileRoot {
             Err(error) => return Err(error),
         };
         let entry = read_leaf(&dir, Path::new(STAGED), true)?;
+        #[cfg(windows)]
+        if *desired == Snapshot::Absent && matches!(entry, Snapshot::File { .. }) && *seen != entry
+        {
+            return keep_changed_deletion(&dir, Path::new(STAGED), &parent, leaf, actual);
+        }
         let incoming = match dir.symlink_metadata(INCOMING) {
             Ok(metadata) if metadata.is_file() => dir
                 .symlink_metadata(STAGED)
@@ -552,6 +568,13 @@ impl FileRoot {
                 let displaced = recovery_location(&parent, options.displaced)?
                     .ok_or_else(|| io::Error::other("a displaced file requires manual recovery"))?;
                 move_displaced(&dir, &displaced)?;
+                #[cfg(windows)]
+                if *actual == Snapshot::Absent
+                    && matches!(seen, Snapshot::File { .. })
+                    && matches!(desired, Snapshot::File { .. })
+                {
+                    restore_windows_held(&displaced.0, displaced.1, &parent, leaf)?;
+                }
                 #[cfg(unix)]
                 displaced.0.open(".")?.sync_all()?;
             } else if !matches_leaf(&dir, Path::new(STAGED), seen)? || desired != actual {
@@ -1008,12 +1031,30 @@ fn commit(
     desired: &Snapshot,
     displaced: Option<&(Dir, &Path)>,
 ) -> io::Result<ApplyOutcome> {
-    if let Some((directory, recovery)) = displaced {
-        // Link the original before replacing the Windows destination.
-        // Existing handles retain the same object even after replacement.
-        stage.parent.hard_link(name, directory, recovery)?;
-        if !matches_leaf(stage.parent, name, seen)? {
-            return Ok(ApplyOutcome::ChangedSincePlan);
+    commit_windows(stage, name, seen, desired, displaced, || {})
+}
+
+#[cfg(any(windows, test))]
+fn commit_windows(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+    desired: &Snapshot,
+    displaced: Option<&(Dir, &Path)>,
+    before_replace: impl FnOnce(),
+) -> io::Result<ApplyOutcome> {
+    if let Some(displaced) = displaced {
+        if matches!(seen, Snapshot::File { .. })
+            && matches!(desired, Snapshot::Absent | Snapshot::File { .. })
+        {
+            return commit_windows_personal_file(
+                stage,
+                name,
+                seen,
+                desired,
+                displaced,
+                before_replace,
+            );
         }
     }
     match (seen, desired) {
@@ -1038,6 +1079,117 @@ fn commit(
     Ok(ApplyOutcome::Applied)
 }
 
+#[cfg(any(windows, test))]
+fn commit_windows_personal_file(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    seen: &Snapshot,
+    desired: &Snapshot,
+    displaced: &(Dir, &Path),
+    before_replace: impl FnOnce(),
+) -> io::Result<ApplyOutcome> {
+    let expected = stage.parent.symlink_metadata(name)?;
+    if !matches_leaf(stage.parent, name, seen)? {
+        return Ok(ApplyOutcome::ChangedSincePlan);
+    }
+    let replacing = matches!(desired, Snapshot::File { .. });
+    if replacing {
+        if let Err(error) = stage.dir.hard_link(STAGED, &stage.dir, INCOMING) {
+            if error.kind() != io::ErrorKind::AlreadyExists
+                || !same_identity(
+                    &stage.dir.symlink_metadata(STAGED)?,
+                    &stage.dir.symlink_metadata(INCOMING)?,
+                )
+            {
+                return Err(error);
+            }
+        }
+        stage.dir.remove_file(STAGED)?;
+    }
+    before_replace();
+
+    // Take the actual destination into the journaled stage so a save that
+    // landed after the check stays reachable. Publish only at a vacant name.
+    stage.parent.rename(name, &stage.dir, STAGED)?;
+    stage.preserve = true;
+    #[cfg(test)]
+    crash_at("displaced", name);
+    let held = stage.dir.symlink_metadata(STAGED)?;
+    if !held.is_file() {
+        return Err(io::Error::other(format!(
+            "The path changed type during delivery. Its entry is preserved at {}/{STAGED}",
+            stage.name,
+        )));
+    }
+    if !same_identity(&expected, &held)
+        || !matches!(matches_leaf(&stage.dir, Path::new(STAGED), seen), Ok(true))
+    {
+        finish_windows_displacement(stage, name, displaced, true)?;
+        return Ok(ApplyOutcome::ChangedSincePlan);
+    }
+    if replacing {
+        if let Err(error) = stage.dir.hard_link(INCOMING, stage.parent, name) {
+            finish_windows_displacement(stage, name, displaced, true)?;
+            return if error.kind() == io::ErrorKind::AlreadyExists {
+                Ok(ApplyOutcome::ChangedSincePlan)
+            } else {
+                Err(error)
+            };
+        }
+    }
+    finish_windows_displacement(stage, name, displaced, false)?;
+    Ok(ApplyOutcome::Applied)
+}
+
+#[cfg(any(windows, test))]
+fn finish_windows_displacement(
+    stage: &mut Stage<'_>,
+    name: &Path,
+    displaced: &(Dir, &Path),
+    rollback: bool,
+) -> io::Result<()> {
+    if rollback {
+        restore_windows_held(&stage.dir, Path::new(STAGED), stage.parent, name)?;
+    }
+    // Keep the held inode even when rollback filled the live name. An
+    // editor can replace that name again before the stage is cleaned.
+    move_displaced(&stage.dir, displaced)?;
+    stage.preserve = false;
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn restore_windows_held(
+    held_dir: &Dir,
+    held: &Path,
+    parent: &Dir,
+    name: &Path,
+) -> io::Result<bool> {
+    match held_dir.hard_link(held, parent, name) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn keep_changed_deletion(
+    held_dir: &Dir,
+    held: &Path,
+    parent: &Dir,
+    name: &Path,
+    actual: &Snapshot,
+) -> io::Result<()> {
+    if *actual == Snapshot::Absent && restore_windows_held(held_dir, held, parent, name)? {
+        return Err(io::Error::other(
+            "A newer file was put back and retained in recovery after an interrupted deletion. The deletion is still pending.",
+        ));
+    }
+    Err(io::Error::other(
+        "A newer file is retained in recovery after an interrupted deletion. The deletion is still pending.",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1057,6 +1209,47 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let root = FileRoot::open(scratch.path()).unwrap();
         (scratch, root)
+    }
+
+    #[test]
+    fn rulesync_step1g_windows_keeps_a_save_after_the_final_check() {
+        let (scratch, root) = root();
+        let name = Path::new("rules.md");
+        let path = scratch.path().join(name);
+        fs::write(&path, b"Checked rules\n").unwrap();
+        let seen = root.read(name, false).unwrap();
+        let incoming = scratch.path().join("editor-save.md");
+        let saved = b"Editor saved after the last check\n";
+        fs::write(&incoming, saved).unwrap();
+        let recovery = Path::new("rules.previous");
+        let desired = Snapshot::file(b"Generated rules\n".to_vec());
+        let mut stage = Stage::new(&root.dir, None).unwrap();
+        stage.write(&desired).unwrap();
+        let result = commit_windows(
+            &mut stage,
+            name,
+            &seen,
+            &desired,
+            Some(&(root.dir.try_clone().unwrap(), recovery)),
+            || fs::rename(&incoming, &path).unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            fs::read(&path).is_ok_and(|bytes| bytes == saved)
+                || fs::read(scratch.path().join(recovery)).is_ok_and(|bytes| bytes == saved),
+            "the editor's save vanished from the live path and the recovery copy"
+        );
+        assert_eq!(result, ApplyOutcome::ChangedSincePlan);
+
+        // A second atomic save can displace the restored live link before
+        // cleanup. The first save must remain reachable in recovery.
+        let second = scratch.path().join("second-save.md");
+        fs::write(&second, b"Second editor save\n").unwrap();
+        fs::rename(&second, &path).unwrap();
+        drop(stage);
+        assert_eq!(fs::read(scratch.path().join(recovery)).unwrap(), saved);
+        assert_eq!(fs::read(path).unwrap(), b"Second editor save\n");
     }
 
     #[test]
