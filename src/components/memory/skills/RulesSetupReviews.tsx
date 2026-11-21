@@ -71,7 +71,7 @@ export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatu
             <ul className="rules-setup-files">{(preview.decision.file ? [preview.decision.file] : currentReview.files).map((file) => (
               <li key={file}>{rulesSetupFileLabel(t, status.review_tools[file], file)}</li>
             ))}</ul>
-            <RulesSetupDiff diff={preview.result.diff} tools={status.review_tools} codes={preview.result.diff_codes} />
+            <RulesSetupDiff diff={preview.result.diff} codes={preview.result.diff_codes} />
           </>}
           confirmLabel={preview.decision.action === "dismiss" ? t("rulesSetup.restore") : preview.label}
           cancelLabel={t("rulesSetup.cancel")}
@@ -117,7 +117,7 @@ function ReviewCard({ card, tools, busy, onChoice }: {
       ) : (
         <ul className="rules-setup-files">{card.files.map((file) => <li key={file}>{rulesSetupFileLabel(t, tools[file], file)}</li>)}</ul>
       )}
-      <RulesSetupDiff diff={card.diff} tools={tools} codes={card.diff_codes} />
+      <RulesSetupDiff diff={card.diff} codes={card.diff_codes} />
       <div className="rules-setup-actions">
         {scope && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
         <Button type="button" disabled={busy} onClick={() => choice("tool_only", only)}>{only}</Button>

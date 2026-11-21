@@ -1,52 +1,66 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useTranslation } from "react-i18next";
-import type { RulesSetupTool } from "../../../lib/tauri";
-import { rulesSetupDiffText, rulesSetupMessage, rulesSetupName } from "./rulesSetupText";
+import { rulesSetupDiffText, rulesSetupMessage } from "./rulesSetupText";
 
-export function RulesSetupDiff({ diff, tool, tools, codes = [] }: {
+const newlineCode = "no_final_newline";
+
+export function RulesSetupDiff({ diff, codes = [] }: {
   readonly diff: string;
-  readonly tool?: RulesSetupTool;
-  readonly tools?: Record<string, RulesSetupTool>;
   readonly codes?: string[];
 }) {
   const { t } = useTranslation();
   const lines = diff.split("\n");
-  const shown: { text: string; change?: "added" | "removed" }[] = [];
-  let remaining = 0;
+  const rows: { text: string; change: "added" | "removed" }[] = [];
+  let newlineOnly = codes.includes(newlineCode);
   let hasFile = false;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    if (remaining === 0 && line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ")) {
-      const path = line.slice(4);
-      const name = rulesSetupName((tool ?? tools?.[path] ?? tools?.[path.replaceAll("/", "\\")])?.name);
-      shown.push({ text: name || t("rulesSetup.previewFile") });
+    if (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ")) {
       hasFile = true;
       index++;
       continue;
     }
     if (!hasFile) continue;
     const hunk = /^@@ -\d+,(\d+) \+\d+,(\d+) @@$/u.exec(line);
-    if (hunk && remaining === 0) {
-      remaining = Number(hunk[1]) + Number(hunk[2]);
-      shown.push({ text: line });
-    } else if (line === "\\ No newline at end of file") {
-      shown.push({ text: rulesSetupMessage(t, "no_final_newline") });
-    } else if (remaining > 0 && (line.startsWith("+") || line.startsWith("-"))) {
-      remaining--;
-      shown.push({
-        text: line[0] + rulesSetupDiffText(line.slice(1), t("rulesSetup.hiddenPath")),
-        change: line.startsWith("+") ? "added" : "removed",
-      });
+    if (!hunk) continue;
+
+    let remaining = Number(hunk[1]) + Number(hunk[2]);
+    let newlineMarkers = 0;
+    const start = rows.length;
+    // Use the hunk's line count so authored lines that look like headers stay visible.
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1];
+      if (next === "\\ No newline at end of file") {
+        newlineMarkers++;
+      } else if (remaining > 0 && (next.startsWith("+") || next.startsWith("-"))) {
+        remaining--;
+        rows.push({ text: next.slice(1), change: next.startsWith("+") ? "added" : "removed" });
+      } else {
+        break;
+      }
+      index++;
+    }
+    // A final newline change is encoded as the same line removed and added back.
+    if (remaining === 0 && hunk[1] === "1" && hunk[2] === "1" && newlineMarkers === 1
+      && rows[start].text === rows[start + 1].text) {
+      rows.length = start;
+      newlineOnly = true;
     }
   }
 
-  for (const code of codes) shown.push({ text: rulesSetupMessage(t, code) });
-  if (!shown.length && diff.trim()) shown.push({ text: rulesSetupMessage(t) });
-  return shown.length ? (
-    <pre className="rules-setup-diff" dir="auto">
-      {shown.map(({ text, change }, index) => (
-        <span key={index} data-change={change}>{text}{"\n"}</span>
+  const notes = codes.filter((code) => code !== newlineCode).map((code) => rulesSetupMessage(t, code));
+  if (!rows.length && !notes.length) {
+    if (newlineOnly) notes.push(rulesSetupMessage(t, newlineCode));
+    else if (diff.trim()) notes.push(rulesSetupMessage(t));
+  }
+  return rows.length || notes.length ? (
+    <div className="rules-setup-diff" dir="auto">
+      {rows.map(({ text, change }, index) => (
+        <div key={index} data-change={change} dir="auto">
+          {change === "added" ? "+ " : "− "}{rulesSetupDiffText(text, t("rulesSetup.hiddenPath"))}
+        </div>
       ))}
-    </pre>
+      {notes.map((note, index) => <div key={index} dir="auto">{note}</div>)}
+    </div>
   ) : null;
 }

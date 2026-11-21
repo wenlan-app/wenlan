@@ -25,10 +25,22 @@ export function rulesSetupName(name?: string): string {
   return label && !/[\\/\r\n]/u.test(label) ? label : "";
 }
 
-export function rulesSetupFileLabel(t: TFunction, tool: RulesSetupTool | undefined, path: string): string {
-  const name = rulesSetupName(tool?.name);
-  const file = rulesSetupName(path.split(/[\\/]/u).pop());
-  return name && file ? `${name} · ${file}` : name || t("rulesSetup.previewFile");
+export function rulesSetupFileLabel(
+  t: TFunction, tool: RulesSetupTool | undefined, path: string,
+  missingToolLabel: "rulesSetup.previewFile" | "rulesSetup.sharedSource" = "rulesSetup.previewFile",
+): string {
+  const name = rulesSetupName(tool?.name) || t(missingToolLabel);
+  const parts = path.split(/[\\/]/u);
+  // The daemon sends tool paths here. The first item directory determines the kind,
+  // even if a skill contains its own commands or a command sits in a nested folder.
+  const directory = parts.findIndex((part) => /^(?:skills|commands?|agents?|prompts)$/u.test(part));
+  if (directory < 0 || directory === parts.length - 1) return name;
+
+  const suffix = parts[directory - 1] === ".copilot" ? /\.agent\.md$/u : /\.(?:md|toml)$/u;
+  const file = parts[parts.length - 1];
+  const item = rulesSetupName(parts[directory] === "skills" ? parts[directory + 1]
+    : suffix.test(file) ? file.replace(suffix, "") : undefined);
+  return item ? `${name} · ${item}` : name;
 }
 
 export function rulesSetupSkillSource(source: string): string {

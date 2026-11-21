@@ -1159,8 +1159,12 @@ and wait for evidence that people need them.
   where they are for review.
 - **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
   localized codes. A missing or unknown code shows a generic message.
-  Cards, previews, adoption details and feedback hide paths. A diff header
-  names the tool. A file name may appear beside its tool name.
+  Cards, previews, adoption details and feedback hide paths and file names
+  in labels. Rules use the tool name alone. Skills, commands and subagents
+  add the item name to the tool or shared setup label. Previews show removed
+  and added lines with a minus or plus and a red or green tint, and mask
+  paths in the changed text. Localized notes explain other changes. The
+  final newline note appears only for a newline-only change.
 
 ## From the terminal
 

@@ -157,7 +157,7 @@ function AdoptionDetails({ plan }: { readonly plan: RulesAdoptionPlan }) {
             <h3>{rulesSetupFileLabel(t, file.tool, file.path)}</h3>
             {file.text_diff === undefined ? <p>{rulesSetupMessage(t)}</p> :
               <RulesSetupDiff diff={file.text_diff.kind === "extracted" ? file.text_diff.diff : file.diff}
-                tool={file.tool} codes={file.notice_codes} />}
+                codes={file.notice_codes} />}
           </section>
         ))}
       </details>}
@@ -165,7 +165,7 @@ function AdoptionDetails({ plan }: { readonly plan: RulesAdoptionPlan }) {
         <summary>{t("rulesSetup.skillSources")}</summary>
         <ul className="rules-setup-plan-list">{plan.skills.map((skill) => (
           <li key={skill.path}>
-            <strong>{skill.tool ? rulesSetupFileLabel(t, skill.tool, skill.path) : t("rulesSetup.sharedSource")}</strong>
+            <strong>{rulesSetupFileLabel(t, skill.tool, skill.path, "rulesSetup.sharedSource")}</strong>
             <span>{skill.outcome === "skipped" ? rulesSetupMessage(t, skill.reason_code) : skill.outcome === "plain_copy"
               ? t("rulesSetup.plainSkill")
               : t("rulesSetup.trackedSkill", { source: rulesSetupSkillSource(

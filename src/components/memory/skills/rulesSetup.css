@@ -51,17 +51,26 @@
   max-height: 14rem;
   overflow: auto;
   margin: 0;
-  padding: 8px 10px;
+  padding: 8px 0;
   border-radius: var(--mem-radius-md);
-  background: var(--mem-surface);
+  background: var(--mem-detail-surface-raised);
   color: var(--mem-text-secondary);
-  font: 12px/1.5 var(--mem-font-mono);
+  font: 13px/1.5 var(--mem-font-body);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.rules-setup-diff [data-change="added"] { color: var(--mem-accent-sage-text); }
-.rules-setup-diff [data-change="removed"] { color: var(--mem-danger); }
+.rules-setup-diff > div {
+  padding: 2px 12px;
+  text-align: start;
+}
+.rules-setup-diff [data-change] { color: var(--mem-text); }
+.rules-setup-diff [data-change="added"] {
+  background: color-mix(in srgb, var(--mem-accent-sage) 17%, transparent);
+}
+.rules-setup-diff [data-change="removed"] {
+  background: color-mix(in srgb, var(--mem-danger) 12%, transparent);
+}
 
 .rules-setup-actions {
   display: flex;
