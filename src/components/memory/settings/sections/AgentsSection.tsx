@@ -23,6 +23,7 @@ import {
 } from "../../../../lib/agents";
 import { RemoteAccessPanel } from "../../RemoteAccessPanel";
 import { HowIWorkSetting } from "../../skills/HowIWorkSetting";
+import { RulesSetupSettings } from "../../skills/RulesSetupSettings";
 import { Button, Card, ConfirmActionButton, SectionHeader, Select, Toggle } from "../primitives";
 import ClientSetupList from "../../../connect/ClientSetupList";
 import { connectClient, needsSkillsOnly } from "../../../connect/connectClient";
@@ -274,6 +275,7 @@ export default function AgentsSection({
       </section>
 
       <HowIWorkSetting />
+      <RulesSetupSettings />
 
       <ClientSetupList
         connectedFamilies={connectedFamilyKeys}

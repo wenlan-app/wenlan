@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_personal::{self, fingerprint, write_root_rule, PersonalMaster};
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_core::{repo_wiki, rulesync_renderer, shared_space};
+use wenlan_types::rulesync::RulesSetupCode as Code;
 use wenlan_types::rulesync::{CheckoutRulesReceipt, CheckoutRulesRequest, RulesSyncReport};
 
 use crate::error::ServerError;
@@ -376,7 +377,8 @@ struct Job<'a> {
 }
 
 fn report_blocks(result: &mut RulesSyncReport, blocked: BTreeMap<PathBuf, String>) {
-    result.blocked.extend(
+    result.extend_blocks(
+        Code::CheckoutNeedsReview,
         blocked
             .into_iter()
             .map(|(path, reason)| format!("{}: {reason}", path.display())),
@@ -421,7 +423,8 @@ impl Job<'_> {
             .collect::<Result<_>>()?;
         let keys: BTreeSet<_> = authorized.keys().cloned().collect();
         let mut result = report("Checked the rules for this checkout");
-        result.blocked.extend(
+        result.extend_blocks(
+            Code::CheckoutNeedsReview,
             skills
                 .conflicts
                 .iter()
@@ -547,7 +550,10 @@ impl Job<'_> {
         let rendered = match self.render(&project, &teams, &skills, master, generated) {
             Ok(files) => files,
             Err(error) => {
-                result.blocked.push(format!("Checkout render: {error:#}"));
+                result.block(
+                    Code::CheckoutNeedsReview,
+                    format!("Checkout render: {error:#}"),
+                );
                 report_blocks(&mut result, blocked);
                 return Ok(result);
             }
