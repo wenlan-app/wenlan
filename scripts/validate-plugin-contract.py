@@ -108,16 +108,6 @@ LINT_SHARED_GUARDRAILS = [
     "Match every line byte-for-byte",
     "the MCP repair-manifest tools have no CLI equivalent yet",
 ]
-# A skill that refreshes pages reads a page's `basis` first and settles a
-# pending one through `page_basis`; the note-id/memory-id split must stay stated.
-PAGE_BASIS_SKILLS = {"handoff"}
-PAGE_BASIS_GUARDRAILS = [
-    "`pending`",
-    '"diff"',
-    '"confirm"',
-    "`basis`",
-    "`archived`, `deleted` or `unavailable`",
-]
 PAGES_SHARED_GUARDRAILS = [
     'Resolve the page ID first with `wenlan pages "<query-or-filename>" --resolve-id`.',
 ]
@@ -252,7 +242,6 @@ def validate_session_brief_flow(
             "cwd-repo-new",
             "For `cwd-repo-new`, prove the Space is absent with `spaces show` before composing deltas.",
             "Outside a Git repository, do not derive a new Space from the directory basename.",
-            "Apply the Brief update before any Space-scoped page update when this fallback is new.",
             # UX-HAND-7: a handoff changes the Brief only.
             "A handoff changes the Brief only.",
             "Every delta for one existing item uses the same version from the pre-handoff Brief snapshot.",
@@ -269,6 +258,14 @@ def validate_session_brief_flow(
             # The narrative session log is no longer written (older logs stay readable).
             "Write the session log",
             "sessions/<YYYY",
+            # UX-HAND-7: a handoff edits no page; pages follow memory changes
+            # and the night's read-page check.
+            "Update the pages this session used",
+            "write_page",
+            "page_basis",
+            "page_code_basis",
+            "read_page",
+            "list_pages",
         ]
         for needle in retired_handoff:
             if needle in text:
@@ -759,22 +756,6 @@ def validate_skill_text(
         )
         if resolver not in text:
             fail(f"{rel(root, skill_path)} must use {resolver}")
-    if name in PAGE_BASIS_SKILLS:
-        normalized_text = " ".join(text.split())
-        if frontmatter is not None:
-            try:
-                skill_tools = json.loads(frontmatter.get("allowed-tools", ""))
-            except json.JSONDecodeError:
-                fail(f"{rel(root, skill_path)} allowed-tools must be a JSON array")
-            for tool_name in ("read_page", "page_basis"):
-                if f"{expected_prefix}{tool_name}" not in skill_tools:
-                    fail(
-                        f"{rel(root, skill_path)} allowed-tools must include "
-                        f"{expected_prefix}{tool_name}"
-                    )
-        for needle in PAGE_BASIS_GUARDRAILS:
-            if needle not in normalized_text:
-                fail(f"{rel(root, skill_path)} must contain page basis guardrail {needle!r}")
     if name == "pages":
         normalized_text = " ".join(text.split())
         for needle in PAGES_SHARED_GUARDRAILS:

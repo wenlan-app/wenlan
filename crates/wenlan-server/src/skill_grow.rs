@@ -350,6 +350,157 @@ fn last_page_edit_is_person(page: &wenlan_types::Page) -> bool {
     page.last_edited_at.is_some() && page.last_edited_at == page.human_edited_at
 }
 
+/// Whether a page sentence's own words are the person's: they wrote, edited
+/// or accepted it, or it comes from a page older than per-version history,
+/// where nobody can say. An AI's sentence, or an AI chat's imported words, is
+/// not.
+fn sentence_is_the_persons(author: wenlan_types::authorship::SentenceAuthor) -> bool {
+    use wenlan_types::authorship::SentenceAuthor;
+    matches!(author, SentenceAuthor::Person | SentenceAuthor::Unknown)
+}
+
+/// Whether every sentence of a page is the person's own. A page with no
+/// sentences is not.
+fn page_is_the_persons(sentences: &wenlan_types::authorship::PageSentencesResponse) -> bool {
+    !sentences.sentences.is_empty()
+        && sentences
+            .sentences
+            .iter()
+            .all(|sentence| sentence_is_the_persons(sentence.author))
+}
+
+/// Whether a cited memory keeps something the person said: the line they
+/// typed that a night kept with it, or a line of theirs the AI tool sent with
+/// it when saving.
+async fn memory_keeps_the_persons_words(
+    db: &MemoryDB,
+    memory_id: &str,
+) -> Result<bool, ServerError> {
+    let Some(anchor) = db
+        .memory_said_anchor(memory_id, &wenlan_core::read_scope::ReadScope::Global)
+        .await?
+    else {
+        return Ok(false);
+    };
+    Ok(anchor.line.is_some()
+        || anchor
+            .kept
+            .iter()
+            .any(|line| line.speaker == wenlan_types::conversations::ConversationSpeaker::You))
+}
+
+/// Who wrote what, read once per page for one pass.
+#[derive(Default)]
+struct SentenceReads {
+    pages: HashMap<String, wenlan_types::authorship::PageSentencesResponse>,
+}
+
+impl SentenceReads {
+    async fn of(
+        &mut self,
+        db: &MemoryDB,
+        page_id: &str,
+    ) -> Result<&wenlan_types::authorship::PageSentencesResponse, ServerError> {
+        if !self.pages.contains_key(page_id) {
+            let sentences = wenlan_core::sentences::page_sentences(db, page_id).await?;
+            self.pages.insert(page_id.to_string(), sentences);
+        }
+        Ok(&self.pages[page_id])
+    }
+}
+
+/// Whether a page follows only pages that are wholly the person's: one
+/// step, with every basis still there.
+async fn follows_only_the_persons_pages(
+    db: &MemoryDB,
+    reads: &mut SentenceReads,
+    page_id: &str,
+) -> Result<bool, ServerError> {
+    let bases = db.list_page_basis(page_id).await?;
+    if bases.is_empty() || bases.iter().any(|basis| basis.current_version.is_none()) {
+        return Ok(false);
+    }
+    for basis in bases {
+        if !page_is_the_persons(reads.of(db, &basis.basis_page_id).await?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Design v5 F4: whether what a line quotes traces to the person. Each quoted
+/// sentence is the person's own, cites a memory that keeps their words, or
+/// sits on a page that follows only the person's pages. What an AI wrote
+/// from its own reading does not count.
+async fn quote_traces_to_person(
+    db: &MemoryDB,
+    reads: &mut SentenceReads,
+    page_id: &str,
+    quote: &str,
+) -> Result<bool, ServerError> {
+    let sentences = reads.of(db, page_id).await?;
+    let texts: Vec<&str> = sentences
+        .sentences
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    let quoted = skill_grow::sentences_quoted(quote, &texts);
+    if quoted.is_empty() {
+        return Ok(false);
+    }
+    let untraced: Vec<Vec<String>> = quoted
+        .into_iter()
+        .map(|idx| &sentences.sentences[idx])
+        .filter(|sentence| !sentence_is_the_persons(sentence.author))
+        .map(|sentence| {
+            sentence
+                .citations
+                .iter()
+                .filter(|citation| citation.source_kind == "memory")
+                .map(|citation| citation.locator.clone())
+                .collect()
+        })
+        .collect();
+    for memories in untraced {
+        let mut traced = false;
+        for memory in &memories {
+            if memory_keeps_the_persons_words(db, memory).await? {
+                traced = true;
+                break;
+            }
+        }
+        if !traced && !follows_only_the_persons_pages(db, reads, page_id).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// F4: the lines Wenlan may add on its own, with no one looking: those
+/// already there (the person saw them, or they traced then), those the
+/// person rewrote, and those whose quote traces to the person now.
+async fn lines_that_trace_to_person(
+    db: &MemoryDB,
+    lines: Vec<SkillLine>,
+    already_there: &[SkillLine],
+) -> Result<Vec<SkillLine>, ServerError> {
+    let mut reads = SentenceReads::default();
+    let mut out = Vec::new();
+    for line in lines {
+        let known = already_there.iter().any(|old| {
+            old.source_page_id == line.source_page_id && old.source_quote == line.source_quote
+        });
+        if known
+            || line.person_edited
+            || quote_traces_to_person(db, &mut reads, &line.source_page_id, &line.source_quote)
+                .await?
+        {
+            out.push(line);
+        }
+    }
+    Ok(out)
+}
+
 async fn source_line_is_eligible(
     db: &MemoryDB,
     expected_space_id: &str,
@@ -1187,7 +1338,7 @@ pub async fn handle_read_rules(
     };
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
-        let general = general_lines(&db, &own, None).await?;
+        let general = general_lines(&db, &own, None, by_tool).await?;
         if by_tool {
             record_general_reads(&db, &tool, &general).await?;
         }
@@ -1206,7 +1357,7 @@ pub async fn handle_read_rules(
             .await?;
     }
     // General lines from other Spaces apply here too (UX-SKILL-5).
-    let general = general_lines(&db, &own, Some(&space.id)).await?;
+    let general = general_lines(&db, &own, Some(&space.id), by_tool).await?;
     let known: HashSet<String> = response
         .lines
         .iter()
@@ -1244,11 +1395,15 @@ fn no_space_named(headers: &HeaderMap, query_space: Option<&str>) -> bool {
 /// empty Space id), then the approved general lines of every accepted Space
 /// other than `except`, each still checked against its own Space's rules
 /// page, with that Space's id. The same sentence from two places is listed
-/// once.
+/// once. With `preferences`, then what the person said once about how they
+/// work, kept outside every Space (UX-CHAT-5): only the person's own AI tools
+/// are given it, in every Space, never the app's list, a team member or a
+/// Space's own rules.
 async fn general_lines(
     db: &MemoryDB,
     own: &OwnRulePages,
     except: Option<&str>,
+    preferences: bool,
 ) -> Result<Vec<(String, SkillLine)>, ServerError> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -1267,7 +1422,44 @@ async fn general_lines(
             }
         }
     }
+    if preferences {
+        for line in preference_lines(db).await? {
+            if seen.insert(line.text.trim().to_lowercase()) {
+                out.push((String::new(), line));
+            }
+        }
+    }
     Ok(out)
+}
+
+/// How many preferences a tool is given at most: a rules file is read at the
+/// start of every session.
+const PREFERENCE_LINE_CAP: usize = skill_grow::PERSON_PREFERENCES_MAX;
+
+/// The person's confirmed preferences that live in no Space, as general
+/// rule lines. They have no rules page behind them, so no source page and
+/// nothing counted as borrowed.
+async fn preference_lines(db: &MemoryDB) -> Result<Vec<SkillLine>, ServerError> {
+    Ok(db
+        .person_preferences(PREFERENCE_LINE_CAP)
+        .await?
+        .into_iter()
+        .map(|(id, text)| SkillLine {
+            id: format!("preference:{id}"),
+            kind: wenlan_types::SkillLineKind::Rule,
+            text: text.trim().to_string(),
+            source_page_id: String::new(),
+            source_page_title: "What you told your tools".to_string(),
+            source_revision: 0,
+            source_revision_at: 0,
+            source_quote: String::new(),
+            person_edited: false,
+            general: true,
+            hand_written: false,
+            saved_from: None,
+            saved_by: None,
+        })
+        .collect())
 }
 
 async fn record_general_reads(
@@ -1993,13 +2185,18 @@ async fn rules_by_layer(
             }
         }
     }
+    for line in preference_lines(db).await? {
+        if seen.insert(line.text.trim().to_lowercase()) {
+            general.push(line);
+        }
+    }
     Ok((general, layers))
 }
 
 pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
     let (db, page_root) = db_and_page_root(state).await?;
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
-    let general: Vec<_> = general_lines(&db, &own, None)
+    let general: Vec<_> = general_lines(&db, &own, None, true)
         .await?
         .into_iter()
         .map(|(_, line)| line)
@@ -2455,6 +2652,19 @@ pub(crate) fn request_rules_sync(db: Arc<MemoryDB>, page_root: Option<PathBuf>) 
     });
 }
 
+/// Whether the memory is a preference kept in no Space: what the person's
+/// own tools are given as rules (UX-CHAT-5). A change to one (confirmed,
+/// unconfirmed, forgotten, restored, edited, replaced) changes the rules files.
+pub(crate) async fn is_person_preference(db: &MemoryDB, source_id: &str) -> bool {
+    match db.get_memory_detail(source_id).await {
+        Ok(Some(memory)) => {
+            memory.memory_type.as_deref() == Some("preference")
+                && memory.space.as_deref().is_none_or(str::is_empty)
+        }
+        _ => false,
+    }
+}
+
 /// For a route that changed some page without naming it (an accepted
 /// revision): ask for a sync, in the background.
 pub(crate) async fn rules_may_have_changed(state: &SharedState) {
@@ -2608,17 +2818,24 @@ async fn process_space(
     let mut suggested = false;
     match state.status {
         SpaceRulesStatus::Suggested => {
-            state.lines = lines;
-            if library_answered() && !state.lines.is_empty() {
+            if library_answered() {
                 // The person already said yes once for the whole library:
-                // accept this Space without asking again (UX-SKILL-1).
-                accept_space(db, page_root, &mut state, space.clone()).await?;
-                updated = true;
+                // accept this Space without asking again (UX-SKILL-1). Nobody
+                // sees these lines first, so only those that trace to the
+                // person go (F4).
+                state.lines = lines_that_trace_to_person(db, lines, &[]).await?;
+                if !state.lines.is_empty() {
+                    accept_space(db, page_root, &mut state, space.clone()).await?;
+                    updated = true;
+                }
             } else {
+                state.lines = lines;
                 suggested = !state.lines.is_empty();
             }
         }
         SpaceRulesStatus::Accepted => {
+            // A line new tonight reaches every AI tool unseen (F4).
+            let lines = lines_that_trace_to_person(db, lines, &state.lines).await?;
             updated = write_maintained_rules_page(db, page_root, &mut state, &lines).await?;
         }
         SpaceRulesStatus::ExcludedPrivate
@@ -3941,7 +4158,7 @@ pub async fn handle_self_report(
             .find(|line| line.id == request.rule_id)
         {
             Some(line) => (space_id.unwrap_or_default(), line),
-            None => general_lines(&db, &own, space_id.as_deref())
+            None => general_lines(&db, &own, space_id.as_deref(), true)
                 .await?
                 .into_iter()
                 .find(|(_, line)| line.id == request.rule_id)
@@ -3951,6 +4168,16 @@ pub async fn handle_self_report(
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if tool == "unknown" {
         return Err(ServerError::BadRequest("x-agent-name is required".into()));
+    }
+    // What the person told their tools has no page to record a report on.
+    if skill_grow::is_person_preference_line(&line) {
+        return Ok(PageResponse::for_caller(
+            SkillReportResponse {
+                recorded: false,
+                rule_id: Some(request.rule_id),
+            },
+            private,
+        ));
     }
     db.record_skill_self_report(&tool, &owner, &line, request.report)
         .await?;

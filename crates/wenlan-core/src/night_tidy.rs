@@ -56,10 +56,21 @@ pub struct TidyItem {
     pub event_date: Option<i64>,
     /// A decision rather than a fact.
     pub decided: bool,
+    /// The memory's type (`decision`, `fact`, `preference`, `gotcha`,
+    /// `lesson`, ...). A preference, tool problem or lesson is merged or
+    /// replaced only by one of its own kind.
+    pub memory_type: String,
     /// The conversation it came from and the line there, carried to what a
     /// merge or update writes so it keeps its source.
     pub session_id: Option<String>,
     pub line: Option<String>,
+}
+
+impl TidyItem {
+    /// The kind a night keeps beside the work's points, when it is one.
+    pub fn working_kind(&self) -> Option<crate::conversation_intake::WorkingKind> {
+        crate::conversation_intake::WorkingKind::from_memory_type(&self.memory_type)
+    }
 }
 
 /// One change the model asked for and the checks let through. Indices are
@@ -197,7 +208,10 @@ pub fn parse_tidy(text: &str, items: &[TidyItem], now: i64) -> Option<Vec<TidyCh
                     .filter_map(|id| index(id, items.len()))
                     .collect();
                 let [a, b] = ids[..] else { continue };
-                if a == b || items[a].space != items[b].space {
+                if a == b
+                    || items[a].space != items[b].space
+                    || items[a].working_kind() != items[b].working_kind()
+                {
                     continue;
                 }
                 let Some(text) = new_text(&change.text, &[&items[a].text, &items[b].text]) else {
@@ -217,6 +231,7 @@ pub fn parse_tidy(text: &str, items: &[TidyItem], now: i64) -> Option<Vec<TidyCh
                 };
                 if keep == drop
                     || items[keep].space != items[drop].space
+                    || items[keep].working_kind() != items[drop].working_kind()
                     || items[keep].created_at <= items[drop].created_at
                 {
                     continue;

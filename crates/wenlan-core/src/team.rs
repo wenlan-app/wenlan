@@ -1563,9 +1563,21 @@ pub struct SharedFolderPages {
     /// safe final-stay archive remains available to the sync client.
     pub(crate) receipts: std::collections::HashMap<String, crate::shared_space::MemberViewReceipt>,
     pub(crate) deleted: HashSet<String>,
+    /// Durable deletion identity and its single archive binding. Private
+    /// deletions are never inserted into this member-facing projection.
+    pub(crate) deletions: std::collections::HashMap<String, SharedDeletion>,
     /// For a deleted page, the one archive verified as its final version.
     /// Members receive only it, and only it stands in for the deletion.
     pub(crate) final_archives: std::collections::HashMap<String, String>,
+}
+
+/// A deletion event visible to this Space's sync. `parent_hash` is captured
+/// at delete time only when the held page version still matched the page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SharedDeletion {
+    pub event_id: String,
+    pub parent_hash: Option<String>,
+    pub archive_hash: Option<String>,
 }
 
 /// Versions must belong to this Space and refer only to its shared pages.
@@ -1589,7 +1601,10 @@ pub fn can_serve_version(page: &str, name: &str, bytes: &[u8], pages: &SharedFol
             && (shared
                 || (read.meta.archived
                     && read.meta.parent.is_some()
-                    && pages.final_archives.get(page) == Some(&read.sha)
+                    && pages.deletions.get(page).is_some_and(|deletion| {
+                        deletion.archive_hash.as_ref() == Some(&read.sha)
+                            && deletion.parent_hash.as_ref() == read.meta.parent.as_ref()
+                    })
                     && version::file_kind(&read.meta) == version::PAGES_DIR))
             && pages.stays.get(page).is_some_and(|stay| {
                 crate::member_view::MemberSnapshot::matches_in_stay(&read, &pages.shared, stay)

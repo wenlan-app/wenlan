@@ -148,6 +148,7 @@ async fn ux_chat_5_a_night_is_offered_specific_topics_and_never_a_hub() {
         id: "mem_old".into(),
         text: "the point".into(),
         decided: true,
+        space: None,
     }];
     let topics = db
         .night_topics("Site redesign", &conversations, &prior, &["wenlan".into()])

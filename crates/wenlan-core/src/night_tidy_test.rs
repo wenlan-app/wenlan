@@ -13,6 +13,7 @@ fn item(text: &str, space: Option<&str>, created_at: i64) -> TidyItem {
         created_at,
         event_date: None,
         decided: false,
+        memory_type: "fact".into(),
         session_id: None,
         line: None,
     }
@@ -140,4 +141,40 @@ fn only_a_plan_written_before_its_day_counts_as_passed() {
         "written that day: it says what happened"
     );
     assert!(!plan_passed(day, day - 86_400, day + 3_600), "day not over");
+}
+
+/// A preference, tool problem or lesson is merged or replaced only by one of
+/// its own kind; two of one kind merge as before.
+#[test]
+fn a_tidy_never_merges_across_kinds() {
+    let at = |text: &str, kind: &str, created_at: i64| TidyItem {
+        memory_type: kind.into(),
+        ..item(text, Some("wenlan"), created_at)
+    };
+    let items = [
+        at("Answer in short sentences.", "preference", NOW - 3_000),
+        at(
+            "Answer in short sentences please.",
+            "preference",
+            NOW - 2_000,
+        ),
+        at("Answers stay short.", "fact", NOW - 1_000),
+        at("Answers stay short for now.", "decision", NOW - 500),
+    ];
+    let answer = r#"{"changes": [
+        {"do": "merge", "memories": ["M0", "M2"], "text": "Answer in short sentences."},
+        {"do": "replace", "keep": "M2", "drop": "M1"},
+        {"do": "merge", "memories": ["M0", "M1"], "text": "Answer in short sentences."},
+        {"do": "merge", "memories": ["M2", "M3"], "text": "Answers stay short."}]}"#;
+    let changes = parse_tidy(answer, &items, NOW).unwrap();
+    assert_eq!(changes.len(), 2, "{changes:?}");
+    assert!(matches!(
+        changes[0],
+        TidyChange::Merge { items: [0, 1], .. }
+    ));
+    // A fact and a decision are not kinds a night keeps apart.
+    assert!(matches!(
+        changes[1],
+        TidyChange::Merge { items: [2, 3], .. }
+    ));
 }

@@ -100,14 +100,27 @@ fn parse_toml_string(line: &str, key: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// Run `git` in `cwd`, without a console window flashing on Windows.
+fn git_output(cwd: &Path, args: &[&str]) -> Option<std::process::Output> {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command.output().ok()
+}
+
 /// The folder name of the git repository `cwd` is in.
 pub fn repository_folder_name(cwd: &Path) -> Option<String> {
-    let common = Command::new("git")
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let common = git_output(
+        cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
     if !common.status.success() {
         return None;
     }
@@ -120,12 +133,7 @@ pub fn repository_folder_name(cwd: &Path) -> Option<String> {
             .map(ToOwned::to_owned);
     }
 
-    let root = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let root = git_output(cwd, &["rev-parse", "--show-toplevel"])?;
     if !root.status.success() {
         return None;
     }

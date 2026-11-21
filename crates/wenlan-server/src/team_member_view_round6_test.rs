@@ -258,6 +258,12 @@ async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
         .await
         .id;
     let older_archive = archive_and_restore(&f, &db, &id).await;
+    let restored = folder_head(&f, &id);
+    let restored_path = format!(
+        "members/{}/pages/{id}/{}",
+        restored.meta.author.member,
+        version::version_file_name(&restored.sha)
+    );
     db.delete_page(&id).await.unwrap();
     sync_hosted_test_folder(&f, &db).await;
     let final_archive = archive_paths(&f, &id)
@@ -272,9 +278,10 @@ async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
     );
     assert!(!deleted_pages(&f).await.contains(&id));
 
-    // Without that file the older archive still must not stand in for it:
-    // either a newly verified final archive is served, or the deletion is.
+    // When both newer files are lost, the original archive is still present.
+    // The host must report the deletion using its durable event.
     std::fs::remove_file(f.folder.join(&final_archive)).unwrap();
+    std::fs::remove_file(f.folder.join(restored_path)).unwrap();
     sync_hosted_test_folder(&f, &db).await;
     let files = listed_files(&f).await;
     assert!(
@@ -283,13 +290,8 @@ async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
     );
     assert!(!files.contains(&final_archive));
     assert_eq!(download(&f, &older_archive).await.0, StatusCode::NOT_FOUND);
-    let served = files.iter().filter(|path| path.contains(&id)).count();
-    assert!(served <= 1, "{files:?}");
-    assert_eq!(
-        served == 0,
-        deleted_pages(&f).await.contains(&id),
-        "{files:?}"
-    );
+    assert!(files.iter().all(|path| !path.contains(&id)), "{files:?}");
+    assert!(deleted_pages(&f).await.contains(&id));
 }
 
 /// A member refresh carrying a summary; the host moves the page to a
