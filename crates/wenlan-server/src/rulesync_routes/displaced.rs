@@ -17,11 +17,18 @@ pub(super) struct Batch {
 }
 
 impl Batch {
-    pub(super) fn prepare(root: &FileRoot, operations: &[Pending]) -> Result<Option<Self>> {
+    pub(super) fn prepare(
+        tool: &FileRoot,
+        root: &FileRoot,
+        operations: &[Pending],
+    ) -> Result<Option<Self>> {
+        for op in operations {
+            preflight(tool, root, op)?;
+        }
         let files: BTreeMap<_, _> = operations
             .iter()
             .enumerate()
-            .filter(|(_, op)| op.seen != op.desired && matches!(op.seen, Snapshot::File { .. }))
+            .filter(|(_, op)| displaces_file(op))
             .map(|(index, op)| (index, op.path.clone()))
             .collect();
         if files.is_empty() {
@@ -68,6 +75,17 @@ impl Batch {
         root.sync_directory(&self.directory)?;
         Ok(())
     }
+}
+
+fn displaces_file(op: &Pending) -> bool {
+    op.seen != op.desired && matches!(op.seen, Snapshot::File { .. })
+}
+
+pub(super) fn preflight(tool: &FileRoot, data: &FileRoot, op: &Pending) -> Result<()> {
+    if displaces_file(op) {
+        tool.check_recovery_volume(&op.path, data, Path::new(DIRECTORY))?;
+    }
+    Ok(())
 }
 
 fn file_name(index: usize) -> String {

@@ -20,8 +20,14 @@ use wenlan_core::rulesync_personal::{
 };
 use wenlan_core::rulesync_personal_files::{
     directory_entry_identity, directory_is_case_sensitive, is_personal_path, location_of,
-    require_ascii_entry_name, require_plain_personal_directory, NON_ASCII_PERSONAL_NAME,
+    readonly_personal_file, require_ascii_entry_name, require_plain_personal_directory,
+    require_plain_personal_file, NON_ASCII_PERSONAL_NAME,
 };
+use wenlan_core::rulesync_settings::personal::is_settings_path;
+
+pub(crate) fn is_personal_entry(path: &Path) -> bool {
+    is_personal_path(path) || is_settings_path(path)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
@@ -249,6 +255,8 @@ pub(crate) struct FileRoot {
     harness: Option<HarnessGuard>,
     tool_home: bool,
     private_directories: bool,
+    #[cfg(test)]
+    pub(crate) simulate_cross_volume: bool,
     #[cfg(all(test, not(windows)))]
     pub(crate) refuse_windows_acl_in_test: bool,
 }
@@ -269,6 +277,8 @@ impl FileRoot {
             harness: None,
             tool_home: false,
             private_directories: false,
+            #[cfg(test)]
+            simulate_cross_volume: false,
             #[cfg(all(test, not(windows)))]
             refuse_windows_acl_in_test: false,
         })
@@ -293,6 +303,21 @@ impl FileRoot {
     pub(crate) fn with_private_directories(mut self) -> Self {
         self.private_directories = true;
         self
+    }
+
+    pub(crate) fn check_recovery_volume(
+        &self,
+        path: &Path,
+        data: &FileRoot,
+        recovery_directory: &Path,
+    ) -> io::Result<()> {
+        let (parent, _) = entry_path(path)?;
+        let parent = self.open_parent(parent, false)?.ok_or_else(invalid_path)?;
+        let recovery = data.open_parent(recovery_directory, false)?;
+        let volume = recovery.as_ref().unwrap_or(&data.dir).dir_metadata()?.dev();
+        #[cfg(test)]
+        let volume = volume ^ u64::from(self.simulate_cross_volume);
+        same_recovery_volume(parent.dir_metadata()?.dev(), volume)
     }
 
     pub(crate) fn open_private_lock(&self) -> io::Result<std::fs::File> {
@@ -612,7 +637,7 @@ impl FileRoot {
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
         self.check_tool_path(path)?;
-        let personal = self.tool_home && is_personal_path(path);
+        let personal = self.tool_home && is_personal_entry(path);
         if personal {
             require_ascii_personal_path(path)?;
         }
@@ -807,7 +832,7 @@ impl FileRoot {
                 }
             }
         }
-        let personal = self.tool_home && is_personal_path(path);
+        let personal = self.tool_home && is_personal_entry(path);
         let read: ReadLeaf = if personal {
             read_single_link_leaf
         } else {
@@ -1118,29 +1143,8 @@ fn read_single_link_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::
 }
 
 fn single_link_contents(file: &cap_std::fs::File, metadata: &Metadata) -> io::Result<Vec<u8>> {
-    {
-        if cfg!(windows) && metadata.permissions().readonly() {
-            return Err(readonly_personal_file());
-        }
-        if metadata.nlink() != 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "the file has multiple hard links. Its link will be kept in place",
-            ));
-        }
-        #[cfg(unix)]
-        wenlan_core::rulesync_personal_files::require_plain_unix_acl(file)?;
-        #[cfg(windows)]
-        check_windows_replacement(file)?;
-        read_file_contents(file)
-    }
-}
-
-fn readonly_personal_file() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Unsupported,
-        "Windows cannot safely replace this read-only command or subagent",
-    )
+    require_plain_personal_file(file, metadata)?;
+    read_file_contents(file)
 }
 
 fn require_ascii_personal_path(path: &Path) -> io::Result<()> {
@@ -1291,16 +1295,27 @@ fn recovery_location<'a>(
     option
         .map(|(root, path)| {
             let (directory, name) = entry_path(path)?;
-            let directory = root.open_parent(directory, false)?.ok_or_else(invalid_path)?;
-            if directory.dir_metadata()?.dev() != parent.dir_metadata()?.dev() {
-                return Err(io::Error::new(
-                    io::ErrorKind::CrossesDevices,
-                    "place Wenlan's rulesync data on the same volume as this tool file to keep concurrent saves recoverable",
-                ));
-            }
+            let directory = root
+                .open_parent(directory, false)?
+                .ok_or_else(invalid_path)?;
+            same_recovery_volume(
+                parent.dir_metadata()?.dev(),
+                directory.dir_metadata()?.dev(),
+            )?;
             Ok((directory, name))
         })
         .transpose()
+}
+
+fn same_recovery_volume(source: u64, recovery: u64) -> io::Result<()> {
+    if source == recovery {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::CrossesDevices,
+            "place Wenlan's rulesync data on the same volume as this tool file to keep concurrent saves recoverable",
+        ))
+    }
 }
 
 fn move_displaced(dir: &Dir, displaced: &(Dir, &Path)) -> io::Result<()> {

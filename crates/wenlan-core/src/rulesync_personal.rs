@@ -984,6 +984,7 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
     let tools = installed.iter().map(|target| target.id);
     let files = rulesync_adopt::discover_personal_files(home, tools, &BTreeSet::new())?;
     let mut adoption = discover_targets(home, &installed, None, Some(files))?;
+    adoption.settings = crate::rulesync_settings::personal::Adoption::discover(home)?;
     adoption.skipped_tools = skipped;
     Ok(adoption)
 }
@@ -1011,6 +1012,7 @@ pub fn discover_additional_adoption(
         .chain(installed.iter().map(|target| target.id));
     let files = rulesync_adopt::discover_personal_files(home, tools, known_files)?;
     let mut adoption = discover_targets(home, &installed, Some(master), Some(files))?;
+    adoption.settings = crate::rulesync_settings::personal::Adoption::discover(home)?;
     adoption.added_tools = installed
         .iter()
         .map(|target| target.tool.display_name().to_owned())
@@ -1134,8 +1136,8 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-const ADOPTION_TOKEN_VERSION: &str = "adopt-6";
-const ADOPTION_FIELDS: [&str; 7] = [
+const ADOPTION_TOKEN_VERSION: &str = "adopt-7";
+const ADOPTION_FIELDS: [&str; 8] = [
     "file entries",
     "skill locations and upstreams",
     "skipped paths",
@@ -1143,6 +1145,7 @@ const ADOPTION_FIELDS: [&str; 7] = [
     "personal skill master",
     "personal commands and subagents",
     "Git worktree destinations",
+    "personal settings",
 ];
 
 fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len()]> {
@@ -1189,6 +1192,7 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
             &adoption.skipped_personal_files,
         ))?,
         fingerprint(&adoption.worktree_writes)?,
+        fingerprint(&adoption.settings)?,
     ])
 }
 
@@ -1311,6 +1315,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             diff,
         });
     }
+    files.extend(adoption.settings.preview()?);
     let mut skills = adoption
         .skill_locations
         .iter()
@@ -1345,6 +1350,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
     notes.extend(adoption.skipped_tools.iter().cloned());
     notes.extend(adoption.worktree_notes.iter().cloned());
+    notes.extend(adoption.settings.notes.iter().cloned());
     if adoption.includes_personal_files {
         notes.push("Commands and subagents are adopted at their native tool paths. All-tools review shares compatible files with enrolled tools. Tool-specific metadata and Codex TOML subagents stay with their own tool.".into());
         notes.push("Personal ignore: none supported by the eight tools in this setup.".into());
