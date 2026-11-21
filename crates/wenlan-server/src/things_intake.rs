@@ -257,6 +257,7 @@ pub async fn look_once(
     // UX-HAND-8: without a readable shared-Space list no Space is filled, so
     // private conversation text never reaches a team or folder-shared Space.
     // A fill problem skips only the fill; intake and the night pass go on.
+    let language = intake::language_name(wenlan_core::config::load_config().ui_language.as_deref());
     let settings_path = wenlan_core::shared_space::settings_path();
     let handoffs_filled = match shared_space_names(&settings_path) {
         Ok(_) => {
@@ -270,6 +271,7 @@ pub async fn look_once(
                     &found,
                     &shared_space,
                     models.as_ref().map(|models| models.label.as_ref()),
+                    language,
                     now,
                     HANDOFF_IDLE_SECS,
                 )
@@ -302,7 +304,6 @@ pub async fn look_once(
             ..LookReport::default()
         }));
     };
-    let language = intake::language_name(wenlan_core::config::load_config().ui_language.as_deref());
     let mut report = look_with_until(&db, found, &models, language, backoff, &still_quiet).await?;
     report.handoffs_filled = handoffs_filled;
     if !still_quiet() {

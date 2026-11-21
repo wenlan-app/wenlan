@@ -590,7 +590,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        405 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378, the four team sign-in routes and the four AI-tool routes, all with no page markers.
+        406 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes and POST /api/handoff, all with no page markers.
     );
 }
 

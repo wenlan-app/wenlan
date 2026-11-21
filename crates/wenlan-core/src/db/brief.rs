@@ -972,6 +972,7 @@ impl MemoryDB {
         conversations: &[crate::conversation_intake::FoundConversation],
         shared_space: &(dyn Fn(&str) -> Result<bool, String> + Sync),
         model: Option<&dyn crate::llm_provider::LlmProvider>,
+        language: &str,
         now: i64,
         idle_secs: i64,
     ) -> Result<usize, WenlanError> {
@@ -1069,10 +1070,9 @@ impl MemoryDB {
                     transcript
                 );
                 let request = crate::llm_provider::LlmRequest {
-                    system_prompt: Some(
-                        "Update one handoff item. Do not quote raw transcript text in the person-facing line. Answer with JSON only."
-                            .into(),
-                    ),
+                    system_prompt: Some(format!(
+                        "Update one handoff item. Write the line and the details in {language}. Do not quote raw transcript text in the person-facing line. Answer with JSON only."
+                    )),
                     user_prompt: prompt,
                     max_tokens: 700,
                     temperature: 0.0,

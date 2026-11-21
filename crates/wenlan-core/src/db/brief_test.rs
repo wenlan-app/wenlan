@@ -665,9 +665,10 @@ async fn ux_hand_3_idle_fill_is_replaced_by_a_real_handoff() {
 
     assert_eq!(
         db.fill_idle_handoffs(
-            &[conversation.clone()],
+            std::slice::from_ref(&conversation),
             &not_shared,
             None,
+            "English",
             handed_at + 3001,
             3000,
         )
@@ -677,9 +678,10 @@ async fn ux_hand_3_idle_fill_is_replaced_by_a_real_handoff() {
     );
     assert_eq!(
         db.fill_idle_handoffs(
-            &[conversation.clone()],
+            std::slice::from_ref(&conversation),
             &not_shared,
             None,
+            "English",
             handed_at + 4000,
             3000,
         )
@@ -727,6 +729,7 @@ async fn ux_hand_3_idle_fill_is_replaced_by_a_real_handoff() {
             &[older_transcript],
             &not_shared,
             None,
+            "English",
             handed_at + 4000,
             3000,
         )
@@ -785,6 +788,7 @@ async fn idle_fill_uses_model_for_line_and_details_without_copying_raw_transcrip
             &[conversation],
             &not_shared,
             Some(&model),
+            "English",
             handed_at + 3001,
             3000,
         )
@@ -804,6 +808,75 @@ async fn idle_fill_uses_model_for_line_and_details_without_copying_raw_transcrip
         Some("Parser done; run the focused import tests next.")
     );
     assert!(!item.text.contains(raw));
+}
+
+#[tokio::test]
+async fn idle_fill_asks_the_model_for_the_ui_language() {
+    let (db, _dir) = test_db().await;
+    let not_shared = |_: &str| Ok(false);
+    let session = SessionRef::parse("claude-code:lang-fill").unwrap();
+    db.apply_brief_update_in_session(
+        &update_request(
+            "lang-work",
+            "lang-handoff",
+            vec![BriefMutation::Add {
+                text: "Importer".into(),
+                details: None,
+                state: BriefItemState::Active,
+                added_at: None,
+                gate: None,
+            }],
+        ),
+        Some(&session),
+    )
+    .await
+    .unwrap();
+    let handed_at = db.list_brief_history("lang-work", 1).await.unwrap()[0].created_at;
+    let conversation = FoundConversation {
+        tool: "claude-code".into(),
+        external_id: "lang-fill".into(),
+        path: PathBuf::from("/tmp/lang-fill.jsonl"),
+        len: 10,
+        cwd: None,
+        branch: None,
+        said: vec!["please continue".into()],
+        last_reply: "the import tests pass now".into(),
+        last_content: "the import tests pass now".into(),
+        first_at: handed_at - 60,
+        last_content_at: handed_at + 1,
+        last_at: handed_at + 1,
+        automated: false,
+        on_behalf: false,
+        touched: vec![],
+    };
+    // The model only gives a usable answer when the system prompt names the
+    // UI language; otherwise the fill falls back and keeps the old line.
+    let model = crate::llm_provider::CannedLlmProvider::new("not json").with(
+        "in Traditional Chinese",
+        r#"{"text":"匯入：測試已通過","details":"下一步：合併前再跑一次。"}"#,
+    );
+
+    assert_eq!(
+        db.fill_idle_handoffs(
+            &[conversation],
+            &not_shared,
+            Some(&model),
+            "Traditional Chinese",
+            handed_at + 3001,
+            3000,
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    let item = &db
+        .get_brief_by_space_name("lang-work")
+        .await
+        .unwrap()
+        .unwrap()
+        .active[0];
+    assert_eq!(item.text, "匯入：測試已通過");
+    assert!(item.filled_by_wenlan);
 }
 
 #[tokio::test]
@@ -847,6 +920,7 @@ async fn idle_fill_rejects_model_output_that_echoes_the_transcript() {
             &[conversation],
             &not_shared,
             Some(&model),
+            "English",
             handed_at + 3001,
             3000,
         )
@@ -909,6 +983,7 @@ async fn idle_fill_rechecks_when_space_becomes_shared_during_generation() {
             &[conversation],
             &shared,
             Some(&model),
+            "English",
             handed_at + 3001,
             3000,
         )
@@ -981,9 +1056,16 @@ async fn idle_fill_skips_item_changed_after_sessions_last_handoff() {
     };
 
     assert_eq!(
-        db.fill_idle_handoffs(&[conversation], &not_shared, None, handed_at + 3001, 3000,)
-            .await
-            .unwrap(),
+        db.fill_idle_handoffs(
+            &[conversation],
+            &not_shared,
+            None,
+            "English",
+            handed_at + 3001,
+            3000,
+        )
+        .await
+        .unwrap(),
         0
     );
     let brief = db.get_brief_by_space_name("work").await.unwrap().unwrap();
@@ -1025,9 +1107,16 @@ async fn idle_fill_skips_when_only_non_content_events_are_newer_than_handoff() {
     };
 
     assert_eq!(
-        db.fill_idle_handoffs(&[conversation], &not_shared, None, handed_at + 3002, 3000,)
-            .await
-            .unwrap(),
+        db.fill_idle_handoffs(
+            &[conversation],
+            &not_shared,
+            None,
+            "English",
+            handed_at + 3002,
+            3000,
+        )
+        .await
+        .unwrap(),
         0
     );
     let brief = db
@@ -1076,9 +1165,16 @@ async fn ux_hand_8_idle_fill_skips_team_space() {
     let shared = |space: &str| Ok(space == "team-work");
 
     assert_eq!(
-        db.fill_idle_handoffs(&[conversation], &shared, None, handed_at + 3001, 3000)
-            .await
-            .unwrap(),
+        db.fill_idle_handoffs(
+            &[conversation],
+            &shared,
+            None,
+            "English",
+            handed_at + 3001,
+            3000
+        )
+        .await
+        .unwrap(),
         0
     );
     let brief = db
