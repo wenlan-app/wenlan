@@ -239,6 +239,107 @@ fn rulesync_step1h_windows_refuses_nondefault_access_permissions() {
     }
 }
 
+#[cfg(test)]
+#[test]
+fn rulesync_step1j_windows_accepts_only_the_inherited_profile_user_on_administrator_entries() {
+    use WindowsTrustee::{Administrators, Other, Owner, ProfileUser, System};
+
+    for (directory, flags) in [(false, 0x10), (true, 0x13)] {
+        let full = WINDOWS_FILE_ALL_ACCESS;
+        let inherited = [
+            (flags, full, System),
+            (flags, full, Administrators),
+            (flags, full, ProfileUser),
+        ];
+        let acl = WindowsAcl {
+            owner: b"Administrators SID",
+            owner_is_privileged: true,
+            protected: false,
+            has_security_policy: false,
+            aces: &inherited,
+        };
+        let parent = Some(acl.owner);
+        assert_eq!(
+            windows_acl_problem(&acl, directory, parent),
+            None,
+            "the CI runner's profile layout, directory={directory}"
+        );
+        let privileged_only = [inherited[0], inherited[1]];
+        assert_eq!(
+            windows_acl_problem(
+                &WindowsAcl {
+                    aces: &privileged_only,
+                    ..acl
+                },
+                directory,
+                parent
+            ),
+            None
+        );
+        let mut accepted = Vec::new();
+        for (case, ace) in [
+            (
+                "explicit profile-user ACE",
+                (flags & !0x10, full, ProfileUser),
+            ),
+            (
+                "restrictive profile-user ACE",
+                (flags, 0x0012_0089, ProfileUser),
+            ),
+            ("another user", (flags, full, Other)),
+            ("owner instead of profile user", (flags, full, Owner)),
+        ] {
+            let changed = [inherited[0], inherited[1], ace];
+            if windows_acl_problem(
+                &WindowsAcl {
+                    aces: &changed,
+                    ..acl
+                },
+                directory,
+                parent,
+            )
+            .is_none()
+            {
+                accepted.push(case);
+            }
+        }
+        let extra = [
+            inherited[0],
+            inherited[1],
+            inherited[2],
+            (flags, full, Other),
+        ];
+        if windows_acl_problem(
+            &WindowsAcl {
+                aces: &extra,
+                ..acl
+            },
+            directory,
+            parent,
+        )
+        .is_none()
+        {
+            accepted.push("profile user plus another user");
+        }
+        if windows_acl_problem(
+            &WindowsAcl {
+                protected: true,
+                ..acl
+            },
+            directory,
+            parent,
+        )
+        .is_none()
+        {
+            accepted.push("protected DACL");
+        }
+        assert!(
+            accepted.is_empty(),
+            "accepted {accepted:?}, directory={directory}"
+        );
+    }
+}
+
 #[cfg(windows)]
 pub use windows_acl::{
     default_windows_child_acl, open_windows_tool_dir, windows_access_error, windows_owner,

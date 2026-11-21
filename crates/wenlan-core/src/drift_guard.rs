@@ -9739,7 +9739,10 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_TEST_FILE_APPLY_ROOT",          // test-only crash-during-apply child root
     "WENLAN_TEST_PARENT_NET_NS",            // test-only renderer network-namespace probe
     "WENLAN_TEST_RULESYNC_BINARY",          // test-only pinned renderer binary for opt-in tests
-    "WENLAN_TEST_SETTINGS_ROOT",            // test-only crash-during-settings child root
+    "WENLAN_TEST_RULESYNC_COPIED_HOME", // test-only copied real-home fixture for opt-in adoption
+    "WENLAN_TEST_SETTINGS_ROOT",        // test-only crash-during-settings child root
+    "WENLAN_TEST_SKILL_REVIEW_ROOT",    // test-only skill review subprocess fixture root
+    "WENLAN_TEST_SKILL_REVIEW_TOKEN",   // test-only skill review subprocess approval token
 ];
 
 /// BASELINE: behavioral flags undocumented when this contract was introduced
