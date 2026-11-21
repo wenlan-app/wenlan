@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use cap_fs_ext::MetadataExt as _;
+use cap_fs_ext::{DirEntryExt as _, MetadataExt as _};
 use cap_std::fs::Metadata;
 use serde_yaml::{Mapping, Value};
 
@@ -220,7 +220,9 @@ pub fn require_ascii_entry_name(
         for entry in parent.entries()? {
             let entry = entry?;
             if entry.file_name().eq_ignore_ascii_case(name) {
-                let metadata = entry.metadata()?;
+                // Listing metadata has no volume or file index on Windows, and
+                // cap-fs-ext panics when asked for them. Open the entry instead.
+                let metadata = entry.full_metadata()?;
                 if opened.ino() != 0
                     && (opened.dev(), opened.ino()) == (metadata.dev(), metadata.ino())
                 {
