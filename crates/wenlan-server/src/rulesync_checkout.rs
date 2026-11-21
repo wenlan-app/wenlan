@@ -124,8 +124,6 @@ impl CheckoutStage {
             displaced: self.displaced.as_deref().map(|path| (root, path)),
             stage_id: Some(&self.id),
             verify_source: None,
-            #[cfg(windows)]
-            restore_owner: None,
         }
     }
 }
@@ -874,13 +872,13 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn rulesync_step1i_first_checkout_delivery_refuses_restrictive_windows_inheritance() {
+    fn rulesync_step1j_first_checkout_delivery_skips_the_windows_replacement_check() {
         check_checkout_windows_acl_refusal(true);
     }
 
     #[cfg(not(windows))]
     #[test]
-    fn rulesync_step1i_refused_checkout_withdrawal_names_the_live_file() {
+    fn rulesync_step1j_refused_checkout_withdrawal_names_the_live_file() {
         check_checkout_windows_acl_refusal(false);
     }
 
@@ -932,16 +930,11 @@ mod tests {
                     approved,
                 )
                 .unwrap();
-            let reason = outcome.conflict("Unexpected file change").unwrap();
-            assert!(
-                reason.contains("left unmanaged") && reason.contains("Administrators"),
-                "{reason}"
+            assert!(outcome.conflict("Unexpected file change").is_none());
+            assert_eq!(
+                root.read(&destination, false).unwrap(),
+                checkout.files[&path]
             );
-            assert!(
-                root.read(&destination, false).unwrap() == Snapshot::Absent,
-                "First delivery published AGENTS.md despite restrictive inherited access"
-            );
-            assert!(!checkout.files.contains_key(&path));
         } else {
             assert!(job.replace(&path, &Snapshot::Absent, &approved).unwrap());
             checkout.files.insert(path.clone(), approved.clone());
@@ -952,7 +945,7 @@ mod tests {
                 report.blocked.iter().any(|reason| {
                     reason.contains("AGENTS.md")
                         && reason.contains("revoked")
-                        && reason.contains("Administrators")
+                        && reason.contains("the Windows owner differs from the process user")
                 }),
                 "{report:?}"
             );

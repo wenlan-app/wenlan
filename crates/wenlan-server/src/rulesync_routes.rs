@@ -458,8 +458,6 @@ impl PendingStage {
             displaced: self.displaced.as_deref().map(|path| (data, path)),
             stage_id: Some(&self.id),
             verify_source,
-            #[cfg(windows)]
-            restore_owner: None,
         }
     }
 }
@@ -499,8 +497,8 @@ struct Manifest<Content = Vec<u8>> {
     /// Every destination's original bytes, mode or exact link value. This
     /// whole map reaches disk before the first tool file changes.
     backup: BTreeMap<PathBuf, Snapshot<Content>>,
-    /// The ordinary inherited Windows ACL is determined by the owner. An
-    /// older receipt contains only modes, so it cannot authorize new bytes.
+    /// The verified owner of each backed-up Windows entry. Older receipts
+    /// without an owner keep their original bytes available for manual restore.
     #[cfg(windows)]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     windows_backup_owners: BTreeMap<PathBuf, Vec<u8>>,
@@ -1286,15 +1284,6 @@ impl Setup {
                         operation.allow_link,
                         (link.is_some() || removal || restoring).then_some(&verify as _),
                     );
-                    #[cfg(windows)]
-                    let options = ApplyOptions {
-                        restore_owner: if restoring || operation.kind.is_none() {
-                            manifest.windows_backup_owners.get(&path).map(Vec::as_slice)
-                        } else {
-                            None
-                        },
-                        ..options
-                    };
                     root.apply_with(&path, &operation.seen, &operation.desired, options)
                         .with_context(|| format!("write {}", path.display()))?
                 } else if operation.seen == Snapshot::Absent
@@ -1462,7 +1451,7 @@ impl Setup {
                 }
             };
             #[cfg(windows)]
-            if let Err(reason) = check_windows_restore(root, manifest, &path, &seen, &original) {
+            if let Err(reason) = check_windows_restore(manifest, &path, &seen, &original) {
                 result.blocked.push(format!(
                     "{} could not be restored. {reason}",
                     path.display()
@@ -3150,7 +3139,7 @@ fn registry_removals(
                 continue;
             }
             #[cfg(windows)]
-            if let Err(reason) = check_windows_restore(root, manifest, path, &seen, &desired) {
+            if let Err(reason) = check_windows_restore(manifest, path, &seen, &desired) {
                 result.blocked.push(format!("{}: {reason}", path.display()));
                 continue;
             }
@@ -3633,18 +3622,10 @@ fn record_originals(
         };
         #[cfg(windows)]
         if matches!(original, Snapshot::File { .. } | Snapshot::Directory { .. }) {
-            let owner = root.windows_home_owner()?;
-            ensure!(
-                root.read(&op.path, false)
-                    .with_context(|| format!("back up {}", op.path.display()))?
-                    == original
-                    && owner == root.windows_home_owner()?,
-                "{} changed before backup",
-                op.path.display()
+            manifest.windows_backup_owners.insert(
+                op.path.clone(),
+                windows_backup_owner(root, &op.path, &original)?,
             );
-            manifest
-                .windows_backup_owners
-                .insert(op.path.clone(), owner);
         }
         entry.insert(original);
     }
@@ -3652,8 +3633,21 @@ fn record_originals(
 }
 
 #[cfg(windows)]
+fn windows_backup_owner(root: &FileRoot, path: &Path, original: &Snapshot) -> Result<Vec<u8>> {
+    let owner = root.windows_entry_owner(path)?;
+    ensure!(
+        root.read(path, false)
+            .with_context(|| format!("back up {}", path.display()))?
+            == *original
+            && owner == root.windows_entry_owner(path)?,
+        "{} changed before backup",
+        path.display()
+    );
+    Ok(owner)
+}
+
+#[cfg(windows)]
 fn check_windows_restore(
-    root: &FileRoot,
     manifest: &Manifest,
     path: &Path,
     current: &Snapshot,
@@ -3666,7 +3660,7 @@ fn check_windows_restore(
         "restore conflict: the backup has no verified Windows permissions. Keep it for manual recovery",
     )?;
     ensure!(
-        *owner == root.windows_home_owner()?,
+        *owner == rulesync_personal::windows_process_user()?,
         "restore conflict: the Windows owner changed since backup"
     );
     Ok(())

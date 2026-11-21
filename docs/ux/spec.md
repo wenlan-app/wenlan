@@ -913,9 +913,11 @@ and wait for evidence that people need them.
   Unsafe paths and links stay in place with a reason in the plan. Adoption
   stages the files again and checks their bytes against the approved plan before writing.
   On Windows, the plan lists linked rule files and skill folders as unmanaged.
-  Tool files and directories on Windows must have ordinary inherited profile
-  permissions and the same owner as their parent. Custom access lists, integrity
-  labels, and permissions Wenlan cannot verify leave the path unmanaged.
+  On Windows, a replacement keeps the destination's access rules, including
+  custom rules. New entries inherit permissions from their folder. A different
+  owner from the account running Wenlan, an integrity label or other security
+  policy, a protected audit list or a detected explicit audit rule, or a failure
+  to preserve permissions leaves the path unmanaged.
   The preview names any Git worktree that contains a delivery destination.
   The preview says `~/.agents` is left untouched. Wenlan reads its shared
   sources and replaces adopted links at the tool paths. Personal Codex
@@ -944,8 +946,8 @@ and wait for evidence that people need them.
   that has changed since delivery available for review.
   Restore keeps the backup when an unreviewed spelling differs at any point
   in the path or when a needed parent disappeared outside an approved change.
-  On Windows, restore also keeps the backup when it cannot verify the
-  original permissions for a file or directory it would have to write.
+  On Windows, restore keeps the backup when it cannot verify its recorded owner
+  or preserve the permissions of the destination it would have to replace.
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
   Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
 

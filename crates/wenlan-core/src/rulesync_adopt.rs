@@ -479,10 +479,7 @@ impl Home {
         );
         #[cfg(windows)]
         if check_destination_access {
-            let parent = self
-                .windows_tool_directory(node.path.parent().context("tool file has no parent")?)?
-                .context("tool file's parent disappeared")?;
-            crate::rulesync_personal::default_windows_child_acl(&parent, &file, false)
+            crate::rulesync_personal::check_windows_replacement(&file)
                 .with_context(|| format!("check permissions on {}", node.path.display()))?;
         }
         #[cfg(not(windows))]
