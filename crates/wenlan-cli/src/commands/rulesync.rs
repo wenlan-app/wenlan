@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Preview and manage the personal rules and skills on this computer.
+//! Preview and manage the personal tool setup on this computer.
 
 use std::fmt::Write;
 use std::io::{self, IsTerminal};
@@ -20,7 +20,7 @@ use crate::{client::WenlanClient, output::ResolvedFormat};
 
 #[derive(Debug, Subcommand)]
 pub enum RulesSetupCmd {
-    /// Bring your personal rules, skills, commands and subagents under Wenlan management.
+    /// Adopt personal rules, skills, commands, subagents and settings.
     Adopt {
         /// Preview the changes, or list the installed files while offline.
         #[arg(long)]
@@ -28,11 +28,11 @@ pub enum RulesSetupCmd {
     },
     /// Restore the original files and links from the local setup backup.
     Restore,
-    /// Review local changes and deliver the current personal tool setup.
+    /// Merge personal settings and check the local tool setup for changes to review.
     Sync,
     /// Check adopted skills for upstream releases and list offers for review.
     SkillUpdates,
-    /// Preview local MCP servers, hooks and permissions and confirm before applying.
+    /// Preview and approve an explicit local rulesync settings source.
     Settings {
         /// A local rulesync source folder.
         source: PathBuf,

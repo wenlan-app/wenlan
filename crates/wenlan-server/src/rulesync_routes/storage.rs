@@ -262,6 +262,7 @@ fn map_contents<From, To>(
         extension_paths: manifest.extension_paths.clone(),
         settings_only: manifest.settings_only,
         settings_batch: manifest.settings_batch.clone(),
+        personal_settings: manifest.personal_settings.clone(),
         registry_skipped: manifest.registry_skipped.clone(),
         unmanaged_skills: manifest.unmanaged_skills.clone(),
         unmanaged_personal_files: manifest.unmanaged_personal_files.clone(),
