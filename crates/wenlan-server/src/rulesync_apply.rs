@@ -224,6 +224,8 @@ pub(crate) struct FileRoot {
     harness: Option<HarnessGuard>,
     tool_home: bool,
     private_directories: bool,
+    #[cfg(all(test, not(windows)))]
+    pub(crate) refuse_windows_acl_in_test: bool,
 }
 
 impl FileRoot {
@@ -242,6 +244,8 @@ impl FileRoot {
             harness: None,
             tool_home: false,
             private_directories: false,
+            #[cfg(all(test, not(windows)))]
+            refuse_windows_acl_in_test: false,
         })
     }
 
@@ -564,9 +568,18 @@ impl FileRoot {
             return Ok(ApplyOutcome::Applied);
         }
         let displaced = recovery_location(&parent, options.displaced)?;
-        let check_access = self.tool_home || displaced.is_some();
+        // Checkout deliveries are journaled even before there is a file to
+        // displace. Check what the staged file inherits on its first write too.
+        let check_access = self.tool_home || options.stage_id.is_some() || displaced.is_some();
         let mut staged = Stage::new(&parent, options.stage_id, check_access)?;
         let result = (|| {
+            #[cfg(all(test, not(windows)))]
+            if check_access && self.refuse_windows_acl_in_test {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "left unmanaged: the Windows access list lacks the inherited Administrators grant",
+                ));
+            }
             #[cfg(windows)]
             if check_access {
                 default_windows_child_acl(&parent, &staged.dir, true)?;

@@ -1350,16 +1350,16 @@ impl Setup {
         }
         manifest.adopted = false;
         manifest.settings_batch = None;
+        let mut result = report("Restored the managed files from the local setup backup");
         if !manifest.settings_only {
-            crate::rulesync_checkout::refresh(
+            result.blocked.extend(crate::rulesync_checkout::refresh(
                 self,
                 &RenderSession::new(&self.binary),
                 &wenlan_core::shared_space::settings_path(),
                 None,
                 &[],
-            );
+            ));
         }
-        let mut result = report("Restored the managed files from the local setup backup");
         self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
         if manifest.delivered.is_empty() && manifest.pending.is_empty() {
             if !manifest.settings_only {
@@ -1687,20 +1687,22 @@ impl Setup {
         let layers = rulesync_team::load_layers(&settings)?;
         self.capture_team_edits(root, manifest, &settings, &layers)?;
         let session = RenderSession::new(&self.binary);
-        crate::rulesync_checkout::refresh(
+        let checkout_conflicts = crate::rulesync_checkout::refresh(
             self,
             &session,
             &settings,
             Some(&manifest.master),
             generated,
         );
-        self.sync_locked(
+        let mut result = self.sync_locked(
             root,
             manifest,
             generated,
             |target, source| self.render_member_rule(&session, target, source, &layers),
             |renderer, skills| self.render_skills(&session, renderer, skills),
-        )
+        )?;
+        result.blocked.extend(checkout_conflicts);
+        Ok(result)
     }
 
     pub(crate) fn checkout(
