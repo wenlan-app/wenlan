@@ -64,6 +64,10 @@ pub struct LedgerRow {
     /// The memory file it was read from, to tell an edit from a new memory.
     pub file: String,
     pub decided: Decided,
+    /// The tool's copy no longer has it. Wenlan's point stays (Wenlan's
+    /// memory is the record); the row is kept so Undo still finds the point
+    /// and the memory coming back is known, not new.
+    pub gone: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -71,6 +75,8 @@ struct Stored {
     f: String,
     #[serde(flatten)]
     d: Decided,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    g: bool,
 }
 
 impl MemoryDB {
@@ -109,6 +115,7 @@ impl MemoryDB {
                     key,
                     file: stored.f,
                     decided: stored.d,
+                    gone: stored.g,
                 });
             }
         }
@@ -122,9 +129,27 @@ impl MemoryDB {
         file: &str,
         decided: &Decided,
     ) -> Result<(), WenlanError> {
+        self.set_ai_memory_row(key, file, decided, false).await
+    }
+
+    /// Note whether the tool's copy still has one memory, keeping what was
+    /// decided about it.
+    pub async fn set_ai_memory_gone(&self, row: &LedgerRow, gone: bool) -> Result<(), WenlanError> {
+        self.set_ai_memory_row(&row.key, &row.file, &row.decided, gone)
+            .await
+    }
+
+    async fn set_ai_memory_row(
+        &self,
+        key: &str,
+        file: &str,
+        decided: &Decided,
+        gone: bool,
+    ) -> Result<(), WenlanError> {
         let value = serde_json::to_string(&Stored {
             f: file.to_string(),
             d: decided.clone(),
+            g: gone,
         })
         .map_err(|e| WenlanError::Generic(format!("ai memory ledger: {e}")))?;
         self.upsert_sync_state(LEDGER, key, 0, &value).await

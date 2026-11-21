@@ -24,7 +24,9 @@ pub struct ImportCounts {
     /// Edited in the tool, so their point was brought up to date.
     #[serde(default)]
     pub updated: usize,
-    /// Gone from the tool, so their point was removed.
+    /// Points removed because the tool dropped them. Always 0 since Wenlan's
+    /// memory became the record: a tool's copy dropping a line keeps the
+    /// point. Kept so older readers of the counts still parse.
     #[serde(default)]
     pub removed: usize,
     /// New or edited, waiting for a model to read them.
