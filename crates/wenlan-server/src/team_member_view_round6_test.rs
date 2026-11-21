@@ -89,7 +89,8 @@ async fn round6_member_save_that_repeats_or_moves_cited_text_is_refused() {
     let root = f._dir.path().join("wiki");
     set_daemon(&mut f, &db, &root);
     let body = "First claim.[1]\n\nSecond claim.[2]\n\nClosing words.";
-    let cases: [(&str, fn(&str) -> String); 3] = [
+    type Edit = fn(&str) -> String;
+    let cases: [(&str, Edit); 3] = [
         ("repeated", |p| {
             p.replace("First claim.", "First claim.\n\nFirst claim.")
         }),
