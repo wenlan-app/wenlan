@@ -405,7 +405,7 @@ pub async fn handle_add_member(
     let (member, key) = {
         let spaces = req.spaces.clone();
         let name = req.name.clone();
-        blocking(move || team::add_member(&team::team_path(), &name, &spaces)).await?
+        blocking(move || team::invite_with_key(&team::team_path(), &name, &spaces)).await?
     };
     Ok(Json(member_key(member, key, req.url.as_deref())?))
 }

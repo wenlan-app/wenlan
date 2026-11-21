@@ -62,6 +62,11 @@ pub struct Member {
     pub key_sha256: Option<String>,
     #[serde(default)]
     pub spaces: BTreeMap<String, TeamAccess>,
+    /// Existing members get no team-wide grant during migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_access: Option<TeamAccess>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub space_only: bool,
     pub added_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_at: Option<String>,
@@ -107,6 +112,8 @@ pub struct ToolKey {
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<wenlan_types::team_library::TeamToolScope>,
 }
 
 /// A one-time invite token (its SHA-256), optionally for one email.
@@ -180,6 +187,26 @@ impl Member {
         self.removed_at.is_none()
     }
 
+    pub fn library_access(&self) -> Option<TeamAccess> {
+        if !self.is_active() {
+            return None;
+        }
+        if self.role == TeamRole::Owner {
+            return Some(TeamAccess::Write);
+        }
+        self.library_access.filter(|_| !self.space_only)
+    }
+
+    pub fn space_grants(&self) -> BTreeMap<String, TeamAccess> {
+        let mut grants = if self.space_only {
+            BTreeMap::new()
+        } else {
+            self.everyone.clone()
+        };
+        grants.extend(self.spaces.clone());
+        grants
+    }
+
     /// What this member may do in `space`; `None` when they are removed or
     /// it is not one of theirs.
     pub fn access(&self, space: &str) -> Option<TeamAccess> {
@@ -193,7 +220,11 @@ impl Member {
         }
         self.spaces
             .get(space)
-            .or_else(|| self.everyone.get(space))
+            .or_else(|| {
+                (!self.space_only)
+                    .then(|| self.everyone.get(space))
+                    .flatten()
+            })
             .copied()
     }
 
@@ -272,8 +303,7 @@ impl Member {
     /// (the owner: every Space the server hosts, `hosted`, by name and
     /// folder). A hosted Space carries its id, which a rename keeps.
     pub fn me(&self, hosted: &[(String, PathBuf)]) -> TeamMe {
-        let mut all = self.everyone.clone();
-        all.extend(self.spaces.clone());
+        let mut all = self.space_grants();
         if self.role == TeamRole::Owner {
             for (space, _) in hosted {
                 all.insert(space.clone(), TeamAccess::Write);
@@ -433,11 +463,7 @@ pub fn people_sharing_with(
 
 /// Changes `team.json` under its lock and writes it back (0600 on Unix: it
 /// holds key hashes).
-fn change_team<T>(
-    path: &Path,
-    change: impl FnOnce(&mut TeamFile) -> Result<T, WenlanError>,
-) -> Result<T, WenlanError> {
-    use std::io::Write;
+pub(crate) fn lock_team(path: &Path) -> Result<std::fs::File, WenlanError> {
     let parent = path
         .parent()
         .ok_or_else(|| WenlanError::Validation(format!("no folder for {}", path.display())))?;
@@ -449,6 +475,16 @@ fn change_team<T>(
         .write(true)
         .open(path.with_extension("lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
+    Ok(lock)
+}
+
+fn change_team<T>(
+    path: &Path,
+    change: impl FnOnce(&mut TeamFile) -> Result<T, WenlanError>,
+) -> Result<T, WenlanError> {
+    use std::io::Write;
+    let _lock = lock_team(path)?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut file = read_team(path)?;
     let read_format = file.format;
     if file.id.is_none() {
@@ -607,6 +643,8 @@ pub fn set_owner_hash(path: &Path, name: &str, hash: &str) -> Result<Member, Wen
                     name,
                     key_sha256: Some(hash.to_string()),
                     spaces: BTreeMap::new(),
+                    library_access: None,
+                    space_only: false,
                     added_at: now(),
                     removed_at: None,
                     role: TeamRole::Owner,
@@ -710,6 +748,25 @@ pub fn add_member(
     name: &str,
     spaces: &[TeamSpaceAccess],
 ) -> Result<(Member, String), WenlanError> {
+    add_member_with_scope(path, name, spaces, false)
+}
+
+/// A legacy-key invitation uses the same team or guest choice as sign-in
+/// invitations. Existing legacy members keep their saved Space grants.
+pub fn invite_with_key(
+    path: &Path,
+    name: &str,
+    spaces: &[TeamSpaceAccess],
+) -> Result<(Member, String), WenlanError> {
+    add_member_with_scope(path, name, spaces, !spaces.is_empty())
+}
+
+fn add_member_with_scope(
+    path: &Path,
+    name: &str,
+    spaces: &[TeamSpaceAccess],
+    space_only: bool,
+) -> Result<(Member, String), WenlanError> {
     let name = clean_name(name)?;
     let key = new_key();
     let mut member = Member {
@@ -717,6 +774,8 @@ pub fn add_member(
         name,
         key_sha256: Some(key_hash(&key)),
         spaces: access_map(spaces),
+        library_access: spaces.is_empty().then_some(TeamAccess::Read),
+        space_only,
         added_at: now(),
         removed_at: None,
         role: TeamRole::Member,
@@ -762,6 +821,28 @@ pub fn update_member(
             member.spaces = access_map(spaces);
         }
         Ok(member.clone())
+    })
+}
+
+/// Changes an active member's team-wide grant. Space grants are independent.
+pub fn set_library_access(
+    path: &Path,
+    actor: &str,
+    id: &str,
+    access: Option<TeamAccess>,
+) -> Result<(), WenlanError> {
+    change_team(path, |file| {
+        if find_active(file, actor)?.role != TeamRole::Owner {
+            return Err(WenlanError::Validation("Team owner required".into()));
+        }
+        let member = find_active(file, id)?;
+        if member.role == TeamRole::Owner || member.space_only {
+            return Err(WenlanError::Validation(
+                "The owner and Space-only guests have fixed team access".into(),
+            ));
+        }
+        member.library_access = access;
+        Ok(())
     })
 }
 
@@ -823,10 +904,27 @@ pub fn issue_tool_key(
     member_id: &str,
     name: &str,
 ) -> Result<(String, String), WenlanError> {
+    issue_scoped_tool_key(path, member_id, name, None)
+}
+
+pub fn issue_scoped_tool_key(
+    path: &Path,
+    member_id: &str,
+    name: &str,
+    scope: Option<wenlan_types::team_library::TeamToolScope>,
+) -> Result<(String, String), WenlanError> {
     let name = clean_name(name)?;
     let key = new_tool_key()?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     change_team(path, |file| {
+        if scope
+            .as_ref()
+            .is_some_and(|scope| Some(&scope.team_id) != file.id.as_ref())
+        {
+            return Err(WenlanError::Validation(
+                "Team credential scope changed".into(),
+            ));
+        }
         let member = find_active(file, member_id)?;
         member.keys.push(ToolKey {
             id: id.clone(),
@@ -834,6 +932,7 @@ pub fn issue_tool_key(
             sha256: key_hash(&key),
             created_at: now(),
             revoked_at: None,
+            scope,
         });
         Ok(())
     })?;
@@ -1117,6 +1216,8 @@ pub fn create_invited_member(
         name,
         key_sha256: None,
         spaces: access_map(spaces),
+        library_access: spaces.is_empty().then_some(TeamAccess::Read),
+        space_only: !spaces.is_empty(),
         added_at: now(),
         removed_at: None,
         role: TeamRole::Member,
@@ -1339,7 +1440,15 @@ pub fn authenticate(path: &Path, key: &str) -> Result<Option<Authenticated>, Wen
             }
         }
         for tool_key in &member.keys {
-            if same_hash(&tool_key.sha256, &hash) && tool_key.revoked_at.is_none() {
+            if same_hash(&tool_key.sha256, &hash)
+                && tool_key.revoked_at.is_none()
+                && tool_key.scope.as_ref().is_none_or(|scope| {
+                    member
+                        .team
+                        .as_ref()
+                        .is_some_and(|team| team.id == scope.team_id)
+                })
+            {
                 credential = Some(Credential::ToolKey {
                     id: tool_key.id.clone(),
                 });

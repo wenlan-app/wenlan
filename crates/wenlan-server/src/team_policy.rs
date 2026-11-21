@@ -101,11 +101,9 @@ fn set(spaces: &BTreeSet<String>) -> RestrictedExpression {
 /// The Spaces `member` was given, to read and to edit: their own grants and
 /// the ones given to everyone, their own winning.
 fn grants(member: &Member) -> (BTreeSet<String>, BTreeSet<String>) {
-    let mut all = member.everyone.clone();
-    all.extend(member.spaces.clone());
     let mut reads = BTreeSet::new();
     let mut writes = BTreeSet::new();
-    for (space, access) in all {
+    for (space, access) in member.space_grants() {
         match access {
             TeamAccess::Read => reads.insert(space),
             TeamAccess::Write => writes.insert(space),
