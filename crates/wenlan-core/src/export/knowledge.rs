@@ -23,9 +23,10 @@ pub use folders::{
     follow_external_moves, has_origin_version, knowledge_edit_targets, knowledge_markdown_paths,
     list_knowledge_folders, move_projected_page, note_missing_pages, note_person_file,
     origin_id_line, page_file_still_gone, pending_adoptions, person_page_files,
-    read_knowledge_markdown, reclaim_returned_page, record_person_note, restamp_person_note,
-    stamp_person_note, unstamp_person_note, validate_knowledge_folder_path, wenlan_page_digests,
-    KnowledgeFolderEntry, MissingPages, PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
+    read_knowledge_markdown, reclaim_returned_page, record_person_note, recorded_page_file,
+    restamp_person_note, stamp_person_note, unstamp_person_note, validate_knowledge_folder_path,
+    wenlan_page_digests, KnowledgeFolderEntry, MissingPages, PersonPageFile, MASS_MISSING_FLOOR,
+    MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;

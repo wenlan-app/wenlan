@@ -346,3 +346,70 @@ async fn round6_member_refresh_writes_summary_with_the_body_under_one_check() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn round6_member_cannot_write_a_page_whose_file_is_outside_the_space_folder() {
+    let (mut f, db) = fixture_with_daemon().await;
+    let root = f._dir.path().join("wiki");
+    std::fs::create_dir_all(root.join("Design")).unwrap();
+    std::fs::create_dir_all(root.join("Private ancestor")).unwrap();
+    wenlan_core::space_folders::turn_on(&root).unwrap();
+    let draft = db
+        .create_page_draft_with_id_in_registered_space_and_folder(
+            &wenlan_core::pages::new_page_id(),
+            "Round6 legacy note",
+            "Legacy text.",
+            Some("Design"),
+            "Private ancestor",
+        )
+        .await
+        .unwrap();
+    let wenlan_core::pages::PageDraftPublishOutcome::Published(page) = db
+        .publish_page_draft(&draft.id, draft.version)
+        .await
+        .unwrap()
+    else {
+        panic!("publish fixture");
+    };
+    wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root.clone(), &db)
+        .write_page_gated(&db, &page)
+        .await
+        .unwrap();
+    let outside = |root: &std::path::Path| {
+        std::fs::read_dir(root.join("Private ancestor"))
+            .unwrap()
+            .flatten()
+            .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let file_before = outside(&root);
+    assert_eq!(file_before.len(), 1);
+    set_daemon(&mut f, &db, &root);
+    let path = format!("/api/pages/{}", page.id);
+    // The member can read the page; only its writes are refused.
+    let (status, reply) = forwarded(&f, Method::GET, &path, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let (status, reply) = forwarded(
+        &f,
+        Method::PUT,
+        &path,
+        json!({"expected_version": page.version, "content": "Legacy text. A member line."}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{reply}");
+    assert!(reply.contains("outside the Space"), "{reply}");
+    assert!(!reply.contains("Private ancestor"), "{reply}");
+    let (status, reply) = forwarded(
+        &f,
+        Method::POST,
+        &format!("{path}/rename"),
+        json!({"expected_version": page.version, "title": "Round6 renamed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{reply}");
+    let after = db.get_page(&page.id).await.unwrap().unwrap();
+    assert_eq!(after.version, page.version);
+    assert_eq!(after.content, page.content);
+    assert_eq!(after.title, page.title);
+    assert_eq!(outside(&root), file_before);
+}

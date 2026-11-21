@@ -144,6 +144,27 @@ pub(crate) async fn may_write_pages<'a>(
     Ok(true)
 }
 
+/// Why a member cannot write a page the host keeps outside the Space's
+/// folder. It names no folder.
+pub(crate) const OUTSIDE_SPACE: &str =
+    "This page's file is kept outside the Space's folder, so team members cannot change it. The host can move it into the Space's folder.";
+
+/// Whether every page a member write names keeps its file inside the
+/// Space's folder ([`wenlan_core::space_folders::member_write_stays_in_space`]).
+pub(crate) async fn writes_stay_in_space<'a>(
+    db: &MemoryDB,
+    root: &std::path::Path,
+    space: &str,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<bool, wenlan_core::WenlanError> {
+    for id in ids {
+        if !wenlan_core::space_folders::member_write_stays_in_space(db, root, id, space).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn write_target<'a>(
     method: &Method,
     route: &str,
@@ -232,7 +253,17 @@ pub(crate) async fn guard_private_memory(
             ) else {
                 return refused();
             };
-            let Some(db) = state.read().await.db.clone() else {
+            let (db, root) = {
+                let state = state.read().await;
+                (
+                    state.db.clone(),
+                    state
+                        .lint_config
+                        .page_root()
+                        .map(std::path::Path::to_path_buf),
+                )
+            };
+            let Some(db) = db else {
                 return MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE).into_response();
             };
             let scope = ReadScope::Space(pinned.to_owned());
@@ -242,6 +273,21 @@ pub(crate) async fn guard_private_memory(
                 Err(error) => {
                     tracing::warn!("member page authorization failed: {error}");
                     return MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE).into_response();
+                }
+            }
+            if let Some(root) = root {
+                let ids = page_parameters(route, req.uri().path());
+                match writes_stay_in_space(&db, &root, pinned, ids).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return MemberResponse::problem(StatusCode::CONFLICT, OUTSIDE_SPACE)
+                            .into_response()
+                    }
+                    Err(error) => {
+                        tracing::warn!("member page folder check failed: {error}");
+                        return MemberResponse::status(StatusCode::SERVICE_UNAVAILABLE)
+                            .into_response();
+                    }
                 }
             }
         }
