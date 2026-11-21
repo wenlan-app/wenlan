@@ -35,7 +35,7 @@ repository basename, which the user can override through normal Space config.
 Do not invent any other Space name.
 
 Outside a Git repository, do not derive a new Space from the directory
-basename. If resolution still leaves `space` empty, skip the Brief read, the
+basename. If resolution still leaves `space` empty, skip the Brief read and the
 typed update, and report that no Space resolved. Outside
 a Git repository, a pin, explicit argument, default, or mapping still resolves
 a Space, and the Brief update still runs.
