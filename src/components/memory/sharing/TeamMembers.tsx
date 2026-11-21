@@ -37,11 +37,13 @@ function accessOf(member: TeamMember, space: string): TeamAccess {
 export function memberTag(t: TFunction, member: TeamMember): string {
   const signIn = member.sign_in;
   if (signIn?.waiting_email) return t("team.signIn.tagWaiting", { email: signIn.waiting_email.replace("***", "•••") });
+  const tools = signIn?.tools ?? 0;
+  const withTools = (tag: string) => (tools > 0 ? `${tag} · ${t("team.signIn.tagTools", { count: tools })}` : tag);
   const provider = signIn?.providers?.[0];
-  if (provider === "google") return t("team.signIn.tagGoogle");
-  if (provider === "github") return t("team.signIn.tagGitHub");
+  if (provider === "google") return withTools(t("team.signIn.tagGoogle"));
+  if (provider === "github") return withTools(t("team.signIn.tagGitHub"));
   if (signIn?.invited) return t("team.signIn.tagInvited");
-  return t("team.signIn.tagLink");
+  return withTools(t("team.signIn.tagLink"));
 }
 
 /** Whether the person signs in through the server rather than by a key. */
@@ -52,9 +54,11 @@ export function usesSignIn(member: TeamMember): boolean {
 
 /** The "⋯" menu of a person. It is placed in the viewport (`fixed`) from the
  *  button, so the box it opens in, which scrolls, never clips it. */
-export function MemberMenu({ member, onNewCode, onCompromised, onRemoveFromSpace, onRemoveFromTeam }: {
+export function MemberMenu({ member, onNewCode, onTools, onCompromised, onRemoveFromSpace, onRemoveFromTeam }: {
   readonly member: TeamMember;
   readonly onNewCode: () => void;
+  /** See or remove their AI tools; offered when they have any. */
+  readonly onTools?: () => void;
   /** Their account was taken over: ends every sign-in and key. */
   readonly onCompromised?: () => void;
   /** Absent outside one Space's box. */
@@ -103,6 +107,14 @@ export function MemberMenu({ member, onNewCode, onCompromised, onRemoveFromSpace
       {open && (
         <ul className="team-menu-list" role="menu" style={place ?? { visibility: "hidden" }}>
           <li role="none"><button type="button" role="menuitem" onClick={pick(onNewCode)}>{t("team.page.newLink")}</button></li>
+          {onTools && (member.sign_in?.tools ?? 0) > 0 && (
+            <li role="none">
+              <button type="button" role="menuitem" className="team-menu-two-line" onClick={pick(onTools)}>
+                <span>{t("team.signIn.toolsMenu", { count: member.sign_in?.tools ?? 0 })}</span>
+                <span className="team-menu-sub">{t("team.signIn.toolsMenuHint", { name: member.name })}</span>
+              </button>
+            </li>
+          )}
           {onCompromised && (
             <li role="none">
               <button type="button" role="menuitem" className="team-menu-two-line" onClick={pick(onCompromised)}>

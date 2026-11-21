@@ -223,9 +223,30 @@ pub async fn admin(
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    call_team(url, key, method, &format!("/team/v1/admin{path}"), body).await
+}
+
+/// One call to the member's own account on a team server
+/// (`/team/v1/account<path>`), with their member key: their AI tools.
+pub async fn account(
+    url: &str,
+    key: &str,
+    method: reqwest::Method,
+    path: &str,
+) -> Result<serde_json::Value, String> {
+    call_team(url, key, method, &format!("/team/v1/account{path}"), None).await
+}
+
+async fn call_team(
+    url: &str,
+    key: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, String> {
     let url = check_url(url)?;
     let mut request = client()?
-        .request(method, format!("{url}/team/v1/admin{path}"))
+        .request(method, format!("{url}{path}"))
         .bearer_auth(key);
     if let Some(body) = body {
         request = request.json(body);

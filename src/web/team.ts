@@ -263,3 +263,138 @@ export async function linkProvider(provider: string): Promise<boolean> {
 export function accessBySpace(me: TeamMe | null): Map<string, string> {
   return new Map((me?.spaces ?? []).map((entry) => [entry.space, entry.access]));
 }
+
+/** One of the member's AI tools: its name and when it was added. */
+export interface TeamTool {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+/** How a call to the member's own account signs in: the browser session,
+ *  or the key kept in this browser. */
+function accountInit(init: RequestInit = {}): RequestInit {
+  const key = credential === "key" ? readTeamKey() : null;
+  return {
+    ...init,
+    headers: { ...(init.body ? { "Content-Type": "application/json" } : {}), ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+    credentials: key ? "omit" : "same-origin",
+    cache: "no-store",
+  };
+}
+
+/** The member's AI tools; null when the server would not say. */
+export async function teamTools(): Promise<TeamTool[] | null> {
+  try {
+    const response = await fetch("/team/v1/account/keys", accountInit());
+    return response.ok ? ((await response.json()) as TeamTool[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Removes one of them; resolves to the tools left, or null on failure. */
+export async function removeTeamTool(id: string): Promise<TeamTool[] | null> {
+  try {
+    const response = await fetch(`/team/v1/account/keys/${encodeURIComponent(id)}`, accountInit({ method: "DELETE" }));
+    return response.ok ? ((await response.json()) as TeamTool[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What a call that may need a fresh sign-in answers. */
+export type Answer<T> = { ok: true; value: T } | { ok: false; error: string };
+
+async function answer<T>(path: string, body?: unknown): Promise<Answer<T>> {
+  try {
+    const response = await fetch(path, accountInit({ method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }));
+    if (response.ok) {
+      const text = await response.text();
+      return { ok: true, value: (text ? JSON.parse(text) : null) as T };
+    }
+    const said = (await response.json().catch(() => ({}))) as { error?: unknown };
+    return { ok: false, error: typeof said.error === "string" ? said.error : `http_${response.status}` };
+  } catch {
+    return { ok: false, error: "offline" };
+  }
+}
+
+export interface DeviceRequest {
+  tool: string;
+  spaces: { space: string; access: string }[];
+}
+
+/** Which AI tool waits behind a short code. */
+export function deviceLookup(code: string): Promise<Answer<DeviceRequest>> {
+  return answer("/auth/device/lookup", { user_code: code });
+}
+
+/** Allows (or refuses) the AI tool behind a short code. Allowing answers
+ *  `reauth_required` when the browser has not signed in again just now. */
+export function deviceDecide(code: string, allow: boolean): Promise<Answer<null>> {
+  return answer(allow ? "/auth/device/approve" : "/auth/device/deny", { user_code: code });
+}
+
+/** A one-time link for the desktop app, with a new member key. Answers
+ *  `reauth_required` when the browser has not signed in again just now. */
+export function desktopLink(): Promise<Answer<{ link: string }>> {
+  return answer("/team/v1/account/desktop-link");
+}
+
+/** What to pick up again after the provider sends the browser back. */
+export type After = { kind: "device"; code?: string } | { kind: "desktop" };
+
+export const AFTER_STORAGE = "wenlan.team.after";
+
+export function rememberAfter(after: After): void {
+  try {
+    window.sessionStorage.setItem(AFTER_STORAGE, JSON.stringify(after));
+  } catch {
+    // Storage blocked: the person starts over by hand.
+  }
+}
+
+/** What was left to do before signing in again, read once. */
+export function takeAfter(): After | null {
+  try {
+    const raw = window.sessionStorage.getItem(AFTER_STORAGE);
+    window.sessionStorage.removeItem(AFTER_STORAGE);
+    const after = raw ? (JSON.parse(raw) as After) : null;
+    return after && (after.kind === "device" || after.kind === "desktop") ? after : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Looks without taking. */
+export function peekAfter(): After | null {
+  try {
+    const raw = window.sessionStorage.getItem(AFTER_STORAGE);
+    return raw ? (JSON.parse(raw) as After) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Signs in again with an account already linked, then comes back to `/app`
+ * and picks up `after`. Resolves false when the server would not start it.
+ */
+export async function reauthThen(provider: string, after: After): Promise<boolean> {
+  rememberAfter(after);
+  try {
+    const response = await fetch(`/auth/reauth/${encodeURIComponent(provider)}`, {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const started = (await response.json()) as { url?: unknown };
+    if (typeof started.url !== "string" || !started.url) return false;
+    window.location.assign(started.url);
+    return true;
+  } catch {
+    return false;
+  }
+}

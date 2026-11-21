@@ -355,9 +355,12 @@ fn manifest_counts_match_the_spec() {
     // Then 411 after the four hosted team sign-in routes (POST
     // `/api/team/invites`, `/api/team/members/{id}/invite`, `/approve` and
     // `/compromised`): invite and account changes, no page text.
+    // Then 415 after a member's AI tools: the owner's list and removal
+    // (`/api/team/members/{id}/keys`) and this person's own on the teams
+    // they joined (`/api/team/my-tools`). Names and dates, never a key.
     assert_eq!(
         HTTP_READERS.len(),
-        411,
+        415,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -370,7 +373,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        423,
+        427,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -378,7 +381,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        406,
+        410,
         "main builder entries"
     );
     assert_eq!(
@@ -585,7 +588,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        401 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378, and the four team sign-in routes, all with no page markers.
+        405 // 19 personal setup, checkout, skill and rule-proposal routes plus the existing 378, the four team sign-in routes and the four AI-tool routes, all with no page markers.
     );
 }
 

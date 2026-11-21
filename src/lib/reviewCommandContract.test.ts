@@ -60,6 +60,8 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "team_new_invite_link",
   "team_approve_member",
   "team_member_compromised",
+  "team_member_tools",
+  "team_remove_member_tool",
   "team_host_space",
   "team_join",
   "team_start",

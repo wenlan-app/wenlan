@@ -12,6 +12,7 @@ pub mod ingest;
 pub mod init;
 pub mod lint;
 pub mod list;
+pub mod login;
 pub mod mcp;
 pub mod outbox;
 pub mod page_tools;

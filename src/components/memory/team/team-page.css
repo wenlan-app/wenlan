@@ -347,3 +347,9 @@
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+/* A member's AI tools, above the people list. */
+.team-member-tools { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; }
+.team-member-tools h3 { margin: 0; font-size: 14.5px; font-weight: 600; }
+.team-member-tools .team-own-list { margin: 0; }
+.team-member-tools > .share-secondary { align-self: flex-end; }
