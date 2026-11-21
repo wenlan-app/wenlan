@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::sessions::{import_session_ref, last_ai_title, session_row_id, SESSION_READS_LISTED};
+use super::sessions::{
+    import_session_ref, last_ai_title, session_row_id, SESSION_READS_KEPT, SESSION_READS_LISTED,
+    SESSION_RECALL_PAGES_KEPT,
+};
 use super::tests::{test_db, test_db_at};
 use crate::read_scope::ReadScope;
 use wenlan_types::{SessionReadKind, SessionRef, UpsertSessionRequest};
@@ -381,6 +384,103 @@ async fn reads_are_recorded_collapsed_and_capped() {
     assert_eq!(detail.reads_total, 50);
     assert_eq!(detail.reads[0].label, "query 79");
     assert!(detail.reads.len() >= SESSION_READS_LISTED);
+}
+
+/// The notes a recall returned are kept apart from the card's reads: they
+/// never push a real read out of the newest 50, a repeat moves its time
+/// instead of adding a row, and they have a cap of their own.
+#[tokio::test]
+async fn recall_pages_have_their_own_list_and_never_push_real_reads_out() {
+    let (db, _temp) = test_db().await;
+    let a = session("claude-code:recaller");
+    let id = announce(&db, &a.to_string()).await;
+    db.record_session_read(&a, SessionReadKind::Recall, "the query", None)
+        .await
+        .unwrap();
+    for i in 0..(SESSION_RECALL_PAGES_KEPT + 30) {
+        db.record_session_read(&a, SessionReadKind::RecallPage, &format!("page_{i}"), None)
+            .await
+            .unwrap();
+    }
+    // A repeat of a note is not a new row.
+    let before = read_rows(&db).await;
+    db.record_session_read(&a, SessionReadKind::RecallPage, "page_229", None)
+        .await
+        .unwrap();
+    assert_eq!(read_rows(&db).await, before);
+    // The real read is still there, beside the newest 200 notes only.
+    assert_eq!(read_rows(&db).await, 1 + SESSION_RECALL_PAGES_KEPT);
+    let seen = db.session_pages_seen(&id).await.unwrap();
+    assert_eq!(seen.len() as i64, SESSION_RECALL_PAGES_KEPT);
+    assert_eq!(seen[0], "page_229");
+    assert!(!seen.contains(&"page_0".to_string()));
+    // Fifty real reads do not take the notes away.
+    for i in 0..60 {
+        db.record_session_read(&a, SessionReadKind::Recall, &format!("q{i}"), None)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        db.session_pages_seen(&id).await.unwrap().len() as i64,
+        SESSION_RECALL_PAGES_KEPT
+    );
+    let detail = db
+        .get_session_detail(&id, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    let real = detail
+        .reads
+        .iter()
+        .filter(|r| r.kind == SessionReadKind::Recall)
+        .count();
+    assert_eq!(real as i64, SESSION_READS_KEPT);
+}
+
+/// Migration 170 widens a table made with three kinds, keeping its rows.
+#[tokio::test]
+async fn migration_170_lets_an_old_session_reads_table_hold_recall_pages() {
+    let (db, _temp) = test_db().await;
+    let a = session("claude-code:old-table");
+    let id = announce(&db, &a.to_string()).await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute_batch(
+            "DROP TABLE session_reads;
+             CREATE TABLE session_reads (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_id TEXT NOT NULL,
+                 kind TEXT NOT NULL CHECK (kind IN ('recall', 'brief', 'read_page')),
+                 label TEXT NOT NULL,
+                 space TEXT,
+                 created_at INTEGER NOT NULL
+             );
+             CREATE INDEX idx_session_reads_session ON session_reads(session_id, id);",
+        )
+        .await
+        .unwrap();
+    }
+    db.record_session_read(&a, SessionReadKind::Recall, "kept query", None)
+        .await
+        .unwrap();
+    assert!(db
+        .record_session_read(&a, SessionReadKind::RecallPage, "page_x", None)
+        .await
+        .is_err());
+
+    db.migrate_170_recall_page_reads(169).await.unwrap();
+    // Replaying it is harmless.
+    db.migrate_170_recall_page_reads(169).await.unwrap();
+    db.record_session_read(&a, SessionReadKind::RecallPage, "page_x", None)
+        .await
+        .unwrap();
+    assert_eq!(db.session_pages_seen(&id).await.unwrap(), ["page_x"]);
+    let detail = db
+        .get_session_detail(&id, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(detail.reads.iter().any(|r| r.label == "kept query"));
 }
 
 #[tokio::test]

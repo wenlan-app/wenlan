@@ -562,7 +562,7 @@ fn flagged_since(entries: &[HistoryEntry], hash: &str, since_version: i64) -> bo
 }
 
 /// What lets a proposal reach a protected sentence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProposalGrant {
     /// The default: only when its facts changed (a current `reason`).
     FactsChanged,
@@ -570,6 +570,61 @@ enum ProposalGrant {
     /// flag stands, the fix may reach the sentence without a reason. Only
     /// [`ask_ai_to_fix`] uses this; the HTTP propose route never does.
     PersonFlagged,
+    /// A newer memory (its id) says the opposite of the sentence. Only
+    /// [`propose_contradicted_sentence`] uses this, from the night's reading
+    /// of a note a conversation read; the HTTP propose route never does. The
+    /// memory must exist and stand now, and the proposal's `why` names it.
+    ContradictedBy(String),
+}
+
+/// What the night files when a memory it just kept clearly contradicts one
+/// sentence of a note a conversation read but did not cite. For a sentence
+/// that only the person may change, this is the one way past `reason_required`
+/// for a sentence whose own sources did not change: the grant is the
+/// contradicting memory, which must exist and be current, and the proposal
+/// says which one it came from so the person can judge it. The page is not
+/// touched; the person decides.
+pub async fn propose_contradicted_sentence(
+    db: &MemoryDB,
+    page_id: &str,
+    req: &wenlan_types::authorship::SentenceProposeRequest,
+    agent: &str,
+    memory_id: &str,
+) -> Result<SentenceProposal, WenlanError> {
+    let actor = HistoryActor {
+        kind: ActorKind::Ai,
+        name: agent.to_string(),
+        agent: Some(agent.to_string()),
+        session: None,
+    };
+    let memory = db
+        .get_memory_detail(memory_id)
+        .await?
+        .filter(|memory| !memory.is_archived)
+        .ok_or_else(|| {
+            WenlanError::Validation(format!(
+                "contradicting_memory_not_current: memory {memory_id} does not stand now"
+            ))
+        })?;
+    // The person reads the new point beside the sentence it would replace.
+    let mut req = req.clone();
+    req.why = Some(match req.why.as_deref().map(str::trim) {
+        Some(why) if !why.is_empty() => {
+            format!("{why} (new point {memory_id}: {})", memory.content)
+        }
+        _ => format!(
+            "A new point says otherwise ({memory_id}): {}",
+            memory.content
+        ),
+    });
+    propose_as(
+        db,
+        page_id,
+        &req,
+        &actor,
+        ProposalGrant::ContradictedBy(memory_id.to_string()),
+    )
+    .await
 }
 
 /// An AI's proposal for one sentence, made by name instead of by rewriting
@@ -645,6 +700,7 @@ async fn propose_as(
                 }
             }
             None if asked => {}
+            None if matches!(grant, ProposalGrant::ContradictedBy(_)) => {}
             None => {
                 return Err(WenlanError::Validation(
                     "reason_required: this sentence is protected; propose a change only when \
@@ -672,6 +728,56 @@ async fn propose_as(
     )
     .await?;
     find_proposal(db, page_id, &id).await
+}
+
+/// The page body and citation records after one sentence (found by `hash`)
+/// is replaced by `after`, or removed when `after` is empty. Every other byte
+/// of the body is kept, and the citation records of the sentences that stay
+/// are renumbered to their markers' new places, so a machine write can carry
+/// the change as it is. `after` carries no citation marker of its own: what
+/// it says is not backed by the sources the old sentence cited.
+pub fn body_with_replaced_sentence(
+    page: &Page,
+    hash: &str,
+    after: &str,
+) -> Result<(String, Option<(String, String)>), WenlanError> {
+    let units = authorship::sentence_units(&page.content);
+    let idx = units
+        .iter()
+        .position(|u| u.hash == hash)
+        .ok_or_else(|| WenlanError::Conflict(format!("sentence_changed: no sentence {hash}")))?;
+    let after = after.trim();
+    if !crate::citations::marker_spans(after).is_empty() {
+        return Err(WenlanError::Validation(
+            "a replacement sentence carries no citation marker".into(),
+        ));
+    }
+    let content = body_with(&page.content, &units[idx], after);
+    if page.citations.is_empty() {
+        return Ok((content, None));
+    }
+    let by_occurrence: HashMap<u32, &PageCitation> =
+        page.citations.iter().map(|c| (c.occurrence, c)).collect();
+    let kept: Vec<PageCitation> = occurrence_units(&page.content, &units)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, at)| *at != Some(idx))
+        .filter_map(|(k, _)| by_occurrence.get(&u32::try_from(k + 1).unwrap_or(u32::MAX)))
+        .enumerate()
+        .map(|(i, record)| {
+            let mut record = (*record).clone();
+            record.occurrence = u32::try_from(i + 1).unwrap_or(u32::MAX);
+            record
+        })
+        .collect();
+    let json = serde_json::to_string(&kept)?;
+    Ok((
+        content,
+        Some((
+            json,
+            "citations kept on the sentences left as they were".to_string(),
+        )),
+    ))
 }
 
 async fn find_proposal(

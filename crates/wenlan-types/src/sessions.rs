@@ -164,6 +164,10 @@ pub enum SessionReadKind {
     Brief,
     /// A note read in full; the label is the note id.
     ReadPage,
+    /// A note a recall returned; the label is the note id. Kept only so the
+    /// night can find the notes an AI tool was shown; the session card does
+    /// not list it.
+    RecallPage,
 }
 
 impl SessionReadKind {
@@ -173,6 +177,7 @@ impl SessionReadKind {
             Self::Recall => "recall",
             Self::Brief => "brief",
             Self::ReadPage => "read_page",
+            Self::RecallPage => "recall_page",
         }
     }
 
@@ -181,6 +186,7 @@ impl SessionReadKind {
             "recall" => Some(Self::Recall),
             "brief" => Some(Self::Brief),
             "read_page" => Some(Self::ReadPage),
+            "recall_page" => Some(Self::RecallPage),
             _ => None,
         }
     }
@@ -282,6 +288,7 @@ mod tests {
             SessionReadKind::Recall,
             SessionReadKind::Brief,
             SessionReadKind::ReadPage,
+            SessionReadKind::RecallPage,
         ] {
             assert_eq!(SessionReadKind::parse(kind.as_str()), Some(kind));
             assert_eq!(

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use wenlan_core::events::NoopEmitter;
 use wenlan_core::llm_provider::{LlmBackend, LlmError};
 use wenlan_core::read_scope::ReadScope;
+use wenlan_types::authorship::SentenceAuthor;
 
 /// Answers in turn from a list, and keeps the prompts it was given.
 /// Answers in order. A night's tidy call (UX-GRAPH-7) depends on how alike
@@ -18,14 +19,26 @@ struct Scripted {
     answers: Mutex<Vec<String>>,
     prompts: Mutex<Vec<String>>,
     tidy_prompts: Mutex<Vec<String>>,
+    /// The night's check of a note it only read (`things_read_page`): one
+    /// scripted answer per note, in order, kept apart from the points' answers.
+    read_page_answers: Mutex<Vec<String>>,
+    read_page_prompts: Mutex<Vec<String>>,
 }
 
 impl Scripted {
     fn new(answers: &[&str]) -> Arc<Self> {
+        Self::with_read_page_answers(answers, &[])
+    }
+
+    fn with_read_page_answers(answers: &[&str], read_page_answers: &[&str]) -> Arc<Self> {
         Arc::new(Self {
             answers: Mutex::new(answers.iter().map(|a| a.to_string()).collect()),
             prompts: Mutex::new(Vec::new()),
             tidy_prompts: Mutex::new(Vec::new()),
+            read_page_answers: Mutex::new(
+                read_page_answers.iter().map(|a| a.to_string()).collect(),
+            ),
+            read_page_prompts: Mutex::new(Vec::new()),
         })
     }
 }
@@ -37,6 +50,18 @@ fn is_tidy_answer(answer: &str) -> bool {
 #[async_trait]
 impl LlmProvider for Scripted {
     async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+        if request.label.as_deref() == Some("things_read_page") {
+            self.read_page_prompts
+                .lock()
+                .unwrap()
+                .push(request.user_prompt);
+            let mut answers = self.read_page_answers.lock().unwrap();
+            return Ok(if answers.is_empty() {
+                r#"{"contradicted": []}"#.to_string()
+            } else {
+                answers.remove(0)
+            });
+        }
         let tidy = matches!(
             request.label.as_deref(),
             Some("things_tidy" | "things_old_pass")
@@ -1314,4 +1339,293 @@ async fn a_point_not_kept_leaves_its_conversation_for_the_next_night() {
         again[0].conversations[0].session_id, due[0].conversations[0].session_id,
         "only the conversation (C0) whose point was not kept"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Design v5 F6 / D15: a note a conversation only read is a candidate; the
+// night changes one of its sentences only when a new point clearly
+// contradicts it.
+// ---------------------------------------------------------------------------
+
+/// A note in `space` whose sentences the AI wrote, cited by one old memory.
+async fn ai_note(db: &MemoryDB, space: &str, title: &str, body: &str) -> String {
+    let source = format!("src_{}", title.replace(' ', "_"));
+    db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+        source: "memory".into(),
+        source_id: source.clone(),
+        title: source.clone(),
+        content: body.to_string(),
+        last_modified: chrono::Utc::now().timestamp(),
+        memory_type: Some("fact".into()),
+        source_agent: Some("test".into()),
+        confidence: Some(0.9),
+        confirmed: Some(true),
+        space: Some(space.to_string()),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let made = wenlan_core::post_write::create_page_with_floor(
+        db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: title.to_string(),
+            content: body.to_string(),
+            summary: None,
+            entity_id: None,
+            space: Some(space.to_string()).into(),
+            source_memory_ids: vec![source],
+            creation_kind: Some("distilled".into()),
+            workspace: Some(space.to_string()),
+        },
+        "test",
+        None,
+        1,
+    )
+    .await
+    .unwrap();
+    db.set_page_review_status(&made.id, "confirmed")
+        .await
+        .unwrap();
+    made.id
+}
+
+/// The person rewrites the note's body in their own editor.
+async fn person_edits(db: &MemoryDB, page_id: &str, body: &str) {
+    let page = db.get_page(page_id).await.unwrap().unwrap();
+    let result = wenlan_core::post_write::update_page(
+        db,
+        page_id,
+        wenlan_types::requests::UpdatePageRequest {
+            content: body.to_string(),
+            source_memory_ids: page.source_memory_ids.clone(),
+            expected_version: None,
+            caller_id: None,
+            operation_id: None,
+        },
+        "manual_edit",
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(result.wrote);
+}
+
+/// Record that the first conversation of `due` read `page_id` as `kind`.
+async fn conversation_read(
+    db: &MemoryDB,
+    due: &[DreamDue],
+    kind: wenlan_types::SessionReadKind,
+    page_id: &str,
+) {
+    let conversation = &due[0].conversations[0];
+    let session = wenlan_types::SessionRef::parse(&format!(
+        "{}:{}",
+        conversation.tool, conversation.external_id
+    ))
+    .unwrap();
+    assert!(db
+        .record_session_read(&session, kind, page_id, None)
+        .await
+        .unwrap());
+}
+
+/// A night in which the conversation settles "The release ships on
+/// Wednesday." (kept as `mem_0`) and the model answers each read note's check
+/// from `read_answers`, in order. Returns the model, to see what it was asked.
+async fn night_over_read_notes(
+    db: &MemoryDB,
+    found: &HashMap<String, FoundConversation>,
+    due: &[DreamDue],
+    read_answers: &[&str],
+) -> Arc<Scripted> {
+    let night = Scripted::with_read_page_answers(
+        &[
+            r#"{"points": [{"text": "The release ships on Wednesday.", "settled": true, "from": "C0"}]}"#,
+            r#"{"conclusion": []}"#,
+        ],
+        read_answers,
+    );
+    let keep = Keep(db, Default::default());
+    dream_with(db, due, found, night.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    night
+}
+
+const SHIPS_ON_TUESDAY: &str =
+    r#"{"contradicted": [{"sentence": 0, "point": 0, "text": "The release ships on Wednesday."}]}"#;
+
+#[tokio::test]
+async fn a_night_changes_the_ai_sentence_a_new_point_contradicts_on_a_note_a_recall_returned() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let note = ai_note(
+        &db,
+        "team",
+        "Release",
+        "The release ships on Tuesday. The team reviews on Monday.",
+    )
+    .await;
+    conversation_read(&db, &due, wenlan_types::SessionReadKind::RecallPage, &note).await;
+    let before = db.get_page(&note).await.unwrap().unwrap();
+
+    let night = night_over_read_notes(&db, &found, &due, &[SHIPS_ON_TUESDAY]).await;
+
+    let asked = night.read_page_prompts.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(
+        asked[0].contains("The release ships on Wednesday."),
+        "{}",
+        asked[0]
+    );
+    let after = db.get_page(&note).await.unwrap().unwrap();
+    // Only the contradicted sentence changed; the other is byte for byte.
+    assert_eq!(
+        after.content,
+        "The release ships on Wednesday. The team reviews on Monday."
+    );
+    assert_eq!(after.version, before.version + 1);
+    assert!(after.source_memory_ids.contains(&"mem_0".to_string()));
+    let sentences = wenlan_core::sentences::page_sentences(&db, &note)
+        .await
+        .unwrap();
+    assert_eq!(sentences.sentences[0].author, SentenceAuthor::Ai);
+    assert!(sentences.proposals.is_empty());
+}
+
+#[tokio::test]
+async fn a_night_only_proposes_when_the_contradicted_sentence_is_the_persons() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let note = ai_note(&db, "team", "Release", "The release ships on Tuesday.").await;
+    person_edits(
+        &db,
+        &note,
+        "The release ships on Tuesday. I check the release on Tuesday morning.",
+    )
+    .await;
+    conversation_read(&db, &due, wenlan_types::SessionReadKind::ReadPage, &note).await;
+    let before = db.get_page(&note).await.unwrap().unwrap();
+    let mine = wenlan_core::sentences::page_sentences(&db, &note)
+        .await
+        .unwrap();
+    assert_eq!(mine.sentences[1].author, SentenceAuthor::Person);
+
+    let night = night_over_read_notes(
+        &db,
+        &found,
+        &due,
+        &[r#"{"contradicted": [{"sentence": 1, "point": 0, "text": "I check the release on Wednesday morning."}]}"#],
+    )
+    .await;
+
+    assert_eq!(night.read_page_prompts.lock().unwrap().len(), 1);
+    let after = db.get_page(&note).await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
+    let view = wenlan_core::sentences::page_sentences(&db, &note)
+        .await
+        .unwrap();
+    assert_eq!(view.proposals.len(), 1, "{:?}", view.proposals);
+    let proposal = &view.proposals[0];
+    assert_eq!(proposal.after, "I check the release on Wednesday morning.");
+    assert!(
+        proposal.why.as_deref().unwrap_or("").contains("mem_0"),
+        "{proposal:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_night_only_proposes_on_a_locked_note_even_for_the_ais_sentence() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let note = ai_note(&db, "team", "Release", "The release ships on Tuesday.").await;
+    db.set_page_review_required(&note, true).await.unwrap();
+    conversation_read(&db, &due, wenlan_types::SessionReadKind::ReadPage, &note).await;
+    let before = db.get_page(&note).await.unwrap().unwrap();
+
+    night_over_read_notes(&db, &found, &due, &[SHIPS_ON_TUESDAY]).await;
+
+    let after = db.get_page(&note).await.unwrap().unwrap();
+    assert_eq!(
+        (after.content, after.version),
+        (before.content, before.version)
+    );
+    let view = wenlan_core::sentences::page_sentences(&db, &note)
+        .await
+        .unwrap();
+    assert_eq!(view.proposals.len(), 1);
+}
+
+#[tokio::test]
+async fn a_read_note_with_no_contradicted_sentence_is_not_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let note = ai_note(&db, "team", "Release", "The release ships on Tuesday.").await;
+    conversation_read(&db, &due, wenlan_types::SessionReadKind::ReadPage, &note).await;
+    let before = db.get_page(&note).await.unwrap().unwrap();
+
+    // The model finds nothing; and an answer naming a sentence that does not
+    // exist, a point that does not exist, or the sentence as it already reads
+    // changes nothing either.
+    for answer in [
+        r#"{"contradicted": []}"#,
+        r#"{"contradicted": [{"sentence": 9, "point": 0, "text": "x."}]}"#,
+        r#"{"contradicted": [{"sentence": 0, "point": 5, "text": "x."}]}"#,
+        r#"{"contradicted": [{"sentence": 0, "point": 0, "text": "The release ships on Tuesday."}]}"#,
+    ] {
+        let night = night_over_read_notes(&db, &found, &due, &[answer]).await;
+        assert_eq!(night.read_page_prompts.lock().unwrap().len(), 1, "{answer}");
+        let after = db.get_page(&note).await.unwrap().unwrap();
+        assert_eq!(after.version, before.version, "{answer}");
+        assert_eq!(after.content, before.content, "{answer}");
+        let view = wenlan_core::sentences::page_sentences(&db, &note)
+            .await
+            .unwrap();
+        assert!(view.proposals.is_empty(), "{answer}");
+    }
+}
+
+#[tokio::test]
+async fn a_note_read_in_another_space_is_never_a_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    db.create_space("home", None, false).await.unwrap();
+    let team = ai_note(&db, "team", "Release", "The release ships on Tuesday.").await;
+    let home = ai_note(&db, "home", "Chores", "The release ships on Tuesday.").await;
+    conversation_read(&db, &due, wenlan_types::SessionReadKind::ReadPage, &home).await;
+    conversation_read(&db, &due, wenlan_types::SessionReadKind::ReadPage, &team).await;
+    let home_before = db.get_page(&home).await.unwrap().unwrap();
+
+    // One answer: it can only go to the one note that is checked.
+    let night = night_over_read_notes(&db, &found, &due, &[SHIPS_ON_TUESDAY]).await;
+
+    let asked = night.read_page_prompts.lock().unwrap().clone();
+    assert_eq!(
+        asked.len(),
+        1,
+        "only the note in the points' Space is asked about"
+    );
+    let home_after = db.get_page(&home).await.unwrap().unwrap();
+    assert_eq!(home_after.content, home_before.content);
+    assert_eq!(home_after.version, home_before.version);
+    let team_after = db.get_page(&team).await.unwrap().unwrap();
+    assert_eq!(team_after.content, "The release ships on Wednesday.");
 }

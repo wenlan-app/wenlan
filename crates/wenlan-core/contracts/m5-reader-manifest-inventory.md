@@ -1366,7 +1366,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_page_to_grow_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_by_scope` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_by_scope_on_conn` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit`, `server/things_read_pages.rs::candidate`, `server/things_read_pages.rs::change_in_place` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::insert_document_source_page_at_hash` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
 | `core/db.rs::insert_page_with_basis` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
@@ -1804,6 +1804,8 @@ carrying the authority of agreement.
 | `server/team_routes.rs::team_files` | `private` | no | no | — | `server/team_routes.rs::hosted_folder_pages` |
 | `server/things_intake.rs::connect_old_night_points` | `pub` | no | **yes** | `server/things_routes.rs::handle_connect_night_points` | `core/db/night_links.rs::night_topics` |
 | `server/things_intake.rs::dream_with` | `pub` | no | **yes** | `server/things_intake.rs::dream_once` | `core/db/night_links.rs::night_topics` |
+| `server/things_read_pages.rs::candidate` | `private` | no | no | `server/things_read_pages.rs::check_read_pages` | `core/db.rs::get_page` |
+| `server/things_read_pages.rs::change_in_place` | `private` | no | no | `server/things_read_pages.rs::check_page` | `core/db.rs::get_page` |
 | `server/things_routes.rs::handle_get_thing` | `pub` | no | no | — | `core/db/things.rs::get_thing_detail` |
 
 ### Depth 3 — outer consumers — route handlers and orchestration
@@ -1921,7 +1923,7 @@ carrying the authority of agreement.
 | `core/sentence_fix.rs::ask_ai_to_fix` | `pub` | no | **yes** | `server/sentence_routes.rs::spawn_ai_fix` | `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
 | `core/sentences.rs::accept_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_accept_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::flag_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_flag_sentence` | `core/sentences.rs::load_page` |
-| `core/sentences.rs::page_sentences` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_get_page_sentences`, `server/skill_grow.rs::of` | `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
+| `core/sentences.rs::page_sentences` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_get_page_sentences`, `server/skill_grow.rs::of`, `server/things_read_pages.rs::check_page` | `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
 | `core/sentences.rs::propose_as` | `private` | no | no | — | `core/sentences.rs::load_page` |
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
@@ -2011,6 +2013,8 @@ carrying the authority of agreement.
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |
 | `server/team_routes.rs::handle_host_space` | `pub` | no | no | — | `core/shared_space/mod.rs::sync_space` |
 | `server/things_intake.rs::dream_once` | `private` | no | no | `server/things_intake.rs::look_once` | `server/things_intake.rs::dream_with` |
+| `server/things_read_pages.rs::check_page` | `private` | no | no | `server/things_read_pages.rs::check_read_pages` | `server/things_read_pages.rs::change_in_place` |
+| `server/things_read_pages.rs::check_read_pages` | `pub(crate)` | no | no | `server/things_intake.rs::dream_with` | `server/things_read_pages.rs::candidate` |
 | `server/things_routes.rs::handle_connect_night_points` | `pub` | no | no | — | `server/things_intake.rs::connect_old_night_points` |
 
 <!-- m5-reader-sweep:end -->

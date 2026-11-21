@@ -605,6 +605,11 @@ pub async fn dream_with(
         // A conversation one of whose points could not be kept is not marked
         // read, so the next night reads it again instead of losing the point.
         let mut not_kept = std::collections::HashSet::new();
+        // The points this group kept, and the memories they wrote or replaced:
+        // a note citing one of those already follows it, so only the notes
+        // that cite none are checked for a contradiction below.
+        let mut kept_points: Vec<crate::things_read_pages::NewPoint> = Vec::new();
+        let mut following = std::collections::HashSet::new();
         for point in points {
             let (from, found_from) = &conversations[point.from];
             // The Space its label named; else the conversation's or the
@@ -686,6 +691,15 @@ pub async fn dream_with(
                     .replaces
                     .and_then(|p| map.by_memory.get(&prior[p].id).cloned())
             });
+            kept_points.push(crate::things_read_pages::NewPoint {
+                memory_id: id.clone(),
+                text: point.text.clone(),
+                space: point_space.clone(),
+            });
+            following.insert(id.clone());
+            if let Some(p) = point.replaces {
+                following.insert(prior[p].id.clone());
+            }
             on_map.push(DreamMapWrite {
                 memory_id: id.clone(),
                 session_id: from.session_id.clone(),
@@ -752,6 +766,30 @@ pub async fn dream_with(
             )
             .await
             .map_err(|e| e.to_string())?;
+        // Then the notes these conversations only read: one sentence of such a
+        // note changes only when a point just kept clearly contradicts it
+        // (design v5 D15). Nothing here fails the night or un-reads a
+        // conversation.
+        let session_ids: Vec<&str> = conversations
+            .iter()
+            .map(|(c, _)| c.session_id.as_str())
+            .collect();
+        let read_pages = crate::things_read_pages::check_read_pages(
+            db,
+            &session_ids,
+            &kept_points,
+            &following,
+            model,
+        )
+        .await;
+        if read_pages != Default::default() {
+            tracing::info!(
+                "[things] {}: {} sentence(s) changed, {} proposed on notes that were read",
+                thing.thing_id,
+                read_pages.changed,
+                read_pages.proposed
+            );
+        }
         // Then what the work has come to, from every point that stands now,
         // once the night is safely recorded: a failure here loses no point
         // and does not stop the night (UX-VIEW-6).
