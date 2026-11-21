@@ -24,6 +24,7 @@ use wenlan_core::skill_locations::{
     rules_location, RulesFileKind, RulesLocation, RulesRoots, GLOBAL_RULES_TOOLS,
 };
 use wenlan_types::requests::{CreateConceptRequest, UpdatePageRequest};
+use wenlan_types::skills::SkillReportResponse;
 use wenlan_types::{
     RulesDeliveryMethod, RulesDeliveryResponse, RulesDeliveryState, SkillBorrowRecord, SkillLine,
     SkillReportRequest, SkillSuggestion, SkillSuggestionActionResponse, SkillsRefreshResponse,
@@ -339,7 +340,7 @@ async fn page_belongs_to_space(
         return Ok(false);
     };
     Ok(db
-        .get_space(name)
+        .get_space_without_private_counts(name)
         .await?
         .is_some_and(|space| space.id == expected_space_id))
 }
@@ -556,6 +557,10 @@ async fn resolved_space(
         })
         .transpose()?
         .filter(|value| !value.is_empty());
+    let private = crate::team_actor::can_read_private_memories(headers);
+    if !private {
+        crate::team_actor::required_space(header.as_deref())?;
+    }
     if let (Some(header), Some(query)) = (header.as_deref(), query_space) {
         if header != query {
             return Err(ServerError::BadRequest(
@@ -569,9 +574,12 @@ async fn resolved_space(
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| ServerError::BadRequest("a Space is required".into()))?;
-    db.get_space(name)
-        .await?
-        .ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
+    let space = if private {
+        db.get_space(name).await?
+    } else {
+        db.get_space_without_private_counts(name).await?
+    };
+    space.ok_or_else(|| ServerError::NotFound(format!("Space {name:?} not found")))
 }
 
 /// A page in a folder named Rules, with the rules the person wrote on it
@@ -761,7 +769,7 @@ impl OwnRulePages {
     /// for every Space. No pages folder, no such pages.
     async fn load(db: &MemoryDB, page_root: Option<&Path>) -> Result<Self, ServerError> {
         let ledger = db.saved_rules_pages().await?;
-        let mut pages = Self::load_rules_folders(db, page_root, &ledger).await?;
+        let mut pages = Self::load_rules_folders(db, page_root, &ledger, None).await?;
         pages.extend(Self::load_saved(db, page_root, &ledger).await?);
         Ok(Self {
             root: page_root.map(Path::to_path_buf),
@@ -816,6 +824,7 @@ impl OwnRulePages {
         db: &MemoryDB,
         page_root: Option<&Path>,
         ledger: &[wenlan_core::db::skill_grow::SavedRulesPage],
+        shared_scope: Option<&wenlan_core::read_scope::ReadScope>,
     ) -> Result<Vec<OwnRulePage>, ServerError> {
         let mut pages = Vec::new();
         let Some(root) = page_root else {
@@ -834,7 +843,11 @@ impl OwnRulePages {
         }
         let layout = wenlan_core::space_folders::current_layout(db, root).await?;
         for (id, (file, person_note)) in files {
-            let Some(page) = db.get_page(&id).await? else {
+            let page = match shared_scope {
+                Some(scope) => db.get_shared_page_scoped(&id, scope).await?,
+                None => db.get_page(&id).await?,
+            };
+            let Some(page) = page else {
                 continue;
             };
             if page.status != "active"
@@ -1088,17 +1101,82 @@ async fn db_and_page_root(
     ))
 }
 
+/// Both hosted tools resolve IDs against the same approved master.
+async fn shared_rule_lines(
+    state: &SharedState,
+    db: &MemoryDB,
+    space: &wenlan_types::Space,
+) -> Result<Vec<SkillLine>, ServerError> {
+    let name = space.name.clone();
+    let settings = state
+        .read()
+        .await
+        .presence_root
+        .as_ref()
+        .map(|root| root.join(wenlan_core::shared_space::SETTINGS_FILE))
+        .unwrap_or_else(wenlan_core::shared_space::settings_path);
+    let master = tokio::task::spawn_blocking(move || {
+        wenlan_core::rulesync_team::approved_hosted_rules(&settings, &name)
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))??;
+    let Some((master, markdown)) = master else {
+        return Ok(Vec::new());
+    };
+    let mut rules = crate::repo_wiki_routes::markdown_rules(&markdown);
+    crate::repo_wiki_routes::exclude_reviewed_removals(db, space, &mut rules).await?;
+    let mut seen = HashSet::new();
+    rules
+        .into_iter()
+        .filter(|text| seen.insert(text.to_lowercase()))
+        .map(|text| {
+            let id = wenlan_core::rulesync_personal::fingerprint(&(&master, &space.id, &text))
+                .map_err(|error| ServerError::Internal(error.to_string()))?;
+            Ok(SkillLine {
+                id,
+                kind: wenlan_types::SkillLineKind::Rule,
+                text,
+                source_page_id: String::new(),
+                source_page_title: "Shared Rules".into(),
+                source_revision: 0,
+                source_revision_at: 0,
+                source_quote: String::new(),
+                person_edited: false,
+                general: false,
+                hand_written: false,
+                saved_from: None,
+                saved_by: None,
+            })
+        })
+        .collect()
+}
+
 pub async fn handle_read_rules(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Query(query): Query<RulesQuery>,
-) -> Result<Json<SpaceRulesResponse>, ServerError> {
+) -> Result<
+    crate::page_routes::PageResponse<SpaceRulesResponse, wenlan_core::member_view::MemberRules>,
+    ServerError,
+> {
+    use crate::page_routes::PageResponse;
+    let private = crate::team_actor::can_read_private_memories(&headers);
     let (db, page_root) = db_and_page_root(&state).await?;
-    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     // The person looking at their own rules in the app is not an AI tool
     // reading them: only a tool's read is recorded.
     let by_tool = !crate::memory_routes::caller_is_person(&headers);
+    if !private {
+        let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
+        let lines = shared_rule_lines(&state, &db, &space).await?;
+        if by_tool && feature_enabled() && !lines.is_empty() {
+            db.record_skill_rules_read(&tool, &space.id, &lines).await?;
+        }
+        return Ok(PageResponse::Member(
+            wenlan_core::member_view::MemberRules::from_approved(&space, lines),
+        ));
+    }
+    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     // The app lists the saved-rules pages under Rules by their ids, so a
     // renamed one stays there and a page that only has the title does not.
     let saved_pages = if by_tool {
@@ -1112,7 +1190,7 @@ pub async fn handle_read_rules(
         if by_tool {
             record_general_reads(&db, &tool, &general).await?;
         }
-        return Ok(Json(SpaceRulesResponse {
+        return Ok(PageResponse::Local(SpaceRulesResponse {
             space_id: String::new(),
             space_name: String::new(),
             rules_page_id: None,
@@ -1144,7 +1222,7 @@ pub async fn handle_read_rules(
         .lines
         .extend(general.into_iter().map(|(_, line)| line));
     response.saved_rules_page_ids = saved_pages;
-    Ok(Json(response))
+    Ok(PageResponse::Local(response))
 }
 
 fn no_space_named(headers: &HeaderMap, query_space: Option<&str>) -> bool {
@@ -3821,31 +3899,46 @@ pub async fn handle_self_report(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Json(request): Json<SkillReportRequest>,
-) -> Result<Json<serde_json::Value>, ServerError> {
+) -> Result<Json<SkillReportResponse>, ServerError> {
+    let private = crate::team_actor::can_read_private_memories(&headers);
     if !feature_enabled() {
-        return Ok(Json(serde_json::json!({ "recorded": false })));
+        return Ok(Json(SkillReportResponse {
+            recorded: false,
+            rule_id: None,
+        }));
     }
     let (db, page_root) = db_and_page_root(&state).await?;
-    let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
-    // A general line is recorded under its own Space, including when it was
-    // read with no Space at all.
-    let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
-        (None, Vec::new())
-    } else {
+    let missing = || ServerError::NotFound("approved rule not found".into());
+    let (owner, line) = if !private {
         let space = resolved_space(&db, &headers, Some(&request.space)).await?;
-        let lines = read_rules_for_space(&db, &own, &space).await?.lines;
-        (Some(space.id), lines)
-    };
-    let (owner, line) = match own_lines
-        .into_iter()
-        .find(|line| line.id == request.rule_id)
-    {
-        Some(line) => (space_id.clone().unwrap_or_default(), line),
-        None => general_lines(&db, &own, space_id.as_deref())
+        let line = shared_rule_lines(&state, &db, &space)
             .await?
             .into_iter()
-            .find(|(_, line)| line.id == request.rule_id)
-            .ok_or_else(|| ServerError::NotFound("approved rule not found".into()))?,
+            .find(|line| line.id == request.rule_id)
+            .ok_or_else(missing)?;
+        (space.id, line)
+    } else {
+        let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
+        // A general line is recorded under its own Space, including when it
+        // was read with no Space at all.
+        let (space_id, own_lines) = if no_space_named(&headers, Some(&request.space)) {
+            (None, Vec::new())
+        } else {
+            let space = resolved_space(&db, &headers, Some(&request.space)).await?;
+            let lines = read_rules_for_space(&db, &own, &space).await?.lines;
+            (Some(space.id), lines)
+        };
+        match own_lines
+            .into_iter()
+            .find(|line| line.id == request.rule_id)
+        {
+            Some(line) => (space_id.unwrap_or_default(), line),
+            None => general_lines(&db, &own, space_id.as_deref())
+                .await?
+                .into_iter()
+                .find(|(_, line)| line.id == request.rule_id)
+                .ok_or_else(missing)?,
+        }
     };
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if tool == "unknown" {
@@ -3853,10 +3946,10 @@ pub async fn handle_self_report(
     }
     db.record_skill_self_report(&tool, &owner, &line, request.report)
         .await?;
-    Ok(Json(serde_json::json!({
-        "recorded": true,
-        "rule_id": request.rule_id,
-    })))
+    Ok(Json(SkillReportResponse {
+        recorded: true,
+        rule_id: Some(request.rule_id),
+    }))
 }
 
 mod saved_rules;

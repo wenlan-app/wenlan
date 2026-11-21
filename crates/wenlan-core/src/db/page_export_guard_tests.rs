@@ -50,7 +50,7 @@ async fn stage(db: &MemoryDB) -> String {
         db,
         &current,
         "The randomized trial measured a substantial improvement in memory after six weeks of training [1]\n\nHuman review recorded.",
-        &["paper".into()],
+        Some(&["paper".into()]),
         revision,
         "agent_refresh",
         Some("agent"),

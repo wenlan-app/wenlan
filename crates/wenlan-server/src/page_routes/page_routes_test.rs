@@ -65,12 +65,14 @@ async fn page_inventory_reports_live_files_after_scope_and_keeps_drafts_null() {
     let params = HashMap::from([("space".into(), "uncategorized".into())]);
     let Json(inventory) = handle_list_pages(
         State(state.clone()),
+        axum::http::HeaderMap::new(),
         crate::space_header::SpaceHeader(None),
         TruthView::automatic(),
         axum::extract::Query(params.clone()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(inventory.pages.len(), 1);
     assert_eq!(inventory.pages[0].page.id, visible_id);
     assert_eq!(
@@ -80,23 +82,27 @@ async fn page_inventory_reports_live_files_after_scope_and_keeps_drafts_null() {
     std::fs::remove_file(root.join(&visible_filename)).unwrap();
     let Json(inventory) = handle_list_pages(
         State(state.clone()),
+        axum::http::HeaderMap::new(),
         crate::space_header::SpaceHeader(None),
         TruthView::automatic(),
         axum::extract::Query(params.clone()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(inventory.pages[0].storage_path, None);
     let mut params = params;
     params.insert("status".into(), "draft".into());
     let Json(inventory) = handle_list_pages(
         State(state),
+        axum::http::HeaderMap::new(),
         crate::space_header::SpaceHeader(None),
         TruthView::automatic(),
         axum::extract::Query(params),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(inventory.pages.len(), 1);
     assert_eq!(inventory.pages[0].page.id, draft_id);
     assert_eq!(inventory.pages[0].storage_path, None);

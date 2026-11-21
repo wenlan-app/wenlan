@@ -22,7 +22,7 @@ static ONLINE_BACKUP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::con
 mod brief;
 mod chat_check;
 pub mod chat_turns;
-pub use brief::LegacyBriefItem;
+pub use brief::{BriefUpdateOutcome, LegacyBriefItem};
 mod claim_derivation;
 pub use claim_derivation::{
     DerivationJob, PromotionTurn, SupportOutcome, EXTRACTOR_VERSION, LEASE_SECS, MAX_ATTEMPTS,
@@ -169,6 +169,7 @@ pub use page_basis::{
     BASIS_STATE_PENDING, BASIS_STATE_UNAVAILABLE,
 };
 pub use presence_review::ReviewOutcome;
+pub use scoped_pages::MemberPageTarget;
 pub use truth_exposure::{
     CutoverFence, CutoverLease, CutoverPhase, TruthMarkerAudit, TRUTH_CUTOVER_FENCE_KEY,
     TRUTH_CUTOVER_GENERATION_KEY,
@@ -1630,7 +1631,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 165;
+pub const SCHEMA_VERSION: u32 = 167;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -11183,6 +11184,20 @@ impl MemoryDB {
             }
             if version < 165 {
                 self.migrate_165_page_history_actor(version).await?;
+            }
+
+            if ceiling < 166 {
+                return Ok(());
+            }
+            if version < 166 {
+                self.migrate_166_page_draft_publication(version).await?;
+            }
+
+            if ceiling < 167 {
+                return Ok(());
+            }
+            if version < 167 {
+                self.migrate_167_page_draft_owner(version).await?;
             }
         }
 
@@ -25601,17 +25616,25 @@ impl MemoryDB {
     // ===== Space CRUD Methods =====
 
     pub async fn list_spaces(&self) -> Result<Vec<Space>, WenlanError> {
+        self.list_spaces_inner(true).await
+    }
+
+    pub async fn list_spaces_without_private_counts(&self) -> Result<Vec<Space>, WenlanError> {
+        self.list_spaces_inner(false).await
+    }
+
+    async fn list_spaces_inner(&self, include_counts: bool) -> Result<Vec<Space>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 "SELECT s.id, s.name, s.description, s.suggested, s.created_at, s.updated_at,
-                        (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) as mem_count,
-                        (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') as ent_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) ELSE 0 END as mem_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') ELSE 0 END as ent_count,
                         s.sort_order, s.starred, s.is_default
                  FROM spaces s
                  WHERE s.id != ?1
                  ORDER BY s.starred DESC, s.sort_order, s.name",
-                libsql::params![UNFILED_SPACE_ID],
+                libsql::params![UNFILED_SPACE_ID, i64::from(include_counts)],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("list_spaces: {}", e)))?;
@@ -25640,15 +25663,30 @@ impl MemoryDB {
     }
 
     pub async fn get_space(&self, name: &str) -> Result<Option<Space>, WenlanError> {
+        self.get_space_inner(name, true).await
+    }
+
+    pub async fn get_space_without_private_counts(
+        &self,
+        name: &str,
+    ) -> Result<Option<Space>, WenlanError> {
+        self.get_space_inner(name, false).await
+    }
+
+    async fn get_space_inner(
+        &self,
+        name: &str,
+        include_counts: bool,
+    ) -> Result<Option<Space>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 "SELECT s.id, s.name, s.description, s.suggested, s.created_at, s.updated_at,
-                        (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) as mem_count,
-                        (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') as ent_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(DISTINCT c.source_id) FROM memories c WHERE c.space = s.name AND c.source = 'memory' AND c.pending_revision = 0 AND COALESCE(c.is_recap, 0) = 0 AND c.source_id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL AND pending_revision = 0 AND source = 'memory' GROUP BY supersedes)) ELSE 0 END as mem_count,
+                        CASE WHEN ?2 THEN (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id WHERE p.space = s.name AND p.kind = 'entity' AND p.status = 'active') ELSE 0 END as ent_count,
                         s.sort_order, s.starred, s.is_default
                  FROM spaces s WHERE s.name = ?1",
-                libsql::params![name],
+                libsql::params![name, i64::from(include_counts)],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("get_space: {}", e)))?;
@@ -25684,11 +25722,16 @@ impl MemoryDB {
             return Ok(None);
         };
 
-        if self.get_space(name).await?.is_some() {
-            Ok(Some(name.to_string()))
-        } else {
-            Ok(None)
-        }
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT name FROM spaces WHERE name = ?1", [name])
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("registered Space: {error}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("registered Space: {error}")))?;
+        Ok(row.map(|_| name.to_string()))
     }
 
     pub async fn create_space(
@@ -55914,8 +55957,14 @@ impl MemoryDB {
         // projection before this boundary; all other callers must supply
         // delimiter-free source, which is stored without transformation.
         let content = crate::export::provenance::validate_canonical_page_content(content)?;
-        let source_ids_json = serde_json::to_string(&source_memory_ids)
-            .map_err(|e| WenlanError::VectorDb(format!("serialize source_memory_ids: {e}")))?;
+        let source_ids_json =
+            if basis.preserve_source_links {
+                None
+            } else {
+                Some(serde_json::to_string(&source_memory_ids).map_err(|e| {
+                    WenlanError::VectorDb(format!("serialize source_memory_ids: {e}"))
+                })?)
+            };
         // Prepare the vector before taking the DB lock. The subsequent
         // transaction writes it with the exact sanitized body; on an embedding
         // failure we clear the vector instead of leaving an old body vector
@@ -55988,7 +56037,33 @@ impl MemoryDB {
         // no CAS below would see the move. The check is repeated in the
         // write's own transaction; a note no longer in that Space gets
         // nothing, and the caller re-reads it to tell why.
-        if let Some(scope) = basis.space_guard.as_ref() {
+        if basis.member_write {
+            let authorize = async {
+                let scope = basis
+                    .space_guard
+                    .as_ref()
+                    .filter(|scope| matches!(scope, crate::read_scope::ReadScope::Space(_)))
+                    .ok_or_else(|| WenlanError::NotFound("page not found".into()))?;
+                for id in std::iter::once(id).chain(
+                    basis
+                        .marks
+                        .iter()
+                        .chain(&basis.confirm)
+                        .map(|(id, _)| id.as_str()),
+                ) {
+                    if !Self::member_page_access_on(&conn, id, scope, MemberPageTarget::Published)
+                        .await?
+                    {
+                        return Err(WenlanError::NotFound("page not found".into()));
+                    }
+                }
+                Ok(())
+            };
+            if let Err(error) = authorize.await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error);
+            }
+        } else if let Some(scope) = basis.space_guard.as_ref() {
             let space = match conn
                 .query("SELECT space FROM pages WHERE id = ?1", libsql::params![id])
                 .await
@@ -56174,13 +56249,23 @@ impl MemoryDB {
         // rolled back together with the UPDATE if a CAS guard fails below.
         // Each citation records the source version it was checked against,
         // in the transaction of the body it was computed for.
-        let stamped_citations = match sentence_history::stamp_page_citations(
-            &conn,
-            id,
-            citations_bind,
-            Some(content),
-            Some(source_memory_ids),
-        )
+        let stamped_citations = match async {
+            let retained = if basis.preserve_source_links {
+                citation_provenance::retain_refresh_citations_on(&conn, id, content)
+                    .await
+                    .map_err(|error| libsql::Error::Misuse(error.to_string()))?
+            } else {
+                None
+            };
+            sentence_history::stamp_page_citations(
+                &conn,
+                id,
+                retained.as_deref().or(citations_bind),
+                Some(content),
+                (!basis.preserve_source_links).then_some(source_memory_ids),
+            )
+            .await
+        }
         .await
         {
             Ok(stamped) => stamped,
@@ -56195,7 +56280,13 @@ impl MemoryDB {
         let lifecycle_changelog = changelog
             .and_then(|value| citation_provenance::normalize_summary(value, citations_bind));
         let changelog = lifecycle_changelog.as_deref().or(changelog);
-        if let Err(e) = Self::dual_write_page_citations(&conn, id, citations_bind).await {
+        let captured = if basis.preserve_source_links {
+            // Retaining some marker targets does not change the source links.
+            page_export::capture_history_on(&conn, id).await
+        } else {
+            Self::dual_write_page_citations(&conn, id, citations_bind).await
+        };
+        if let Err(e) = captured {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!(
                 "update_page_content citations: {e}"
@@ -56211,7 +56302,7 @@ impl MemoryDB {
                 // from being overwritten. Authored pages never take this path.
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56229,7 +56320,7 @@ impl MemoryDB {
             } else if require_stale {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56248,7 +56339,7 @@ impl MemoryDB {
             } else {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56418,7 +56509,7 @@ impl MemoryDB {
             let mut sql = if require_stale {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56436,7 +56527,7 @@ impl MemoryDB {
             } else {
                 "UPDATE pages SET \
                    content = ?1, \
-                   source_memory_ids = ?2, \
+                   source_memory_ids = COALESCE(?2, source_memory_ids), \
                    version = version + 1, \
                    last_compiled = ?3, \
                    last_modified = ?3, \
@@ -56585,77 +56676,80 @@ impl MemoryDB {
             )));
         }
 
-        // G6 Stage 2 PR 2b: snapshot the memory locators the (now-retired)
-        // page_sources/page_evidence prune used to remove, reading `edges`
-        // directly since both tables stop writing in this PR -- the
-        // memory-kind `cites` set for this page, minus the new source list.
-        let removed_locators: Vec<String> = {
-            let mut rows = match conn
-                .query(
-                    "SELECT dst_id FROM edges
-                     WHERE edge_type = 'cites' AND src_kind = 'page' AND src_id = ?1
-                       AND dst_kind = 'memory' AND valid_until IS NULL",
-                    libsql::params![id],
-                )
-                .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    let _ = conn.execute("ROLLBACK", ()).await;
-                    return Err(WenlanError::VectorDb(format!(
-                        "update_page_content removed scan: {e}"
-                    )));
-                }
-            };
-            let mut current = Vec::new();
-            loop {
-                match rows.next().await {
-                    Ok(Some(row)) => current.push(row.get::<String>(0).unwrap_or_default()),
-                    Ok(None) => break,
+        if !basis.preserve_source_links {
+            // G6 Stage 2 PR 2b: snapshot the memory locators the (now-retired)
+            // page_sources/page_evidence prune used to remove, reading `edges`
+            // directly since both tables stop writing in this PR -- the
+            // memory-kind `cites` set for this page, minus the new source list.
+            let removed_locators: Vec<String> = {
+                let mut rows = match conn
+                    .query(
+                        "SELECT dst_id FROM edges
+                         WHERE edge_type = 'cites' AND src_kind = 'page' AND src_id = ?1
+                           AND dst_kind = 'memory' AND valid_until IS NULL",
+                        libsql::params![id],
+                    )
+                    .await
+                {
+                    Ok(rows) => rows,
                     Err(e) => {
                         let _ = conn.execute("ROLLBACK", ()).await;
                         return Err(WenlanError::VectorDb(format!(
-                            "update_page_content removed row: {e}"
+                            "update_page_content removed scan: {e}"
                         )));
                     }
+                };
+                let mut current = Vec::new();
+                loop {
+                    match rows.next().await {
+                        Ok(Some(row)) => current.push(row.get::<String>(0).unwrap_or_default()),
+                        Ok(None) => break,
+                        Err(e) => {
+                            let _ = conn.execute("ROLLBACK", ()).await;
+                            return Err(WenlanError::VectorDb(format!(
+                                "update_page_content removed row: {e}"
+                            )));
+                        }
+                    }
+                }
+                current.retain(|sid| !source_memory_ids.contains(&sid.as_str()));
+                current
+            };
+
+            // Retire the pruned locators' canonical edges. Kept sids are
+            // re-asserted just below via `insert_resolved_page_evidence`'s
+            // dual-write. G6 Stage 2 PR 2b (item 4): the D7 refcount guard that
+            // used to keep an edge active when the new `pages.citations` value
+            // still listed it retires along with `cites_backed_by_page_citations`
+            // -- the column is a pure render cache now, so it no longer gates
+            // whether a pruned source's edge retracts.
+            for locator in &removed_locators {
+                let edge_id = crate::provenance::compute_edge_id(
+                    "cites", "page", id, "memory", locator, locator,
+                );
+                if let Err(e) = Self::dual_write_invalidate_edge(&conn, &edge_id, None).await {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content retire edge: {e}"
+                    )));
                 }
             }
-            current.retain(|sid| !source_memory_ids.contains(&sid.as_str()));
-            current
-        };
 
-        // Retire the pruned locators' canonical edges. Kept sids are
-        // re-asserted just below via `insert_resolved_page_evidence`'s
-        // dual-write. G6 Stage 2 PR 2b (item 4): the D7 refcount guard that
-        // used to keep an edge active when the new `pages.citations` value
-        // still listed it retires along with `cites_backed_by_page_citations`
-        // -- the column is a pure render cache now, so it no longer gates
-        // whether a pruned source's edge retracts.
-        for locator in &removed_locators {
-            let edge_id =
-                crate::provenance::compute_edge_id("cites", "page", id, "memory", locator, locator);
-            if let Err(e) = Self::dual_write_invalidate_edge(&conn, &edge_id, None).await {
+            if let Err(e) = Self::insert_resolved_page_evidence(
+                &conn,
+                id,
+                source_memory_ids,
+                now_ts,
+                link_reason,
+                receipt.map(|r| r.operation_id),
+            )
+            .await
+            {
                 let _ = conn.execute("ROLLBACK", ()).await;
                 return Err(WenlanError::VectorDb(format!(
-                    "update_page_content retire edge: {e}"
+                    "update_page evidence insert: {e}"
                 )));
             }
-        }
-
-        if let Err(e) = Self::insert_resolved_page_evidence(
-            &conn,
-            id,
-            source_memory_ids,
-            now_ts,
-            link_reason,
-            receipt.map(|r| r.operation_id),
-        )
-        .await
-        {
-            let _ = conn.execute("ROLLBACK", ()).await;
-            return Err(WenlanError::VectorDb(format!(
-                "update_page evidence insert: {e}"
-            )));
         }
 
         if let Some((source_id, expected_memory_version)) = page_growth_guard {
@@ -57592,7 +57686,8 @@ impl MemoryDB {
         id: &str,
         expected_version: Option<i64>,
     ) -> Result<Option<i64>, WenlanError> {
-        self.archive_page_recorded(id, expected_version, None).await
+        self.archive_page_recorded(id, expected_version, None, None)
+            .await
     }
 
     /// [`Self::archive_page_versioned`] (or, with `expected_version`,
@@ -57605,12 +57700,20 @@ impl MemoryDB {
         id: &str,
         expected_version: Option<i64>,
         audit: Option<PageRemovalAudit<'_>>,
+        shared_scope: Option<&crate::read_scope::ReadScope>,
     ) -> Result<Option<i64>, WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_page begin: {e}")))?;
         let result = async {
+            if let Some(scope) = shared_scope {
+                if !Self::member_page_access_on(&conn, id, scope, MemberPageTarget::Published)
+                    .await?
+                {
+                    return Err(WenlanError::NotFound("page not found".into()));
+                }
+            }
             let version = Self::archive_page_on_conn(&conn, id, expected_version).await?;
             if let (Some(version), Some(audit)) = (version, audit) {
                 Self::record_page_removal_on_conn(&conn, id, "page_archive", version, audit)
@@ -58437,6 +58540,7 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page looks: {e}")))?;
+            Self::record_shared_page_deletion_on(&conn, id).await?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;

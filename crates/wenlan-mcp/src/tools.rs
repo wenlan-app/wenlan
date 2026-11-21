@@ -3213,7 +3213,7 @@ impl WenlanMcpServer {
                 SpaceRuleUseOutcome::ChangedPlan => SkillReportKind::ChangedPlan,
             },
         };
-        let response: serde_json::Value = try_call!(
+        let response: wenlan_types::skills::SkillReportResponse = try_call!(
             self.client.post("/api/skills/record", &request),
             "report_space_rule_use"
         );
@@ -3525,6 +3525,9 @@ impl WenlanMcpServer {
     /// The client for a write that names its AI session: the tool's `session`
     /// argument, else (local servers only) `WENLAN_SESSION` or `CODEX_THREAD_ID`.
     async fn session_client(&self, explicit: Option<&str>) -> WenlanClient {
+        if self.agent_identity.team_member().is_some() {
+            return self.client.clone();
+        }
         self.client
             .for_session(explicit, self.transport != TransportMode::Http)
             .await
@@ -3537,6 +3540,9 @@ impl WenlanMcpServer {
         client: &WenlanClient,
         space: Option<&str>,
     ) -> Option<String> {
+        if self.agent_identity.team_member().is_some() {
+            return None;
+        }
         let mut path = "/api/steep/worklist?limit=1".to_string();
         if let Some(space) = space.filter(|space| !space.is_empty()) {
             path.push_str(&format!("&space={}", url_encode_simple(space)));
@@ -5926,6 +5932,12 @@ impl WenlanMcpServer {
             )]));
         }
         let client = self.session_client(session).await;
+        if self.agent_identity.team_member().is_some() {
+            use wenlan_types::member_view::{HostedPageRead, MemberPageRead};
+            let page: MemberPageRead =
+                try_call!(client.get(&format!("/api/pages/{page_id}")), "read_page");
+            return query_success(HostedPageRead::from(page));
+        }
         let page: wenlan_types::responses::PageReadResponse =
             try_call!(client.get(&format!("/api/pages/{page_id}")), "read_page");
         // Only the note read itself is listed on the session card; the
@@ -6167,6 +6179,14 @@ impl WenlanMcpServer {
         ];
         if let Some(space) = space {
             query.push(("space", space));
+        }
+        if self.agent_identity.team_member().is_some() {
+            use wenlan_types::member_view::{HostedPageList, MemberPageEntry, MemberPages};
+            let pages: MemberPages<MemberPageEntry> = try_call!(
+                self.client.get_with_query("/api/pages", &query),
+                "list_pages"
+            );
+            return query_success(HostedPageList::from(pages));
         }
         let resp: PageInventoryResponse = try_call!(
             self.client.get_with_query("/api/pages", &query),
@@ -8250,8 +8270,13 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
 ];
 
 impl WenlanMcpServer {
+    fn is_hosted_memory_tool(&self, name: &str) -> bool {
+        self.agent_identity.team_member().is_some() && matches!(name, "capture" | "forget")
+    }
+
     fn visible_tools(&self) -> Vec<Tool> {
         let mut tools = Self::tool_router().list_all();
+        tools.retain(|tool| !self.is_hosted_memory_tool(tool.name.as_ref()));
         if self.transport == TransportMode::Http {
             let lifted = self.tool_profile == ToolProfile::WebWrite;
             tools.retain(|tool| {
@@ -8288,6 +8313,17 @@ impl WenlanMcpServer {
                 }
             }
         }
+        if self.agent_identity.team_member().is_some() {
+            for tool in &mut tools {
+                let description = match tool.name.as_ref() {
+                    "recall" => "Search this shared Space for relevant pages. Matching pages are returned in supplemental_pages with their page IDs, titles, and text.",
+                    "get_page_sources" => "Read the available source list for a shared page. An empty list means there are no published sources in this Space.",
+                    "write_page" => "Create or refresh a page in this shared Space. Before refreshing, read the page and pass its current version as expected_version. A refresh keeps existing source links and follows the page's review settings. Use shared pages as bases.",
+                    _ => continue,
+                };
+                tool.description = Some(description.into());
+            }
+        }
         tools
     }
 
@@ -8318,8 +8354,16 @@ impl WenlanMcpServer {
     /// Refuse every tool outside the explicit web-write allowlist before the
     /// router can deserialize arguments or invoke a daemon request.
     fn web_write_refusal(&self, name: &str) -> Option<CallToolResult> {
-        (self.tool_profile == ToolProfile::WebWrite && !WEB_WRITE_TOOL_NAMES.contains(&name))
-            .then(|| CallToolResult::error(vec![ContentBlock::text(WEB_WRITE_REFUSAL_MESSAGE)]))
+        (self.tool_profile == ToolProfile::WebWrite && !WEB_WRITE_TOOL_NAMES.contains(&name)).then(
+            || {
+                let message = if self.agent_identity.team_member().is_some() {
+                    "This tool is unavailable in this shared Space."
+                } else {
+                    WEB_WRITE_REFUSAL_MESSAGE
+                };
+                CallToolResult::error(vec![ContentBlock::text(message)])
+            },
+        )
     }
 }
 
@@ -8340,6 +8384,11 @@ impl ServerHandler for WenlanMcpServer {
     ) -> Result<CallToolResult, McpError> {
         if let Some(refusal) = self.query_only_refusal(request.name.as_ref()) {
             return Ok(refusal);
+        }
+        if self.is_hosted_memory_tool(request.name.as_ref()) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Memories are saved and managed in your own Wenlan.",
+            )]));
         }
         if let Some(refusal) = self.web_write_refusal(request.name.as_ref()) {
             return Ok(refusal);
@@ -8390,24 +8439,19 @@ impl ServerHandler for WenlanMcpServer {
                 );
             }
         }
-        // A team member's AI tool was let in by the server's owner, who gave
-        // that person a key: register it as trusted now, or the page gate
-        // would hide every page from it until its first write.
-        if self.agent_identity.team_member().is_some() {
-            let request = wenlan_types::requests::RegisterAgentRequest {
-                name: self.agent_identity.current(),
-            };
-            if let Err(error) = self
-                .client
-                .post::<_, wenlan_types::responses::AgentResponse>("/api/agents", &request)
-                .await
-            {
-                tracing::warn!("could not register the team member's AI tool: {error}");
-            }
-        }
     }
 
     fn get_info(&self) -> InitializeResult {
+        if self.agent_identity.team_member().is_some() {
+            let instructions = if self.tool_profile == ToolProfile::WebWrite {
+                "You can read this shared Space and edit its pages. Use brief for its overview, recall to search its pages, read_space_rules for approved rules, and list_pages and read_page to browse it. Use write_page, rename_page, or delete_page only when the person asks. Read a page before changing it and pass its current version."
+            } else {
+                "You can read this shared Space. Use brief for its overview, recall to search its pages, and read_space_rules for approved rules."
+            };
+            return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION")))
+                .with_instructions(instructions);
+        }
         if self.tool_profile == ToolProfile::QueryOnly {
             return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
                 .with_server_info(Implementation::new(
@@ -10298,6 +10342,28 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         assert_eq!(text_of(&result), TEAM_REFRESH_NEEDS_VERSION);
         assert!(received(&mock).await.is_empty());
+    }
+
+    #[test]
+    fn hosted_write_page_help_describes_refresh_with_existing_sources() {
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Http,
+            AgentIdentity::new("remote-mcp".into(), false).for_team_member("member".into()),
+            None,
+        )
+        .with_tool_profile(ToolProfile::WebWrite);
+        let tool = server
+            .visible_tools()
+            .into_iter()
+            .find(|tool| tool.name == "write_page")
+            .unwrap();
+        let description = tool.description.unwrap();
+        assert!(
+            description.contains("keeps existing source links")
+                && description.contains("expected_version"),
+            "hosted write_page help does not describe supported refreshes: {description}"
+        );
     }
 
     #[tokio::test]

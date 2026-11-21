@@ -356,7 +356,7 @@ pub async fn stage_page_revision_card_with_citation_snapshot(
         db,
         page,
         content,
-        source_memory_ids,
+        Some(source_memory_ids),
         source_revision,
         edited_by,
         proposer,
@@ -375,7 +375,7 @@ pub async fn stage_page_revision_card_with_citations(
     db: &MemoryDB,
     page: &crate::pages::Page,
     content: &str,
-    source_memory_ids: &[String],
+    source_memory_ids: Option<&[String]>,
     source_revision: i64,
     edited_by: &str,
     proposer: Option<&str>,
@@ -445,7 +445,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         db,
         page,
         content,
-        source_memory_ids,
+        Some(source_memory_ids),
         fence.source_revision,
         Some(fence),
         None,
@@ -478,7 +478,7 @@ pub(crate) async fn stage_basis_preview_card(
         db,
         page,
         content,
-        source_memory_ids,
+        Some(source_memory_ids),
         fence.source_revision,
         Some(fence),
         None,
@@ -499,7 +499,7 @@ async fn stage_page_revision_card_inner(
     db: &MemoryDB,
     page: &crate::pages::Page,
     content: &str,
-    source_memory_ids: &[String],
+    source_memory_ids: Option<&[String]>,
     source_revision: i64,
     fence: Option<&PageFence>,
     space_guard: Option<&ReadScope>,
@@ -612,7 +612,7 @@ async fn stage_page_revision_card_inner(
         "page_version": page.version,
         "source_revision": source_revision,
         "edited_by": edited_by,
-        "source_memory_ids": source_memory_ids,
+        "source_memory_ids": source_memory_ids.unwrap_or_default(),
         "review_reason": review_reason,
         // The body as stored (PII redacted, dates grounded, as the upsert
         // writes it), so a later proposal can tell an untouched card (safe
@@ -621,6 +621,9 @@ async fn stage_page_revision_card_inner(
             &crate::db::revision_cards::stored_card_body(content, staged_at)
         ),
     });
+    if source_memory_ids.is_none() {
+        structured["preserve_source_links"] = serde_json::json!(true);
+    }
     // Only an update-from-sources card carries the notes it was written from.
     if let Some(snapshot) = basis_snapshot {
         structured["basis_snapshot"] = serde_json::to_value(snapshot)?;
@@ -723,7 +726,13 @@ async fn stage_page_revision_card_inner(
                 &page.id,
                 scope,
                 citation_snapshots,
-                research_write.map(|fence| (fence, source_memory_ids, revision_card_id.as_str())),
+                research_write.map(|fence| {
+                    (
+                        fence,
+                        source_memory_ids.unwrap_or_default(),
+                        revision_card_id.as_str(),
+                    )
+                }),
             )
             .await
         }
@@ -1217,9 +1226,8 @@ async fn update_page_db_impl(
             "restored_from rides only an agent's version-checked write".into(),
         ));
     }
-    // Preserve mode derives provenance from the Page generation inside the
-    // CAS. It is intentionally human-only: a machine writer must declare the
-    // source set its output was computed from.
+    // Local machine writers declare the sources they used. A hosted agent
+    // edits shared prose and has no access to the page's source set.
     let writer = Writer::classify(edited_by);
     // A user-forced rebuild may replace a `user_edited` body, so it must be a
     // machine rewrite fenced on the page fence (source revision AND
@@ -1245,9 +1253,20 @@ async fn update_page_db_impl(
             "a page incarnation fence is only carried by a user-forced page rebuild".into(),
         ));
     }
-    if preserve_sources && writer.is_machine() {
+    if preserve_sources && writer.is_machine() && !basis.preserve_source_links {
         return Err(WenlanError::Validation(
             "only human Page writes may preserve server-owned sources".into(),
+        ));
+    }
+    if basis.preserve_source_links
+        && (!matches!(writer, Writer::Agent(_))
+            || !req.source_memory_ids.is_empty()
+            || citations.is_some()
+            || !basis.citation_snapshots.is_empty()
+            || basis.research_write.is_some())
+    {
+        return Err(WenlanError::Validation(
+            "a refresh that preserves server-owned links cannot replace sources".into(),
         ));
     }
     // A machine replacement write must carry provenance. A human write need not: an
@@ -1650,7 +1669,7 @@ async fn update_page_db_impl(
                             db,
                             &current,
                             &card_content,
-                            effective_sources,
+                            (!basis.preserve_source_links).then_some(effective_sources),
                             staged_source_revision,
                             card_edited_by,
                             agent,
@@ -1734,7 +1753,7 @@ async fn update_page_db_impl(
                     db,
                     &current,
                     &req.content,
-                    effective_sources,
+                    Some(effective_sources),
                     revision,
                     edited_by,
                     agent,
@@ -1754,6 +1773,7 @@ async fn update_page_db_impl(
             // markers, so their citation records come along from the current
             // page and every record is renumbered to its marker's place.
             let citations: Option<(String, String)> = match &gate {
+                _ if basis.preserve_source_links => None,
                 Some(plan) => crate::authorship::merge_gate_citations(
                     citations.as_ref().map(|(json, _)| json.as_str()),
                     &current.citations,
@@ -2153,7 +2173,9 @@ async fn update_page_db_impl(
                 )
                 .await?
                 .then(BasisWriteOutcome::default)
-            } else if let Some(source_revision) = expected_source_revision {
+            } else if let Some(source_revision) =
+                expected_source_revision.filter(|_| !basis.preserve_source_links)
+            {
                 db.try_update_page_content_with_changelog_at_source_revision_and_basis(
                     page_id,
                     landing_content,

@@ -109,4 +109,25 @@ describe("page history", () => {
     expect(await within(dialog).findByText("The page as it was first written.")).toBeTruthy();
     expect(within(dialog).getByTestId("history-change-text").textContent).toBe("Tram 28.");
   });
+
+  it.each([
+    { text: null, message: "The text for this version is unavailable." },
+    { text: "Shared revision.", message: "Earlier text is unavailable. Here is this version’s full text." },
+  ])("UX-HIST-2: describes unavailable text when a revision body was withheld ($text)", async ({ text, message }) => {
+    const withheld: PageHistoryItem = { kind: "ai_edit", at: NOW - 5, version: 4, edited_by: "agent_refresh", text: null };
+    const current = { ...withheld, text };
+    const earlier = { ...withheld, at: NOW - 7, version: 3 };
+    getPageRevisions.mockResolvedValueOnce({ page_id: "page-1", current_version: 4, user_edited: true, entries: [], history: [current, earlier] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <HistoryChangeDialog pageId="page-1" item={current} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(message)).toBeTruthy();
+    if (text != null) {
+      expect(within(dialog).getByTestId("history-change-text").textContent).toBe(text);
+    }
+  });
 });

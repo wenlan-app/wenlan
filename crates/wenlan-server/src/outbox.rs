@@ -8,20 +8,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use wenlan_core::db::MemoryDB;
 use wenlan_types::{
     BriefUpdateReceipt, OutboxDrainDetail, OutboxDrainReport, OutboxEnvelope, OutboxPayload,
     OUTBOX_SCHEMA,
 };
 
 pub async fn drain_once(state: SharedState) -> OutboxDrainReport {
-    let (lock, port, db) = {
+    let (lock, port) = {
         let state = state.read().await;
-        (
-            Arc::clone(&state.outbox_drain_lock),
-            state.bound_port,
-            state.db.clone(),
-        )
+        (Arc::clone(&state.outbox_drain_lock), state.bound_port)
     };
     let Some(_drain_guard) = lock.try_lock().ok() else {
         let remaining = queued_files().map(|files| files.len() as u32).unwrap_or(0);
@@ -85,7 +80,7 @@ pub async fn drain_once(state: SharedState) -> OutboxDrainReport {
         };
 
         let kind = envelope.payload.kind().to_string();
-        match replay(&client, port, db.as_ref(), &envelope).await {
+        match replay(&client, port, &envelope).await {
             Ok(ReplayOutcome::Applied { receipt }) => {
                 if let Some(receipt) = receipt.filter(|receipt| !receipt.conflicts.is_empty()) {
                     let error = format!(
@@ -215,7 +210,6 @@ enum ReplayOutcome {
 async fn replay(
     client: &reqwest::Client,
     port: u16,
-    db: Option<&Arc<MemoryDB>>,
     envelope: &OutboxEnvelope,
 ) -> Result<ReplayOutcome> {
     if port == 0 {
@@ -224,20 +218,7 @@ async fn replay(
     let base_url = format!("http://127.0.0.1:{port}");
     let mut request = match &envelope.payload {
         OutboxPayload::BriefUpdate(request) => {
-            let mut request = request.clone();
-            if envelope.reconcile_summary_version && request.summary.is_some() {
-                let db = db.context("database is not initialized")?;
-                let current_version = db
-                    .get_brief_by_space_name(&request.space)
-                    .await
-                    .context("read current Brief version")?
-                    .map(|brief| brief.version)
-                    .unwrap_or(0);
-                if let Some(summary) = request.summary.as_mut() {
-                    summary.expected_version = current_version;
-                }
-            }
-            client.patch(format!("{base_url}/api/brief")).json(&request)
+            client.patch(format!("{base_url}/api/brief")).json(request)
         }
         OutboxPayload::MemoryStore(request) => client
             .post(format!("{base_url}/api/memory/store"))
@@ -254,8 +235,15 @@ async fn replay(
     }
     let response = request.send().await.context("loopback replay request")?;
     let status = response.status();
+    let duplicate = response
+        .headers()
+        .get(crate::brief_routes::OPERATION_OUTCOME_HEADER)
+        .is_some_and(|value| value == "duplicate");
     let body = response.text().await.context("read replay response")?;
     if status.is_success() {
+        if duplicate {
+            return Ok(ReplayOutcome::Duplicate);
+        }
         if matches!(&envelope.payload, OutboxPayload::BriefUpdate(_)) {
             let receipt: BriefUpdateReceipt =
                 serde_json::from_str(&body).context("parse Brief replay receipt")?;

@@ -92,7 +92,8 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
         Json(request),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(saved.folder_path, "Missing");
     let Json(reloaded) = handle_get_page(
         State(state.clone()),
@@ -102,10 +103,12 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
         Path(id.into()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(reloaded.page.folder_path.as_deref(), Some("Missing"));
     let Json(published) = handle_publish_page_draft(
         State(state.clone()),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         crate::team_actor::TeamActor::default(),
         TruthView::automatic(),
@@ -115,7 +118,8 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
         }),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(published.page.status, "active");
     assert_eq!(
         published.projection_status,
@@ -127,6 +131,7 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     std::fs::create_dir(root.join("Missing")).unwrap();
     let Json(retry) = handle_publish_page_draft(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         crate::team_actor::TeamActor::default(),
         TruthView::automatic(),
@@ -136,7 +141,8 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
         }),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(retry.projection_status, Some(PageProjectionStatus::Synced));
     let path = retry.storage_path.unwrap();
     assert!(path.starts_with("Missing/"));
@@ -195,7 +201,8 @@ async fn move_route_changes_projection_path_and_preserves_page_identity() {
         }),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(moved.storage_path, format!("Research/{expected}"));
     assert!(!root.join(&expected).exists());
     assert!(root.join(&moved.storage_path).is_file());
@@ -231,12 +238,14 @@ async fn move_route_changes_projection_path_and_preserves_page_identity() {
     );
     let Json(inventory) = handle_list_pages(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         TruthView::automatic(),
         axum::extract::Query(HashMap::new()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(
         inventory.pages[0].storage_path.as_deref(),
         Some(moved.storage_path.as_str())
@@ -266,7 +275,8 @@ async fn detail_resolves_a_live_file_when_stored_kind_is_stale_overview() {
         Path(page.id),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(detail.page.storage_path.as_deref(), Some(expected.as_str()));
 }
 
@@ -299,7 +309,8 @@ async fn move_accepts_a_live_file_when_stored_kind_is_stale_overview() {
         }),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     let filename = std::path::Path::new(&expected)
         .file_name()
         .unwrap()
@@ -322,7 +333,8 @@ async fn move_accepts_a_live_file_when_stored_kind_is_stale_overview() {
         Path(page.id),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(detail.page.storage_path, Some(moved.storage_path));
 }
 
@@ -349,7 +361,8 @@ async fn overview_title_with_stale_concept_kind_has_no_file_path() {
         Path(page.id),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert!(detail.page.storage_path.is_none());
 }
 
@@ -502,7 +515,8 @@ async fn page_selection_impacts_respect_scope_truth_and_hide_aliases() {
         Path(id.into()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(full.selection_impacts.len(), 1);
     assert_eq!(full.selection_impacts[0].titles, vec!["Study A"]);
     assert!(!full.selection_impacts[0].unavailable);
@@ -519,7 +533,8 @@ async fn page_selection_impacts_respect_scope_truth_and_hide_aliases() {
         Path(id.into()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert!(redacted.selection_impacts[0].titles.is_empty());
     assert!(redacted.selection_impacts[0].unavailable);
     let mut batch = event.clone();
@@ -536,7 +551,8 @@ async fn page_selection_impacts_respect_scope_truth_and_hide_aliases() {
         Path(id.into()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert_eq!(disconnected.selection_impacts[0].reason, "disconnected");
     assert!(disconnected.selection_impacts[0].titles.is_empty());
     assert!(!disconnected.selection_impacts[0].unavailable);
@@ -568,6 +584,7 @@ async fn page_selection_impacts_respect_scope_truth_and_hide_aliases() {
         Path(id.into()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     assert!(entry.selection_impacts.is_empty());
 }

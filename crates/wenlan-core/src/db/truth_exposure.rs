@@ -713,13 +713,21 @@ impl MemoryDB {
         page_id: &str,
         wanted_key: &str,
         expected_scope: &str,
+        shared_only: bool,
     ) -> Result<Option<(String, String)>, WenlanError> {
         let conn = self.conn.lock().await;
         let title = {
+            let shared = if shared_only {
+                format!(" AND {}", super::scoped_pages::shared_page_predicate(""))
+            } else {
+                String::new()
+            };
             let mut rows = conn
                 .query(
-                    "SELECT title FROM pages WHERE id = ?1 AND status = 'active' \
-                     AND space = ?2 AND COALESCE(kind, 'concept') != 'entity'",
+                    &format!(
+                        "SELECT title FROM pages WHERE id = ?1 AND status = 'active' \
+                     AND space = ?2 AND COALESCE(kind, 'concept') != 'entity'{shared}"
+                    ),
                     libsql::params![page_id, expected_scope],
                 )
                 .await

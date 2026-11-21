@@ -106,7 +106,10 @@ fn members_of_a_space_are_listed_in_its_space_file() {
     let names: Vec<&str> = file.members.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, ["Server", "Amy"]);
     assert_eq!(file.members[1].id, amy.id);
-    assert_eq!(list_folder_files(&folder), ["space.json"]);
+    assert_eq!(
+        list_folder_files(&folder, &SharedFolderPages::default()),
+        ["space.json"]
+    );
 }
 
 #[test]

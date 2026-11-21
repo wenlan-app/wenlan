@@ -57,6 +57,7 @@ pub mod linked_vault;
 pub mod lint;
 pub mod llm_provider;
 pub mod maintenance;
+pub mod member_view;
 pub mod migrate_rename;
 pub mod migrations;
 pub mod narrative;

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getSpace, getSpaceBrief, listEntities, listIndexedFiles, listMemoriesRich, listPages, type Page, type Space } from "../../../lib/tauri";
+import { getSpace, getSpaceBrief, listEntities, listIndexedFiles, listMemoriesRich, listPages, skillsFromLibraryEnabled, type Page, type Space } from "../../../lib/tauri";
 import SpaceDetail from "../SpaceDetail";
 import { SPACE_DETAIL_TEST_COPY } from "./testTranslation";
 
 vi.mock("../../../lib/tauri", () => ({ getSpace: vi.fn(), getSpaceBrief: vi.fn(), listPages: vi.fn(), listIndexedFiles: vi.fn(), listEntities: vi.fn(), listMemoriesRich: vi.fn(), updateSpace: vi.fn(), deleteSpace: vi.fn(), confirmSpace: vi.fn(), skillsFromLibraryEnabled: vi.fn().mockResolvedValue(false), listSpaceRulesSuggestions: vi.fn().mockResolvedValue([]) }));
 const a: Space = { id: "stable-a", name: "讀書會", description: "Reading together", suggested: false, starred: false, sort_order: 0, memory_count: 12, entity_count: 6, created_at: 1, updated_at: 1 };
 function workspace() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0, refetchOnWindowFocus: false } } });
   const onSelectPage = vi.fn(); const onCreatePage = vi.fn(); const onReviewAll = vi.fn();
   const result = render(<QueryClientProvider client={client}><SpaceDetail copy={SPACE_DETAIL_TEST_COPY} spaceName={a.name} onBack={() => {}} onSelectPage={onSelectPage} onCreatePage={onCreatePage} onReviewAll={onReviewAll} /></QueryClientProvider>);
   return { ...result, onSelectPage, onCreatePage, onReviewAll };
@@ -20,6 +20,7 @@ beforeEach(() => {
   vi.mocked(getSpace).mockResolvedValue(a);
   vi.mocked(listPages).mockResolvedValue([]);
   vi.mocked(getSpaceBrief).mockResolvedValue(null);
+  vi.mocked(skillsFromLibraryEnabled).mockResolvedValue(false);
 });
 describe("A Space's page", () => {
   it("UX-SPACE-1 opens with the Brief: where it stands, the last handoff and three items, the rest folded", async () => {
@@ -45,6 +46,23 @@ describe("A Space's page", () => {
     workspace();
     expect(await screen.findByText("Reading list")).toBeInTheDocument();
     expect(screen.queryByTestId("space-brief")).not.toBeInTheDocument();
+  });
+
+  it("UX-SPACE-1 refreshes the Brief while its Space page stays open", async () => {
+    vi.mocked(getSpaceBrief)
+      .mockResolvedValueOnce({ summary: "Before handoff", handed_off_at: 10, active: [] })
+      .mockResolvedValue({ summary: "After handoff", handed_off_at: 20, active: [] });
+    workspace();
+    expect(await screen.findByText("Before handoff")).toBeInTheDocument();
+
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    try {
+      expect(await screen.findByText("After handoff")).toBeInTheDocument();
+      expect(getSpaceBrief).toHaveBeenCalledTimes(2);
+    } finally {
+      focusManager.setFocused(undefined);
+    }
   });
 
   it("UX-SPACE-3 has no Pages/Sources tabs and never loads sources, memories or topics", async () => {

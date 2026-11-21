@@ -6,7 +6,10 @@ use super::*;
 use axum::body::to_bytes;
 use axum::http::Method;
 use wenlan_core::shared_space::{version, SpaceMember};
-use wenlan_types::team::TeamSpaceAccess;
+use wenlan_types::team::{TeamFileList, TeamSpaceAccess};
+
+#[path = "team_member_view_test.rs"]
+mod member_view;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -58,7 +61,9 @@ fn fixture() -> Fixture {
         state: TeamState {
             team_path,
             settings_path,
+            db: None,
             daemon_url: "http://127.0.0.1:9".into(),
+            in_process_daemon: None,
             mcp: Arc::default(),
             sessions: Arc::default(),
             auth: Arc::default(),
@@ -111,11 +116,234 @@ async fn response_text(response: Response) -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 
+async fn fixture_with_daemon() -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+    let mut fixture = fixture();
+    let db = Arc::new(
+        wenlan_core::db::MemoryDB::new(
+            &fixture._dir.path().join("daemon"),
+            Arc::new(wenlan_core::events::NoopEmitter),
+        )
+        .await
+        .unwrap(),
+    );
+    db.create_space("Design", None, false).await.unwrap();
+    fixture.state.db = Some(db.clone());
+    let state = crate::state::ServerState {
+        db: Some(db.clone()),
+        ..Default::default()
+    };
+    fixture.state.in_process_daemon = Some(crate::router::build_router(Arc::new(
+        tokio::sync::RwLock::new(state),
+    )));
+    (fixture, db)
+}
+
+async fn create_folder_test_page(
+    db: &wenlan_core::db::MemoryDB,
+    title: &str,
+    kind: &str,
+) -> wenlan_core::post_write::WriteResult {
+    wenlan_core::post_write::create_page_with_floor(
+        db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: title.into(),
+            content: "Synthetic meeting notes.".into(),
+            summary: None,
+            entity_id: None,
+            space: Some("Design".into()).into(),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some(kind.into()),
+            workspace: Some("Design".into()),
+        },
+        "fixture",
+        None,
+        1,
+    )
+    .await
+    .unwrap()
+}
+
+async fn sync_hosted_test_folder(
+    f: &Fixture,
+    db: &wenlan_core::db::MemoryDB,
+) -> wenlan_types::shared_space::SharedSyncCounts {
+    shared_space::sync_space(
+        db,
+        shared_space::SyncTarget {
+            scope: &Scope::Space("Design".into()),
+            folder: &f.folder,
+            member_name: "Server",
+            settings_path: &f.state.settings_path,
+            knowledge_path: None,
+            member_id: None,
+            host: None,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn authenticated_team_reader_sees_shared_page_without_seeded_host_memory() {
+    const PRIVATE_ID: &str = "fixture-authenticated-evidence";
+    const PRIVATE_TEXT: &str = "fictional amber envelope for the design";
+    const SHARED: &str = "The design meeting starts on Tuesday. [1]";
+    let (f, db) = fixture_with_daemon().await;
+    db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+        source: "memory".into(),
+        source_id: PRIVATE_ID.into(),
+        title: "Fixture reminder".into(),
+        content: PRIVATE_TEXT.into(),
+        space: Some("Design".into()),
+        confirmed: Some(true),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let page = wenlan_core::post_write::create_page_with_floor(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "Fixture page".into(),
+            content: SHARED.into(),
+            summary: None,
+            entity_id: None,
+            space: Some("Design".to_string()).into(),
+            source_memory_ids: vec![PRIVATE_ID.into()],
+            creation_kind: Some("distilled".into()),
+            workspace: Some("Design".into()),
+        },
+        "fixture",
+        None,
+        1,
+    )
+    .await
+    .unwrap();
+    let citations = serde_json::json!([{
+        "occurrence": 1, "marker": 1, "source_kind": "memory",
+        "locator": PRIVATE_ID, "score": 1.0, "status": "verified",
+    }]);
+    db.set_page_citations(&page.id, Some(&citations.to_string()))
+        .await
+        .unwrap();
+
+    let source_path = format!("/api/pages/{}/sources", page.id);
+    let host = f
+        .state
+        .in_process_daemon
+        .as_ref()
+        .unwrap()
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&source_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(host.status(), StatusCode::OK);
+    let host = response_text(host).await;
+    assert!(host.contains(PRIVATE_ID) && host.contains(PRIVATE_TEXT));
+
+    let page_path = format!("/team/v1/app/api/pages/{}", page.id);
+    let (status, body) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = String::from_utf8(body).unwrap();
+    assert!(body.contains("The design meeting starts on Tuesday."));
+    assert!(!body.contains("[1]"));
+    assert!(!body.contains(PRIVATE_ID) && !body.contains(PRIVATE_TEXT));
+    let sources = format!("/team/v1/app{source_path}");
+    let (status, body) = call(&f.state, Method::GET, &sources, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!([])
+    );
+    for (member, expected) in [
+        (None, StatusCode::UNAUTHORIZED),
+        (Some(f.outsider.1.as_str()), StatusCode::NOT_FOUND),
+    ] {
+        let (status, _) = call(&f.state, Method::GET, &sources, member, vec![]).await;
+        assert_eq!(status, expected);
+    }
+}
+
+#[tokio::test]
+async fn authenticated_team_writer_can_save_and_publish_a_draft_kept_off_read_routes() {
+    use serde_json::{json, Value};
+
+    let (f, _) = fixture_with_daemon().await;
+    let (status, body) = call(
+        &f.state,
+        Method::POST,
+        "/team/v1/app/api/pages/drafts",
+        Some(&f.writer.1),
+        serde_json::to_vec(&json!({
+            "draft_id": "page_00000000-0000-4000-8000-00000000e241",
+            "title": "Draft schedule",
+            "content": "First draft.",
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "draft creation");
+    let draft: Value = serde_json::from_slice(&body).unwrap();
+    let id = draft["page"]["id"].as_str().unwrap();
+    let page_path = format!("/team/v1/app/api/pages/{id}");
+    let (status, _) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let draft_path = format!("/team/v1/app/api/pages/drafts/{id}");
+    let (status, body) = call(
+        &f.state,
+        Method::PUT,
+        &draft_path,
+        Some(&f.writer.1),
+        serde_json::to_vec(&json!({
+            "title": "Team schedule",
+            "content": "Published schedule.",
+            "expected_version": draft["page"]["version"],
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "draft save");
+    let saved: Value = serde_json::from_slice(&body).unwrap();
+    let publish =
+        serde_json::to_vec(&json!({"expected_version": saved["page"]["version"]})).unwrap();
+    let publish_path = format!("{draft_path}/publish");
+    for _ in 0..2 {
+        let (status, body) = call(
+            &f.state,
+            Method::POST,
+            &publish_path,
+            Some(&f.writer.1),
+            publish.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "draft publication");
+        let published: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(published["page"]["status"], "active");
+        assert_eq!(
+            published["page"]["version"].as_i64(),
+            saved["page"]["version"].as_i64().map(|v| v + 1)
+        );
+    }
+    let (status, body) = call(&f.state, Method::GET, &page_path, Some(&f.reader.1), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let published: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(published["page"]["content"], "Published schedule.");
+}
+
 fn version_text(page: &str, member: &str, body: &str) -> String {
     let mut file = wenlan_core::store::format::page::PageFile::new("Plan", body);
     file.id = Some(page.into());
+    render_test_version(&file, member)
+}
+
+fn render_test_version(file: &wenlan_core::store::format::page::PageFile, member: &str) -> String {
     version::render(
-        &file,
+        file,
         &version::VersionMeta {
             parent: None,
             merged: Vec::new(),
@@ -511,6 +739,90 @@ async fn bare_mcp_counts_a_space_open_to_everyone() {
 }
 
 #[tokio::test]
+async fn hosted_mcp_lists_tools_for_the_authenticated_space_grant() {
+    let f = fixture();
+    let router = team_router(f.state);
+    for (key, access) in [
+        (&f.reader.1, TeamAccess::Read),
+        (&f.writer.1, TeamAccess::Write),
+    ] {
+        let request = |body: serde_json::Value, session: Option<&str>| {
+            let mut builder = Request::post("/mcp")
+                .header(header::HOST, "team.example.com")
+                .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .header(header::CONTENT_TYPE, "application/json");
+            if let Some(session) = session {
+                builder = builder
+                    .header("mcp-session-id", session)
+                    .header("mcp-protocol-version", "2025-06-18");
+            }
+            builder.body(Body::from(body.to_string())).unwrap()
+        };
+        let response = router
+            .clone()
+            .oneshot(request(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": {"name": "team-test", "version": "1"}
+                    }
+                }),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let session = response.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let _ = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let response = router
+            .clone()
+            .oneshot(request(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "method": "notifications/initialized"
+                }),
+                Some(&session),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let response = router
+            .clone()
+            .oneshot(request(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 2, "method": "tools/list"
+                }),
+                Some(&session),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_text(response).await;
+        let data = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .find(|data| !data.trim().is_empty())
+            .unwrap_or(&body);
+        let reply: serde_json::Value = serde_json::from_str(data).unwrap();
+        let tools = reply["result"]["tools"].as_array().unwrap();
+        let names: std::collections::HashSet<_> = tools
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        for tool in ["recall", "brief", "get_page_sources", "read_space_rules"] {
+            assert!(names.contains(tool));
+        }
+        assert!(!names.contains("capture"));
+        assert!(!names.contains("forget"));
+        assert_eq!(names.contains("write_page"), access == TeamAccess::Write);
+    }
+}
+
+#[tokio::test]
 async fn a_key_reads_only_its_members_spaces() {
     let f = fixture();
     let acme = team::rename_team(&f.state.team_path, "Acme").unwrap();
@@ -568,8 +880,348 @@ async fn a_key_reads_only_its_members_spaces() {
 }
 
 #[tokio::test]
-async fn a_writer_sends_only_their_own_whole_versions() {
+async fn hosted_files_withhold_old_snapshots_with_private_quotes() {
+    use wenlan_core::store::format::page::{Citation, Locator, PageFile};
+    let (f, db) = fixture_with_daemon().await;
+    let legacy_page = create_folder_test_page(&db, "Team notes", "authored").await;
+    let id = legacy_page.id.as_str();
+    let mut legacy = PageFile::new("Team notes", "The meeting starts on Tuesday. [1]");
+    legacy.id = Some(id.into());
+    legacy.citations.push(Citation {
+        marker: 1,
+        label: "“Fixture excerpt” (from Server's conversation)".into(),
+        locator: Locator::Other("shared:quote".into()),
+    });
+    let old = render_test_version(&legacy, "server");
+    let (old_sha, _) = version::write_version(&f.folder, "server", id, &old).unwrap();
+    let old_path = format!(
+        "members/server/pages/{id}/{}",
+        version::version_file_name(&old_sha)
+    );
+    let safe_page = create_folder_test_page(&db, "Published note", "authored").await;
+    let safe = version_text(&safe_page.id, "server", "A published note.");
+    let (safe_sha, _) = version::write_version(&f.folder, "server", &safe_page.id, &safe).unwrap();
+    let safe_path = format!(
+        "members/server/pages/{}/{}",
+        safe_page.id,
+        version::version_file_name(&safe_sha)
+    );
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    let (download, _) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={old_path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        (list.files.contains(&old_path), download),
+        (false, StatusCode::NOT_FOUND),
+        "an old private-source snapshot must be absent from the inventory and downloads"
+    );
+    assert!(list.files.contains(&safe_path));
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={safe_path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, safe.into_bytes());
+}
+
+#[tokio::test]
+async fn hosted_files_withhold_old_snapshots_of_generated_source_pages() {
     let f = fixture();
+    let id = wenlan_core::document_enrichment::source_page_id("fixture", "/import.md");
+    let legacy = version_text(&id, "server", "Private import fixture.");
+    let (sha, _) = version::write_version(&f.folder, "server", &id, &legacy).unwrap();
+    let path = format!(
+        "members/server/pages/{id}/{}",
+        version::version_file_name(&sha)
+    );
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    let (download, _) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        (list.files.contains(&path), download),
+        (false, StatusCode::NOT_FOUND),
+        "import snapshots must be absent from the inventory and downloads"
+    );
+}
+
+#[tokio::test]
+async fn hosted_files_withhold_ordinary_snapshots_that_name_private_imports() {
+    use wenlan_core::store::format::page::{Basis, Citation, Locator, PageFile};
+
+    let (f, db) = fixture_with_daemon().await;
+    let imported_page = create_folder_test_page(&db, "Imported private title", "imported").await;
+    let visible_page = create_folder_test_page(&db, "Published target", "authored").await;
+    let safe_page = create_folder_test_page(&db, "Safe ordinary page", "authored").await;
+    let ordinary_page = create_folder_test_page(&db, "Ordinary page", "authored").await;
+    let shared_ids = db
+        .list_shared_pages_scoped(
+            "active",
+            100,
+            0,
+            &wenlan_core::read_scope::ReadScope::Space("Design".into()),
+        )
+        .await
+        .unwrap();
+    assert!(shared_ids.iter().any(|page| page.id == visible_page.id));
+    assert!(!shared_ids.iter().any(|page| page.id == imported_page.id));
+
+    let import_snapshot = version_text(&imported_page.id, "server", "Legacy imported body.");
+    let (import_sha, _) =
+        version::write_version(&f.folder, "server", &imported_page.id, &import_snapshot).unwrap();
+    let import_path = format!(
+        "members/server/pages/{}/{}",
+        imported_page.id,
+        version::version_file_name(&import_sha)
+    );
+
+    let id = ordinary_page.id.as_str();
+    let mut legacy = PageFile::new("Ordinary page", "A shared paragraph.");
+    legacy.id = Some(id.to_string());
+    legacy.citations.push(Citation {
+        marker: 1,
+        label: "[[Imported private title]]".into(),
+        locator: Locator::Wenlan {
+            id: imported_page.id.clone(),
+            version: 1,
+        },
+    });
+    legacy.basis.push(Basis {
+        label: "[[Imported private title]]".into(),
+        locator: Locator::Wenlan {
+            id: imported_page.id,
+            version: 1,
+        },
+    });
+    let old = render_test_version(&legacy, "server");
+    let (sha, _) = version::write_version(&f.folder, "server", id, &old).unwrap();
+    let path = format!(
+        "members/server/pages/{id}/{}",
+        version::version_file_name(&sha)
+    );
+
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    assert!(
+        !list.files.contains(&import_path),
+        "an ordinary-ID imported page must stay out of the inventory"
+    );
+    let (download, body) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        (list.files.contains(&path), download),
+        (false, StatusCode::NOT_FOUND),
+        "an ordinary snapshot must not disclose a private import citation or basis"
+    );
+    assert!(!String::from_utf8_lossy(&body).contains("Imported private title"));
+    let (download, _) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={import_path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        download,
+        StatusCode::NOT_FOUND,
+        "ordinary-ID imports stay hidden as pages"
+    );
+
+    let mut safe = PageFile::new("Safe ordinary page", "A shared paragraph.");
+    safe.id = Some(safe_page.id.clone());
+    safe.citations.push(Citation {
+        marker: 1,
+        label: "[[Published target]]".into(),
+        locator: Locator::Wenlan {
+            id: visible_page.id.clone(),
+            version: 1,
+        },
+    });
+    let safe_text = render_test_version(&safe, "server");
+    let (safe_sha, _) =
+        version::write_version(&f.folder, "server", &safe_page.id, &safe_text).unwrap();
+    let safe_path = format!(
+        "members/server/pages/{}/{}",
+        safe_page.id,
+        version::version_file_name(&safe_sha)
+    );
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    assert!(
+        list.files.contains(&safe_path),
+        "visible shared targets remain servable"
+    );
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={safe_path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = String::from_utf8(body).unwrap();
+    assert!(body.contains("[[Published target]]"));
+    assert!(body.contains(&visible_page.id));
+}
+
+#[tokio::test]
+async fn hosted_files_withhold_old_per_private_source_placeholders() {
+    use wenlan_core::store::format::page::{Citation, Locator, PageFile};
+
+    let (f, db) = fixture_with_daemon().await;
+    let page = create_folder_test_page(&db, "Old private placeholder", "authored").await;
+    let id = page.id.as_str();
+    let mut legacy = PageFile::new("Old private placeholder", "A shared paragraph. [1]");
+    legacy.id = Some(id.into());
+    legacy.citations.push(Citation {
+        marker: 1,
+        label: "Unavailable source".into(),
+        locator: Locator::Other("shared:private-source".into()),
+    });
+    let old = render_test_version(&legacy, "server");
+    let (sha, _) = version::write_version(&f.folder, "server", id, &old).unwrap();
+    let path = format!(
+        "members/server/pages/{id}/{}",
+        version::version_file_name(&sha)
+    );
+    let (status, files) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&files).unwrap();
+    let (download, _) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        (list.files.contains(&path), download),
+        (false, StatusCode::NOT_FOUND)
+    );
+}
+
+#[tokio::test]
+async fn hosted_files_deliver_archives_after_a_shared_page_is_deleted() {
+    let (f, db) = fixture_with_daemon().await;
+    let public = create_folder_test_page(&db, "Shared meeting", "authored").await;
+    let imported = create_folder_test_page(&db, "Local import", "imported").await;
+    assert_eq!(sync_hosted_test_folder(&f, &db).await.exported, 1);
+    db.delete_page(&public.id).await.unwrap();
+    db.delete_page(&imported.id).await.unwrap();
+    assert_eq!(sync_hosted_test_folder(&f, &db).await.exported, 1);
+
+    let (status, bytes) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list: TeamFileList = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(list.files.len(), 2, "the archive should remain visible");
+    let path = &list.files[1];
+    assert!(path.contains(&public.id));
+    let (status, archived) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={path}"),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let version = version::parse(path.rsplit('/').next().unwrap(), &archived).unwrap();
+    assert!(version.meta.archived);
+
+    // An archive-shaped legacy file alone is no proof the import was shared.
+    let mut legacy = version.page;
+    legacy.id = Some(imported.id.clone());
+    let old = version::render(&legacy, &version.meta);
+    let (sha, _) = version::write_version(&f.folder, "server", &imported.id, &old).unwrap();
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        &format!(
+            "/team/v1/spaces/Design/file?path=members/server/pages/{}/{}",
+            imported.id,
+            version::version_file_name(&sha)
+        ),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_writer_sends_only_their_own_whole_versions() {
+    let (f, db) = fixture_with_daemon().await;
     let page = "page_plan";
     let mine = version_text(page, &f.writer.0.id, "We marry in May.");
     let name = version::version_file_name(&version::sha256_hex(mine.as_bytes()));
@@ -658,6 +1310,19 @@ async fn a_writer_sends_only_their_own_whole_versions() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let pending: TeamFileList = serde_json::from_slice(&body).unwrap();
+    assert_eq!(pending.files, ["space.json"]);
+    assert_eq!(sync_hosted_test_folder(&f, &db).await.applied, 1);
+
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     let list: TeamFileList = serde_json::from_slice(&body).unwrap();
     assert_eq!(list.files.len(), 2);
     let path = &list.files[1];
@@ -681,8 +1346,10 @@ async fn a_writer_sends_only_their_own_whole_versions() {
 
 #[tokio::test]
 async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
-    let f = fixture();
-    let page = "page_plan";
+    let (f, db) = fixture_with_daemon().await;
+    let published = create_folder_test_page(&db, "Plan", "authored").await;
+    assert_eq!(sync_hosted_test_folder(&f, &db).await.exported, 1);
+    let page = published.id.as_str();
     let put = |meta_change: fn(&mut version::VersionMeta), body: &'static str| {
         let mut file = wenlan_core::store::format::page::PageFile::new("Plan", body);
         file.id = Some(page.into());
@@ -693,7 +1360,7 @@ async fn a_writers_proposals_and_decisions_land_in_their_own_folders() {
             author: version::Author {
                 member: f.writer.0.id.clone(),
                 kind: version::AuthorKind::Ai,
-                agent: Some("claude-code".into()),
+                agent: None,
             },
             ts: "2026-11-11T05:00:00Z".into(),
             archived: false,
@@ -1354,7 +2021,8 @@ fn no_store(response: &Response) -> bool {
 
 #[tokio::test]
 async fn rulesync_team_project_review_requires_a_current_write_session() {
-    let (f, _) = session_fixture();
+    let (f, db) = fixture_with_daemon().await;
+    team::set_url(&f.state.team_path, Some(ORIGIN)).unwrap();
     team::owner_key(&f.state.team_path, "Team owner").unwrap();
     std::fs::write(
         f.state.settings_path.with_file_name("repo-wiki.json"),
@@ -1373,12 +2041,36 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
         .unwrap();
     rulesync_team::decide_local_space_proposal(&f.state.settings_path, "Design", &seed, true)
         .unwrap();
+    let page = create_folder_test_page(&db, "Shared project page", "authored").await;
+    let text = version_text(&page.id, "server", "Shared project page.");
+    let (sha, _) = version::write_version(&f.folder, "server", &page.id, &text).unwrap();
+    let page_file = format!(
+        "members/server/pages/{}/{}",
+        page.id,
+        version::version_file_name(&sha)
+    );
     let files = "/team/v1/spaces/Design/files";
     let (status, body) = call(&f.state, Method::GET, files, Some(&f.reader.1), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     let list: TeamFileList = serde_json::from_slice(&body).unwrap();
+    assert!(list.files.contains(&page_file));
     let rules = list.rules.unwrap();
     assert_eq!(rules.project.as_ref().unwrap().space, "Design");
+    assert!(list.files.contains(&rules.file));
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        &format!("/team/v1/spaces/Design/file?path={}", rules.file),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the advertised Rules version must download"
+    );
+    assert!(String::from_utf8(body).unwrap().contains("Initial rule"));
     let revision = rules
         .file
         .rsplit('/')
@@ -1419,6 +2111,18 @@ async fn rulesync_team_project_review_requires_a_current_write_session() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = call(
+        &f.state,
+        Method::GET,
+        &format!(
+            "/team/v1/spaces/Design/file?path=members/{}/proposals/{}/{name}",
+            f.reader.0.id, rules.page_id
+        ),
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     let forged = version_text(&rules.page_id, &f.writer.0.id, "Unapproved team rules");
     let forged_name = version::version_file_name(&version::sha256_hex(forged.as_bytes()));
     let forged_path = format!(

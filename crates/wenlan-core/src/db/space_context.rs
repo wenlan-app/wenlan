@@ -212,11 +212,14 @@ impl MemoryDB {
                 "Space name must not be empty".to_string(),
             ));
         }
-        let space = self.get_space(normalized).await?.ok_or_else(|| {
-            WenlanError::Validation(format!(
-                "Space '{normalized}' is not registered; create it first or choose Uncategorized"
-            ))
-        })?;
+        let space = self
+            .get_space_without_private_counts(normalized)
+            .await?
+            .ok_or_else(|| {
+                WenlanError::Validation(format!(
+                    "Space '{normalized}' is not registered; create it first or choose Uncategorized"
+                ))
+            })?;
         if space.id == UNFILED_SPACE_ID {
             return Err(WenlanError::Validation(
                 "Uncategorized must be selected with an explicit null Space".to_string(),

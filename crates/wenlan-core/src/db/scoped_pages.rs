@@ -6,6 +6,8 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::{HashMap, HashSet};
 
+const SHARED_PAGE_DELETION_PREFIX: &str = "shared_space.deleted:";
+
 fn numbered_conditions(conditions: &[String], start: usize) -> String {
     let mut parameter = start;
     conditions
@@ -91,6 +93,56 @@ fn page_link_label_key(label: &str) -> String {
     label.to_lowercase()
 }
 
+/// The page set a Space shares, applied before filtering, ranking or paging.
+pub(super) fn shared_page_predicate(alias: &str) -> String {
+    member_page_predicate(alias, MemberPageTarget::Published)
+}
+
+#[derive(Clone, Copy)]
+pub enum MemberPageTarget<'a> {
+    Published,
+    OwnedDraft(&'a str),
+    PublishedOrOwnedDraft(&'a str),
+}
+
+fn member_page_predicate(alias: &str, target: MemberPageTarget<'_>) -> String {
+    let personal_rules = super::skill_grow::personal_rule_pages_sql();
+    let master_prefix = crate::rulesync_team::ID_PREFIX;
+    let published = format!("{alias}status IN ('active', 'archived')");
+    let draft = || {
+        format!(
+            "({alias}status = 'draft' AND EXISTS (SELECT 1 FROM page_draft_create_requests r
+           WHERE r.page_id = {alias}id AND r.owner_member_id = ?2))"
+        )
+    };
+    let status = match target {
+        MemberPageTarget::Published => published,
+        MemberPageTarget::OwnedDraft(_) => draft(),
+        MemberPageTarget::PublishedOrOwnedDraft(_) => format!("({published} OR {})", draft()),
+    };
+    format!(
+        "{status} AND {alias}workspace IS NOT NULL AND {alias}workspace != '{unfiled}'
+           AND COALESCE({alias}kind, 'concept') != 'entity'
+           AND COALESCE({alias}creation_kind, 'distilled') NOT IN ('source', 'imported', 'entity')
+           AND NOT (LENGTH({alias}id) = 20 AND {alias}id GLOB 'src_*'
+                    AND SUBSTR({alias}id, 5) NOT GLOB '*[^0-9a-f]*')
+           AND NOT (LENGTH({alias}id) = {master_length} AND SUBSTR({alias}id, 1, {prefix_length}) = '{master_prefix}'
+                    AND SUBSTR({alias}id, {digest_start}) NOT GLOB '*[^0-9a-f]*')
+           AND {alias}id NOT IN (SELECT page_id FROM ({personal_rules}) WHERE page_id IS NOT NULL)",
+        unfiled = super::UNFILED_SPACE_ID,
+        master_length = master_prefix.len() + 64,
+        prefix_length = master_prefix.len(),
+        digest_start = master_prefix.len() + 1,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PageReader {
+    Browse,
+    Internal,
+    Shared,
+}
+
 /// One unresolved wikilink, still attached to the page whose body it came from.
 ///
 /// This is the row `list_orphan_link_labels_scoped` throws away:
@@ -107,6 +159,70 @@ pub struct OrphanLinkRow {
 }
 
 impl MemoryDB {
+    /// A member may introduce a new page, or upload to an existing published
+    /// page in their Space. A retired ID remains governed by sync's tombstone.
+    pub async fn member_may_upload_page_version(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let error = |e: libsql::Error| WenlanError::VectorDb(e.to_string());
+        let mut rows = conn
+            .query("SELECT 1 FROM pages WHERE id=?1", [id])
+            .await
+            .map_err(error)?;
+        let exists = rows.next().await.map_err(error)?.is_some();
+        drop(rows);
+        if !exists {
+            return Ok(true);
+        }
+        Self::member_page_access_on(&conn, id, scope, MemberPageTarget::Published).await
+    }
+
+    pub async fn member_can_access_page(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+        target: MemberPageTarget<'_>,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::member_page_access_on(&conn, id, scope, target).await
+    }
+
+    /// Run the same predicate as shared reads, inside the write transaction
+    /// when authorizing a mutation. Unscoped use is only for Space discovery.
+    pub(super) async fn member_page_access_on(
+        conn: &libsql::Connection,
+        id: &str,
+        scope: &ReadScope,
+        target: MemberPageTarget<'_>,
+    ) -> Result<bool, WenlanError> {
+        let mut params = vec![libsql::Value::Text(id.to_owned())];
+        match target {
+            MemberPageTarget::OwnedDraft(member)
+            | MemberPageTarget::PublishedOrOwnedDraft(member) => {
+                params.push(libsql::Value::Text(member.to_owned()))
+            }
+            MemberPageTarget::Published => {}
+        }
+        let (binding, value) = page_scope_clause(scope, "p.workspace", params.len() + 1);
+        params.extend(value);
+        let predicate = member_page_predicate("p.", target);
+        let mut rows = conn
+            .query(
+                &format!("SELECT 1 FROM pages p WHERE p.id=?1{binding} AND {predicate}"),
+                params,
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(error.to_string()))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(error.to_string()))?
+            .is_some())
+    }
+
     /// Route-facing Page search. Selected scopes use a workspace predicate in
     /// the same query that ranks and limits candidates; Global preserves the
     /// existing indexed search path.
@@ -122,7 +238,7 @@ impl MemoryDB {
         page_type: Option<&str>,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.search_pages_scoped_inner(query, limit, page_type, scope, true)
+        self.search_pages_scoped_inner(query, limit, page_type, scope, PageReader::Internal)
             .await
     }
 
@@ -138,7 +254,18 @@ impl MemoryDB {
         page_type: Option<&str>,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.search_pages_scoped_inner(query, limit, page_type, scope, false)
+        self.search_pages_scoped_inner(query, limit, page_type, scope, PageReader::Browse)
+            .await
+    }
+
+    pub async fn search_shared_pages_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        page_type: Option<&str>,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        self.search_pages_scoped_inner(query, limit, page_type, scope, PageReader::Shared)
             .await
     }
 
@@ -148,10 +275,10 @@ impl MemoryDB {
         limit: usize,
         page_type: Option<&str>,
         scope: &ReadScope,
-        fence_entity: bool,
+        reader: PageReader,
     ) -> Result<Vec<Page>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
-            return if fence_entity {
+        if matches!(scope, ReadScope::Global) && reader != PageReader::Shared {
+            return if reader == PageReader::Internal {
                 self.search_pages(query, limit, page_type).await
             } else {
                 self.search_pages_browse(query, limit, page_type).await
@@ -187,10 +314,10 @@ impl MemoryDB {
         // rows and drops detected and archived ones, matching the Wiki list.
         // In SQL rather than a post-fusion Rust filter so the fence lands
         // before `LIMIT`.
-        conditions.push(if fence_entity {
-            "COALESCE(c.kind, 'concept') != 'entity'".to_string()
-        } else {
-            super::entity_row_browse_predicate("c.")
+        conditions.push(match reader {
+            PageReader::Internal => "COALESCE(c.kind, 'concept') != 'entity'".to_string(),
+            PageReader::Browse => super::entity_row_browse_predicate("c."),
+            PageReader::Shared => shared_page_predicate("c."),
         });
         let mut values = Vec::new();
         super::push_read_scope_filter_folded(scope, "c.workspace", &mut conditions, &mut values);
@@ -340,7 +467,28 @@ impl MemoryDB {
         since_ms: Option<i64>,
         scope: &ReadScope,
     ) -> Result<Vec<wenlan_types::RecentActivityItem>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
+        self.list_recent_page_activity(limit, since_ms, scope, true)
+            .await
+    }
+
+    pub async fn list_recent_shared_pages(
+        &self,
+        limit: i64,
+        since_ms: Option<i64>,
+        scope: &ReadScope,
+    ) -> Result<Vec<wenlan_types::RecentActivityItem>, WenlanError> {
+        self.list_recent_page_activity(limit, since_ms, scope, false)
+            .await
+    }
+
+    async fn list_recent_page_activity(
+        &self,
+        limit: i64,
+        since_ms: Option<i64>,
+        scope: &ReadScope,
+        private: bool,
+    ) -> Result<Vec<wenlan_types::RecentActivityItem>, WenlanError> {
+        if private && matches!(scope, ReadScope::Global) {
             return self.list_recent_pages_with_badges(limit, since_ms).await;
         }
 
@@ -349,22 +497,31 @@ impl MemoryDB {
         // Q1 (stage c): `kind='entity'` dual-write shadow pages appear in this
         // recent-activity listing -- a browse surface, so it reads the unfenced
         // `list_pages_scoped_browse` twin.
-        let pages: Vec<Page> = self
-            .list_pages_scoped_browse("active", limit, 0, scope)
-            .await?;
-        let all_source_ids = pages
-            .iter()
-            .flat_map(|page| page.source_memory_ids.iter().cloned())
-            .collect::<Vec<_>>();
-        let visible_source_ids = self
-            .get_memories_by_source_ids_scoped(&all_source_ids, scope)
-            .await?
-            .into_iter()
-            .map(|memory| memory.source_id)
-            .collect::<HashSet<_>>();
-        let flagged = self
-            .pending_review_memory_ids(&visible_source_ids.iter().cloned().collect::<Vec<String>>())
-            .await?;
+        let pages = if private {
+            self.list_pages_scoped_browse("active", limit, 0, scope)
+                .await?
+        } else {
+            self.list_shared_pages_scoped("active", limit, 0, scope)
+                .await?
+        };
+        let (visible_source_ids, flagged) = if private {
+            let all_source_ids = pages
+                .iter()
+                .flat_map(|page| page.source_memory_ids.iter().cloned())
+                .collect::<Vec<_>>();
+            let visible = self
+                .get_memories_by_source_ids_scoped(&all_source_ids, scope)
+                .await?
+                .into_iter()
+                .map(|memory| memory.source_id)
+                .collect::<HashSet<_>>();
+            let flagged = self
+                .pending_review_memory_ids(&visible.iter().cloned().collect::<Vec<_>>())
+                .await?;
+            (visible, flagged)
+        } else {
+            (HashSet::new(), HashSet::new())
+        };
         let since_rfc = since_ms.and_then(|ms| {
             chrono::DateTime::from_timestamp(ms / 1000, 0).map(|dt| dt.to_rfc3339())
         });
@@ -379,7 +536,24 @@ impl MemoryDB {
                 .cloned()
                 .collect::<Vec<_>>();
             let needs_review = visible_members.iter().any(|id| flagged.contains(id));
-            let badge = if needs_review {
+            let badge = if !private {
+                if since_rfc
+                    .as_ref()
+                    .is_some_and(|since| page.last_modified >= *since)
+                {
+                    let rows = self.list_shared_page_history(&page.id, scope, 2).await?;
+                    if rows
+                        .get(1)
+                        .is_some_and(|previous| previous.version == page.version - 1)
+                    {
+                        ActivityBadge::Revised
+                    } else {
+                        ActivityBadge::New
+                    }
+                } else {
+                    ActivityBadge::None
+                }
+            } else if needs_review {
                 ActivityBadge::NeedsReview
             } else if let Some(ref since) = since_rfc {
                 if page.created_at >= *since {
@@ -450,13 +624,40 @@ impl MemoryDB {
         limit: i64,
         scope: &ReadScope,
     ) -> Result<Vec<wenlan_types::PageChange>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
+        self.list_recent_page_changes(limit, scope, true).await
+    }
+
+    pub async fn list_recent_shared_page_changes(
+        &self,
+        limit: i64,
+        scope: &ReadScope,
+    ) -> Result<Vec<crate::member_view::MemberChange>, WenlanError> {
+        Ok(self
+            .list_recent_page_changes(limit, scope, false)
+            .await?
+            .into_iter()
+            .map(crate::member_view::MemberChange::new)
+            .collect())
+    }
+
+    async fn list_recent_page_changes(
+        &self,
+        limit: i64,
+        scope: &ReadScope,
+        include_entities: bool,
+    ) -> Result<Vec<wenlan_types::PageChange>, WenlanError> {
+        if include_entities && matches!(scope, ReadScope::Global) {
             return self.list_recent_changes(limit).await;
         }
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
+        let shared_fence = if include_entities {
+            String::new()
+        } else {
+            format!("AND {}", shared_page_predicate("c."))
+        };
         let sql = format!(
             "SELECT c.id, c.title, c.version, c.created_at, c.last_modified, c.status \
-             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} \
+             FROM pages c WHERE c.status IN ('active', 'archived'){scope_sql} {shared_fence} \
              ORDER BY c.last_modified DESC LIMIT ?1"
         );
         let mut params = vec![libsql::Value::Integer(limit)];
@@ -479,7 +680,7 @@ impl MemoryDB {
             let last_modified = row.get::<String>(4).unwrap_or_default();
             let change_kind = if row.get::<String>(5).unwrap_or_default() == "archived" {
                 wenlan_types::PageChangeKind::Archived
-            } else if version > 1 || created_at != last_modified {
+            } else if include_entities && (version > 1 || created_at != last_modified) {
                 wenlan_types::PageChangeKind::Revised
             } else {
                 wenlan_types::PageChangeKind::Created
@@ -499,7 +700,39 @@ impl MemoryDB {
         }
         drop(rows);
         drop(conn);
-        self.annotate_page_changes(&mut changes, &versions).await;
+        if include_entities {
+            self.annotate_page_changes(&mut changes, &versions).await;
+        } else {
+            for (change, version) in changes.iter_mut().zip(versions) {
+                let rows = self
+                    .list_shared_page_history(&change.page_id, scope, 2)
+                    .await?;
+                let Some(current) = rows.first().filter(|row| row.version == version) else {
+                    continue;
+                };
+                use wenlan_types::PageChangeKind;
+                if let Some((marker, actor)) =
+                    self.page_lifecycle_at(&change.page_id, version).await
+                {
+                    change.change_kind = if marker == "archive" {
+                        PageChangeKind::Archived
+                    } else {
+                        PageChangeKind::Restored
+                    };
+                    change.edited_by = actor;
+                } else {
+                    change.change_kind = PageChangeKind::Created;
+                    change.edited_by = Some(current.edited_by.clone());
+                    if let Some(previous) = rows.get(1).filter(|row| row.version == version - 1) {
+                        change.change_kind = PageChangeKind::Revised;
+                        change.changed_sentences = Some(crate::authorship::changed_sentence_count(
+                            &previous.content,
+                            &current.content,
+                        ));
+                    }
+                }
+            }
+        }
         Ok(changes)
     }
 
@@ -516,7 +749,7 @@ impl MemoryDB {
         offset: i64,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.list_pages_scoped_inner(status, limit, offset, scope, true)
+        self.list_pages_scoped_inner(status, limit, offset, scope, PageReader::Internal)
             .await
     }
 
@@ -532,7 +765,18 @@ impl MemoryDB {
         offset: i64,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
-        self.list_pages_scoped_inner(status, limit, offset, scope, false)
+        self.list_pages_scoped_inner(status, limit, offset, scope, PageReader::Browse)
+            .await
+    }
+
+    pub async fn list_shared_pages_scoped(
+        &self,
+        status: &str,
+        limit: i64,
+        offset: i64,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        self.list_pages_scoped_inner(status, limit, offset, scope, PageReader::Shared)
             .await
     }
 
@@ -542,10 +786,10 @@ impl MemoryDB {
         limit: i64,
         offset: i64,
         scope: &ReadScope,
-        fence_entity: bool,
+        reader: PageReader,
     ) -> Result<Vec<Page>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
-            return if fence_entity {
+        if matches!(scope, ReadScope::Global) && reader != PageReader::Shared {
+            return if reader == PageReader::Internal {
                 self.list_pages(status, limit, offset).await
             } else {
                 self.list_pages_browse(status, limit, offset).await
@@ -572,10 +816,10 @@ impl MemoryDB {
         // entity row as before. Both land in SQL before `LIMIT`, so a burst
         // of fresh detected entities can never crowd real pages out of a
         // bounded window.
-        let fence_sql = if fence_entity {
-            " AND COALESCE(c.kind, 'concept') != 'entity'".to_string()
-        } else {
-            super::entity_row_browse_fence("c.")
+        let fence_sql = match reader {
+            PageReader::Internal => " AND COALESCE(c.kind, 'concept') != 'entity'".to_string(),
+            PageReader::Browse => super::entity_row_browse_fence("c."),
+            PageReader::Shared => format!(" AND {}", shared_page_predicate("c.")),
         };
         let (sql, params) = match scope {
             ReadScope::Space(workspace) => (
@@ -603,7 +847,17 @@ impl MemoryDB {
                     libsql::Value::Integer(offset),
                 ],
             ),
-            ReadScope::Global => unreachable!(),
+            ReadScope::Global => (
+                format!(
+                    "SELECT {select} FROM pages c WHERE c.status = ?1{fence_sql}
+                     ORDER BY c.last_modified DESC LIMIT ?2 OFFSET ?3"
+                ),
+                vec![
+                    libsql::Value::Text(status.to_string()),
+                    libsql::Value::Integer(limit),
+                    libsql::Value::Integer(offset),
+                ],
+            ),
         };
         let conn = self.conn.lock().await;
         let mut rows = conn
@@ -762,7 +1016,8 @@ impl MemoryDB {
         id: &str,
         scope: &ReadScope,
     ) -> Result<Option<Page>, WenlanError> {
-        self.get_page_scoped_inner(id, scope, true).await
+        self.get_page_scoped_inner(id, scope, PageReader::Internal)
+            .await
     }
 
     /// Browse-facing twin of `get_page_scoped`: backs `GET /api/pages/{id}` and
@@ -774,17 +1029,206 @@ impl MemoryDB {
         id: &str,
         scope: &ReadScope,
     ) -> Result<Option<Page>, WenlanError> {
-        self.get_page_scoped_inner(id, scope, false).await
+        self.get_page_scoped_inner(id, scope, PageReader::Browse)
+            .await
+    }
+
+    /// Eligibility for the Space's shared folder, including archive delivery
+    /// for pages verified as shared when the host permanently deleted them.
+    pub async fn shared_folder_pages(
+        &self,
+        space: &str,
+    ) -> Result<crate::team::SharedFolderPages, WenlanError> {
+        let shared = shared_page_predicate("p.");
+        let id_start = SHARED_PAGE_DELETION_PREFIX.len() + 1;
+        let sql = format!(
+            "SELECT p.id, p.title, 0 FROM pages p WHERE p.workspace = ?1 AND {shared}
+             UNION ALL
+             SELECT substr(m.key, {id_start}), '', 1
+               FROM app_metadata m JOIN spaces s ON s.id = m.value
+              WHERE s.name = ?1 AND m.key GLOB '{SHARED_PAGE_DELETION_PREFIX}*'
+                AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = substr(m.key, {id_start}))"
+        );
+        let error = |e| WenlanError::VectorDb(format!("shared folder pages: {e}"));
+        let conn = self.conn.lock().await;
+        let mut rows = conn.query(&sql, [space]).await.map_err(error)?;
+        let mut pages = crate::team::SharedFolderPages::default();
+        while let Some(row) = rows.next().await.map_err(error)? {
+            let id = row.get(0).map_err(error)?;
+            if row.get::<i64>(2).map_err(error)? == 1 {
+                pages.deleted.insert(id);
+            } else {
+                pages.shared.insert(id, row.get(1).map_err(error)?);
+            }
+        }
+        Ok(pages)
+    }
+
+    pub(super) async fn record_shared_page_deletion_on(
+        conn: &libsql::Connection,
+        id: &str,
+    ) -> Result<(), WenlanError> {
+        let key = format!("{SHARED_PAGE_DELETION_PREFIX}{id}");
+        let error = |e| WenlanError::VectorDb(format!("shared page deletion: {e}"));
+        // The ID may have been reused. Only its current generation's eligibility
+        // can authorize an archive after the page row is gone.
+        conn.execute("DELETE FROM app_metadata WHERE key = ?1", [key.as_str()])
+            .await
+            .map_err(error)?;
+        let shared = shared_page_predicate("p.");
+        conn.execute(
+            &format!(
+                "INSERT INTO app_metadata(key, value)
+                 SELECT ?2, s.id FROM pages p
+                   JOIN spaces s ON s.name = p.workspace
+                   JOIN app_metadata h ON h.key = 'shared_space.held:' || s.name
+                  WHERE p.id = ?1 AND {shared}
+                    AND EXISTS (
+                        SELECT 1 FROM json_each(CASE WHEN json_valid(h.value) THEN h.value ELSE '{{}}' END)
+                         WHERE key = p.id
+                    )"
+            ),
+            libsql::params![id, key],
+        )
+        .await
+        .map_err(error)?;
+        Ok(())
+    }
+
+    pub async fn get_shared_page_scoped(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+    ) -> Result<Option<Page>, WenlanError> {
+        self.get_page_scoped_inner(id, scope, PageReader::Shared)
+            .await
+    }
+
+    /// History text the Space could read. A saved export records the stable Space
+    /// and page incarnation at the time that version was active or archived.
+    /// A current page also proves its own body. Older snapshots without either
+    /// witness may date from a draft or another Space.
+    pub(crate) async fn list_shared_page_history(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+        limit: i64,
+    ) -> Result<Vec<super::PageHistoryEntry>, WenlanError> {
+        let ReadScope::Space(space) = scope else {
+            return Ok(Vec::new());
+        };
+        let conn = self.conn.lock().await;
+        let shared = shared_page_predicate("p.");
+        let error = |e| WenlanError::VectorDb(format!("shared page history: {e}"));
+        let mut page = conn
+            .query(
+                &format!(
+                    "SELECT p.incarnation, s.id, p.version, p.content, p.citations
+                       FROM pages p JOIN spaces s ON s.name=p.workspace
+                      WHERE p.id=?1 AND p.workspace=?2 AND {shared}"
+                ),
+                libsql::params![id, space.as_str()],
+            )
+            .await
+            .map_err(error)?;
+        let Some(row) = page.next().await.map_err(error)? else {
+            return Ok(Vec::new());
+        };
+        let incarnation = row.get::<String>(0).map_err(error)?;
+        let space_id = row.get::<String>(1).map_err(error)?;
+        let version = row.get::<i64>(2).map_err(error)?;
+        let content = row.get::<String>(3).map_err(error)?;
+        let citations = row.get::<Option<String>>(4).map_err(error)?;
+        drop(page);
+        let prefix = super::page_export::bundle_prefix(id, &incarnation);
+        let mut rows = conn
+            .query(
+                "WITH saved AS (
+                SELECT json_extract(value, '$.version') AS version,
+                       json_extract(value, '$.title') AS title,
+                       json_extract(value, '$.content') AS content,
+                       json_extract(value, '$.citations') AS citations
+                FROM app_metadata WHERE key GLOB ?2 AND json_valid(value)
+                  AND json_extract(value, '$.kind') = 'saved'
+                  AND json_extract(value, '$.space_id') = ?3
+             )
+             SELECT h.version, h.title, h.content, h.edited_by, h.created_at,
+                    CASE WHEN h.version=?4 THEN ?7 ELSE (
+                        SELECT citations FROM saved WHERE version=h.version AND title=h.title AND content=h.content
+                        ORDER BY citations IS NULL LIMIT 1
+                    ) END
+               FROM page_history h
+              WHERE h.page_id=?1 AND h.version >= COALESCE((
+                  SELECT MAX(m.version) FROM page_history m
+                   WHERE m.page_id=?1 AND m.edited_by='space_move'
+              ), 1)
+              AND (EXISTS (SELECT 1 FROM saved WHERE version=h.version AND title=h.title AND content=h.content)
+                   OR (h.version=?4 AND h.content=?5))
+              ORDER BY h.version DESC LIMIT ?6",
+                libsql::params![
+                    id,
+                    format!("{prefix}*"),
+                    space_id,
+                    version,
+                    content,
+                    limit,
+                    citations
+                ],
+            )
+            .await
+            .map_err(error)?;
+        let mut history = Vec::new();
+        while let Some(row) = rows.next().await.map_err(error)? {
+            let content = row.get::<String>(2).map_err(error)?;
+            let citations = row
+                .get::<Option<String>>(5)
+                .map_err(error)?
+                .and_then(|json| {
+                    serde_json::from_str::<Vec<wenlan_types::pages::PageCitation>>(&json).ok()
+                })
+                .unwrap_or_default();
+            history.push(super::PageHistoryEntry {
+                version: row.get(0).map_err(error)?,
+                title: row.get(1).map_err(error)?,
+                content: crate::member_view::published_body(&content, &citations),
+                source_memory_ids: Vec::new(),
+                edited_by: row.get(3).map_err(error)?,
+                created_at: row.get(4).map_err(error)?,
+            });
+        }
+        Ok(history)
+    }
+
+    /// A shared basis reference can name the current row or a version this
+    /// Space witnessed after the note most recently entered it.
+    pub async fn member_can_read_page_version(
+        &self,
+        id: &str,
+        scope: &ReadScope,
+        version: i64,
+    ) -> Result<bool, WenlanError> {
+        if self
+            .get_shared_page_scoped(id, scope)
+            .await?
+            .is_some_and(|page| page.version == version)
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .list_shared_page_history(id, scope, 200)
+            .await?
+            .iter()
+            .any(|row| row.version == version))
     }
 
     async fn get_page_scoped_inner(
         &self,
         id: &str,
         scope: &ReadScope,
-        fence_entity: bool,
+        reader: PageReader,
     ) -> Result<Option<Page>, WenlanError> {
-        if matches!(scope, ReadScope::Global) {
-            return if fence_entity {
+        if matches!(scope, ReadScope::Global) && reader != PageReader::Shared {
+            return if reader == PageReader::Internal {
                 self.get_page(id).await
             } else {
                 self.get_page_browse(id).await
@@ -809,10 +1253,10 @@ impl MemoryDB {
         // twins as before; column 22 carries the review lock so list_pages and
         // read_page can report it.
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
-        let fence_sql = if fence_entity {
-            " AND COALESCE(c.kind, 'concept') != 'entity'"
-        } else {
-            ""
+        let fence_sql = match reader {
+            PageReader::Internal => " AND COALESCE(c.kind, 'concept') != 'entity'".to_string(),
+            PageReader::Browse => String::new(),
+            PageReader::Shared => format!(" AND {}", shared_page_predicate("c.")),
         };
         let sql = format!("SELECT {select} FROM pages c WHERE c.id = ?1{fence_sql}{scope_sql}");
         let mut params = vec![libsql::Value::Text(id.to_string())];
@@ -831,7 +1275,11 @@ impl MemoryDB {
         {
             Some(row) => {
                 let mut page = Self::row_to_page(&row)?;
-                super::citation_provenance::apply_on(&conn, &mut page).await?;
+                // Hosted readers don't disclose source evidence. Resolving
+                // each locator here would still touch the host's memories.
+                if reader != PageReader::Shared {
+                    super::citation_provenance::apply_on(&conn, &mut page).await?;
+                }
                 Ok(Some(page))
             }
             None => Ok(None),
@@ -1118,6 +1566,27 @@ impl MemoryDB {
         limit: usize,
         scope: &ReadScope,
     ) -> Result<Vec<Page>, WenlanError> {
+        self.pages_containing_text_inner(query, limit, scope, true)
+            .await
+    }
+
+    pub async fn shared_pages_containing_text(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        self.pages_containing_text_inner(query, limit, scope, false)
+            .await
+    }
+
+    async fn pages_containing_text_inner(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &ReadScope,
+        include_entities: bool,
+    ) -> Result<Vec<Page>, WenlanError> {
         let words: Vec<String> = query
             .split_whitespace()
             .map(str::to_lowercase)
@@ -1138,10 +1607,12 @@ impl MemoryDB {
              COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
              NULL, COALESCE(c.review_required, 0)"
         );
-        let mut conditions = vec![
-            "c.status = 'active'".to_string(),
-            super::entity_row_browse_predicate("c."),
-        ];
+        let entity_fence = if include_entities {
+            super::entity_row_browse_predicate("c.")
+        } else {
+            shared_page_predicate("c.")
+        };
+        let mut conditions = vec!["c.status = 'active'".to_string(), entity_fence];
         let mut values = Vec::new();
         for word in &words {
             conditions.push(

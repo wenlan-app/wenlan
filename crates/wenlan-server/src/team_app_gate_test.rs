@@ -67,31 +67,40 @@ async fn stand_in(log: Log, req: Request) -> Response {
             "status": "ok", "db_initialized": true, "version": "1.0.0",
             "data_root": "/Users/server/.wenlan", "data_root_identity": "dev-1",
         }),
-        ("GET", "/api/spaces") => json!([
-            {"id": "1", "name": "Alpha"}, {"id": "2", "name": "Beta"}, {"id": "3", "name": "Private"},
-        ]),
+        ("GET", "/api/spaces") => {
+            let spaces = [("1", "Alpha"), ("2", "Beta"), ("3", "Private")];
+            json!(spaces
+                .into_iter()
+                .filter(|(_, name)| pinned.as_deref() == Some(*name))
+                .map(|(id, name)| json!({"id": id, "name": name}))
+                .collect::<Vec<_>>())
+        }
         ("GET", "/api/pages") | ("POST", "/api/pages/search") => json!({
             "pages": [
-                {"id": "a1", "space": pinned, "storage_path": "/srv/pages/a1.md",
-                 "nested": {"device_id": "dev-1", "title": "kept"}},
+                {"id": "a1", "space": pinned, "title": "Alpha one"},
                 // A row of another Space, as a daemon bug could return.
                 {"id": "b9", "space": "Beta", "title": "Beta secret"},
             ],
         }),
-        ("GET", "/api/memory/graph") => json!({
-            "entities": [{"id": "e1", "name": "Beta secret"}],
-            "relations": [], "memories": [], "memory_links": [],
-            "pages": [
-                {"id": "a1", "title": "Alpha one", "space": "Alpha", "storage_path": "/srv/a1.md", "entity_id": "e1"},
-                {"id": "a2", "title": "Alpha two", "space": "Alpha", "entity_id": null},
-                {"id": "b1", "title": "Beta secret", "space": "Beta", "entity_id": "e1"},
-            ],
-            "page_links": [
-                {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}},
-                {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "b1", "title": "Beta secret"}},
-                {"from": {"kind": "page", "id": "a2"}, "to": {"kind": "entity", "id": "e1"}},
-            ],
-        }),
+        ("GET", "/api/memory/graph") => {
+            let page = |id, title, space| {
+                json!({
+                    "id": id, "title": title, "space": space, "entity_id": "e1",
+                    "creation_kind": "authored", "last_modified": "2026-01-01T00:00:00Z",
+                    "storage_path": "/srv/a1.md", "local_note": "round4-private-graph-note"
+                })
+            };
+            json!({
+                "entities": [{"id": "e1", "name": "Beta secret"}],
+                "relations": [], "memories": [], "memory_links": [],
+                "pages": [page("a1", "Alpha one", "Alpha"), page("a2", "Alpha two", "Alpha"), page("b1", "Beta secret", "Beta")],
+                "page_links": [
+                    {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2", "filename": "round4-private-graph-note"}, "link_type": "wikilink"},
+                    {"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "b1", "title": "Beta secret"}, "link_type": "wikilink"},
+                    {"from": {"kind": "page", "id": "a2"}, "to": {"kind": "entity", "id": "e1"}, "link_type": "about"},
+                ],
+            })
+        }
         ("GET", "/api/knowledge/folders") => {
             let space = pinned.clone().unwrap_or_default();
             json!({"folders": [
@@ -114,18 +123,12 @@ async fn stand_in(log: Log, req: Request) -> Response {
             let id = path.trim_start_matches("/api/pages/");
             match space_of(id) {
                 Some(space) if pinned.is_none() || pinned.as_deref() == Some(space) => {
-                    if id == "acode" {
-                        json!({"page": {"id": id, "space": space, "code_basis": [
-                            {"repo_root": "/Users/server/src/repo", "file": "src/a.rs", "state": "ok"},
-                        ]}})
-                    } else {
-                        json!({"page": {"id": id, "space": space, "storage_path": "/srv/x.md"}})
-                    }
+                    json!({"page": {"id": id, "space": space}})
                 }
                 _ => return StatusCode::NOT_FOUND.into_response(),
             }
         }
-        _ => json!({"ok": true, "space": pinned, "source_path": "/srv/file.txt"}),
+        _ => json!({"ok": true, "space": pinned}),
     };
     Json(answer).into_response()
 }
@@ -155,10 +158,6 @@ async fn fixture() -> Fixture {
         let log = log.clone();
         move |req: Request| stand_in(log.clone(), req)
     });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move { axum::serve(listener, daemon.into_make_service()).await });
-
     let dir = tempfile::tempdir().unwrap();
     let team_path = dir.path().join(team::TEAM_FILE);
     let settings_path = dir.path().join(shared_space::SETTINGS_FILE);
@@ -196,7 +195,9 @@ async fn fixture() -> Fixture {
         state: TeamState {
             team_path,
             settings_path,
-            daemon_url: format!("http://127.0.0.1:{port}"),
+            db: None,
+            daemon_url: "http://127.0.0.1:1".into(),
+            in_process_daemon: Some(crate::router::AppRouter::from_test_router(daemon)),
             mcp: Arc::default(),
             sessions: Arc::default(),
             auth: Arc::default(),
@@ -1109,7 +1110,7 @@ async fn the_graph_shows_only_the_members_pages_and_their_links() {
     assert_eq!(ids, ["a1", "a2"]);
     assert_eq!(
         answer["page_links"],
-        json!([{"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}}])
+        json!([{"from": {"kind": "page", "id": "a1"}, "to": {"kind": "page", "id": "a2"}, "link_type": "wikilink"}])
     );
     for key in ["entities", "relations", "memories", "memory_links"] {
         assert_eq!(answer[key], json!([]), "{key}");
@@ -1120,7 +1121,10 @@ async fn the_graph_shows_only_the_members_pages_and_their_links() {
     }
     let text = answer.to_string();
     assert!(
-        !text.contains("b1") && !text.contains("Beta") && !text.contains("/srv/"),
+        !text.contains("b1")
+            && !text.contains("Beta")
+            && !text.contains("/srv/")
+            && !text.contains("round4-private-graph-note"),
         "{text}"
     );
     assert_eq!(
@@ -1246,7 +1250,7 @@ async fn answers_keep_only_the_members_spaces() {
     .await;
     assert_eq!(
         pages,
-        json!({"pages": [{"id": "a1", "space": "Alpha", "nested": {"title": "kept"}}]})
+        json!({"pages": [{"id": "a1", "space": "Alpha", "title": "Alpha one"}]})
     );
 }
 
@@ -1539,26 +1543,6 @@ fn bounded_numbers() {
     assert_eq!(bounded("status", "active").as_deref(), Some("active"));
 }
 
-/// Where a note's code lives on the server's disk is not a member's.
-#[tokio::test]
-async fn a_code_basis_repo_root_is_not_sent_to_a_member() {
-    let f = fixture().await;
-    let (status, page) = call(
-        &f.state,
-        "GET",
-        &format!("{PREFIX}/api/pages/acode"),
-        &f.alpha_reader.1,
-        None,
-        &[],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let basis = &page["page"]["code_basis"][0];
-    assert_eq!(basis["file"], json!("src/a.rs"));
-    assert!(basis.get("repo_root").is_none(), "{page}");
-    assert!(!page.to_string().contains("/Users/server"), "{page}");
-}
-
 /// Every route the daemon's router binds (the handler manifest, not only
 /// the page readers) is closed to a member unless it is a row, whatever its
 /// method: a route added later is closed until someone writes its row.
@@ -1622,17 +1606,18 @@ async fn every_bound_daemon_route_without_a_row_is_not_found() {
 /// still loses every other private key.
 #[test]
 fn a_folder_answer_keeps_only_the_folder_path() {
-    let mut list = json!({"folders": [
+    let list = json!({"folders": [
         {"path": "Alpha/Q3", "parent_path": "Alpha", "name": "Q3", "absolute_path": "/srv/pages/a/Q3"},
     ], "knowledge_path": "/srv/pages", "truncated": false});
-    strip_private_keeping_folder_paths(&mut list);
     assert_eq!(
-        list,
+        project_answer::<KnowledgeFoldersResponse>(list),
         json!({"folders": [{"path": "Alpha/Q3", "parent_path": "Alpha", "name": "Q3"}], "truncated": false})
     );
-    let mut made = json!({"path": "Alpha/Q3", "nested": {"path": "/srv/pages/a/Q3"}});
-    strip_private_keeping_folder_paths(&mut made);
-    assert_eq!(made, json!({"path": "Alpha/Q3", "nested": {}}));
+    let made = json!({"path": "Alpha/Q3", "nested": {"path": "/srv/pages/a/Q3"}});
+    assert_eq!(
+        project_answer::<CreateKnowledgeFolderResponse>(made),
+        json!({"path": "Alpha/Q3"})
+    );
 }
 
 /// End to end: the real gate in front of a real daemon with real files. A
@@ -1724,7 +1709,9 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
     let state = TeamState {
         team_path,
         settings_path,
+        db: None,
         daemon_url: format!("http://127.0.0.1:{port}"),
+        in_process_daemon: None,
         mcp: Arc::default(),
         sessions: Arc::default(),
         auth: Arc::default(),
@@ -1805,7 +1792,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{answer}");
-    assert_eq!(answer["pages"][0]["space_path"], format!("{SPACE}/{file}"));
+    assert_eq!(answer["pages"][0]["space_path"], format!("{SPACE}/{id}.md"));
     assert!(answer["pages"][0].get("storage_path").is_none());
     no_server_path(&answer);
 
@@ -1815,7 +1802,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
         &format!("{PREFIX}/api/pages/{id}/move"),
         &writer,
         Some(json!({
-            "expected_storage_path": format!("{SPACE}/{file}"),
+            "expected_storage_path": format!("{SPACE}/{id}.md"),
             "folder_path": format!("{SPACE}/Q3"),
             "operation_id": "00000000-0000-4000-8000-00000000e2e2",
         })),
@@ -1823,7 +1810,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{answer}");
-    assert_eq!(answer["space_path"], format!("{SPACE}/Q3/{file}"));
+    assert_eq!(answer["space_path"], format!("{SPACE}/Q3/{id}.md"));
     no_server_path(&answer);
     assert!(root.join(FOLDER).join("Q3").join(&file).is_file());
 
@@ -1834,7 +1821,7 @@ async fn a_member_uses_folders_through_the_gate_and_a_real_daemon() {
         &format!("{PREFIX}/api/pages/{id}/move"),
         &writer,
         Some(json!({
-            "expected_storage_path": format!("{SPACE}/Q3/{file}"),
+            "expected_storage_path": format!("{SPACE}/Q3/{id}.md"),
             "folder_path": "Private/Secret plans",
             "operation_id": "00000000-0000-4000-8000-00000000e2e3",
         })),

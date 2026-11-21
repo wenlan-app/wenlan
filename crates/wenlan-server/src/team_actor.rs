@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Who is acting when the team listener forwards a team member's browser
+//! Who is acting when the team listener forwards a member's browser or MCP
 //! call to this daemon over loopback.
 //!
-//! The team listener's gate (`team_app_gate`) sets these headers itself,
-//! from the member its key authenticated, on a call it builds anew, so no
-//! header the browser sent reaches this daemon. They are believed only next to this process's own secret,
-//! which never leaves the process, so no other local program and no
-//! browser can name a member. Without them every handler behaves as it
-//! always has for the person at this computer.
+//! Both transports attach the shared credential only to daemon requests
+//! they build after authenticating a Space grant. The browser gate also
+//! forwards the acting member for edits made in person. These requests
+//! carry only headers set by the forwarding code. Calls from the person
+//! at this computer have no forwarding credential.
 
 use std::sync::LazyLock;
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, MatchedPath, Request, State};
 use axum::http::request::Parts;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use wenlan_core::db::MemberPageTarget;
+use wenlan_core::read_scope::ReadScope;
 use wenlan_core::shared_space::version::{Author, AuthorKind};
 
 /// The secret the gate proves it is this process with.
@@ -24,6 +27,9 @@ pub(crate) const MEMBER_HEADER: &str = "x-wenlan-team-member";
 pub(crate) const MEMBER_NAME_HEADER: &str = "x-wenlan-team-member-name";
 /// What is acting: only `person` is accepted.
 pub(crate) const KIND_HEADER: &str = "x-wenlan-team-member-kind";
+/// Internal Space lookup for a draft mutation. The browser gate constructs
+/// this header itself and forwards no caller-supplied headers.
+pub(crate) const DRAFT_SPACE_LOOKUP_HEADER: &str = "x-wenlan-draft-space-lookup";
 
 static SECRET: LazyLock<String> = LazyLock::new(|| {
     format!(
@@ -36,6 +42,20 @@ static SECRET: LazyLock<String> = LazyLock::new(|| {
 /// This process's secret, for the gate's forwarded calls only.
 pub(crate) fn secret() -> &'static str {
     SECRET.as_str()
+}
+
+/// A dedicated loopback client for the hosted MCP service. Redirects and
+/// proxies must not carry the forwarding credential outside this daemon.
+pub(crate) fn mcp_client() -> reqwest::Result<reqwest::Client> {
+    let mut credential = HeaderValue::from_static(secret());
+    credential.set_sensitive(true);
+    let mut headers = HeaderMap::new();
+    headers.insert(SECRET_HEADER, credential);
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
 }
 
 /// A team member acting in person, through the team server.
@@ -69,10 +89,130 @@ fn same(a: &[u8], b: &[u8]) -> bool {
         == 0
 }
 
+/// A hosted Space grant covers shared material. Private memory reads belong
+/// to the local library. Explicitly published memories can get their own
+/// reader here when team memory sharing is introduced.
+pub(crate) fn can_read_private_memories(headers: &HeaderMap) -> bool {
+    !headers
+        .get(SECRET_HEADER)
+        .is_some_and(|given| same(given.as_bytes(), secret().as_bytes()))
+}
+
+pub(crate) fn required_space(pinned: Option<&str>) -> Result<&str, crate::error::ServerError> {
+    pinned.ok_or_else(|| crate::error::ServerError::NotFound("Space not found".into()))
+}
+
+/// Daemon calls used by hosted MCP in addition to the browser catalog.
+pub(crate) const MCP_CALLS: &[(&str, &str)] = &[
+    ("POST", "/api/memory/search"),
+    ("POST", "/api/brief"),
+    ("GET", "/api/skills/rules"),
+    ("POST", "/api/skills/record"),
+    ("POST", "/api/pages"),
+    ("POST", "/api/pages/{id}/rename"),
+    ("PUT", "/api/pages/{id}"),
+    ("DELETE", "/api/pages/{id}"),
+];
+
+/// Check the route template before exposing any row or entering a mutation.
+pub(crate) async fn guard_private_memory(
+    State(state): State<crate::state::SharedState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !req.headers().contains_key(SECRET_HEADER) {
+        return next.run(req).await;
+    }
+    if can_read_private_memories(req.headers()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or("");
+    let method = req.method().as_str();
+    if !crate::team_routes::is_member_app_call(req.method(), route)
+        && !MCP_CALLS.contains(&(method, route))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"error": "This route is unavailable to team members."})),
+        )
+            .into_response();
+    }
+    let draft_route = route.starts_with("/api/pages/drafts/");
+    let refused = || {
+        if draft_route {
+            crate::page_routes::draft_not_found().into_response()
+        } else {
+            crate::error::ServerError::NotFound("page not found".into()).into_response()
+        }
+    };
+    let member = from_headers(req.headers());
+    let pinned = req
+        .headers()
+        .get(crate::space_header::HEADER_NAME)
+        .or_else(|| req.headers().get(crate::space_header::HEADER_NAME_LEGACY))
+        .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
+        .map(str::trim)
+        .filter(|space| !space.is_empty());
+    // The browser can discover the Space for one opaque ID. The route's
+    // unpinned response to that lookup has only the ID and Space name.
+    if pinned.is_none()
+        && !matches!((method, route), ("GET", "/api/health"))
+        && !(method == "GET" && route == "/api/pages/{id}" && member.is_some())
+    {
+        return refused();
+    }
+    if req.method() != Method::GET {
+        let ids: Vec<_> = route
+            .split('/')
+            .zip(req.uri().path().split('/'))
+            .filter_map(|(segment, id)| matches!(segment, "{id}" | "{basis_id}").then_some(id))
+            .collect();
+        if !ids.is_empty() {
+            let Some(pinned) = pinned else {
+                return refused();
+            };
+            let target = if draft_route {
+                let Some(member) = member.as_ref() else {
+                    return refused();
+                };
+                if req.method() == Method::PUT {
+                    MemberPageTarget::OwnedDraft(&member.id)
+                } else {
+                    MemberPageTarget::PublishedOrOwnedDraft(&member.id)
+                }
+            } else {
+                MemberPageTarget::Published
+            };
+            let Some(db) = state.read().await.db.clone() else {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            };
+            let scope = ReadScope::Space(pinned.to_owned());
+            for id in ids {
+                match db.member_can_access_page(id, &scope, target).await {
+                    Ok(true) => {}
+                    Ok(false) => return refused(),
+                    Err(error) => {
+                        tracing::warn!("member page authorization failed: {error}");
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                }
+            }
+        }
+    }
+    let response = next.run(req).await;
+    if response.status().is_server_error() {
+        return response.status().into_response();
+    }
+    response
+}
+
 /// The member these headers name, when they carry this process's secret.
 pub(crate) fn from_headers(headers: &HeaderMap) -> Option<ActingMember> {
-    let given = headers.get(SECRET_HEADER)?;
-    if !same(given.as_bytes(), secret().as_bytes()) {
+    if can_read_private_memories(headers) {
         return None;
     }
     if headers.get(KIND_HEADER)?.to_str().ok()? != "person" {
@@ -109,14 +249,9 @@ where
     }
 }
 
-/// Whether a page or draft filed under `page_space` may be changed by a
-/// member call pinned to `pinned`: only in the Space the gate checked.
-pub(crate) fn in_pinned_space(page_space: Option<&str>, pinned: Option<&str>) -> bool {
-    match (page_space.map(str::trim), pinned.map(str::trim)) {
-        (Some(page), Some(pinned)) => !page.is_empty() && page == pinned,
-        _ => false,
-    }
-}
+#[cfg(test)]
+#[path = "team_memory_privacy_test.rs"]
+mod memory_privacy_tests;
 
 #[cfg(test)]
 mod tests {
@@ -151,13 +286,5 @@ mod tests {
         let mut map = headers(secret(), "person", "m-wang");
         map.insert(MEMBER_NAME_HEADER, HeaderValue::from_str("王小明").unwrap());
         assert_eq!(from_headers(&map).unwrap().name, "王小明");
-    }
-
-    #[test]
-    fn a_member_changes_only_the_pinned_space() {
-        assert!(in_pinned_space(Some("Alpha"), Some("Alpha")));
-        assert!(!in_pinned_space(Some("Beta"), Some("Alpha")));
-        assert!(!in_pinned_space(None, Some("Alpha")));
-        assert!(!in_pinned_space(Some("Alpha"), None));
     }
 }

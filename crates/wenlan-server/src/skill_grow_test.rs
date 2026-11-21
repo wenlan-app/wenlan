@@ -393,6 +393,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
     )
     .await
     .unwrap()
+    .into_test_json()
     .0;
     assert_eq!(response.space_id, research.id);
     assert_eq!(response.lines.len(), 1);
@@ -567,6 +568,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
     )
     .await
     .unwrap()
+    .into_test_json()
     .0
     .lines
     .is_empty());
@@ -595,6 +597,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
     )
     .await
     .unwrap()
+    .into_test_json()
     .0
     .lines
     .is_empty());
@@ -672,6 +675,7 @@ async fn suggests_then_person_accepts_and_reads_one_space_scoped_rules_page() {
     )
     .await
     .unwrap()
+    .into_test_json()
     .0;
     assert!(off_response.lines.is_empty());
     assert_eq!(
@@ -1219,6 +1223,7 @@ async fn ux_skill_5_general_rules_are_read_in_every_space_and_with_no_space() {
             )
             .await
             .unwrap()
+            .into_test_json()
             .0
         }
     };
@@ -1531,6 +1536,7 @@ async fn ux_skill_9_a_teammates_page_never_gives_this_person_a_general_rule() {
             )
             .await
             .unwrap()
+            .into_test_json()
             .0
         }
     };
@@ -1627,6 +1633,7 @@ async fn read_rules_as_codex(scratch: &Scratch, space: Option<&str>) -> SpaceRul
     )
     .await
     .unwrap()
+    .into_test_json()
     .0
 }
 
@@ -1636,6 +1643,244 @@ fn texts(response: &SpaceRulesResponse) -> Vec<&str> {
         .iter()
         .map(|line| line.text.as_str())
         .collect()
+}
+
+fn approve_project_master(scratch: &Scratch, space: &str, versions: &[&str]) {
+    use wenlan_core::{rulesync_team, shared_space, team};
+    let settings = shared_space::settings_path();
+    let folder = team::new_hosted_folder(&settings);
+    let team_path = scratch.data.join(team::TEAM_FILE);
+    team::owner_key(&team_path, "Owner").unwrap();
+    std::fs::write(
+        scratch.data.join("repo-wiki.json"),
+        serde_json::to_vec(&serde_json::json!({"bindings": [{
+            "space": space,
+            "repo_root": scratch.pages,
+            "folder": "wiki",
+            "remote_url": "https://github.com/fixture/design",
+        }]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let scope = shared_space::Scope::Space(space.into());
+    shared_space::join_at(&settings, &scope, &folder, "Owner").unwrap();
+    shared_space::update_share(&settings, &scope, |share| share.hosted = true).unwrap();
+    for markdown in versions {
+        let proposal = rulesync_team::update_hosted_rules(&settings, space, markdown).unwrap();
+        rulesync_team::decide_local_space_proposal(&settings, space, &proposal, true).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn round4_hosted_rules_reads_and_reports_use_the_approved_master() {
+    const OLD: &str = "ROUND4 superseded instruction";
+    const APPROVED: &str = "Use the reviewed agenda";
+    const REMOVED: &str = "Retain the draft notes";
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    write_page_in_folder(
+        &scratch,
+        11,
+        Some("Project"),
+        "Rules",
+        "Folder rules",
+        &format!("- {OLD}"),
+        "publish",
+    )
+    .await;
+    let local = read_rules_as_codex(&scratch, Some("Project")).await;
+    let obsolete_folder_id = local
+        .lines
+        .iter()
+        .find(|line| line.text == OLD)
+        .unwrap()
+        .id
+        .clone();
+    let replacement = format!("- {APPROVED}\n- {REMOVED}\n");
+    approve_project_master(&scratch, "Project", &[OLD, &replacement]);
+    let mut headers = caller(Some("codex@team.reader"), Some("Project"));
+    headers.insert(
+        crate::team_actor::SECRET_HEADER,
+        HeaderValue::from_static(crate::team_actor::secret()),
+    );
+    let read = || async {
+        handle_read_rules(
+            axum::extract::State(scratch.shared.clone()),
+            headers.clone(),
+            Query(RulesQuery { space: None }),
+        )
+        .await
+        .unwrap()
+        .into_test_json()
+        .0
+    };
+    let report = |rule_id: String| {
+        handle_self_report(
+            axum::extract::State(scratch.shared.clone()),
+            headers.clone(),
+            Json(SkillReportRequest {
+                space: "Project".into(),
+                rule_id,
+                report: wenlan_types::SkillReportKind::ChangedPlan,
+            }),
+        )
+    };
+    let before_removal = read().await;
+    let removed_id = before_removal
+        .lines
+        .iter()
+        .find(|line| line.text == REMOVED)
+        .unwrap()
+        .id
+        .clone();
+    assert!(report(removed_id.clone()).await.is_ok());
+    scratch
+        .db
+        .set_app_metadata(
+            &format!("rulesync.project.edits:{}", project.id),
+            &serde_json::json!({"removed": [REMOVED], "added": {}}).to_string(),
+        )
+        .await
+        .unwrap();
+
+    let hosted = read().await;
+    let obsolete = axum::response::IntoResponse::into_response(report(obsolete_folder_id).await);
+    let removed = axum::response::IntoResponse::into_response(report(removed_id).await);
+    assert_eq!(
+        (texts(&hosted), obsolete.status(), removed.status()),
+        (
+            vec![APPROVED],
+            axum::http::StatusCode::NOT_FOUND,
+            axum::http::StatusCode::NOT_FOUND
+        )
+    );
+    assert!(report(hosted.lines[0].id.clone()).await.is_ok());
+}
+
+#[tokio::test]
+async fn hosted_rules_exclude_personal_rules_pages() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let project = scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    for (n, title, rule) in [
+        (1, "Team conventions", "Check the shared agenda"),
+        (2, "How I work", "Private working preference"),
+    ] {
+        let id = write_page_in_folder(
+            &scratch,
+            n,
+            Some("Project"),
+            "Rules",
+            title,
+            &format!("- {rule}\n"),
+            "publish",
+        )
+        .await;
+        if n == 2 {
+            let state = serde_json::from_value(serde_json::json!({
+                "space_id": project.id,
+                "space_name": "Project",
+                "status": "accepted",
+                "rules_page_id": id,
+            }))
+            .unwrap();
+            scratch.db.set_space_rules_state(&state).await.unwrap();
+        }
+    }
+    save_rule(
+        &scratch,
+        &caller(Some("codex"), Some("Project")),
+        save_request("Private saved rule", false),
+    )
+    .await
+    .unwrap();
+    let local = read_rules_as_codex(&scratch, Some("Project")).await;
+    assert!(texts(&local).contains(&"Private working preference"));
+    assert!(texts(&local).contains(&"Private saved rule"));
+    approve_project_master(&scratch, "Project", &["Check the shared agenda"]);
+    let mut headers = caller(Some("codex@team.reader"), Some("Project"));
+    headers.insert(
+        crate::team_actor::SECRET_HEADER,
+        HeaderValue::from_static(crate::team_actor::secret()),
+    );
+    let hosted = handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        headers.clone(),
+        Query(RulesQuery { space: None }),
+    )
+    .await
+    .unwrap()
+    .into_test_json()
+    .0;
+    let lines = texts(&hosted);
+    assert_eq!(
+        (
+            lines.len(),
+            hosted.rules_page_id.is_none(),
+            hosted.saved_rules_page_ids.is_empty()
+        ),
+        (1, true, true),
+        "hosted rules must only include rules from published pages"
+    );
+    assert!(lines.contains(&"Check the shared agenda"));
+
+    let report = |rule_id: String| {
+        handle_self_report(
+            axum::extract::State(scratch.shared.clone()),
+            headers.clone(),
+            Json(SkillReportRequest {
+                space: "Project".into(),
+                rule_id,
+                report: wenlan_types::SkillReportKind::ChangedPlan,
+            }),
+        )
+    };
+    let private = local
+        .lines
+        .iter()
+        .find(|line| line.text == "Private saved rule")
+        .unwrap();
+    let private_result =
+        axum::response::IntoResponse::into_response(report(private.id.clone()).await);
+    let unknown_result =
+        axum::response::IntoResponse::into_response(report("unknown-rule".into()).await);
+    let (private_parts, private_body) = private_result.into_parts();
+    let (unknown_parts, unknown_body) = unknown_result.into_parts();
+    let private_body = axum::body::to_bytes(private_body, 4096).await.unwrap();
+    let unknown_body = axum::body::to_bytes(unknown_body, 4096).await.unwrap();
+    let records = scratch
+        .db
+        .skill_borrow_records(&project.id, 0, i64::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            private_parts.status,
+            private_body,
+            records
+                .iter()
+                .any(|record| record.rule_id == private.id && record.self_report.is_some())
+        ),
+        (unknown_parts.status, unknown_body, false),
+        "a hosted report must neither confirm nor record a private rule"
+    );
+    assert!(report(hosted.lines[0].id.clone()).await.unwrap().0.recorded);
 }
 
 #[tokio::test]
@@ -1723,6 +1968,37 @@ async fn ux_skill_10_hand_written_rules_reach_tools_with_no_model_and_no_yes() {
         texts(&read_rules_as_codex(&scratch, None).await),
         vec!["回答用白話"],
         "a rules page in no Space is used everywhere; a Space's own stays there"
+    );
+    approve_project_master(
+        &scratch,
+        "Project",
+        &["Use the merge queue\nForce-pushing main loses work"],
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-agent-name",
+        HeaderValue::from_static("codex@team.reader"),
+    );
+    headers.insert(
+        crate::space_header::HEADER_NAME,
+        HeaderValue::from_static("Project"),
+    );
+    headers.insert(
+        crate::team_actor::SECRET_HEADER,
+        HeaderValue::from_static(crate::team_actor::secret()),
+    );
+    let hosted = handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        headers,
+        Query(RulesQuery { space: None }),
+    )
+    .await
+    .unwrap()
+    .into_test_json()
+    .0;
+    assert_eq!(
+        texts(&hosted),
+        vec!["Use the merge queue", "Force-pushing main loses work"]
     );
 
     let project_dir = scratch.data.join("spaces").join("Project");
@@ -5017,6 +5293,7 @@ async fn ux_skill_11_the_person_reading_their_rules_in_the_app_is_not_recorded_a
         )
         .await
         .unwrap()
+        .into_test_json()
         .0;
         if space.is_some() {
             assert_eq!(texts(&shown), vec!["Use the merge queue"]);
@@ -5149,6 +5426,7 @@ async fn a_rule_from_a_following_page_changes_the_night_after_that_page_catches_
             )
             .await
             .unwrap()
+            .into_test_json()
             .0
         }
     };
@@ -5351,6 +5629,7 @@ async fn read_rules_as_person(scratch: &Scratch, space: Option<&str>) -> SpaceRu
     )
     .await
     .unwrap()
+    .into_test_json()
     .0
 }
 
@@ -5749,6 +6028,7 @@ async fn page_revisions(
 ) -> wenlan_types::responses::ListPageRevisionsResponse {
     crate::page_routes::handle_get_page_revisions(
         axum::extract::State(scratch.shared.clone()),
+        axum::http::HeaderMap::new(),
         crate::space_header::SpaceHeader(None),
         crate::truth_guard::TruthView::automatic(),
         AxumPath(page_id.to_string()),
@@ -5756,6 +6036,7 @@ async fn page_revisions(
     )
     .await
     .unwrap()
+    .into_test_json()
     .0
 }
 

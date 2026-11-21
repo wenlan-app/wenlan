@@ -1023,149 +1023,8 @@ impl MemoryDB {
         }
         drop(memory_rows);
 
-        // ---- wiki pages ------------------------------------------------
-        //
-        // Every page that is NOT an entity's `kind='entity'` dual-write
-        // shadow. Both markers are checked: a shadow carries `kind='entity'`
-        // and `creation_kind='entity'`, and a row that somehow lost one must
-        // still not arrive here as a wiki page — the entity is already a node,
-        // so its shadow would draw the same thing twice.
-        let mut page_links: Vec<wenlan_types::GraphPageLink> = Vec::new();
-        let (page_scope_sql, page_scope_value) =
-            super::scoped_pages::page_scope_clause(scope, "p.workspace", 1);
-        let page_sql = format!(
-            "SELECT p.id, p.title, p.space, COALESCE(p.creation_kind, 'distilled'), \
-                    p.entity_id, p.last_modified \
-             FROM pages p \
-             WHERE p.status = 'active' \
-               AND COALESCE(p.kind, 'concept') != 'entity' \
-               AND COALESCE(p.creation_kind, 'distilled') != 'entity'\
-               {page_scope_sql} \
-             ORDER BY p.id ASC"
-        );
-        let mut page_rows = conn
-            .query(
-                &page_sql,
-                libsql::params_from_iter(page_scope_value.into_iter().collect::<Vec<_>>()),
-            )
-            .await
-            .map_err(|error| {
-                WenlanError::VectorDb(format!("get_knowledge_graph_scoped pages query: {error}"))
-            })?;
-        let mut pages = Vec::new();
-        while let Some(row) = page_rows.next().await.map_err(|error| {
-            WenlanError::VectorDb(format!("get_knowledge_graph_scoped pages next: {error}"))
-        })? {
-            let id: String = row.get(0).map_err(|error| {
-                WenlanError::VectorDb(format!("get_knowledge_graph_scoped page id: {error}"))
-            })?;
-            let entity_id = row.get::<Option<String>>(4).unwrap_or(None);
-            // `pages.entity_id` says this page is ABOUT that entity — a
-            // different thing from being its shadow. Emitted only when the
-            // entity is one the scope can already see.
-            if let Some(entity_id) = entity_id
-                .as_deref()
-                .filter(|entity_id| entity_ids.contains(entity_id))
-            {
-                page_links.push(page_link(&id, PAGE, entity_id, ENTITY, "about"));
-            }
-            pages.push(wenlan_types::GraphPageNode {
-                id,
-                title: row
-                    .get::<Option<String>>(1)
-                    .unwrap_or(None)
-                    .unwrap_or_default(),
-                // Same `null`-for-unfiled normalization the entity and memory
-                // rows get, so all three collections speak one space vocabulary.
-                space: crate::space_context::normalize_unfiled_space(
-                    row.get::<Option<String>>(2).unwrap_or(None),
-                ),
-                creation_kind: row
-                    .get::<Option<String>>(3)
-                    .unwrap_or(None)
-                    .unwrap_or_else(|| "distilled".to_string()),
-                entity_id,
-                last_modified: row
-                    .get::<Option<String>>(5)
-                    .unwrap_or(None)
-                    .unwrap_or_default(),
-            });
-        }
-        drop(page_rows);
+        let (pages, mut page_links) = page_graph_rows(&conn, scope, &entity_ids, true).await?;
         let page_ids: HashSet<&str> = pages.iter().map(|page| page.id.as_str()).collect();
-
-        // ---- resolved wikilinks ----------------------------------------
-        //
-        // Read from `edges`, NOT from `page_links`. Since the G6 Stage 2
-        // orphan-only narrowing, `replace_page_links` writes a `page_links`
-        // row only for an UNRESOLVED `[[link]]` and deletes the page's whole
-        // row set on every re-link; a resolved link's sole canonical
-        // representation is the `links` edge minted beside it. This is the
-        // same store `get_page_outbound_links_scoped` reads.
-        //
-        // A dangling link reaches nothing and is simply not an edge. A
-        // resolved target is another wiki page; it can also be an entity's
-        // shadow page for a legacy row (today's title resolver excludes
-        // `kind='entity'`), and that is drawn as a link to the ENTITY, since
-        // the shadow itself is not on the map. No scope predicate: both
-        // endpoints are checked against the sets above, which are already
-        // scoped. Several labels can resolve to one target, so pairs are
-        // de-duplicated.
-        let mut seen_wikilinks: HashSet<(String, String)> = HashSet::new();
-        let mut wikilink_rows = conn
-            .query(
-                "SELECT e.src_id, e.dst_id, \
-                        COALESCE(t.kind, 'concept'), epm.entity_id \
-                 FROM edges e \
-                 JOIN pages t ON t.id = e.dst_id \
-                 LEFT JOIN entity_page_map epm ON epm.page_id = t.id \
-                 WHERE e.edge_type = 'links' AND e.src_kind = 'page' \
-                   AND e.dst_kind = 'page' AND e.valid_until IS NULL \
-                 ORDER BY e.src_id ASC, e.dst_id ASC",
-                (),
-            )
-            .await
-            .map_err(|error| {
-                WenlanError::VectorDb(format!(
-                    "get_knowledge_graph_scoped wikilinks query: {error}"
-                ))
-            })?;
-        while let Some(row) = wikilink_rows.next().await.map_err(|error| {
-            WenlanError::VectorDb(format!(
-                "get_knowledge_graph_scoped wikilinks next: {error}"
-            ))
-        })? {
-            let source: String = row.get(0).map_err(|error| {
-                WenlanError::VectorDb(format!("get_knowledge_graph_scoped wikilink src: {error}"))
-            })?;
-            if !page_ids.contains(source.as_str()) {
-                continue;
-            }
-            let target: String = row.get(1).map_err(|error| {
-                WenlanError::VectorDb(format!("get_knowledge_graph_scoped wikilink dst: {error}"))
-            })?;
-            let target_kind: String = row.get(2).unwrap_or_else(|_| "concept".to_string());
-            if target_kind == "entity" {
-                let Some(entity_id) = row.get::<Option<String>>(3).unwrap_or(None) else {
-                    continue;
-                };
-                if entity_ids.contains(entity_id.as_str())
-                    && seen_wikilinks.insert((source.clone(), entity_id.clone()))
-                {
-                    page_links.push(page_link(&source, PAGE, &entity_id, ENTITY, "wikilink"));
-                }
-                continue;
-            }
-            // A page linking to itself is not a relationship between two
-            // things; it would draw a self-loop on the map for nothing.
-            if target != source
-                && page_ids.contains(target.as_str())
-                && seen_wikilinks.insert((source.clone(), target.clone()))
-            {
-                page_links.push(page_link(&source, PAGE, &target, PAGE, "wikilink"));
-            }
-        }
-        drop(wikilink_rows);
 
         // ---- page -> memory citations ----------------------------------
         //
@@ -1236,6 +1095,188 @@ impl MemoryDB {
             page_links,
         })
     }
+
+    /// Pages and their links in a shared Space. Only page rows participate.
+    pub async fn get_page_graph_scoped(
+        &self,
+        scope: &ReadScope,
+    ) -> Result<wenlan_types::KnowledgeGraphResponse, WenlanError> {
+        let conn = self.conn.lock().await;
+        let (pages, page_links) = page_graph_rows(&conn, scope, &HashSet::new(), false).await?;
+        Ok(wenlan_types::KnowledgeGraphResponse {
+            entities: Vec::new(),
+            relations: Vec::new(),
+            memories: Vec::new(),
+            memory_links: Vec::new(),
+            pages,
+            page_links,
+        })
+    }
+}
+
+async fn page_graph_rows(
+    conn: &libsql::Connection,
+    scope: &ReadScope,
+    entity_ids: &HashSet<&str>,
+    private: bool,
+) -> Result<
+    (
+        Vec<wenlan_types::GraphPageNode>,
+        Vec<wenlan_types::GraphPageLink>,
+    ),
+    WenlanError,
+> {
+    // ---- wiki pages ------------------------------------------------
+    //
+    // Every page that is NOT an entity's `kind='entity'` dual-write
+    // shadow. Both markers are checked: a shadow carries `kind='entity'`
+    // and `creation_kind='entity'`, and a row that somehow lost one must
+    // still not arrive here as a wiki page — the entity is already a node,
+    // so its shadow would draw the same thing twice.
+    let mut page_links: Vec<wenlan_types::GraphPageLink> = Vec::new();
+    let (page_scope_sql, page_scope_value) =
+        super::scoped_pages::page_scope_clause(scope, "p.workspace", 1);
+    let shared_fence = if private {
+        String::new()
+    } else {
+        format!("AND {}", super::scoped_pages::shared_page_predicate("p."))
+    };
+    let entity = if private { "p.entity_id" } else { "NULL" };
+    let page_sql = format!(
+        "SELECT p.id, p.title, p.space, COALESCE(p.creation_kind, 'distilled'), \
+                    {entity}, p.last_modified \
+             FROM pages p \
+             WHERE p.status = 'active' \
+               AND COALESCE(p.kind, 'concept') != 'entity' \
+               AND COALESCE(p.creation_kind, 'distilled') != 'entity'\
+               {page_scope_sql} {shared_fence} \
+             ORDER BY p.id ASC"
+    );
+    let mut page_rows = conn
+        .query(
+            &page_sql,
+            libsql::params_from_iter(page_scope_value.into_iter().collect::<Vec<_>>()),
+        )
+        .await
+        .map_err(|error| {
+            WenlanError::VectorDb(format!("get_knowledge_graph_scoped pages query: {error}"))
+        })?;
+    let mut pages = Vec::new();
+    while let Some(row) = page_rows.next().await.map_err(|error| {
+        WenlanError::VectorDb(format!("get_knowledge_graph_scoped pages next: {error}"))
+    })? {
+        let id: String = row.get(0).map_err(|error| {
+            WenlanError::VectorDb(format!("get_knowledge_graph_scoped page id: {error}"))
+        })?;
+        let entity_id = row.get::<Option<String>>(4).unwrap_or(None);
+        // `pages.entity_id` says this page is ABOUT that entity — a
+        // different thing from being its shadow. Emitted only when the
+        // entity is one the scope can already see.
+        if let Some(entity_id) = entity_id
+            .as_deref()
+            .filter(|entity_id| entity_ids.contains(entity_id))
+        {
+            page_links.push(page_link(&id, PAGE, entity_id, ENTITY, "about"));
+        }
+        pages.push(wenlan_types::GraphPageNode {
+            id,
+            title: row
+                .get::<Option<String>>(1)
+                .unwrap_or(None)
+                .unwrap_or_default(),
+            // Same `null`-for-unfiled normalization the entity and memory
+            // rows get, so all three collections speak one space vocabulary.
+            space: crate::space_context::normalize_unfiled_space(
+                row.get::<Option<String>>(2).unwrap_or(None),
+            ),
+            creation_kind: row
+                .get::<Option<String>>(3)
+                .unwrap_or(None)
+                .unwrap_or_else(|| "distilled".to_string()),
+            entity_id,
+            last_modified: row
+                .get::<Option<String>>(5)
+                .unwrap_or(None)
+                .unwrap_or_default(),
+        });
+    }
+    drop(page_rows);
+    let page_ids: HashSet<&str> = pages.iter().map(|page| page.id.as_str()).collect();
+
+    // ---- resolved wikilinks ----------------------------------------
+    //
+    // Read from `edges`, NOT from `page_links`. Since the G6 Stage 2
+    // orphan-only narrowing, `replace_page_links` writes a `page_links`
+    // row only for an UNRESOLVED `[[link]]` and deletes the page's whole
+    // row set on every re-link; a resolved link's sole canonical
+    // representation is the `links` edge minted beside it. This is the
+    // same store `get_page_outbound_links_scoped` reads.
+    //
+    // A dangling link reaches nothing and is simply not an edge. A
+    // resolved target is another wiki page; it can also be an entity's
+    // shadow page for a legacy row (today's title resolver excludes
+    // `kind='entity'`), and that is drawn as a link to the ENTITY, since
+    // the shadow itself is not on the map. No scope predicate: both
+    // endpoints are checked against the sets above, which are already
+    // scoped. Several labels can resolve to one target, so pairs are
+    // de-duplicated.
+    let mut seen_wikilinks: HashSet<(String, String)> = HashSet::new();
+    let mut wikilink_rows = conn
+        .query(
+            "SELECT e.src_id, e.dst_id, \
+                        COALESCE(t.kind, 'concept'), epm.entity_id \
+                 FROM edges e \
+                 JOIN pages t ON t.id = e.dst_id \
+                 LEFT JOIN entity_page_map epm ON epm.page_id = t.id \
+                 WHERE e.edge_type = 'links' AND e.src_kind = 'page' \
+                   AND e.dst_kind = 'page' AND e.valid_until IS NULL \
+                 ORDER BY e.src_id ASC, e.dst_id ASC",
+            (),
+        )
+        .await
+        .map_err(|error| {
+            WenlanError::VectorDb(format!(
+                "get_knowledge_graph_scoped wikilinks query: {error}"
+            ))
+        })?;
+    while let Some(row) = wikilink_rows.next().await.map_err(|error| {
+        WenlanError::VectorDb(format!(
+            "get_knowledge_graph_scoped wikilinks next: {error}"
+        ))
+    })? {
+        let source: String = row.get(0).map_err(|error| {
+            WenlanError::VectorDb(format!("get_knowledge_graph_scoped wikilink src: {error}"))
+        })?;
+        if !page_ids.contains(source.as_str()) {
+            continue;
+        }
+        let target: String = row.get(1).map_err(|error| {
+            WenlanError::VectorDb(format!("get_knowledge_graph_scoped wikilink dst: {error}"))
+        })?;
+        let target_kind: String = row.get(2).unwrap_or_else(|_| "concept".to_string());
+        if target_kind == "entity" {
+            let Some(entity_id) = row.get::<Option<String>>(3).unwrap_or(None) else {
+                continue;
+            };
+            if entity_ids.contains(entity_id.as_str())
+                && seen_wikilinks.insert((source.clone(), entity_id.clone()))
+            {
+                page_links.push(page_link(&source, PAGE, &entity_id, ENTITY, "wikilink"));
+            }
+            continue;
+        }
+        // A page linking to itself is not a relationship between two
+        // things; it would draw a self-loop on the map for nothing.
+        if target != source
+            && page_ids.contains(target.as_str())
+            && seen_wikilinks.insert((source.clone(), target.clone()))
+        {
+            page_links.push(page_link(&source, PAGE, &target, PAGE, "wikilink"));
+        }
+    }
+    drop(wikilink_rows);
+
+    Ok((pages, page_links))
 }
 
 /// The three collections a [`wenlan_types::GraphRef`] can point into. Spelled

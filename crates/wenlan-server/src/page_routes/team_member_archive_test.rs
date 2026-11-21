@@ -87,6 +87,7 @@ async fn archive(
         Path(id.into()),
     )
     .await
+    .map(PageResponse::into_test_json)
 }
 
 async fn restore(
@@ -110,6 +111,7 @@ async fn restore(
         }),
     )
     .await
+    .map(PageResponse::into_test_json)
 }
 
 async fn lifecycle(db: &wenlan_core::db::MemoryDB, id: &str) -> Vec<(String, Option<String>)> {
@@ -159,13 +161,15 @@ async fn a_members_archive_and_restore_are_recorded_as_that_member() {
     // The page's history names Amy on both rows.
     let Json(revisions) = handle_get_page_revisions(
         State(state.clone()),
+        axum::http::HeaderMap::new(),
         SpaceHeader(Some("Alpha".into())),
         TruthView::automatic(),
         Path(PAGE.into()),
         axum::extract::Query(HashMap::new()),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_test_json();
     let history = revisions.history;
     let kinds: Vec<_> = history
         .iter()

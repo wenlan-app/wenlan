@@ -18,8 +18,10 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Extension;
 use serde_json::{Map, Value};
+use wenlan_core::member_view::{MemberGraph, MemberHealth};
 use wenlan_core::shared_space::remote;
 use wenlan_core::team::{self, Member};
+use wenlan_types::responses::{CreateKnowledgeFolderResponse, KnowledgeFoldersResponse};
 use wenlan_types::team::TeamAccess;
 
 use super::TeamState;
@@ -58,18 +60,14 @@ pub(crate) enum Need {
     Write,
 }
 
-/// What is taken out of a call's answer.
+/// How the gate handles the daemon response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Strip {
-    /// Local paths, device ids, keys and invite links, wherever they are.
-    Private,
+    /// The daemon supplies the typed member view.
+    Projected,
     /// Health: only `status`, `db_initialized` and `version` stay.
     Health,
-    /// The Space list: only the member's Spaces stay, and no private keys.
-    MemberSpaces,
-    /// Folders as the member sees them: the daemon answers a member's
-    /// folder call with paths under their Space's name, never the
-    /// server's, so a folder's `path` stays; every other private key goes.
+    /// Folders as the member sees them, with paths relative to their Space.
     MemberFolders,
 }
 
@@ -95,6 +93,8 @@ pub(crate) struct Call {
 pub(crate) enum Rows {
     /// One thing, not a list.
     One,
+    /// A list of the member's authorized Spaces.
+    Spaces,
     /// `{ "pages": [...] }`, each page naming its `space`.
     Pages,
     /// A bare list, newest first by `field`.
@@ -122,11 +122,11 @@ pub(crate) const CALLS: &[Call] = &[
     Call {
         method: "GET",
         path: "/api/spaces",
-        space: SpaceFrom::NoSpace,
+        space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::MemberSpaces,
+        strip: Strip::Projected,
         query: &[],
-        rows: Rows::One,
+        rows: Rows::Spaces,
     },
     // Home and a Space: the page list.
     Call {
@@ -134,7 +134,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages",
         space: SpaceFrom::QueryOrMember,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &["status", "limit", "offset"],
         rows: Rows::Pages,
     },
@@ -143,7 +143,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/recent",
         space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &["limit", "since_ms"],
         rows: Rows::Newest("timestamp_ms"),
     },
@@ -154,7 +154,7 @@ pub(crate) const CALLS: &[Call] = &[
         // and each Space on the home page, labels them with it).
         space: SpaceFrom::QueryOrMember,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &["limit"],
         rows: Rows::Newest("changed_at_ms"),
     },
@@ -164,7 +164,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/search",
         space: SpaceFrom::BodyOrMember,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::Pages,
     },
@@ -174,7 +174,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}",
         space: SpaceFrom::Page,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -183,7 +183,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/revisions",
         space: SpaceFrom::Page,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &["include"],
         rows: Rows::One,
     },
@@ -192,7 +192,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/sources",
         space: SpaceFrom::Page,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -203,7 +203,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/memory/graph",
         space: SpaceFrom::MemberSpaces,
         need: Need::Read,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::Graph,
     },
@@ -213,7 +213,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/memory/{id}/update-page",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -223,7 +223,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/drafts",
         space: SpaceFrom::Body,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -232,7 +232,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/drafts/{id}",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -241,7 +241,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/drafts/{id}/publish",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -251,7 +251,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/archive",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -260,7 +260,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/restore",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -270,7 +270,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/basis/{basis_id}",
         space: SpaceFrom::PagePair,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -279,7 +279,7 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/basis/{basis_id}",
         space: SpaceFrom::PagePair,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
@@ -310,14 +310,13 @@ pub(crate) const CALLS: &[Call] = &[
         path: "/api/pages/{id}/move",
         space: SpaceFrom::Page,
         need: Need::Write,
-        strip: Strip::Private,
+        strip: Strip::Projected,
         query: &[],
         rows: Rows::One,
     },
 ];
 
-/// Keys taken out of every answer, wherever they are: where things are on
-/// the server's disk, which device, keys, and invite links.
+/// Host-only fields excluded from forwarded error payloads.
 const PRIVATE_KEYS: &[&str] = &[
     "path",
     "storage_path",
@@ -482,6 +481,8 @@ fn every(spaces: &BTreeMap<String, TeamAccess>, need: Need) -> Vec<String> {
 fn client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()
 }
@@ -494,6 +495,7 @@ async fn forward(
     path_and_query: &str,
     space: Option<&str>,
     body: Option<&[u8]>,
+    draft_lookup: bool,
 ) -> Result<(StatusCode, Vec<u8>), Response> {
     let client = client().ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     let method = reqwest::Method::from_bytes(method.as_bytes())
@@ -506,6 +508,9 @@ async fn forward(
         )
         .header(crate::team_actor::KIND_HEADER, "person")
         .header(crate::team_actor::MEMBER_HEADER, member.id.as_str());
+    if draft_lookup {
+        call = call.header(crate::team_actor::DRAFT_SPACE_LOOKUP_HEADER, "1");
+    }
     if let Ok(name) = reqwest::header::HeaderValue::from_str(member.name.trim()) {
         call = call.header(crate::team_actor::MEMBER_NAME_HEADER, name);
     }
@@ -517,6 +522,28 @@ async fn forward(
         call = call
             .header(header::CONTENT_TYPE, "application/json")
             .body(body.to_vec());
+    }
+    #[cfg(test)]
+    if let Some(daemon) = &state.in_process_daemon {
+        use tower::ServiceExt;
+
+        let built = call.build().expect("valid daemon forwarding request");
+        let bytes = built
+            .body()
+            .and_then(reqwest::Body::as_bytes)
+            .unwrap_or_default();
+        let mut request = axum::http::Request::builder()
+            .method(built.method().clone())
+            .uri(path_and_query)
+            .body(Body::from(bytes.to_vec()))
+            .expect("valid in-process forwarding request");
+        *request.headers_mut() = built.headers().clone();
+        let answer = daemon.clone().oneshot(request).await.unwrap();
+        let status = answer.status();
+        let bytes = axum::body::to_bytes(answer.into_body(), usize::MAX)
+            .await
+            .unwrap_or_default();
+        return Ok((status, bytes.to_vec()));
     }
     match call.send().await {
         Ok(answer) => {
@@ -537,6 +564,7 @@ async fn page_space(
     state: &TeamState,
     member: &Member,
     id: &str,
+    draft_lookup: bool,
 ) -> Result<Option<String>, Response> {
     let (status, bytes) = forward(
         state,
@@ -545,6 +573,7 @@ async fn page_space(
         &format!("/api/pages/{id}"),
         None,
         None,
+        draft_lookup,
     )
     .await?;
     if !status.is_success() {
@@ -565,7 +594,7 @@ async fn page_space(
 }
 
 /// Takes every private key out of `value`, at any depth.
-pub(crate) fn strip_private(value: &mut Value) {
+fn strip_private(value: &mut Value) {
     match value {
         Value::Object(map) => {
             map.retain(|key, _| !PRIVATE_KEYS.contains(&key.as_str()));
@@ -576,29 +605,10 @@ pub(crate) fn strip_private(value: &mut Value) {
     }
 }
 
-/// [`strip_private`], keeping the `path` of the folder an answer names
-/// (`{"path": …}`) and of each folder in a list (`{"folders": [{"path": …}]}`).
-fn strip_private_keeping_folder_paths(value: &mut Value) {
-    fn take_path(value: &mut Value) -> Option<Value> {
-        value.as_object_mut()?.remove("path")
-    }
-    fn put_path(value: &mut Value, path: Option<Value>) {
-        if let (Some(map), Some(Value::String(path))) = (value.as_object_mut(), path) {
-            map.insert("path".into(), Value::String(path));
-        }
-    }
-    let own = take_path(value);
-    let listed: Vec<Option<Value>> = match value.get_mut("folders") {
-        Some(Value::Array(folders)) => folders.iter_mut().map(take_path).collect(),
-        _ => Vec::new(),
-    };
-    strip_private(value);
-    put_path(value, own);
-    if let Some(Value::Array(folders)) = value.get_mut("folders") {
-        for (folder, path) in folders.iter_mut().zip(listed) {
-            put_path(folder, path);
-        }
-    }
+fn project_answer<T: serde::de::DeserializeOwned + serde::Serialize>(value: Value) -> Value {
+    serde_json::from_value::<T>(value)
+        .and_then(serde_json::to_value)
+        .unwrap_or(Value::Null)
 }
 
 fn row_space(row: &Value) -> Option<&str> {
@@ -741,7 +751,8 @@ pub(super) async fn handle(
         }
         SpaceFrom::Page | SpaceFrom::PagePair => {
             let id = ids.first().map(String::as_str).unwrap_or_default();
-            let space = match page_space(&state, &member, id).await {
+            let draft_lookup = call.path.starts_with("/api/pages/drafts/");
+            let space = match page_space(&state, &member, id, draft_lookup).await {
                 Ok(Some(space)) => space,
                 Ok(None) => return not_found(),
                 Err(response) => return response,
@@ -753,7 +764,7 @@ pub(super) async fn handle(
                     return not_found();
                 }
                 let other = match ids.get(1) {
-                    Some(other) => page_space(&state, &member, other).await,
+                    Some(other) => page_space(&state, &member, other, false).await,
                     None => Ok(None),
                 };
                 match other {
@@ -824,6 +835,7 @@ pub(super) async fn handle(
             &format!("{path}{}", encode(&pairs)),
             space.as_deref(),
             bytes.as_deref(),
+            false,
         )
         .await
         {
@@ -843,7 +855,7 @@ pub(super) async fn handle(
             strip_private(&mut value);
             return json(status, &value);
         }
-        None => merge(call, &query, window, answers),
+        None => merge(call, &query, window, answers, &spaces),
     };
     // Every folder starts with its Space's name: folders of a Space not the
     // member's go.
@@ -863,63 +875,24 @@ pub(super) async fn handle(
             pages.retain(|row| row_space(row).is_some_and(|space| spaces.contains_key(space)));
         }
     }
-    // Pages of the member's Spaces only, and links only between those pages:
-    // a link to anything else would name a page, entity or memory they may
-    // not see.
-    if call.rows == Rows::Graph {
-        if let Some(Value::Array(pages)) = value.get_mut("pages") {
-            pages.retain(|row| row_space(row).is_some_and(|space| spaces.contains_key(space)));
-            // An entity id would tell two pages share a subject, possibly
-            // one from a Space the member cannot read.
-            for page in pages.iter_mut() {
-                if let Some(row) = page.as_object_mut() {
-                    if row.contains_key("entity_id") {
-                        row.insert("entity_id".into(), Value::Null);
-                    }
-                }
-            }
-        }
-        let kept: std::collections::HashSet<String> = value
-            .get("pages")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|page| page.get("id").and_then(Value::as_str).map(str::to_string))
-            .collect();
-        let kept_page = |end: Option<&Value>| {
-            end.is_some_and(|end| {
-                end.get("kind").and_then(Value::as_str) == Some("page")
-                    && end
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| kept.contains(id))
-            })
-        };
-        if let Some(Value::Array(links)) = value.get_mut("page_links") {
-            links.retain(|link| kept_page(link.get("from")) && kept_page(link.get("to")));
+    if call.rows == Rows::Spaces {
+        if let Some(list) = value.as_array_mut() {
+            list.retain(|space| {
+                space
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| spaces.contains_key(name))
+            });
         }
     }
-    match call.strip {
-        Strip::Health => {
-            let keep = ["status", "db_initialized", "version"];
-            if let Value::Object(map) = &mut value {
-                map.retain(|key, _| keep.contains(&key.as_str()));
-            }
+    let value = match call.strip {
+        Strip::Health => project_answer::<MemberHealth>(value),
+        Strip::Projected => value,
+        Strip::MemberFolders if call.rows == Rows::Folders => {
+            project_answer::<KnowledgeFoldersResponse>(value)
         }
-        Strip::MemberSpaces => {
-            if let Value::Array(list) = &mut value {
-                list.retain(|space| {
-                    space
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .is_some_and(|name| spaces.contains_key(name))
-                });
-            }
-            strip_private(&mut value);
-        }
-        Strip::Private => strip_private(&mut value),
-        Strip::MemberFolders => strip_private_keeping_folder_paths(&mut value),
-    }
+        Strip::MemberFolders => project_answer::<CreateKnowledgeFolderResponse>(value),
+    };
     json(StatusCode::OK, &value)
 }
 
@@ -949,10 +922,19 @@ fn merge(
     query: &[(String, String)],
     window: Option<(usize, usize)>,
     answers: Vec<(StatusCode, Value)>,
+    spaces: &BTreeMap<String, TeamAccess>,
 ) -> Value {
     let mut answers = answers.into_iter().map(|(_, value)| value);
     match call.rows {
         Rows::One => answers.next().unwrap_or(Value::Null),
+        Rows::Spaces => Value::Array(
+            answers
+                .flat_map(|answer| match answer {
+                    Value::Array(spaces) => spaces,
+                    _ => Vec::new(),
+                })
+                .collect(),
+        ),
         Rows::Pages => {
             let mut first = Value::Null;
             let mut pages = Vec::new();
@@ -983,37 +965,11 @@ fn merge(
             serde_json::json!({ "folders": folders, "truncated": false })
         }
         Rows::Graph => {
-            let mut pages: Vec<Value> = Vec::new();
-            let mut links: Vec<Value> = Vec::new();
-            for mut answer in answers {
-                if let Some(Value::Array(list)) = answer.get_mut("pages").map(Value::take) {
-                    for page in list {
-                        let id = page.get("id").and_then(Value::as_str);
-                        if id.is_some()
-                            && !pages
-                                .iter()
-                                .any(|have| have.get("id").and_then(Value::as_str) == id)
-                        {
-                            pages.push(page);
-                        }
-                    }
-                }
-                if let Some(Value::Array(list)) = answer.get_mut("page_links").map(Value::take) {
-                    for link in list {
-                        if !links.contains(&link) {
-                            links.push(link);
-                        }
-                    }
-                }
-            }
-            serde_json::json!({
-                "entities": [],
-                "relations": [],
-                "memories": [],
-                "memory_links": [],
-                "pages": pages,
-                "page_links": links,
-            })
+            let graphs = answers.filter_map(|answer| serde_json::from_value(answer).ok());
+            serde_json::to_value(MemberGraph::merge(graphs, |space| {
+                spaces.contains_key(space)
+            }))
+            .unwrap_or(Value::Null)
         }
         Rows::Newest(field) => {
             let mut rows: Vec<Value> = answers

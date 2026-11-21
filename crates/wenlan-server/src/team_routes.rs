@@ -33,9 +33,9 @@ use wenlan_core::rulesync_team::{self, ReviewError};
 use wenlan_core::shared_space::{self, remote, Scope};
 use wenlan_core::team::{self, Member};
 use wenlan_types::team::{
-    TeamAccess, TeamAddMemberRequest, TeamFileList, TeamHostSpaceRequest, TeamJoinRequest,
-    TeamJoinResponse, TeamMember, TeamMemberKey, TeamMembershipRequest, TeamRenameRequest,
-    TeamRole, TeamRulesDecisionRequest, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
+    TeamAccess, TeamAddMemberRequest, TeamHostSpaceRequest, TeamJoinRequest, TeamJoinResponse,
+    TeamMember, TeamMemberKey, TeamMembershipRequest, TeamRenameRequest, TeamRole,
+    TeamRulesDecisionRequest, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
     DEFAULT_TEAM_PORT,
 };
 
@@ -883,8 +883,14 @@ static LIVE_SESSIONS: LazyLock<Arc<crate::team_session::SessionStore>> =
 struct TeamState {
     team_path: PathBuf,
     settings_path: PathBuf,
+    /// The listener needs the host's current shared-page IDs to suppress old
+    /// snapshots whose citations predate the source filter.
+    db: Option<Arc<wenlan_core::db::MemoryDB>>,
     /// The daemon's own loopback address, which MCP reaches it at.
     daemon_url: String,
+    /// Dispatch the forwarded browser request without a listening socket.
+    #[cfg(test)]
+    in_process_daemon: Option<crate::router::AppRouter>,
     /// One MCP service per member, Space and access, so a connection's
     /// session stays with the service that made it.
     mcp: McpCache,
@@ -903,11 +909,24 @@ type McpCache = Arc<std::sync::Mutex<HashMap<(String, String, TeamAccess), McpSe
 /// stops or starts it without a restart. A listener that cannot start is
 /// logged; the daemon goes on without it.
 pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) {
-    let port = { shared.read().await.bound_port };
+    let (port, db) = {
+        let shared = shared.read().await;
+        (shared.bound_port, shared.db.clone())
+    };
+    let Some(db) = db else {
+        tracing::warn!("[team] listener not started without the local database");
+        return;
+    };
     let state = TeamState {
         team_path: team::team_path(),
         settings_path: shared_space::settings_path(),
+        db: Some(db),
         daemon_url: format!("http://127.0.0.1:{port}"),
+        #[cfg(test)]
+        in_process_daemon: {
+            // The live listener always uses its HTTP transport.
+            None
+        },
         mcp: Arc::default(),
         sessions: LIVE_SESSIONS.clone(),
         auth: Arc::new(auth::AuthState::from_config(&team::team_path())),
@@ -1047,26 +1066,37 @@ async fn owner_link_for_headless_server(state: &TeamState) {
     tracing::info!("[team] the owner's invite link was printed to the server's output");
 }
 
-fn team_router(state: TeamState) -> axum::Router {
-    use axum::routing::{any, get, post, put};
-    let checked = axum::Router::new()
-        .route("/team/v1/me", get(team_me))
-        .route("/team/v1/admin", any(team_admin))
-        .route("/team/v1/admin/{*rest}", any(team_admin))
-        .route("/team/v1/spaces/{space}/files", get(team_files))
-        .route("/team/v1/spaces/{space}/file", get(team_file))
-        .route(
+fn member_data_routes() -> [(&'static str, axum::routing::MethodRouter<TeamState>); 6] {
+    use axum::routing::{get, post, put};
+    [
+        ("/team/v1/me", get(team_me)),
+        ("/team/v1/spaces/{space}/files", get(team_files)),
+        ("/team/v1/spaces/{space}/file", get(team_file)),
+        (
             "/team/v1/spaces/{space}/rules/proposals",
             get(team_rule_proposals),
-        )
-        .route(
+        ),
+        (
             "/team/v1/spaces/{space}/rules/proposals/{proposal}/decision",
             post(team_rule_decision),
-        )
-        .route(
+        ),
+        (
             "/team/v1/spaces/{space}/versions/{page}/{name}",
             put(team_put_version),
-        )
+        ),
+    ]
+}
+
+fn team_router(state: TeamState) -> axum::Router {
+    use axum::routing::{any, get, post};
+    let data = member_data_routes()
+        .into_iter()
+        .fold(axum::Router::new(), |router, (path, handler)| {
+            router.route(path, handler)
+        });
+    let checked = data
+        .route("/team/v1/admin", any(team_admin))
+        .route("/team/v1/admin/{*rest}", any(team_admin))
         .route("/mcp", any(team_mcp))
         .route("/mcp/{*space}", any(team_mcp_in))
         .route("/team/v1/app/{*call}", any(app_gate::handle))
@@ -1677,6 +1707,12 @@ async fn team_join_page(State(state): State<TeamState>, headers: HeaderMap) -> R
 
 #[path = "team_app_gate.rs"]
 mod app_gate;
+
+pub(crate) fn is_member_app_call(method: &Method, route: &str) -> bool {
+    app_gate::CALLS
+        .iter()
+        .any(|call| call.method == method.as_str() && call.path == route)
+}
 
 #[path = "team_auth.rs"]
 mod auth;
@@ -2312,14 +2348,22 @@ async fn team_files(
         Ok(found) => found,
         Err(refused) => return refused,
     };
+    let shared_pages = match hosted_folder_pages(&state, &space).await {
+        Ok(pages) => pages,
+        Err(error) => {
+            tracing::warn!("[team] cannot verify hosted page sources: {error}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let listed = tokio::task::spawn_blocking(move || {
-        let rules = rulesync_team::hosted_manifest(&state.team_path, &state.settings_path, &space)?;
-        let files = team::list_folder_files(&folder);
-        Ok::<_, wenlan_core::error::WenlanError>(TeamFileList {
+        rulesync_team::hosted_file_list(
+            &state.team_path,
+            &state.settings_path,
+            &space,
+            &folder,
             access,
-            files,
-            rules,
-        })
+            &shared_pages,
+        )
     })
     .await;
     match listed {
@@ -2401,6 +2445,16 @@ fn rules_review_error(error: ReviewError) -> Response {
     (status, error.to_string()).into_response()
 }
 
+async fn hosted_folder_pages(
+    state: &TeamState,
+    space: &str,
+) -> Result<team::SharedFolderPages, ServerError> {
+    let Some(db) = &state.db else {
+        return Ok(team::SharedFolderPages::default());
+    };
+    Ok(db.shared_folder_pages(space).await?)
+}
+
 #[derive(Debug, Deserialize)]
 struct FileQuery {
     path: String,
@@ -2419,12 +2473,67 @@ async fn team_file(
     let Some(file) = team::served_path(&folder, &query.path) else {
         return (StatusCode::BAD_REQUEST, "not a file of the Space").into_response();
     };
-    match tokio::fs::read(&file).await {
-        Ok(bytes) => (
+    let send_file = |bytes: Vec<u8>| {
+        (
             [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
             Body::from(bytes),
         )
-            .into_response(),
+            .into_response()
+    };
+    // The approved manifest authorizes the Rules download. The master lives
+    // in the folder without a shared page row in the DB.
+    if query
+        .path
+        .split('/')
+        .nth(3)
+        .is_some_and(rulesync_team::is_master_page)
+    {
+        let result = tokio::task::spawn_blocking(move || {
+            rulesync_team::read_hosted_rule_file(
+                &state.team_path,
+                &state.settings_path,
+                &space,
+                &query.path,
+            )
+        })
+        .await;
+        return match result {
+            Ok(Ok(Some(bytes))) => send_file(bytes),
+            Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+            Ok(Err(error)) => {
+                tracing::warn!("[team] approved Rules version cannot be read: {error}");
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
+            Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
+    }
+    let shared_pages = match hosted_folder_pages(&state, &space).await {
+        Ok(pages) => pages,
+        Err(error) => {
+            tracing::warn!("[team] cannot verify hosted page sources: {error}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
+    match tokio::fs::read(&file).await {
+        Ok(bytes) if query.path == shared_space::SPACE_FILE => {
+            match serde_json::from_slice::<shared_space::SpaceFile>(&bytes) {
+                Ok(space) => {
+                    let view = wenlan_core::member_view::MemberSpaceFile::from(space);
+                    Json(view).into_response()
+                }
+                Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            }
+        }
+        Ok(bytes)
+            if {
+                let mut parts = query.path.rsplit('/');
+                matches!((parts.next(), parts.next()), (Some(name), Some(page))
+                    if team::can_serve_version(page, name, &bytes, &shared_pages))
+            } =>
+        {
+            send_file(bytes)
+        }
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             StatusCode::NOT_FOUND.into_response()
         }
@@ -2471,6 +2580,17 @@ async fn team_put_version(
             "this member may only read this Space",
         )
             .into_response();
+    }
+    if let Some(db) = &state.db {
+        let scope = wenlan_core::read_scope::ReadScope::Space(space);
+        match db.member_may_upload_page_version(&page, &scope).await {
+            Ok(true) => {}
+            Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+            Err(error) => {
+                tracing::warn!("cannot authorize a shared version: {error}");
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        }
     }
     let id = member.id.clone();
     let stored = tokio::task::spawn_blocking(move || {
@@ -2555,25 +2675,75 @@ async fn serve_mcp(state: TeamState, member: Member, space: String, req: Request
             .mcp
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        services
-            .entry((member.id.clone(), space.clone(), access))
-            .or_insert_with(|| {
-                wenlan_mcp::serve::team_member_service(
+        let key = (member.id.clone(), space.clone(), access);
+        match services.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let client = match crate::team_actor::mcp_client() {
+                    Ok(client) => client,
+                    Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+                let client = wenlan_mcp::client::WenlanClient::with_http_client(
                     state.daemon_url.clone(),
-                    member.id.clone(),
-                    space.clone(),
-                    match access {
-                        TeamAccess::Write => wenlan_mcp::tools::ToolProfile::WebWrite,
-                        TeamAccess::Read => wenlan_mcp::tools::ToolProfile::QueryOnly,
-                    },
-                )
-            })
-            .clone()
+                    client,
+                );
+                #[cfg(test)]
+                let client = match state.in_process_daemon.clone() {
+                    Some(router) => client.with_in_process_transport(move |request| {
+                        dispatch_mcp_daemon(router.clone(), request)
+                    }),
+                    None => client,
+                };
+                entry
+                    .insert(wenlan_mcp::serve::team_member_service(
+                        client,
+                        member.id,
+                        space,
+                        match access {
+                            TeamAccess::Write => wenlan_mcp::tools::ToolProfile::WebWrite,
+                            TeamAccess::Read => wenlan_mcp::tools::ToolProfile::QueryOnly,
+                        },
+                    ))
+                    .clone()
+            }
+        }
     };
     match service.oneshot(req).await {
         Ok(response) => response.into_response(),
         Err(never) => match never {},
     }
+}
+
+#[cfg(test)]
+async fn dispatch_mcp_daemon(
+    router: crate::router::AppRouter,
+    request: reqwest::Request,
+) -> Result<reqwest::Response, wenlan_mcp::client::WenlanError> {
+    let path = &request.url()[url::Position::BeforePath..];
+    let mut forwarded = Request::builder()
+        .method(request.method().clone())
+        .uri(path);
+    *forwarded.headers_mut().unwrap() = request.headers().clone();
+    forwarded = forwarded.header(
+        crate::team_actor::SECRET_HEADER,
+        crate::team_actor::secret(),
+    );
+    let bytes = request
+        .body()
+        .and_then(reqwest::Body::as_bytes)
+        .unwrap_or_default()
+        .to_vec();
+    let response = router
+        .oneshot(forwarded.body(Body::from(bytes)).unwrap())
+        .await
+        .unwrap();
+    let (parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, remote::MAX_VERSION_BYTES)
+        .await
+        .unwrap();
+    Ok(reqwest::Response::from(axum::http::Response::from_parts(
+        parts, bytes,
+    )))
 }
 
 #[cfg(test)]

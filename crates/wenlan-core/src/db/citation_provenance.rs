@@ -11,6 +11,21 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use wenlan_types::{pages::PageCitation, source_lifecycle::*};
 
+#[cfg(any(test, feature = "test-query-observer"))]
+tokio::task_local! {
+    static MEMORY_LOOKUPS: std::cell::Cell<usize>;
+}
+
+#[cfg(any(test, feature = "test-query-observer"))]
+pub async fn count_citation_memory_lookups<F: std::future::Future>(read: F) -> (F::Output, usize) {
+    MEMORY_LOOKUPS
+        .scope(std::cell::Cell::new(0), async {
+            let result = read.await;
+            (result, MEMORY_LOOKUPS.with(std::cell::Cell::get))
+        })
+        .await
+}
+
 fn sql(error: libsql::Error) -> WenlanError {
     WenlanError::VectorDb(format!("citation provenance: {error}"))
 }
@@ -305,6 +320,37 @@ async fn preserved_on(
         .map(|saved| (page, saved)))
 }
 
+/// Carry local targets onto the landing body while the page write holds the
+/// transaction. Citation work can refresh the stored map without a version bump.
+pub(super) async fn retain_refresh_citations_on(
+    conn: &libsql::Connection,
+    id: &str,
+    content: &str,
+) -> Result<Option<String>, WenlanError> {
+    let Some(page) = page_on(conn, id).await? else {
+        return Ok(None);
+    };
+    let citations = match page.citations.as_deref() {
+        Some(json) => serde_json::from_str(json).unwrap_or_default(),
+        None => match preserved_on(conn, id).await? {
+            Some((_, saved)) => effective_map(
+                &page.content,
+                &saved.citations,
+                &saved.affected_locators,
+                &saved.historical_locators,
+            ),
+            None => Vec::new(),
+        },
+    };
+    let kept =
+        crate::citations::retain_unchanged_sentence_references(&page.content, content, &citations);
+    if kept.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::to_string(&kept)?))
+    }
+}
+
 /// Shared by scoped/unscoped by-id readers and sentence evidence. Reads only
 /// the already authorized page identity and cannot expose another Space's map.
 pub(super) async fn apply_on(
@@ -352,6 +398,8 @@ async fn downgrade_on(
             historical.insert(citation.locator.clone());
             continue;
         }
+        #[cfg(any(test, feature = "test-query-observer"))]
+        let _ = MEMORY_LOOKUPS.try_with(|count| count.set(count.get() + 1));
         let mut rows=conn.query("SELECT DISTINCT source,source_id FROM memories WHERE (source_id=?1 OR id=?1) AND NULLIF(space,?3) IS ?2 AND COALESCE(pending_revision,0)=0 LIMIT 2",libsql::params![citation.locator.as_str(),space,UNFILED_SPACE_ID]).await.map_err(sql)?;
         let mut sources = Vec::new();
         while let Some(row) = rows.next().await.map_err(sql)? {

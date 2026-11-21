@@ -11,6 +11,8 @@
 
 use crate::db::{MemoryDB, PageHistoryEntry};
 use crate::error::WenlanError;
+use crate::pages::Page;
+use crate::read_scope::ReadScope;
 use std::collections::{HashMap, HashSet};
 use wenlan_types::responses::{
     PageChangelogEntry, PageHistoryItem, PageHistoryKind, PageHistorySource,
@@ -143,20 +145,6 @@ fn texts_by_version(rows: &[PageHistoryEntry]) -> HashMap<i64, &str> {
         .collect()
 }
 
-/// Puts each version's text on its changelog entry.
-pub async fn attach_texts(
-    db: &MemoryDB,
-    page_id: &str,
-    entries: &mut [PageChangelogEntry],
-) -> Result<(), WenlanError> {
-    let rows = db.list_page_history(page_id, HISTORY_SCAN).await?;
-    let texts = texts_by_version(&rows);
-    for entry in entries {
-        entry.text = texts.get(&entry.version).map(|t| (*t).to_string());
-    }
-    Ok(())
-}
-
 /// The ids of the pages `page_id` relies on.
 pub async fn basis_page_ids(db: &MemoryDB, page_id: &str) -> Result<Vec<String>, WenlanError> {
     Ok(db
@@ -167,21 +155,83 @@ pub async fn basis_page_ids(db: &MemoryDB, page_id: &str) -> Result<Vec<String>,
         .collect())
 }
 
-/// The merged history, newest first. `entries` is the page's changelog (with
-/// texts already attached when `include_text`); `visible_bases` are the
-/// relied-on pages this caller may see; updates of any other are left out.
+/// The merged history, newest first, with requested texts attached to the
+/// changelog too. Hosted revisions keep only versions witnessed in the given Space.
 pub async fn build_page_history(
     db: &MemoryDB,
-    page_id: &str,
-    entries: &[PageChangelogEntry],
+    page: &Page,
+    entries: &mut Vec<PageChangelogEntry>,
     visible_bases: &HashSet<String>,
     include_text: bool,
+    shared_scope: Option<&ReadScope>,
 ) -> Result<Vec<PageHistoryItem>, WenlanError> {
-    let own = db.list_page_history(page_id, HISTORY_SCAN).await?;
+    build_page_history_inner(db, page, entries, visible_bases, include_text, shared_scope)
+        .await
+        .map(|(items, _)| items)
+}
+
+pub async fn build_member_page_history(
+    db: &MemoryDB,
+    page: &Page,
+    mut entries: Vec<PageChangelogEntry>,
+    visible_bases: &HashSet<String>,
+    include_text: bool,
+    scope: &ReadScope,
+) -> Result<crate::member_view::MemberRevisions, WenlanError> {
+    let (items, witnessed) = build_page_history_inner(
+        db,
+        page,
+        &mut entries,
+        visible_bases,
+        include_text,
+        Some(scope),
+    )
+    .await?;
+    Ok(crate::member_view::MemberRevisions::new(
+        page, entries, items, &witnessed,
+    ))
+}
+
+async fn build_page_history_inner(
+    db: &MemoryDB,
+    page: &Page,
+    entries: &mut Vec<PageChangelogEntry>,
+    visible_bases: &HashSet<String>,
+    include_text: bool,
+    shared_scope: Option<&ReadScope>,
+) -> Result<(Vec<PageHistoryItem>, HashSet<i64>), WenlanError> {
+    let page_id = page.id.as_str();
+    let own = match shared_scope {
+        Some(scope) => {
+            db.list_shared_page_history(page_id, scope, HISTORY_SCAN)
+                .await?
+        }
+        None => db.list_page_history(page_id, HISTORY_SCAN).await?,
+    };
+    let texts = texts_by_version(&own);
+    if shared_scope.is_some() {
+        entries.retain_mut(|entry| {
+            let Some(row) = own.iter().find(|row| row.version == entry.version) else {
+                return false;
+            };
+            entry.at = row.created_at;
+            entry.text = include_text.then(|| row.content.clone());
+            true
+        });
+    }
+    if include_text {
+        for entry in entries.iter_mut() {
+            entry.text = texts.get(&entry.version).map(|text| (*text).to_string());
+        }
+    }
     let mut items: Vec<PageHistoryItem> = entries
         .iter()
         .map(|entry| PageHistoryItem {
-            changed_sentences: changed_sentences_at(&own, entry.version),
+            changed_sentences: if shared_scope.is_some() {
+                changed_between(&own, entry.version - 1, Some(entry.version))
+            } else {
+                changed_sentences_at(&own, entry.version)
+            },
             kind: kind_of_edit(&entry.edited_by),
             at: entry.at,
             version: Some(entry.version),
@@ -201,39 +251,50 @@ pub async fn build_page_history(
     // be compared with. Who made it decides the kind: the person, or else
     // the AI (an older `create` row whose maker is not known is the AI's
     // kind too; its `edited_by` stays `create`).
-    if !entries.iter().any(|entry| entry.version == 1) {
-        if let Some(birth) = own.iter().find(|row| row.version == 1) {
-            let person = match db.get_page(page_id).await? {
-                Some(page) => {
-                    crate::sentences::first_version_author(&page, &own)
-                        == Some(crate::authorship::VersionAuthor::Person)
-                }
-                None => false,
-            };
-            let agent = if birth.edited_by == "agent_create" {
-                db.page_birth_agent(page_id).await?
+    let birth = match shared_scope {
+        Some(_) => own.last(),
+        None => own.iter().find(|row| row.version == 1),
+    };
+    if let Some(birth) =
+        birth.filter(|birth| !entries.iter().any(|entry| entry.version == birth.version))
+    {
+        let person = if birth.version == 1 {
+            // The authorized page already carries the authorship inputs.
+            page.kind != "entity"
+                && crate::sentences::first_version_author(page, &own)
+                    == Some(crate::authorship::VersionAuthor::Person)
+        } else {
+            crate::authorship::version_author(&birth.edited_by, "")
+                == crate::authorship::VersionAuthor::Person
+        };
+        // The local actor field is private attribution for the first version.
+        let agent = if shared_scope.is_none() && birth.edited_by == "agent_create" {
+            db.page_birth_agent(page_id).await?
+        } else {
+            None
+        };
+        items.push(PageHistoryItem {
+            kind: if person {
+                PageHistoryKind::PersonEdit
             } else {
-                None
-            };
-            items.push(PageHistoryItem {
-                kind: if person {
-                    PageHistoryKind::PersonEdit
-                } else {
-                    PageHistoryKind::AiEdit
-                },
-                at: birth.created_at,
-                version: Some(1),
-                edited_by: Some(birth.edited_by.clone()),
-                agent,
-                delta_summary: None,
-                text: include_text.then(|| birth.content.clone()),
-                source: None,
-                changed_sentences: changed_sentences_at(&own, 1),
-                person_asked: None,
-                restored_from: None,
-                first_version: None,
-            });
-        }
+                PageHistoryKind::AiEdit
+            },
+            at: birth.created_at,
+            version: Some(birth.version),
+            edited_by: Some(birth.edited_by.clone()),
+            agent,
+            delta_summary: None,
+            text: include_text.then(|| birth.content.clone()),
+            source: None,
+            changed_sentences: if shared_scope.is_some() {
+                changed_between(&own, birth.version - 1, Some(birth.version))
+            } else {
+                changed_sentences_at(&own, birth.version)
+            },
+            person_asked: None,
+            restored_from: None,
+            first_version: None,
+        });
     }
 
     // This page's version at a moment: the newest edit at or before it.
@@ -261,7 +322,10 @@ pub async fn build_page_history(
     // Archives and restores, with who did them when that was recorded. A
     // restore already has its changelog entry; an archive has only its
     // history row.
-    let lifecycle = db.page_lifecycle_rows(page_id).await?;
+    let mut lifecycle = db.page_lifecycle_rows(page_id).await?;
+    if shared_scope.is_some() {
+        lifecycle.retain(|(version, _, _, _)| texts.contains_key(version));
+    }
     for item in &mut items {
         if item.edited_by.as_deref() == Some("restore") {
             item.kind = PageHistoryKind::Restored;
@@ -297,9 +361,23 @@ pub async fn build_page_history(
         if !visible_bases.contains(&basis.basis_page_id) {
             continue;
         }
-        let rows = db
-            .list_page_history(&basis.basis_page_id, HISTORY_SCAN)
-            .await?;
+        let rows = match shared_scope {
+            Some(scope) => {
+                db.list_shared_page_history(&basis.basis_page_id, scope, HISTORY_SCAN)
+                    .await?
+            }
+            None => {
+                db.list_page_history(&basis.basis_page_id, HISTORY_SCAN)
+                    .await?
+            }
+        };
+        if shared_scope.is_some()
+            && !rows
+                .iter()
+                .any(|row| row.version == basis.confirmed_version)
+        {
+            continue;
+        }
         // A version this page has not been checked against yet is always an
         // update; an older one counts when it was written after this page
         // started relying on the source.
@@ -335,7 +413,7 @@ pub async fn build_page_history(
         b.at.cmp(&a.at)
             .then_with(|| b.version.unwrap_or(0).cmp(&a.version.unwrap_or(0)))
     });
-    Ok(items)
+    Ok((items, texts.keys().copied().collect()))
 }
 
 #[cfg(test)]

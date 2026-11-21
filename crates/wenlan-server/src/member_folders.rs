@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! on the server   Acme/產品/Q3/路線.md
-//! the member sees 產品/Q3/路線.md
+//! the member sees 產品/Q3/<page id>.md
 //! ```
 //!
 //! Only calls the team gate forwarded for a member, pinned to one Space,
@@ -16,17 +16,9 @@
 
 use std::path::Path;
 
-use axum::body::Body;
-use axum::extract::{Request, State};
-use axum::http::header;
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
-use serde_json::Value;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::error::WenlanError;
 use wenlan_core::space_folders;
-
-use crate::state::SharedState;
 
 /// A member's call: their Space and that Space's folder on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,91 +80,28 @@ impl MemberView {
         space_folders::in_space(&self.folder, inside)
     }
 
-    /// A page file the member named, as a server path: its folder as
-    /// [`MemberView::folder_path`], its name checked by the move itself.
-    pub fn file_path(&self, shown: &str) -> Result<String, WenlanError> {
+    /// A member location contains the page's opaque ID and its shared folder.
+    pub fn page_location(&self, id: &str, path: &str) -> Option<String> {
+        let shown = self.shown(path)?;
+        let (folder, _) = shown.rsplit_once('/')?;
+        Some(format!("{folder}/{id}.md"))
+    }
+
+    /// Resolve the requested folder and the authorized page's live filename.
+    /// Keep the requested folder so a retry or stale move still uses the
+    /// original compare-and-swap precondition.
+    pub fn file_path(&self, id: &str, shown: &str, live: &str) -> Result<String, WenlanError> {
         let (folder, name) = shown.rsplit_once('/').ok_or_else(outside)?;
-        if name.is_empty() || name.contains('\\') {
+        if name != format!("{id}.md") || self.shown(live).is_none() {
             return Err(outside());
         }
-        Ok(format!("{}/{name}", self.folder_path(folder)?))
+        let (_, basename) = live.rsplit_once('/').ok_or_else(outside)?;
+        Ok(format!("{}/{basename}", self.folder_path(folder)?))
     }
 }
 
 fn outside() -> WenlanError {
     WenlanError::Validation("not a folder of this Space".into())
-}
-
-/// Adds `space_path` (the file as the member sees it) next to every
-/// `storage_path` in a member call's answer. The gate takes
-/// `storage_path` itself out; `space_path` is all the member gets.
-pub(crate) async fn add_space_paths(
-    State(state): State<SharedState>,
-    req: Request,
-    next: Next,
-) -> Response {
-    let member = crate::team_actor::from_headers(req.headers()).is_some();
-    if !member {
-        return next.run(req).await;
-    }
-    // Read as the Space header extractor does: UTF-8, so a Space named in
-    // Chinese (not visible ASCII) still counts.
-    let pinned = req
-        .headers()
-        .get(crate::space_header::HEADER_NAME)
-        .or_else(|| req.headers().get(crate::space_header::HEADER_NAME_LEGACY))
-        .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
-        .map(str::to_string);
-    let response = next.run(req).await;
-    let is_json = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.starts_with("application/json"));
-    if !is_json {
-        return response;
-    }
-    let (db, root) = {
-        let s = state.read().await;
-        (
-            s.db.clone(),
-            s.lint_config.page_root().map(Path::to_path_buf),
-        )
-    };
-    let (Some(db), Some(root)) = (db, root) else {
-        return response;
-    };
-    let Some(view) = view(&db, &root, true, pinned.as_deref()).await else {
-        return response;
-    };
-    let (parts, body) = response.into_parts();
-    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
-        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-    let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
-        return Response::from_parts(parts, Body::from(bytes));
-    };
-    mark(&mut value, &view);
-    let mut parts = parts;
-    parts.headers.remove(header::CONTENT_LENGTH);
-    Response::from_parts(
-        parts,
-        Body::from(serde_json::to_vec(&value).unwrap_or_default()),
-    )
-}
-
-fn mark(value: &mut Value, view: &MemberView) {
-    match value {
-        Value::Object(map) => {
-            if let Some(Value::String(path)) = map.get("storage_path") {
-                let shown = view.shown(path).map(Value::String).unwrap_or(Value::Null);
-                map.insert("space_path".into(), shown);
-            }
-            map.values_mut().for_each(|v| mark(v, view));
-        }
-        Value::Array(list) => list.iter_mut().for_each(|v| mark(v, view)),
-        _ => {}
-    }
 }
 
 #[cfg(test)]

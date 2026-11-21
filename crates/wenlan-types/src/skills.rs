@@ -294,6 +294,13 @@ pub struct SkillReportRequest {
     pub report: SkillReportKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillReportResponse {
+    pub recorded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpaceRulesResponse {
     pub space_id: String,

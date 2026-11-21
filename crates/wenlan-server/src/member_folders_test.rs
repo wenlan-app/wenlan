@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use super::{mark, MemberView};
+use super::MemberView;
 
 fn product() -> MemberView {
     MemberView {
@@ -48,39 +48,29 @@ fn a_folder_the_member_names_maps_inside_their_space_only() {
 }
 
 #[test]
-fn a_file_the_member_names_maps_inside_their_space_only() {
+fn a_member_page_location_uses_its_id_and_shared_folder() {
     let view = product();
+    let live = "Acme/產品/路線.md";
     assert_eq!(
-        view.file_path("產品/Q3/路線.md").unwrap(),
+        view.page_location("page-a", live).as_deref(),
+        Some("產品/page-a.md")
+    );
+    assert_eq!(view.page_location("page-a", "Acme/設計/私.md"), None);
+    assert_eq!(
+        view.file_path("page-a", "產品/Q3/page-a.md", live).unwrap(),
         "Acme/產品/Q3/路線.md"
     );
-    assert_eq!(view.file_path("產品/路線.md").unwrap(), "Acme/產品/路線.md");
     for bad in [
-        "路線.md",
-        "設計/路線.md",
-        "產品/../設計/x.md",
-        "產品/",
-        "產品/a\\b.md",
+        "產品/路線.md",
+        "設計/page-a.md",
+        "產品/../設計/page-a.md",
+        "產品/page-b.md",
     ] {
-        assert!(view.file_path(bad).is_err(), "{bad:?} accepted");
+        assert!(
+            view.file_path("page-a", bad, live).is_err(),
+            "{bad:?} accepted"
+        );
     }
-}
-
-#[test]
-fn an_answer_gets_the_path_the_member_sees_next_to_each_storage_path() {
-    let mut answer = serde_json::json!({
-        "pages": [
-            {"id": "a", "storage_path": "Acme/產品/Q3/路線.md"},
-            {"id": "b", "storage_path": "Acme/設計/x.md"},
-            {"id": "c"}
-        ],
-        "page": {"storage_path": "Acme/產品/路線.md"}
-    });
-    mark(&mut answer, &product());
-    assert_eq!(answer["pages"][0]["space_path"], "產品/Q3/路線.md");
-    assert!(answer["pages"][1]["space_path"].is_null());
-    assert!(answer["pages"][2].get("space_path").is_none());
-    assert_eq!(answer["page"]["space_path"], "產品/路線.md");
 }
 
 mod routes {
@@ -276,7 +266,7 @@ mod routes {
             .to_str()
             .unwrap()
             .to_string();
-        let shown = format!("{SPACE}/{file}");
+        let shown = format!("{SPACE}/{id}.md");
         let uri = format!("/api/pages/{id}/move");
 
         for (n, folder) in ["設計", "設計/私", "產品:A/..", FOLDER]
@@ -308,7 +298,7 @@ mod routes {
                 "POST",
                 &uri,
                 Some(serde_json::json!({
-                    "expected_storage_path": format!("設計/{file}"),
+                    "expected_storage_path": format!("設計/{id}.md"),
                     "folder_path": "設計/私",
                     "operation_id": "00000000-0000-4000-8000-00000000f0b0",
                 })),
@@ -332,8 +322,8 @@ mod routes {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{answer}");
-        assert_eq!(answer["storage_path"], format!("{FOLDER}/Q3/{file}"));
-        assert_eq!(answer["space_path"], format!("{SPACE}/Q3/{file}"));
+        assert!(answer.get("storage_path").is_none());
+        assert_eq!(answer["space_path"], format!("{SPACE}/Q3/{id}.md"));
         assert!(s.root.join(FOLDER).join("Q3").join(&file).is_file());
     }
 }

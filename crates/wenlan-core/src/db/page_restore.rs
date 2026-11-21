@@ -84,7 +84,7 @@ impl MemoryDB {
         expected_version: i64,
         scope: &ReadScope,
     ) -> Result<RestorePageResponse, RestorePageError> {
-        self.commit_page_restore(id, title, expected_version, scope)
+        self.commit_page_restore(id, title, expected_version, scope, false)
             .await
             .map(|restored| restored.response)
     }
@@ -95,6 +95,7 @@ impl MemoryDB {
         title: Option<&str>,
         expected_version: i64,
         scope: &ReadScope,
+        member: bool,
     ) -> Result<PageRestore, RestorePageError> {
         if expected_version < 1 {
             return Err(
@@ -115,6 +116,7 @@ impl MemoryDB {
             requested_title.as_deref(),
             expected_version,
             scope,
+            member,
         )
         .await;
         match result {
@@ -141,7 +143,20 @@ impl MemoryDB {
         requested_title: Option<&str>,
         expected_version: i64,
         scope: &ReadScope,
+        member: bool,
     ) -> Result<PageRestore, RestorePageError> {
+        if member
+            && (!matches!(scope, ReadScope::Space(_))
+                || !Self::member_page_access_on(
+                    conn,
+                    id,
+                    scope,
+                    super::MemberPageTarget::Published,
+                )
+                .await?)
+        {
+            return Err(WenlanError::NotFound("page not found".into()).into());
+        }
         // Read the durable fence under the same write transaction so an
         // intervening cutover cannot be missed between a check and write.
         let raw_fence = conn

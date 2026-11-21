@@ -421,6 +421,7 @@ async fn a_negative_generation_still_hides_an_unsupported_conflict_identity() {
             "p2",
             &MemoryDB::page_title_key("p2"),
             scope,
+            false,
         )
         .await
         .unwrap();
@@ -434,6 +435,7 @@ async fn a_negative_generation_still_hides_an_unsupported_conflict_identity() {
             "p1",
             &MemoryDB::page_title_key("p1"),
             scope,
+            false,
         )
         .await
         .unwrap();

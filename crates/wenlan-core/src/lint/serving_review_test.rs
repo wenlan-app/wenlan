@@ -186,6 +186,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/pages/export"),
         (Method::Get, "/api/pages/orphan-links"),
         (Method::Get, "/api/pages/{id}"),
+        (Method::Post, "/api/pages/drafts/{id}/publish"),
         (Method::Post, "/api/pages/{id}/export"),
         (Method::Post, "/api/pages/{id}/rename"),
         (Method::Post, "/api/pages/{id}/restore"),
