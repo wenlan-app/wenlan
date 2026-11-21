@@ -8,6 +8,7 @@ import "./space-brief.css";
 
 /** Items shown before "N more". */
 export const BRIEF_ITEMS_SHOWN = 3;
+export const BRIEF_REFRESH_MS = 5_000;
 
 /**
  * A Space's Brief on top of its page (docs/ux/spec.md, UX-SPACE-1): where
@@ -23,6 +24,10 @@ export function SpaceBrief({ spaceName }: { readonly spaceName: string }) {
     queryKey: ["space-brief", spaceName],
     queryFn: () => getSpaceBrief(spaceName),
     retry: false,
+    // Brief writes come through the daemon, which has no Tauri event bridge.
+    // Refresh promptly when the person returns and while this page is visible.
+    refetchOnWindowFocus: true,
+    refetchInterval: BRIEF_REFRESH_MS,
   });
   const brief = query.data;
   if (!brief) return null;

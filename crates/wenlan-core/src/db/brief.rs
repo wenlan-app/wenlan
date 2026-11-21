@@ -12,6 +12,20 @@ pub struct LegacyBriefItem {
     pub gate: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BriefUpdateOutcome {
+    Applied(wenlan_types::BriefUpdateReceipt),
+    Duplicate(wenlan_types::BriefUpdateReceipt),
+}
+
+impl BriefUpdateOutcome {
+    fn into_receipt(self) -> wenlan_types::BriefUpdateReceipt {
+        match self {
+            Self::Applied(receipt) | Self::Duplicate(receipt) => receipt,
+        }
+    }
+}
+
 const BRIEF_TABLES_DDL: &str = "
 CREATE TABLE IF NOT EXISTS briefs (
     space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
@@ -323,7 +337,9 @@ impl MemoryDB {
         &self,
         request: &wenlan_types::BriefUpdateRequest,
     ) -> Result<wenlan_types::BriefUpdateReceipt, WenlanError> {
-        self.apply_brief_update_in_session(request, None).await
+        self.apply_brief_update_in_session_outcome(request, None)
+            .await
+            .map(BriefUpdateOutcome::into_receipt)
     }
 
     /// [`Self::apply_brief_update`], recording `session` on the history row
@@ -333,6 +349,18 @@ impl MemoryDB {
         request: &wenlan_types::BriefUpdateRequest,
         session: Option<&wenlan_types::SessionRef>,
     ) -> Result<wenlan_types::BriefUpdateReceipt, WenlanError> {
+        self.apply_brief_update_in_session_outcome(request, session)
+            .await
+            .map(BriefUpdateOutcome::into_receipt)
+    }
+
+    /// Apply a Brief update while preserving whether the operation id was
+    /// newly applied or replayed from its durable idempotency receipt.
+    pub async fn apply_brief_update_in_session_outcome(
+        &self,
+        request: &wenlan_types::BriefUpdateRequest,
+        session: Option<&wenlan_types::SessionRef>,
+    ) -> Result<BriefUpdateOutcome, WenlanError> {
         validate_update_request(request)?;
         let request_digest = update_request_digest(request)?;
         let _space_write_guard = self.space_write_lock.lock().await;
@@ -370,7 +398,7 @@ impl MemoryDB {
                 tx.commit().await.map_err(|error| {
                     WenlanError::VectorDb(format!("brief replay commit: {error}"))
                 })?;
-                return Ok(receipt);
+                return Ok(BriefUpdateOutcome::Duplicate(receipt));
             }
         }
 
@@ -802,7 +830,7 @@ impl MemoryDB {
         tx.commit()
             .await
             .map_err(|error| WenlanError::VectorDb(format!("brief update commit: {error}")))?;
-        Ok(receipt)
+        Ok(BriefUpdateOutcome::Applied(receipt))
     }
 }
 

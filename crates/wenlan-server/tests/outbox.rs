@@ -107,7 +107,7 @@ async fn drain_replays_both_kinds_and_handles_duplicates_and_malformed_files() {
             operation_id: "brief-drain".into(),
             summary: Some(BriefSummaryUpdate {
                 text: "drained summary".into(),
-                expected_version: 999,
+                expected_version: 0,
             }),
             mutations: vec![],
         }),
@@ -179,7 +179,8 @@ async fn drain_replays_both_kinds_and_handles_duplicates_and_malformed_files() {
         .unwrap();
     assert_eq!(second.applied, 0);
 
-    envelope_file(&memory, 3);
+    envelope_file(&brief, 3);
+    envelope_file(&memory, 4);
     let duplicate: OutboxDrainReport = client
         .post(format!("http://127.0.0.1:{port}/api/outbox/drain"))
         .send()
@@ -188,8 +189,54 @@ async fn drain_replays_both_kinds_and_handles_duplicates_and_malformed_files() {
         .json()
         .await
         .unwrap();
-    assert_eq!(duplicate.duplicate, 1, "{duplicate:?}");
+    assert_eq!(duplicate.duplicate, 2, "{duplicate:?}");
     assert_eq!(duplicate.remaining, 0);
+
+    db.apply_brief_update(&BriefUpdateRequest {
+        space: "demo".into(),
+        caller_id: "test".into(),
+        operation_id: "newer-summary".into(),
+        summary: Some(BriefSummaryUpdate {
+            text: "newer summary".into(),
+            expected_version: 1,
+        }),
+        mutations: vec![],
+    })
+    .await
+    .unwrap();
+    let stale = OutboxEnvelope {
+        operation_id: "stale-summary".into(),
+        payload: OutboxPayload::BriefUpdate(BriefUpdateRequest {
+            space: "demo".into(),
+            caller_id: "test".into(),
+            operation_id: "stale-summary".into(),
+            summary: Some(BriefSummaryUpdate {
+                text: "offline stale summary".into(),
+                expected_version: 1,
+            }),
+            mutations: vec![],
+        }),
+        ..brief.clone()
+    };
+    envelope_file(&stale, 5);
+    let conflict: OutboxDrainReport = client
+        .post(format!("http://127.0.0.1:{port}/api/outbox/drain"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(conflict.applied, 0, "{conflict:?}");
+    assert_eq!(conflict.failed, 1, "{conflict:?}");
+    assert_eq!(
+        db.get_brief_by_space_name("demo")
+            .await
+            .unwrap()
+            .unwrap()
+            .last_session_summary,
+        "newer summary"
+    );
 
     std::fs::write(
         wenlan_core::config::outbox_dir().join("bad.json"),

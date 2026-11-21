@@ -4629,6 +4629,11 @@ fn first_sentence(text: &str) -> String {
 }
 
 fn space_brief_view(brief: Brief, plain: BriefPlainView) -> Option<SpaceBriefView> {
+    let plain = if plain.brief_version == Some(brief.version) {
+        plain
+    } else {
+        BriefPlainView::default()
+    };
     let summary = plain
         .summary
         .filter(|s| !s.trim().is_empty())
@@ -9018,6 +9023,7 @@ mod working_on_tests {
         b.last_session_summary = "Trust fixes merged (#1236).".into();
         b.last_handoff_at = Some(99);
         let mut plain = BriefPlainView {
+            brief_version: Some(b.version),
             summary: Some("可信度修正都合併了。".into()),
             ..Default::default()
         };
@@ -9043,6 +9049,23 @@ mod working_on_tests {
         );
         let raw = space_brief_view(b, BriefPlainView::default()).unwrap();
         assert_eq!(raw.summary.as_deref(), Some("Trust fixes merged (#1236)."));
+        assert!(raw.active.iter().all(|line| line.raw));
+
+        let mut stale_brief = brief("wenlan", vec![item("a", "Current raw line.", 10)]);
+        stale_brief.version = 2;
+        stale_brief.last_session_summary = "Current raw summary.".into();
+        let mut stale_plain = BriefPlainView {
+            brief_version: Some(1),
+            summary: Some("Stale plain summary.".into()),
+            ..Default::default()
+        };
+        stale_plain
+            .lines
+            .insert("a".into(), "Stale plain line.".into());
+        let stale = space_brief_view(stale_brief, stale_plain).unwrap();
+        assert_eq!(stale.summary.as_deref(), Some("Current raw summary."));
+        assert_eq!(stale.active[0].line, "Current raw line.");
+        assert!(stale.active[0].raw);
         let mut empty = brief("x", vec![]);
         empty.last_session_summary = " ".into();
         assert!(space_brief_view(empty, BriefPlainView::default()).is_none());
