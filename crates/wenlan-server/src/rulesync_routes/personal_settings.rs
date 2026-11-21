@@ -109,15 +109,15 @@ pub(super) fn prepare_adoption(
 pub(super) fn adopt(
     home: &Path,
     root: &FileRoot,
-    manifest: &mut Manifest,
+    manifest: &Manifest,
     source: Adoption,
     operations: &mut Vec<Pending>,
-) -> Result<usize> {
+) -> Result<Source> {
     if source.sources.is_empty() {
-        return Ok(0);
+        return Ok(BTreeMap::new());
     }
     let catalog = Catalog::read(home)?;
-    let mut count = 0;
+    let mut prepared = BTreeMap::new();
     for (path, entries) in source.sources {
         let location = catalog
             .locations
@@ -132,7 +132,6 @@ pub(super) fn adopt(
                 location.display()
             );
         }
-        count += entries.len();
         let claimed = entries
             .into_iter()
             .map(|entry| {
@@ -143,9 +142,7 @@ pub(super) fn adopt(
             })
             .collect::<Vec<_>>();
         let has_receipt = claimed.iter().any(|entry| entry.receipt.is_some());
-        let known = manifest.personal_settings.entry(path.clone()).or_default();
-        known.retain(|known| !claimed.iter().any(|entry| entry.key == known.key));
-        known.extend(claimed);
+        prepared.insert(path.clone(), claimed);
         // Settings already present in a tool are adopted in place. Record an
         // exact original only when the whole file is safe to back up.
         if has_receipt && !manifest.delivered.contains_key(&path) && !reserved(manifest, &path) {
@@ -160,7 +157,15 @@ pub(super) fn adopt(
             });
         }
     }
-    Ok(count)
+    Ok(prepared)
+}
+
+pub(super) fn enroll(manifest: &mut Manifest, source: Source) {
+    for (path, entries) in source {
+        let known = manifest.personal_settings.entry(path).or_default();
+        known.retain(|known| !entries.iter().any(|entry| entry.key == known.key));
+        known.extend(entries);
+    }
 }
 
 struct LiveFile {
@@ -622,13 +627,18 @@ impl Setup {
                     ));
                     continue;
                 }
-                operations.push(Pending {
+                let op = Pending {
                     path: path.clone(),
                     seen: file.snapshot.clone(),
                     desired: with_bytes(&file.snapshot, bytes),
                     kind: Some(Kind::PersonalSettings { updates }),
                     allow_link: false,
-                });
+                };
+                if let Err(reason) = super::displaced::preflight(root, &self.data_files()?, &op) {
+                    result.blocked.push(format!("{display}: {reason}."));
+                    continue;
+                }
+                operations.push(op);
             }
         }
         for (path, key) in &advanced {

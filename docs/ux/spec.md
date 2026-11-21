@@ -1056,21 +1056,27 @@ and wait for evidence that people need them.
   previews existing personal MCP servers, hooks and permissions in the tools'
   default home directories. The person types `yes` to import the listed entries
   into the local settings source. The preview gives the reason for each skipped
-  entry or file. It keeps supported native environment references and omits
-  literals that may be credentials. A file containing possible credentials
+  entry or file. It keeps supported native environment references, checks
+  commands and arguments, and skips credential options and literal values in
+  environment and header maps. A file containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
   Wenlan neither resolves references nor executes hooks or servers.
-  `wenlan rules sync` adds or updates approved entries in place, preserving
-  other entries and their bytes in the native format. A same-name conflict
-  blocks that entry and gives a reason. New entries wait for adoption.
+  Wenlan reads Codex hooks from both native files and requires evidence of
+  the OpenCode config generation before using that file. Hard-linked settings
+  files stay unmanaged. `wenlan rules sync` keeps native line endings and
+  file permissions when adding or updating approved entries. A same-name
+  conflict blocks that entry and gives a reason. New entries wait for adoption.
+  An interrupted addition leaves the earlier tools enrolled.
   A hand edit to a managed entry appears in `wenlan rules sync` for review.
   The person types `yes` to keep it in the originating tool or share it
   with the enrolled tools listed in the proposal. Plain MCP definitions and
-  compatible command hooks can travel when their settings have the same meaning.
-  Tool-specific permissions and fields stay local. Sync never propagates
-  a deletion. Restore returns managed settings files to the original bytes and
-  modes, using the same backup and change check as the rest of the setup.
-  If a file has an independent edit, restore retains the backup for review.
+  compatible session-start command hooks can travel. Permission entries and
+  hooks that decide approvals stay local. Changes to an ordered permission
+  policy appear for review. Dismiss leaves permission entries and their order
+  in place. An accepted deletion settles that entry's receipt. Restore uses
+  the shared writer and the recorded fragments to undo managed changes while
+  keeping independent edits. If a recorded fragment overlaps a newer edit,
+  restore retains the backup for review.
   `wenlan rules settings` still previews an explicitly selected local rulesync
   source. The person types `yes` every time it is applied. Team and project
   settings stay outside personal sync.
@@ -1083,6 +1089,10 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
+  `rulesync_personal_settings_review_preserves_native_approval_and_mode`,
+  `rulesync_personal_settings_restore_owns_only_recorded_entries`,
+  `rulesync_personal_settings_journal_keeps_the_prior_setup_recoverable`,
+  `rulesync_personal_settings_uses_native_opencode_and_inline_codex_shapes`,
   `rulesync_personal_settings_blocks_only_the_conflicting_entry_and_retries`,
   `rulesync_personal_settings_stays_home_scoped_and_offers_new_entries` and
   `ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions`.

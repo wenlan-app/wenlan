@@ -255,6 +255,8 @@ pub(crate) struct FileRoot {
     harness: Option<HarnessGuard>,
     tool_home: bool,
     private_directories: bool,
+    #[cfg(test)]
+    pub(crate) simulate_cross_volume: bool,
     #[cfg(all(test, not(windows)))]
     pub(crate) refuse_windows_acl_in_test: bool,
 }
@@ -275,6 +277,8 @@ impl FileRoot {
             harness: None,
             tool_home: false,
             private_directories: false,
+            #[cfg(test)]
+            simulate_cross_volume: false,
             #[cfg(all(test, not(windows)))]
             refuse_windows_acl_in_test: false,
         })
@@ -299,6 +303,21 @@ impl FileRoot {
     pub(crate) fn with_private_directories(mut self) -> Self {
         self.private_directories = true;
         self
+    }
+
+    pub(crate) fn check_recovery_volume(
+        &self,
+        path: &Path,
+        data: &FileRoot,
+        recovery_directory: &Path,
+    ) -> io::Result<()> {
+        let (parent, _) = entry_path(path)?;
+        let parent = self.open_parent(parent, false)?.ok_or_else(invalid_path)?;
+        let recovery = data.open_parent(recovery_directory, false)?;
+        let volume = recovery.as_ref().unwrap_or(&data.dir).dir_metadata()?.dev();
+        #[cfg(test)]
+        let volume = volume ^ u64::from(self.simulate_cross_volume);
+        same_recovery_volume(parent.dir_metadata()?.dev(), volume)
     }
 
     pub(crate) fn open_private_lock(&self) -> io::Result<std::fs::File> {
@@ -1276,16 +1295,27 @@ fn recovery_location<'a>(
     option
         .map(|(root, path)| {
             let (directory, name) = entry_path(path)?;
-            let directory = root.open_parent(directory, false)?.ok_or_else(invalid_path)?;
-            if directory.dir_metadata()?.dev() != parent.dir_metadata()?.dev() {
-                return Err(io::Error::new(
-                    io::ErrorKind::CrossesDevices,
-                    "place Wenlan's rulesync data on the same volume as this tool file to keep concurrent saves recoverable",
-                ));
-            }
+            let directory = root
+                .open_parent(directory, false)?
+                .ok_or_else(invalid_path)?;
+            same_recovery_volume(
+                parent.dir_metadata()?.dev(),
+                directory.dir_metadata()?.dev(),
+            )?;
             Ok((directory, name))
         })
         .transpose()
+}
+
+fn same_recovery_volume(source: u64, recovery: u64) -> io::Result<()> {
+    if source == recovery {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::CrossesDevices,
+            "place Wenlan's rulesync data on the same volume as this tool file to keep concurrent saves recoverable",
+        ))
+    }
 }
 
 fn move_displaced(dir: &Dir, displaced: &(Dir, &Path)) -> io::Result<()> {

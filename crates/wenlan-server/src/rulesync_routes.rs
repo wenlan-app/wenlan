@@ -1068,10 +1068,11 @@ impl Setup {
         let settings = personal_settings::adopt(
             &self.home,
             root,
-            &mut manifest,
+            &manifest,
             adoption.settings,
             &mut operations,
         )?;
+        let setting_count: usize = settings.values().map(Vec::len).sum();
         let mut result = if !adoption.added_tools.is_empty() {
             report(&format!(
                 "Added {} to the local tool setup",
@@ -1110,10 +1111,10 @@ impl Setup {
                 result.written.push(path.display().to_string());
             }
         }
-        if settings != 0 {
+        if setting_count != 0 {
             result
                 .message
-                .push_str(&format!(". Imported {settings} personal setting(s)."));
+                .push_str(&format!(". Imported {setting_count} personal setting(s)."));
         }
         if let Some(master) = extension {
             manifest.unmanaged_personal_files.retain(|path, _| {
@@ -1129,6 +1130,11 @@ impl Setup {
             manifest.unmanaged_skills.append(&mut skipped);
             manifest.worktree_writes.append(&mut worktree_writes);
             manifest.extension_paths.clear();
+        }
+        // Enroll the settings in the same final checkpoint as the new tool
+        // master. Recovery before this point leaves the previous source intact.
+        if extending || setting_count != 0 {
+            personal_settings::enroll(&mut manifest, settings);
             self.save(&manifest)?;
         }
         if skipped_skills {
@@ -1371,7 +1377,7 @@ impl Setup {
         }
         record_originals(root, manifest, &ready, adopting || extending)?;
         let data = self.data_files()?;
-        let displaced = displaced::Batch::prepare(&data, &ready)?;
+        let displaced = displaced::Batch::prepare(root, &data, &ready)?;
         let batch_paths = ready.iter().map(|op| op.path.clone()).collect::<Vec<_>>();
         manifest.stages.extend(
             ready
@@ -1626,6 +1632,13 @@ impl Setup {
                         if let Err(reason) =
                             check_windows_restore(manifest, &path, &op.seen, &original)
                         {
+                            result.blocked.push(format!(
+                                "{} could not be restored. {reason}",
+                                path.display()
+                            ));
+                            continue;
+                        }
+                        if let Err(reason) = displaced::preflight(root, &self.data_files()?, &op) {
                             result.blocked.push(format!(
                                 "{} could not be restored. {reason}",
                                 path.display()
@@ -5248,6 +5261,108 @@ mod tests {
             matches!(snapshot, Snapshot::File { bytes, .. }
                 if bytes.windows(needle.len()).any(|part| part == needle))
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_personal_settings_journal_keeps_the_prior_setup_recoverable() {
+        const CLAUDE_SETTINGS: &str = ".claude.json";
+        const CODEX_SETTINGS: &str = ".codex/config.toml";
+        const CLAUDE_BEFORE: &str = r#"{"mcpServers":{"shared":{"command":"before"}}}"#;
+        const CODEX_BEFORE: &str = "[mcp_servers.shared]\ncommand = 'before'\n";
+        let recover_and_sync = |f: &Fixture| {
+            {
+                let mut state = f.setup.load().unwrap().unwrap();
+                let root = FileRoot::open_home(&f.setup.home).unwrap();
+                let _lock = f.setup.lock().unwrap();
+                f.setup.recover(&root, &mut state).unwrap();
+            }
+            let synced = f.sync_with("<!-- earlier tools still sync -->\n");
+            assert!(synced.blocked.is_empty(), "{synced:?}");
+            for path in [CLAUDE, CODEX] {
+                assert!(f
+                    .text(path)
+                    .starts_with("<!-- earlier tools still sync -->\n"));
+            }
+        };
+
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        f.write(CODEX_SETTINGS, CODEX_BEFORE);
+        run9_crash_during_file_apply(&f, "journaled:config.toml");
+        let interrupted = f.setup.load().unwrap().unwrap();
+        assert!(interrupted.adopted && !interrupted.pending.is_empty());
+        assert!(!interrupted
+            .personal_settings
+            .contains_key(Path::new(CODEX_SETTINGS)));
+        recover_and_sync(&f);
+        let recovered = f.setup.load().unwrap().unwrap();
+        assert!(
+            recovered.adopted
+                && recovered.pending.is_empty()
+                && recovered.extension_paths.is_empty()
+        );
+        assert!(!recovered
+            .personal_settings
+            .contains_key(Path::new(CODEX_SETTINGS)));
+        assert_eq!(f.text(CODEX_SETTINGS), CODEX_BEFORE);
+
+        let review_fixture = || {
+            let f = Fixture::new();
+            f.write(CLAUDE_SETTINGS, CLAUDE_BEFORE);
+            f.write(CODEX_SETTINGS, CODEX_BEFORE);
+            f.adopt_from_plan();
+            f.write(CLAUDE_SETTINGS, &CLAUDE_BEFORE.replace("before", "after"));
+            let proposal = f
+                .sync_with("")
+                .proposals
+                .into_iter()
+                .find(|card| card.diff.contains(CODEX_SETTINGS))
+                .unwrap();
+            let decision = PullbackDecision {
+                id: proposal.id,
+                action: PullbackAction::AllTools,
+                file: None,
+            };
+            (f, decision)
+        };
+        for point in ["journaled", "before-incoming", "staged", "displaced"] {
+            let (f, decision) = review_fixture();
+            run_file_apply_child(&f, &format!("{point}:config.toml"), Some(&decision.id));
+            let interrupted = f.setup.load().unwrap().unwrap();
+            assert!(
+                interrupted.adopted && !interrupted.pending.is_empty(),
+                "{point}"
+            );
+            recover_and_sync(&f);
+            assert!(f.text(CODEX_SETTINGS).contains("after"), "{point}");
+            assert!(
+                f.setup.load().unwrap().unwrap().pending.is_empty(),
+                "{point}"
+            );
+        }
+
+        let (f, decision) = review_fixture();
+        let mut root = FileRoot::open_home(&f.setup.home).unwrap();
+        root.simulate_cross_volume = true;
+        let displaced = f.setup.data.join("personal-displaced");
+        let count = || fs::read_dir(&displaced).map_or(0, Iterator::count);
+        let before = count();
+        let outcome = f
+            .setup
+            .review_using(&decision, |_, manifest| f.sync_review(&root, manifest))
+            .unwrap();
+        assert!(
+            outcome
+                .blocked
+                .iter()
+                .any(|note| { note.contains(CODEX_SETTINGS) && note.contains("same volume") }),
+            "{outcome:?}"
+        );
+        let state = f.setup.load().unwrap().unwrap();
+        assert!(state.adopted && state.pending.is_empty() && state.stages.is_empty());
+        assert_eq!(count(), before);
+        assert_eq!(f.text(CODEX_SETTINGS), CODEX_BEFORE);
     }
 
     fn personal_targets_round_trip(binary: Option<&Path>) {
@@ -10468,6 +10583,25 @@ mod tests {
             data: root.join("data"),
             binary: "unused".into(),
         };
+        if let Ok(id) = std::env::var("WENLAN_TEST_SETTINGS_REVIEW_ID") {
+            let decision = PullbackDecision {
+                id,
+                action: PullbackAction::AllTools,
+                file: None,
+            };
+            setup
+                .review_using(&decision, |root, manifest| {
+                    setup.sync_locked(
+                        root,
+                        manifest,
+                        &[],
+                        fixture_rule_renderer,
+                        fixture_skill_renderer,
+                    )
+                })
+                .unwrap();
+            panic!("the injected settings process exit was not reached");
+        }
         let previous = setup.adoptable_manifest().unwrap();
         let adoption = setup.discover_for_adoption(previous.as_ref()).unwrap();
         let master = PersonalMaster::new(&adoption);
@@ -10479,13 +10613,21 @@ mod tests {
 
     #[cfg(unix)]
     fn run9_crash_during_file_apply(f: &Fixture, point: &str) {
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
+        run_file_apply_child(f, point, None);
+    }
+
+    #[cfg(unix)]
+    fn run_file_apply_child(f: &Fixture, point: &str, review: Option<&str>) {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
             .arg("--exact")
             .arg("rulesync_routes::tests::run9_crash_during_file_apply_helper")
             .env("WENLAN_TEST_FILE_APPLY_ROOT", f._temp.path())
-            .env("WENLAN_TEST_FILE_APPLY_CRASH", point)
-            .output()
-            .unwrap();
+            .env("WENLAN_TEST_FILE_APPLY_CRASH", point);
+        if let Some(id) = review {
+            command.env("WENLAN_TEST_SETTINGS_REVIEW_ID", id);
+        }
+        let child = command.output().unwrap();
         assert_eq!(child.status.code(), Some(76), "{child:?}");
     }
 
