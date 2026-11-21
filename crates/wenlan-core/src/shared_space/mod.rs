@@ -2492,8 +2492,11 @@ async fn pass(
         .pages
         .iter()
         .filter(|(page, _)| rulesync_team::is_master_page(page))
-        .flat_map(|(_, versions)| versions)
-        .filter_map(rulesync_team::approved_proposal);
+        .flat_map(|(page, versions)| versions.iter().map(move |version| (page, version)))
+        .filter_map(|(page, version)| {
+            Some((page.as_str(), rulesync_team::approved_proposal(version)?))
+        })
+        .collect::<Vec<_>>();
     ctx.review(
         &read.pages,
         &read.proposals,
@@ -2996,6 +2999,21 @@ impl Pass<'_> {
                     && !winner.meta.archived
                     && versions.iter().any(|version| &version.sha == sha)
         );
+        // On a team host a member's version never brings back a page
+        // deleted here (one edited since, or restored elsewhere since): it
+        // stays deleted, and the pass counts it as skipped.
+        let team_host = self.settings.hosted && !self.library;
+        let restored_since = matches!(
+            held,
+            Some(Held { sha, version: None, .. }) if sha != &winner.sha && !winner.meta.archived
+        );
+        if team_host && (edited_since || restored_since) {
+            log::warn!(
+                "[shared_space] {id} was deleted here and a member edited it since; it stays deleted"
+            );
+            counts.skipped += 1;
+            return Ok(Some(deleted(&winner.sha)));
+        }
         match held {
             // The person deleted it here. It is not made again: the others
             // get a version that archives it, which a restore undoes.
@@ -3009,6 +3027,12 @@ impl Pass<'_> {
                     Some(sha) => {
                         counts.exported += 1;
                         Ok(Some(deleted(&sha)))
+                    }
+                    // On a team host it is still deleted here: forgetting
+                    // that would make it again from the folder next pass.
+                    None if team_host => {
+                        counts.skipped += 1;
+                        Ok(Some(deleted(&winner.sha)))
                     }
                     None => {
                         counts.skipped += 1;

@@ -1466,6 +1466,7 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::pass` | `private` | no | no | — | `core/db.rs::list_pages_by_space`, `core/db/scoped_pages.rs::shared_folder_pages` |
 | `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/db/scoped_pages.rs::shared_page_stay_token` |
 | `core/shared_space/mod.rs::taken_titles` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
+| `core/shared_space/review.rs::review` | `pub(super)` | yes | no | — | `core/db/scoped_pages.rs::shared_page_stay_token` |
 | `core/steep.rs::basis_work` | `private` | no | no | — | `core/db/page_basis.rs::list_basis_pending` |
 | `core/steep.rs::claim_bases` | `private` | no | no | — | `core/db/page_basis.rs::list_basis_context` |
 | `core/steep.rs::current_bases` | `private` | no | no | — | `core/db/page_basis.rs::list_basis_context` |
@@ -1694,7 +1695,6 @@ carrying the authority of agreement.
 | `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::host_sync`, `server/spaces_routes.rs::shared_sync`, `server/team_routes.rs::handle_host_space` | `core/db.rs::get_page` |
 | `core/shared_space/mod.rs::write_merged` | `private` | no | no | — | `core/db.rs::set_page_citations` |
 | `core/shared_space/review.rs::accepted` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/shared_space/review.rs::review` | `pub(super)` | yes | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |

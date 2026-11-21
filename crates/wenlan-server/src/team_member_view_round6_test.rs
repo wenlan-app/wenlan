@@ -413,3 +413,212 @@ async fn round6_member_cannot_write_a_page_whose_file_is_outside_the_space_folde
     assert_eq!(after.title, page.title);
     assert_eq!(outside(&root), file_before);
 }
+
+/// Uploads a member's later edit of `page` over its current head.
+async fn writer_edits_head(f: &Fixture, page: &str, body: &str) {
+    let versions = version::read_folder(&f.folder).pages.remove(page).unwrap();
+    let head = version::head(&versions).unwrap().winner.clone();
+    let mut file = wenlan_core::store::format::page::PageFile::new(&head.page.title, body);
+    file.id = Some(page.into());
+    let bytes = version::render(
+        &file,
+        &version::VersionMeta {
+            stay: head.meta.stay.clone(),
+            parent: Some(head.sha.clone()),
+            merged: Vec::new(),
+            body_digest: version::body_digest(&file.body),
+            author: version::Author {
+                member: f.writer.0.id.clone(),
+                kind: version::AuthorKind::Person,
+                agent: None,
+            },
+            ts: "2099-01-01T00:00:00Z".into(),
+            archived: false,
+            locked: false,
+            proposal: false,
+            decides: None,
+            device: None,
+        },
+    );
+    let name = version::version_file_name(&version::sha256_hex(bytes.as_bytes()));
+    let (status, _) = call(
+        &f.state,
+        Method::PUT,
+        &format!("/team/v1/spaces/Design/versions/{page}/{name}"),
+        Some(&f.writer.1),
+        bytes.into(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn round6_sync_never_restores_a_deleted_page_from_a_member_edit() {
+    let (f, db) = fixture_with_daemon().await;
+    // Deleted here and synced; a member then edits over the deletion.
+    let after = create_folder_test_page(&db, "Round6 deleted then edited", "authored")
+        .await
+        .id;
+    // A member edit the host never saw, then deleted here before a sync.
+    let before = create_folder_test_page(&db, "Round6 edited then deleted", "authored")
+        .await
+        .id;
+    sync_hosted_test_folder(&f, &db).await;
+    db.delete_page(&after).await.unwrap();
+    sync_hosted_test_folder(&f, &db).await;
+    writer_edits_head(&f, &after, "A member brings it back.").await;
+    writer_edits_head(&f, &before, "A member edit the host never saw.").await;
+    db.delete_page(&before).await.unwrap();
+    let counts = sync_hosted_test_folder(&f, &db).await;
+    let mut restored = Vec::new();
+    for (case, id) in [
+        ("deleted then edited", &after),
+        ("edited then deleted", &before),
+    ] {
+        if db.get_page(id).await.unwrap().is_some() {
+            restored.push(case);
+        }
+    }
+    assert!(
+        restored.is_empty(),
+        "restored from a member edit: {restored:?}"
+    );
+    assert!(counts.skipped >= 2, "{counts:?}");
+    // A later pass leaves them deleted too.
+    sync_hosted_test_folder(&f, &db).await;
+    for id in [&after, &before] {
+        assert!(db.get_page(id).await.unwrap().is_none(), "{id}");
+    }
+}
+
+/// A member's proposal or decision over `page`'s current head, filed under
+/// `filed` (the page id the file names).
+fn member_review_file(
+    f: &Fixture,
+    filed: &str,
+    over: &version::PageVersion,
+    stay: Option<String>,
+    decides: Option<version::Decides>,
+) -> String {
+    let body = if decides.is_some() {
+        ""
+    } else {
+        "A member's proposed text."
+    };
+    let mut file = wenlan_core::store::format::page::PageFile::new(&over.page.title, body);
+    file.id = Some(filed.into());
+    version::render(
+        &file,
+        &version::VersionMeta {
+            stay,
+            parent: Some(over.sha.clone()),
+            merged: Vec::new(),
+            body_digest: version::body_digest(body),
+            author: version::Author {
+                member: f.writer.0.id.clone(),
+                kind: if decides.is_some() {
+                    version::AuthorKind::Person
+                } else {
+                    version::AuthorKind::Ai
+                },
+                agent: None,
+            },
+            ts: "2099-01-01T00:00:00Z".into(),
+            archived: false,
+            locked: true,
+            proposal: decides.is_none(),
+            decides,
+            device: None,
+        },
+    )
+}
+
+async fn writer_puts(f: &Fixture, page: &str, text: String) -> String {
+    let sha = version::sha256_hex(text.as_bytes());
+    let name = version::version_file_name(&sha);
+    let (status, _) = call(
+        &f.state,
+        Method::PUT,
+        &format!("/team/v1/spaces/Design/versions/{page}/{name}"),
+        Some(&f.writer.1),
+        text.into(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    sha
+}
+
+fn folder_head(f: &Fixture, page: &str) -> version::PageVersion {
+    let versions = version::read_folder(&f.folder).pages.remove(page).unwrap();
+    version::head(&versions).unwrap().winner.clone()
+}
+
+#[tokio::test]
+async fn round6_a_decision_closes_a_card_only_for_its_page_and_current_stay() {
+    let (f, db) = fixture_with_daemon().await;
+    db.create_space("Personal", None, false).await.unwrap();
+    let card_open = |db: Arc<MemoryDB>, page: String| async move {
+        db.open_page_cards()
+            .await
+            .unwrap()
+            .iter()
+            .any(|card| card.page_id == page)
+    };
+    let mut kept = Vec::new();
+    for case in ["another page", "a prior stay"] {
+        let id = create_folder_test_page(&db, &format!("Round6 reviewed {case}"), "authored")
+            .await
+            .id;
+        let other = create_folder_test_page(&db, &format!("Round6 other {case}"), "authored")
+            .await
+            .id;
+        db.set_page_review_required(&id, true).await.unwrap();
+        sync_hosted_test_folder(&f, &db).await;
+        let head = folder_head(&f, &id);
+        let proposal = member_review_file(&f, &id, &head, head.meta.stay.clone(), None);
+        let proposal = writer_puts(&f, &id, proposal).await;
+        sync_hosted_test_folder(&f, &db).await;
+        assert!(
+            card_open(db.clone(), id.clone()).await,
+            "{case}: no card staged"
+        );
+        let decides = Some(version::Decides {
+            proposal: proposal.clone(),
+            accepted: false,
+        });
+        let decision = if case == "another page" {
+            let over = folder_head(&f, &other);
+            let stay = over.meta.stay.clone();
+            (
+                other.clone(),
+                member_review_file(&f, &other, &over, stay, decides),
+            )
+        } else {
+            for space in ["Personal", "Design"] {
+                let page = db.get_page(&id).await.unwrap().unwrap();
+                db.set_page_space(&id, Some(space), page.version, &ReadScope::Global)
+                    .await
+                    .unwrap();
+            }
+            sync_hosted_test_folder(&f, &db).await;
+            assert!(
+                card_open(db.clone(), id.clone()).await,
+                "the move closed the card"
+            );
+            (
+                id.clone(),
+                member_review_file(&f, &id, &head, head.meta.stay.clone(), decides),
+            )
+        };
+        writer_puts(&f, &decision.0, decision.1).await;
+        sync_hosted_test_folder(&f, &db).await;
+        if card_open(db.clone(), id.clone()).await {
+            kept.push(case);
+        }
+    }
+    assert_eq!(
+        kept,
+        ["another page", "a prior stay"],
+        "a stale decision closed a card"
+    );
+}

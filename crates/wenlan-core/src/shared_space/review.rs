@@ -73,6 +73,18 @@ fn proposal_stay(
         .and_then(|proposal| proposal.meta.stay.clone())
 }
 
+/// Whether `version` was made in its page's current stay, where `stays`
+/// tracks it (a team host); everywhere else every version counts.
+fn in_current_stay(
+    stays: &HashMap<&str, Option<String>>,
+    page: &str,
+    version: &PageVersion,
+) -> bool {
+    stays
+        .get(page)
+        .is_none_or(|stay| stay.is_some() && *stay == version.meta.stay)
+}
+
 impl Pass<'_> {
     /// Shares the AI tools' cards, stages the others' proposals, and writes
     /// a decision for each card decided here. Runs after the page steps, so
@@ -83,7 +95,7 @@ impl Pass<'_> {
         proposals: &HashMap<String, Vec<PageVersion>>,
         decisions: &'a HashMap<String, Vec<PageVersion>>,
         heads: &HashMap<String, String>,
-        team_approvals: impl Iterator<Item = &'a str>,
+        team_approvals: Vec<(&'a str, &'a str)>,
     ) -> Result<(), WenlanError> {
         let key = review_key(&self.scope.key());
         let mut review: Review = match self.db.get_app_metadata(&key).await? {
@@ -91,18 +103,37 @@ impl Pass<'_> {
             None => Review::default(),
         };
         let before = review.clone();
-        let decided: HashSet<&str> = decisions
-            .values()
-            .flatten()
-            .filter_map(|decision| decision.meta.decides.as_ref())
-            .map(|decides| decides.proposal.as_str())
+        // On a team host a member's proposal or decision counts only in the
+        // page's current stay: one from before the page left the Space and
+        // came back is ignored.
+        let mut stays: HashMap<&str, Option<String>> = HashMap::new();
+        if self.settings.hosted && !self.library {
+            for page in decisions.keys().chain(proposals.keys()) {
+                if rulesync_team::is_master_page(page) || stays.contains_key(page.as_str()) {
+                    continue;
+                }
+                let stay = match self.db.get_page(page).await? {
+                    Some(here) => self.db.shared_page_stay_token(&here, &self.space).await?,
+                    None => None,
+                };
+                stays.insert(page, stay);
+            }
+        }
+        // A decision closes a card only for the page it is filed under.
+        let decided: HashSet<(&str, &str)> = decisions
+            .iter()
+            .flat_map(|(page, list)| list.iter().map(move |decision| (page.as_str(), decision)))
+            .filter(|(page, decision)| in_current_stay(&stays, page, decision))
+            .filter_map(|(page, decision)| {
+                Some((page, decision.meta.decides.as_ref()?.proposal.as_str()))
+            })
             .chain(team_approvals)
             .collect();
 
         // Proposals of others staged here.
         let staged: Vec<(String, Card)> = review.staged.clone().into_iter().collect();
         for (sha, card) in staged {
-            if decided.contains(sha.as_str()) {
+            if decided.contains(&(card.page.as_str(), sha.as_str())) {
                 if let Some(id) = &card.id {
                     self.close_card(id).await?;
                 }
@@ -140,7 +171,7 @@ impl Pass<'_> {
                 review.shared.remove(&card_id);
                 continue;
             };
-            if decided.contains(sha) {
+            if decided.contains(&(card.page.as_str(), sha)) {
                 self.close_card(&card_id).await?;
                 review.shared.remove(&card_id);
                 continue;
@@ -254,7 +285,8 @@ impl Pass<'_> {
                 let newest = list
                     .iter()
                     .filter(|proposal| {
-                        !decided.contains(proposal.sha.as_str())
+                        in_current_stay(&stays, page_id, proposal)
+                            && !decided.contains(&(page_id.as_str(), proposal.sha.as_str()))
                             && !mine.contains(proposal.sha.as_str())
                     })
                     .max_by(|a, b| (&a.meta.ts, &a.sha).cmp(&(&b.meta.ts, &b.sha)));
