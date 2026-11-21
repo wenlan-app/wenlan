@@ -3222,45 +3222,28 @@ fn with_missing_parents(
     Ok(batch)
 }
 
-fn adopted_skill_folders(master: &PersonalMaster) -> impl Iterator<Item = &Path> {
-    master
-        .skills
-        .iter()
-        .flat_map(|skill| skill.locations.values().flatten())
-        .map(PathBuf::as_path)
-}
-
-/// Journal original pathname state once, including when a tool already has
-/// the approved result and applying it will only settle the delivery receipt.
+/// Journal pathname state before the first managed operation. Adoption
+/// captures the whole managed skill tree, including empty directories;
+/// later registry plans can only touch those paths or add new ones.
 fn record_originals(manifest: &mut Manifest, operations: &[Pending], adopting: bool) {
-    let adopted_folders: BTreeSet<_> = adopted_skill_folders(&manifest.master).collect();
-    let known_folders = adopted_folders
-        .into_iter()
-        .chain(manifest.delivered.iter().filter_map(|(path, delivery)| {
-            (matches!(delivery.kind, Kind::RegistryDirectory { .. })
-                && manifest.backup.get(path) == Some(&Snapshot::Absent))
-            .then_some(path.as_path())
-        }))
-        .collect::<BTreeSet<_>>();
     for op in operations {
-        if op.kind.is_none() || manifest.backup.contains_key(&op.path) {
+        let Some(kind) = &op.kind else {
             continue;
-        }
-        let in_folder = |folders: &BTreeSet<&Path>| {
-            op.path
-                .ancestors()
-                .skip(1)
-                .any(|path| folders.contains(path))
         };
-        let original = if adopting {
-            op.seen.clone()
-        } else if in_folder(&known_folders) {
-            // Adoption recorded every existing entry, including empty dirs.
-            Snapshot::Absent
-        } else {
-            op.seen.clone()
-        };
-        manifest.backup.insert(op.path.clone(), original);
+        manifest.backup.entry(op.path.clone()).or_insert_with(|| {
+            if !adopting
+                && matches!(
+                    kind,
+                    Kind::RegistryDirectory { .. }
+                        | Kind::RegistryAssetDirectory { .. }
+                        | Kind::RegistrySkill { .. }
+                )
+            {
+                Snapshot::Absent
+            } else {
+                op.seen.clone()
+            }
+        });
     }
 }
 
@@ -4904,6 +4887,24 @@ mod tests {
         let message = format!("{:#}", sync.unwrap_err());
         assert!(message.contains("wenlan rules restore"), "{message}");
         assert!(message.contains("adopt again"), "{message}");
+        assert_eq!(step1e_tree(&f.setup.home), before);
+    }
+
+    #[test]
+    fn rulesync_step1f_restores_adoption_tree_after_a_new_skill_is_renamed() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        fs::create_dir(f.setup.home.join(".claude/skills")).unwrap();
+        let before = step1e_tree(&f.setup.home);
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        let skill = write_step1d_skill(&f, ".claude", "New skill.", "# New helper\n");
+        share_step1e_skill(&f);
+        fs::rename(skill.join("helper.py"), skill.join("renamed.py")).unwrap();
+        share_step1e_skill(&f);
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
         assert_eq!(step1e_tree(&f.setup.home), before);
     }
 

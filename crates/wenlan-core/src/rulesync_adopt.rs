@@ -1102,7 +1102,18 @@ impl<'a> SkillDiscovery<'a> {
             );
             return Ok(());
         }
-        if !node.metadata.is_dir() || self.home.resolve(&node.path.join("SKILL.md"))?.is_none() {
+        if !node.metadata.is_dir() {
+            return Ok(());
+        }
+        if self.home.resolve(&node.path.join("SKILL.md"))?.is_none() {
+            // A later SKILL.md must not make the existing contents look
+            // like paths created after adoption.
+            if tool.is_some() {
+                self.skipped.insert(
+                    path.to_owned(),
+                    "This directory existed before adoption without a SKILL.md".into(),
+                );
+            }
             return Ok(());
         }
         let mut key = (name.to_owned(), node.path.clone());
