@@ -59,7 +59,7 @@
         {
           "from": [
             "When the session start printed a `Wenlan session:` line, pass its value as",
-            "`session` on `capture`, `write_page` and `update_brief`.",
+            "`session` on `write_page` and `handoff`.",
             ""
           ],
           "to": null

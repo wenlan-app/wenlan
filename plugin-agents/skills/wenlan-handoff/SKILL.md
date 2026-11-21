@@ -1,20 +1,20 @@
 ---
 name: wenlan-handoff
-description: "End a work session. Stores durable captures, writes a narrative session log, and automatically applies typed item-level deltas to the current Space Brief. Invoked as `/wenlan-handoff`."
+description: "End a work session. Automatically applies typed item-level deltas to the current Space Brief and brings the wiki pages the session used up to date. It stores no memories and writes no session log. Invoked as `/wenlan-handoff`."
 ---
 
 # /wenlan-handoff
 
-Close the session with three separate artifacts:
+Close the session with one typed update to the daemon-owned Space Brief. It
+also brings the wiki pages this session used up to date (step 5).
 
-1. A typed update to the daemon-owned Space Brief.
-2. Durable MCP captures in that Space.
-3. A chronological session log in `~/.wenlan/sessions/`.
+A handoff changes the Brief only. It stores no memories: durable decisions,
+lessons and preferences are captured with `/wenlan-capture` while the work happens,
+not at handoff. It writes no session log either; older logs in the data
+folder's `sessions/` stay readable.
 
-It also brings the wiki pages this session used up to date (step 7).
-
-The daemon Brief is current-work authority. Its
-`~/.wenlan/sessions/_status/<space>.md` projection is a one-way human receipt.
+The daemon Brief is current-work authority. Its `sessions/_status/<space>.md`
+projection in the Wenlan data folder is a one-way human receipt.
 Never read, edit, or overwrite that receipt as authority.
 
 ## 1. Resolve repository and Space
@@ -35,11 +35,10 @@ repository basename, which the user can override through normal Space config.
 Do not invent any other Space name.
 
 Outside a Git repository, do not derive a new Space from the directory
-basename. If resolution still leaves `space` empty, skip the Brief read and
-typed update, do not issue Space-scoped captures, and continue with the
-unscoped session log and any unscoped durable captures. Outside a Git
-repository, a pin, explicit argument, default, or mapping still resolves a
-Space, and the Brief update and captures still run.
+basename. If resolution still leaves `space` empty, skip the Brief read, the
+typed update and the page updates, and report that no Space resolved. Outside
+a Git repository, a pin, explicit argument, default, or mapping still resolves
+a Space, and the Brief update still runs.
 
 ## 2. Read the Brief before composing deltas
 
@@ -84,8 +83,7 @@ fi
 
 Read the Brief before composing deltas. This read is mandatory before any Brief
 delta is authored for a registered Space. Retain the Brief version and every
-item's exact ID, version, state, text, added date, and gate. Use
-`last_handoff_at` for the pending-capture window.
+item's exact ID, version, state, text, added date, and gate.
 
 `brief_not_created` is valid and write-free. Use summary
 `expected_version: 0`. For `cwd-repo-new`, prove the Space is absent with
@@ -95,33 +93,14 @@ failure stops the handoff. An absent Space cannot have a Brief or existing
 items, so use `expected_version: 0` and author no existing-item mutations. The
 typed update may then create the Space and Brief.
 
-## 3. Preview pending captures and gather evidence
-
-Best-effort; skip silently when `daemon_down=1` or the command fails:
-
-```bash
-"$W" --format json --space "$space" memories --pending -l 50
-```
-
-Filter by `created_at >= last_handoff_at`, or 12 hours ago when absent. Show
-at most three when any match, then continue automatically; `/wenlan curate captures`
-remains opt-in.
+## 3. Gather evidence
 
 For a repository, inspect a bounded recent log, short status, diff stat, and
-worktree list. Combine that evidence with the conversation. Draft atomic
-captures only for durable decisions, lessons, gotchas, corrections,
-preferences, and facts. Skip transient or git-recoverable state.
+worktree list. Combine that evidence with the conversation. Use it only to
+compose the Brief update in step 4 and the page updates in step 5; a handoff
+drafts no captures.
 
-## 4. Write the session log
-
-Write `~/.wenlan/sessions/<YYYY-MM-DD-HHmm>-<slug>.md` with Accomplished,
-Decisions, Lessons & Gotchas, Open Threads, Captures stored, Pages touched, and
-Git summary. Pages touched lists each page this session used by title with
-the planned action; step 7 fills in the outcome.
-This is narrative history, not current-work authority. It is a plain file and
-must never depend on the daemon, so write it before the Brief update.
-
-## 5. Build and apply one typed Brief update
+## 4. Build and apply one typed Brief update
 
 Compare the session outcome with `brief_before` and write one
 `BriefUpdateRequest` JSON file:
@@ -172,26 +151,13 @@ and report it as saved for later import. Non-overlapping changes may commit whil
 same-item delta conflicts. Re-read before any safe mechanical reconciliation;
 never guess.
 
-Apply the Brief update before Space-scoped captures when this fallback is new.
+Apply the Brief update before any Space-scoped page update when this fallback is new.
 That creates the basename Space through the typed handoff path without making a
-read or a capture create state. If this first update fails, stop Space-scoped
-captures and report the exact failure. A handoff file saved in the project is
+read or a page write create state. If this first update fails, skip the page
+updates and report the exact failure. A handoff file saved in the project is
 not a failure, but it has not reached the Brief yet.
 
-## 6. Store durable captures
-
-For each drafted durable item, run one command:
-
-```bash
-"$W" --format json --space "$space" capture -t <type> "<content>"
-```
-
-Use one atomic item per call. A `"status": "queued"` result counts as
-queued, not failed — record the path. Do not ask about ordinary captures.
-Pause only for a contradiction, critical incident, irreversible production
-action, or genuine durability ambiguity.
-
-## 7. Update the pages this session used
+## 5. Update the pages this session used
 
 Skip this step when `daemon_down=1` or `space` is empty.
 
@@ -217,7 +183,7 @@ To update a page:
    does not touch what this page says, call it with `action: "confirm"` and
    `version` set to the entry's `to_version`; no rewrite is needed. If it does,
    rewrite the page in steps 4 and 5. A basis that is `archived`, `deleted` or
-   `unavailable` cannot be confirmed: leave it and note it in the session log.
+   `unavailable` cannot be confirmed: leave it and note it in the final report.
 3. Look at `code_basis` the same way. For each entry whose `state` is `pending`,
    read those lines of the file now. If what this page says about them still
    holds, call the Wenlan `page_code_basis` tool with
@@ -226,15 +192,16 @@ To update a page:
    current lines, which replaces the stale entry it overlaps. When a sentence
    this session proved from code is new, add a `code_basis` entry for those
    lines in the same write. An `unavailable` entry cannot be confirmed: leave
-   it and note it in the session log.
+   it and note it in the final report.
 4. Edit the current body: keep everything still true, change only what this
    session changed. Do not rewrite from memory of an older read.
 5. Call the Wenlan `write_page` tool with `page_id`, the edited
    `content`, `expected_version` set to that `page.version`, and
    `source_memory_ids` set to the page's existing source ids plus the ids of
-   any step 6 captures the new text relies on. Also pass `basis` as
-   `[{page_id, version}]` for every note this edit relied on, using the
-   `page.version` of each note's own `read_page` (read it first if you have not).
+   any memories captured during the work that the new text relies on. Also
+   pass `basis` as `[{page_id, version}]` for every note this edit relied on,
+   using the `page.version` of each note's own `read_page` (read it first if
+   you have not).
    Memory ids go in `source_memory_ids`; a note's page id goes only in `basis`.
    `code_basis` is `[{repo_root, path, line_start, line_end}]`.
 
@@ -247,12 +214,11 @@ locked for review; report it as staged for review, not as updated. Do not ask
 approval for ordinary page updates.
 
 Afterwards, record each outcome (updated, staged for review, unchanged, or
-skipped because the daemon was down) under Pages touched in the session log.
+skipped because the daemon was down) for the final report.
 
-## 8. Report
+## 6. Report
 
-Report capture counts (stored vs queued), session-log path, pages updated or
-staged for review,
-applied/conflicted/queued Brief deltas, Brief version or outbox path, and
-projection path or warning. When anything queued, add: `N handoff note(s)
+Report each page this session used with its outcome from step 5, any basis
+or code basis entry left unconfirmed and why, applied/conflicted/queued Brief
+deltas, Brief version or outbox path, and projection path or warning. When anything queued, add: `N handoff note(s)
 saved locally — they sync when Wenlan starts (`wenlan outbox status`).`

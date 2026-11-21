@@ -31,6 +31,8 @@ merged `hooks.json` first and changes nothing until you approve (or explicitly
 run it with `--yes`). The SessionStart hook brings the current Brief's one-line
 items and ids into a new thread. The Stop hook reads Codex's local rollout
 token-count events and, once per session at 80%, asks Codex to run a handoff.
+It takes the context window from the rollout's `model_context_window`;
+`WENLAN_CONTEXT_WINDOW` applies to Claude Code only and has no effect here.
 Existing hooks are preserved, rerunning setup does not duplicate entries, and
 Codex asks you to trust each new hook on first use.
 

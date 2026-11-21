@@ -252,7 +252,9 @@ def validate_session_brief_flow(
             "cwd-repo-new",
             "For `cwd-repo-new`, prove the Space is absent with `spaces show` before composing deltas.",
             "Outside a Git repository, do not derive a new Space from the directory basename.",
-            "Apply the Brief update before Space-scoped captures when this fallback is new.",
+            "Apply the Brief update before any Space-scoped page update when this fallback is new.",
+            # UX-HAND-7: a handoff changes the Brief only.
+            "A handoff changes the Brief only.",
             "Every delta for one existing item uses the same version from the pre-handoff Brief snapshot.",
         ]
         retired_handoff = [
@@ -260,6 +262,13 @@ def validate_session_brief_flow(
             "Promotion / demotion rules",
             "Overwrite `~/.wenlan/sessions/_status",
             "handoff-<project>.json",
+            # UX-HAND-7: a handoff stores no memories.
+            "capture -t",
+            "Store durable captures",
+            "memories --pending",
+            # The narrative session log is no longer written (older logs stay readable).
+            "Write the session log",
+            "sessions/<YYYY",
         ]
         for needle in retired_handoff:
             if needle in text:

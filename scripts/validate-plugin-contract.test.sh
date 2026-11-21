@@ -30,6 +30,24 @@ assert_rejects() {
     echo "PASS $name"
 }
 
+assert_rejects_for() {
+    # Like assert_rejects, but the refusal must name this guardrail, so a
+    # mutation caught only as generator drift does not count as a pass.
+    local name="$1" expected="$2"
+    shift 2
+    copy_fixture
+    "$@"
+    local output
+    if output="$(python3 "$VALIDATOR" --root "$TMPDIR_TEST/root" 2>&1)"; then
+        echo "FAIL $name: validator accepted drift"
+        exit 1
+    fi
+    case "$output" in
+        *"$expected"*) echo "PASS $name" ;;
+        *) echo "FAIL $name: refused for another reason: $output"; exit 1 ;;
+    esac
+}
+
 copy_fixture
 python3 "$VALIDATOR" --root "$TMPDIR_TEST/root"
 echo "PASS valid plugin contract"
@@ -70,9 +88,21 @@ assert_rejects "handoff invents a non-repository Space" \
     perl -0pi -e 's/Outside a Git repository, do not derive a new Space from the directory\s+basename\./Outside a Git repository, use the directory basename as a new Space./g' \
     "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
 
-assert_rejects "handoff captures before first Space creation" \
-    perl -0pi -e 's/Apply the Brief update before Space-scoped captures when this fallback is new./Store captures before the Brief update./g' \
-    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
+assert_rejects_for "handoff writes pages before first Space creation" "Apply the Brief update before any Space-scoped page update" \
+    perl -0pi -e 's/Apply the Brief update before any Space-scoped page update when this fallback is new./Update pages before the Brief update./g' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md" "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
+
+assert_rejects_for "handoff drops the Brief-only rule" "A handoff changes the Brief only." \
+    perl -0pi -e 's/A handoff changes the Brief only\./A handoff saves what it learned./g' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md" "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
+
+assert_rejects_for "handoff stores a memory again" "retired handoff state 'capture -t'" \
+    perl -0pi -e 's/## 3\. Gather evidence/## 3. Gather evidence\n\nRun `wenlan capture -t lesson "<content>"` for each lesson./' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md" "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
+
+assert_rejects_for "handoff writes a session log again" "retired handoff state 'sessions/<YYYY'" \
+    perl -0pi -e 's/## 3\. Gather evidence/## 3. Gather evidence\n\nWrite `~\/.wenlan\/sessions\/<YYYY-MM-DD>.md`./' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md" "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
 
 assert_rejects "handoff same-item snapshot version drift" \
     perl -0pi -e 's/Every delta for one existing item uses the same version from the pre-handoff Brief snapshot./Chain item versions inside the request./g' \

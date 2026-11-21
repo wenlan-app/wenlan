@@ -29,7 +29,7 @@ REQUIRED_SKILL_INTERFACE = {
     },
     "handoff": {
         "display_name": "Wenlan Handoff",
-        "short_description": "End a Codex session with captures and a typed Brief update",
+        "short_description": "End a Codex session with a typed Brief update",
     },
     "recall": {
         "display_name": "Wenlan Recall",

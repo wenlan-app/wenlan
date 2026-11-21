@@ -3,7 +3,6 @@
 Power-user audit lever. Most users do not need /wenlan curate in daily flow:
 
 - **Pending revisions** surface in `/wenlan-brief` automatically (top 3; the person accepts them in the Wenlan app).
-- **Pending captures from this session** surface in `/wenlan-handoff`'s preview block (top 3).
 - **Orphan wikilinks** can be inspected while steep processes a requested knowledge arrangement; they are not pending revisions.
 
 Use /wenlan curate only when you want the deep walk those skills intentionally do not force.
