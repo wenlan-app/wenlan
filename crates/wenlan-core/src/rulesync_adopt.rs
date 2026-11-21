@@ -420,6 +420,21 @@ impl Home {
         Ok(names)
     }
 
+    #[cfg(windows)]
+    fn windows_tool_directory(&self, path: &Path) -> std::io::Result<Option<Dir>> {
+        use crate::rulesync_personal::open_windows_tool_dir;
+
+        let mut dir = self.dir.try_clone()?;
+        for part in path {
+            match open_windows_tool_dir(&dir, Path::new(part)) {
+                Ok(child) => dir = child,
+                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(Some(dir))
+    }
+
     fn bytes(&self, node: &Node, limit: u64, limit_label: &str) -> Result<Vec<u8>> {
         self.read_file(node, limit, limit_label, false)
             .map(|(bytes, _)| bytes)
@@ -449,10 +464,14 @@ impl Home {
             use cap_std::fs::OpenOptionsExt as _;
             options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
         }
-        let file = self
-            .dir
-            .open_with(&node.path, &options)
-            .with_context(|| format!("open {}", node.path.display()))?;
+        let file = self.dir.open_with(&node.path, &options);
+        #[cfg(windows)]
+        let file = if check_destination_access {
+            file.map_err(crate::rulesync_personal::windows_access_error)
+        } else {
+            file
+        };
+        let file = file.with_context(|| format!("open {}", node.path.display()))?;
         ensure!(
             file.metadata()?.is_file(),
             "{} changed while reading",
@@ -460,7 +479,10 @@ impl Home {
         );
         #[cfg(windows)]
         if check_destination_access {
-            crate::rulesync_personal::require_inherited_windows_acl(&file)
+            let parent = self
+                .windows_tool_directory(node.path.parent().context("tool file has no parent")?)?
+                .context("tool file's parent disappeared")?;
+            crate::rulesync_personal::default_windows_child_acl(&parent, &file, false)
                 .with_context(|| format!("check permissions on {}", node.path.display()))?;
         }
         #[cfg(not(windows))]
@@ -662,6 +684,17 @@ fn discover_rules(
         let Some(path) = &target.rules_path else {
             continue;
         };
+        #[cfg(windows)]
+        if let Err(error) =
+            home.windows_tool_directory(path.parent().context("tool file has no parent")?)
+        {
+            if error.kind() != ErrorKind::Unsupported {
+                return Err(error.into());
+            }
+            skipped_rules.insert(path.clone(), error.to_string());
+            overlays.entry(target.tool.clone()).or_default();
+            continue;
+        }
         if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
             if let Some(node) = home.resolve(parent)? {
                 ensure!(
@@ -1083,6 +1116,13 @@ impl<'a> SkillDiscovery<'a> {
     }
 
     fn scan(&mut self, path: &Path, tool: Option<&str>) -> Result<()> {
+        #[cfg(windows)]
+        if tool.is_some() {
+            if let Err(error) = self.home.windows_tool_directory(path) {
+                self.skipped.insert(path.to_owned(), error.to_string());
+                return Ok(());
+            }
+        }
         let node = match self.home.resolve(path) {
             Ok(Some(node)) if node.symlink_hops == 0 => node,
             Ok(None) => return Ok(()),
@@ -1337,6 +1377,12 @@ impl SkillTree {
             "skill symlink cycle at {}",
             node.path.display()
         );
+        #[cfg(windows)]
+        if self.check_destination_access {
+            home.windows_tool_directory(&node.path)
+                .with_context(|| format!("check permissions on {}", node.path.display()))?
+                .context("skill directory disappeared")?;
+        }
         for name in home.names(node)? {
             let name = name
                 .to_str()

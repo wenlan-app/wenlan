@@ -458,6 +458,8 @@ impl PendingStage {
             displaced: self.displaced.as_deref().map(|path| (data, path)),
             stage_id: Some(&self.id),
             verify_source,
+            #[cfg(windows)]
+            restore_owner: None,
         }
     }
 }
@@ -497,6 +499,11 @@ struct Manifest<Content = Vec<u8>> {
     /// Every destination's original bytes, mode or exact link value. This
     /// whole map reaches disk before the first tool file changes.
     backup: BTreeMap<PathBuf, Snapshot<Content>>,
+    /// The ordinary inherited Windows ACL is determined by the owner. An
+    /// older receipt contains only modes, so it cannot authorize new bytes.
+    #[cfg(windows)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    windows_backup_owners: BTreeMap<PathBuf, Vec<u8>>,
     delivered: BTreeMap<PathBuf, Delivery<Content>>,
     pending: Vec<Pending<Content>>,
     stages: BTreeMap<PathBuf, PendingStage>,
@@ -524,6 +531,8 @@ impl Manifest {
         Self {
             master,
             backup,
+            #[cfg(windows)]
+            windows_backup_owners: BTreeMap::new(),
             delivered: BTreeMap::new(),
             pending: Vec::new(),
             stages: BTreeMap::new(),
@@ -1033,6 +1042,8 @@ impl Setup {
                 true
             } else {
                 manifest.backup.remove(path);
+                #[cfg(windows)]
+                manifest.windows_backup_owners.remove(path);
                 false
             }
         });
@@ -1203,7 +1214,7 @@ impl Setup {
         if ready.is_empty() || stop_on_conflict && !outcomes.is_empty() {
             return Ok(outcomes);
         }
-        record_originals(manifest, &ready, adopting || extending);
+        record_originals(root, manifest, &ready, adopting || extending)?;
         let data = self.data_files()?;
         let displaced = displaced::Batch::prepare(&data, &ready)?;
         let batch_paths = ready.iter().map(|op| op.path.clone()).collect::<Vec<_>>();
@@ -1248,36 +1259,44 @@ impl Setup {
                 }
                 _ => false,
             };
-            let status = if path_blocked(&failed, &path) || unfinished_children {
+            let wrong_spelling = restoring
+                && operation.seen != operation.desired
+                && !matches!(root.restore_leaf_alias(&path, |_| false), Ok(None));
+            let status = if path_blocked(&failed, &path) || unfinished_children || wrong_spelling {
                 ApplyOutcome::ChangedSincePlan
             } else {
                 if let Some(stage) = manifest.stages.get(&path) {
                     let link = links.and_then(|links| links.get(&path));
                     let removal = operation.desired == Snapshot::Absent;
                     let verify = || {
-                        let alias = if restoring {
-                            root.case_alias(&path, Path::new(""))?
-                        } else if removal {
-                            skill_case_alias(root, &path)?
-                        } else {
-                            None
-                        };
-                        if alias.is_some() {
+                        if restoring {
+                            return Ok(matches!(
+                                root.restore_leaf_alias(&path, |_| false),
+                                Ok(None)
+                            ));
+                        }
+                        if removal && skill_case_alias(root, &path)?.is_some() {
                             return Ok(false);
                         }
                         link.map_or(Ok(true), |expected| expected.matches(&self.home, &path))
                             .map_err(std::io::Error::other)
                     };
-                    root.apply_with(
-                        &path,
-                        &operation.seen,
-                        &operation.desired,
-                        stage.options(
-                            &data,
-                            operation.allow_link,
-                            (link.is_some() || removal || restoring).then_some(&verify as _),
-                        ),
-                    )?
+                    let options = stage.options(
+                        &data,
+                        operation.allow_link,
+                        (link.is_some() || removal || restoring).then_some(&verify as _),
+                    );
+                    #[cfg(windows)]
+                    let options = ApplyOptions {
+                        restore_owner: if restoring || operation.kind.is_none() {
+                            manifest.windows_backup_owners.get(&path).map(Vec::as_slice)
+                        } else {
+                            None
+                        },
+                        ..options
+                    };
+                    root.apply_with(&path, &operation.seen, &operation.desired, options)
+                        .with_context(|| format!("write {}", path.display()))?
                 } else if operation.seen == Snapshot::Absent
                     && operation.desired == Snapshot::Absent
                 {
@@ -1402,15 +1421,28 @@ impl Setup {
             }
             let original = manifest.backup[&path].clone();
             let expected = &delivered.delivered;
-            let seen = match read_planned_path(root, &path, true, *expected == Snapshot::Absent)
-                .and_then(|current| {
-                    if current != Snapshot::Absent
-                        && root.case_alias(&path, Path::new(""))?.is_some()
-                    {
-                        return Err(std::io::Error::other("the destination spelling changed"));
-                    }
-                    Ok(current)
-                }) {
+            let read_for_restore = || {
+                let alias = root.restore_leaf_alias(&path, |parent| {
+                    (original == Snapshot::Absent && *expected == Snapshot::Absent)
+                        || (selected(parent)
+                            && !manifest.recovery_issues.contains_key(parent)
+                            && manifest
+                                .backup
+                                .get(parent)
+                                .is_some_and(Snapshot::is_directory)
+                            && manifest
+                                .delivered
+                                .get(parent)
+                                .is_some_and(|entry| entry.delivered == Snapshot::Absent))
+                })?;
+                // A reviewed leaf rename can be moved back only after the
+                // journaled alternate spelling has been removed.
+                if alias.is_some() && *expected != Snapshot::Absent {
+                    return Err(std::io::Error::other("the destination spelling changed"));
+                }
+                read_planned_path(root, &path, true, *expected == Snapshot::Absent)
+            };
+            let seen = match read_for_restore() {
                 Ok(current) if extension_only && original == current => {
                     manifest.delivered.remove(&path);
                     continue;
@@ -1429,6 +1461,14 @@ impl Setup {
                     continue;
                 }
             };
+            #[cfg(windows)]
+            if let Err(reason) = check_windows_restore(root, manifest, &path, &seen, &original) {
+                result.blocked.push(format!(
+                    "{} could not be restored. {reason}",
+                    path.display()
+                ));
+                continue;
+            }
             operations.push(Pending {
                 path,
                 seen,
@@ -2166,17 +2206,24 @@ impl Setup {
             if sources.is_empty() {
                 continue;
             }
-            if !matches!(
-                root.read(target.folder(), false),
-                Ok(Snapshot::Directory { .. })
-            ) {
-                if reviewing {
-                    result.blocked.push(format!(
-                        "{}: The enrolled tool folder is unavailable.",
-                        target.folder().display()
-                    ));
+            match root.read(target.folder(), false) {
+                Ok(Snapshot::Directory { .. }) => {}
+                #[cfg(windows)]
+                Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+                    result
+                        .blocked
+                        .push(format!("{}: {error}", target.folder().display()));
+                    continue;
                 }
-                continue;
+                _ => {
+                    if reviewing {
+                        result.blocked.push(format!(
+                            "{}: The enrolled tool folder is unavailable.",
+                            target.folder().display()
+                        ));
+                    }
+                    continue;
+                }
             }
             let deliveries = match render_personal_skills(
                 target,
@@ -3086,11 +3133,23 @@ fn registry_removals(
                 .get(path)
                 .cloned()
                 .context("the backup is incomplete")?;
-            let seen = read_planned_path(root, path, true, record.delivered == Snapshot::Absent)?;
+            let seen =
+                match read_planned_path(root, path, true, record.delivered == Snapshot::Absent) {
+                    Ok(seen) => seen,
+                    Err(error) => {
+                        result.blocked.push(format!("{}: {error}", path.display()));
+                        continue;
+                    }
+                };
             if record.delivered != seen {
                 result
                     .blocked
                     .push(format!("{} changed since delivery", path.display()));
+                continue;
+            }
+            #[cfg(windows)]
+            if let Err(reason) = check_windows_restore(root, manifest, path, &seen, &desired) {
+                result.blocked.push(format!("{}: {reason}", path.display()));
                 continue;
             }
             (seen, desired, None)
@@ -3542,26 +3601,73 @@ fn with_missing_parents(
 /// Journal pathname state before the first managed operation. Adoption
 /// captures the whole managed skill tree, including empty directories;
 /// later registry plans can only touch those paths or add new ones.
-fn record_originals(manifest: &mut Manifest, operations: &[Pending], adopting: bool) {
+fn record_originals(
+    root: &FileRoot,
+    manifest: &mut Manifest,
+    operations: &[Pending],
+    adopting: bool,
+) -> Result<()> {
+    #[cfg(not(windows))]
+    let _ = root;
     for op in operations {
         let Some(kind) = &op.kind else {
             continue;
         };
-        manifest.backup.entry(op.path.clone()).or_insert_with(|| {
-            if !adopting
-                && matches!(
-                    kind,
-                    Kind::RegistryDirectory { .. }
-                        | Kind::RegistryAssetDirectory { .. }
-                        | Kind::RegistrySkill { .. }
-                )
-            {
-                Snapshot::Absent
-            } else {
-                op.seen.clone()
-            }
-        });
+        let std::collections::btree_map::Entry::Vacant(entry) =
+            manifest.backup.entry(op.path.clone())
+        else {
+            continue;
+        };
+        let original = if !adopting
+            && matches!(
+                kind,
+                Kind::RegistryDirectory { .. }
+                    | Kind::RegistryAssetDirectory { .. }
+                    | Kind::RegistrySkill { .. }
+            ) {
+            Snapshot::Absent
+        } else {
+            op.seen.clone()
+        };
+        #[cfg(windows)]
+        if matches!(original, Snapshot::File { .. } | Snapshot::Directory { .. }) {
+            let owner = root.windows_home_owner()?;
+            ensure!(
+                root.read(&op.path, false)
+                    .with_context(|| format!("back up {}", op.path.display()))?
+                    == original
+                    && owner == root.windows_home_owner()?,
+                "{} changed before backup",
+                op.path.display()
+            );
+            manifest
+                .windows_backup_owners
+                .insert(op.path.clone(), owner);
+        }
+        entry.insert(original);
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn check_windows_restore(
+    root: &FileRoot,
+    manifest: &Manifest,
+    path: &Path,
+    current: &Snapshot,
+    original: &Snapshot,
+) -> Result<()> {
+    if current == original || *original == Snapshot::Absent {
+        return Ok(());
+    }
+    let owner = manifest.windows_backup_owners.get(path).context(
+        "restore conflict: the backup has no verified Windows permissions. Keep it for manual recovery",
+    )?;
+    ensure!(
+        *owner == root.windows_home_owner()?,
+        "restore conflict: the Windows owner changed since backup"
+    );
+    Ok(())
 }
 
 fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
@@ -5423,6 +5529,41 @@ mod tests {
         accept_step1e_skill(&f, &preview);
         assert!(fs::read_to_string(peer).unwrap().contains("Saved skill."));
         assert!(f.sync_with("").blocked.is_empty());
+    }
+
+    #[test]
+    fn rulesync_step1h_restore_checks_renamed_parents_of_missing_files() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        let skill = write_step1d_skill(&f, ".claude", "Original body.", "# Helper\n");
+        let docs = skill.join("docs");
+        let renamed = skill.join("Docs");
+        let guide = docs.join("guide.md");
+        fs::create_dir(&docs).unwrap();
+        fs::write(&guide, b"Original guide\n").unwrap();
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        fs::remove_file(&guide).unwrap();
+        share_step1e_skill(&f);
+        fs::rename(&docs, &renamed).unwrap();
+        let aliases = docs.is_dir();
+        eprintln!("The old parent spelling resolves to the renamed directory: {aliases}");
+
+        let restored = f.setup.restore().unwrap();
+
+        assert!(renamed.is_dir());
+        assert!(!renamed.join("guide.md").exists(), "{restored:?}");
+        let relative = guide.strip_prefix(&f.setup.home).unwrap();
+        let reason = if aliases { "spelling" } else { "missing" };
+        assert!(
+            restored.blocked.iter().any(|message| {
+                message.starts_with(&relative.display().to_string()) && message.contains(reason)
+            }),
+            "{restored:?}"
+        );
+        let manifest = f.setup.load().unwrap().expect("backup retained");
+        assert!(manifest.delivered.contains_key(relative));
+        assert!(manifest.delivered.contains_key(relative.parent().unwrap()));
     }
 
     #[test]

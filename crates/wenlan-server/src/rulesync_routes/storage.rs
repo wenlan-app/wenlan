@@ -205,6 +205,8 @@ fn map_contents<From, To>(
             .iter()
             .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
             .collect::<Result<_>>()?,
+        #[cfg(windows)]
+        windows_backup_owners: manifest.windows_backup_owners.clone(),
         delivered: manifest
             .delivered
             .iter()

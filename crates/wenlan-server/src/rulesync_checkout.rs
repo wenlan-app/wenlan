@@ -107,6 +107,8 @@ impl CheckoutStage {
             displaced: self.displaced.as_deref().map(|path| (root, path)),
             stage_id: Some(&self.id),
             verify_source: None,
+            #[cfg(windows)]
+            restore_owner: None,
         }
     }
 }

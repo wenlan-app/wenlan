@@ -1447,6 +1447,8 @@ impl SkillHome {
     }
 
     fn package(&self, folder: &Path, tool: SavedSkillTool) -> Result<Option<ManagedSkill>> {
+        #[cfg(windows)]
+        self.root.read(folder, false)?;
         let Some(dir) = self.below(folder)? else {
             return Ok(None);
         };
@@ -1522,6 +1524,9 @@ impl SkillHome {
             let path = prefix.join(name);
             let kind = entry.file_type()?;
             if kind.is_dir() {
+                #[cfg(windows)]
+                let child = rulesync_personal::open_windows_tool_dir(dir, Path::new(name))?;
+                #[cfg(not(windows))]
                 let child = dir.open_dir_nofollow(name)?;
                 result
                     .directories
@@ -1612,6 +1617,18 @@ pub(crate) fn collect_tool_proposals(
         let current = match home.package(&folder, tool) {
             Ok(Some(snapshot)) => snapshot,
             problem => {
+                if let Err(error) = &problem {
+                    #[cfg(windows)]
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == ErrorKind::Unsupported)
+                    {
+                        blocked.insert(folder, format!("{error:#}"));
+                        continue;
+                    }
+                    #[cfg(not(windows))]
+                    let _ = error;
+                }
                 if baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))) {
                     let reason = match problem {
                         Err(error) => format!(

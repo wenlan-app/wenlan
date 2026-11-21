@@ -11,9 +11,11 @@ use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
-#[cfg(windows)]
-use wenlan_core::rulesync_personal::require_inherited_windows_acl;
 use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
+#[cfg(windows)]
+use wenlan_core::rulesync_personal::{
+    default_windows_child_acl, open_windows_tool_dir, windows_access_error, windows_owner,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
@@ -213,6 +215,8 @@ pub(crate) struct ApplyOptions<'a> {
     pub(crate) displaced: Option<(&'a FileRoot, &'a Path)>,
     pub(crate) stage_id: Option<&'a str>,
     pub(crate) verify_source: Option<&'a dyn Fn() -> io::Result<bool>>,
+    #[cfg(windows)]
+    pub(crate) restore_owner: Option<&'a [u8]>,
 }
 
 pub(crate) struct FileRoot {
@@ -320,19 +324,33 @@ impl FileRoot {
 
     pub(crate) fn read(&self, path: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
         let (relative_parent, name) = entry_path(path)?;
-        match self.open_parent(relative_parent, false)? {
-            Some(parent) => {
-                #[cfg(windows)]
-                if self.tool_home {
-                    return read_leaf_with(&parent, name, allow_symlink, |file, _| {
-                        require_inherited_windows_acl(file)?;
-                        read_file_contents(file)
-                    });
-                }
-                read_leaf(&parent, name, allow_symlink)
-            }
-            None => Ok(Snapshot::Absent),
+        let Some(parent) = self.open_parent(relative_parent, false)? else {
+            return Ok(Snapshot::Absent);
+        };
+        #[cfg(windows)]
+        if self.tool_home {
+            self.check_directory_leaf(&parent, name)?;
         }
+        self.read_entry(&parent, name, allow_symlink)
+    }
+
+    fn read_entry(&self, parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
+        #[cfg(not(windows))]
+        let _ = self;
+        #[cfg(windows)]
+        if self.tool_home {
+            return read_leaf_with(parent, name, allow_symlink, |file, _| {
+                default_windows_child_acl(parent, file, false)?;
+                read_file_contents(file)
+            })
+            .map_err(windows_access_error);
+        }
+        read_leaf(parent, name, allow_symlink)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn windows_home_owner(&self) -> io::Result<Vec<u8>> {
+        windows_owner(&self.dir)
     }
 
     /// Resolve only the components below the configured tool path. Tool
@@ -359,6 +377,49 @@ impl FileRoot {
             resolved.push(case_alias_in(&directory, name)?.as_deref().unwrap_or(name));
         }
         Ok((resolved != path).then_some(resolved))
+    }
+
+    /// Check the journaled spelling from the home down, even if the leaf
+    /// is absent. Only restore planning can account for a missing parent.
+    pub(crate) fn restore_leaf_alias(
+        &self,
+        path: &Path,
+        can_restore_parent: impl Fn(&Path) -> bool,
+    ) -> io::Result<Option<std::ffi::OsString>> {
+        let (parents, leaf) = entry_path(path)?;
+        self.check_tool_path(path)?;
+        let mut directory = Some(self.dir.try_clone()?);
+        let mut prefix = PathBuf::new();
+        for part in parents {
+            prefix.push(part);
+            if let Some(parent) = directory.take() {
+                if let Some(alias) = case_alias_in(&parent, part)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!(
+                            "the parent spelling changed from {} to {}",
+                            prefix.display(),
+                            Path::new(&alias).display()
+                        ),
+                    ));
+                }
+                directory = match parent.open_dir_nofollow(part) {
+                    Ok(directory) => Some(directory),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(error),
+                };
+            }
+            if directory.is_none() && !can_restore_parent(&prefix) {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("the parent {} is missing", prefix.display()),
+                ));
+            }
+        }
+        match directory {
+            Some(parent) => case_alias_in(&parent, leaf.as_os_str()),
+            None => Ok(None),
+        }
     }
 
     pub(crate) fn children(&self, path: &Path) -> io::Result<BTreeSet<PathBuf>> {
@@ -410,6 +471,8 @@ impl FileRoot {
                 displaced: None,
                 stage_id: None,
                 verify_source: None,
+                #[cfg(windows)]
+                restore_owner: None,
             },
         )
     }
@@ -443,6 +506,16 @@ impl FileRoot {
         {
             return Err(symlink_denied());
         }
+        #[cfg(windows)]
+        if self.tool_home
+            && (matches!(seen, Snapshot::Symlink { .. })
+                || matches!(desired, Snapshot::Symlink { .. }))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "left unmanaged: Windows tool links cannot be safely replaced",
+            ));
+        }
         let create = *seen == Snapshot::Absent
             && *desired != Snapshot::Absent
             && !(self.tool_home && options.stage_id.is_some());
@@ -456,7 +529,9 @@ impl FileRoot {
             );
         };
         self.check_directory_leaf(&parent, name)?;
-        if *seen != read_leaf(&parent, name, true)? {
+        #[cfg(windows)]
+        check_restore_owner(&parent, options.restore_owner)?;
+        if *seen != self.read_entry(&parent, name, true)? {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
         if desired == seen {
@@ -477,21 +552,42 @@ impl FileRoot {
             {
                 return Ok(ApplyOutcome::ChangedSincePlan);
             }
+            if let Some(verify) = options.verify_source {
+                if !verify()? {
+                    return Ok(ApplyOutcome::ChangedSincePlan);
+                }
+            }
+            self.check_directory_leaf(&current_parent, name)?;
+            #[cfg(windows)]
+            check_restore_owner(&current_parent, options.restore_owner)?;
             mode.set_directory(&directory)?;
             return Ok(ApplyOutcome::Applied);
         }
         let displaced = recovery_location(&parent, options.displaced)?;
-        let mut staged = Stage::new(&parent, options.stage_id)?;
+        let check_access = self.tool_home || displaced.is_some();
+        let mut staged = Stage::new(&parent, options.stage_id, check_access)?;
         let result = (|| {
+            #[cfg(windows)]
+            if check_access {
+                default_windows_child_acl(&parent, &staged.dir, true)?;
+            }
             staged.write(desired, |incoming| {
                 #[cfg(windows)]
-                if displaced.is_some() && matches!(seen, Snapshot::File { .. }) {
-                    require_windows_replacement_acl(&parent, name, incoming)?;
+                if check_access {
+                    let owner = default_windows_child_acl(&staged.dir, incoming, false)?;
+                    check_restore_owner(incoming, options.restore_owner)?;
+                    if matches!(seen, Snapshot::File { .. }) {
+                        require_windows_replacement_acl(&parent, name, &owner)?;
+                    }
                 }
                 #[cfg(not(windows))]
                 let _ = incoming;
                 Ok(())
             })?;
+            #[cfg(windows)]
+            if check_access && desired.is_directory() {
+                open_windows_tool_dir(&staged.dir, Path::new(STAGED))?;
+            }
             if options.stage_id.is_some() && matches!(desired, Snapshot::File { .. }) {
                 staged.dir.hard_link(STAGED, &staged.dir, INCOMING)?;
             }
@@ -508,6 +604,19 @@ impl FileRoot {
             if let Some(verify) = options.verify_source {
                 if !verify()? || !matches_leaf(&parent, name, seen)? {
                     return Ok(ApplyOutcome::ChangedSincePlan);
+                }
+            }
+            #[cfg(windows)]
+            if check_access {
+                check_restore_owner(&current_parent, options.restore_owner)?;
+                if matches!(seen, Snapshot::File { .. }) {
+                    let live = open_windows_acl_file(&current_parent, name)?;
+                    default_windows_child_acl(&current_parent, &live, false)?;
+                }
+                if matches!(desired, Snapshot::File { .. }) {
+                    let incoming = open_windows_acl_file(&staged.dir, Path::new(STAGED))?;
+                    default_windows_child_acl(&current_parent, &incoming, false)?;
+                    check_restore_owner(&incoming, options.restore_owner)?;
                 }
             }
             match commit(&mut staged, name, seen, desired, displaced.as_ref()) {
@@ -549,10 +658,22 @@ impl FileRoot {
         #[cfg(not(windows))]
         let _ = leaf;
         #[cfg(windows)]
+        let check_recovery_file = |held_dir: &Dir, held: &Path| {
+            if self.tool_home && self.restore_leaf_alias(path, |_| false)?.is_some() {
+                return Err(io::Error::other("the destination spelling changed"));
+            }
+            if self.tool_home || options.displaced.is_some() {
+                let file = open_windows_acl_file(held_dir, held)?;
+                default_windows_child_acl(&parent, &file, false)?;
+            }
+            Ok::<_, io::Error>(())
+        };
+        #[cfg(windows)]
         if *desired == Snapshot::Absent && *actual == Snapshot::Absent {
             if let Some((saved_dir, saved)) = recovery_location(&parent, options.displaced)? {
                 let entry = read_leaf(&saved_dir, saved, true)?;
                 if matches!(entry, Snapshot::File { .. }) && *seen != entry {
+                    check_recovery_file(&saved_dir, saved)?;
                     return keep_changed_deletion(&saved_dir, saved, &parent, leaf, actual);
                 }
             }
@@ -567,6 +688,9 @@ impl FileRoot {
         #[cfg(windows)]
         if *desired == Snapshot::Absent && matches!(entry, Snapshot::File { .. }) && *seen != entry
         {
+            if *actual == Snapshot::Absent {
+                check_recovery_file(&dir, Path::new(STAGED))?;
+            }
             return keep_changed_deletion(&dir, Path::new(STAGED), &parent, leaf, actual);
         }
         let incoming = match dir.symlink_metadata(INCOMING) {
@@ -586,12 +710,17 @@ impl FileRoot {
             if matches!(entry, Snapshot::File { .. }) {
                 let displaced = recovery_location(&parent, options.displaced)?
                     .ok_or_else(|| io::Error::other("a displaced file requires manual recovery"))?;
+                #[cfg(windows)]
+                let put_back = *actual == Snapshot::Absent
+                    && matches!(seen, Snapshot::File { .. })
+                    && matches!(desired, Snapshot::File { .. });
+                #[cfg(windows)]
+                if put_back {
+                    check_recovery_file(&dir, Path::new(STAGED))?;
+                }
                 move_displaced(&dir, &displaced)?;
                 #[cfg(windows)]
-                if *actual == Snapshot::Absent
-                    && matches!(seen, Snapshot::File { .. })
-                    && matches!(desired, Snapshot::File { .. })
-                {
+                if put_back {
                     restore_windows_held(&displaced.0, displaced.1, &parent, leaf)?;
                 }
                 #[cfg(unix)]
@@ -607,6 +736,8 @@ impl FileRoot {
             dir,
             name,
             preserve: true,
+            #[cfg(windows)]
+            check_access: self.tool_home || options.displaced.is_some(),
         };
         stage.clean()
     }
@@ -625,7 +756,14 @@ impl FileRoot {
                 return Err(invalid_path());
             };
             let part = Path::new(part);
-            parent = match parent.open_dir_nofollow(part) {
+            let open = |directory: &Dir| {
+                #[cfg(windows)]
+                if self.tool_home {
+                    return open_windows_tool_dir(directory, part);
+                }
+                directory.open_dir_nofollow(part)
+            };
+            parent = match open(&parent) {
                 Ok(dir) => dir,
                 Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
                     match create_directory(&parent, part) {
@@ -633,7 +771,7 @@ impl FileRoot {
                         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                         Err(error) => return Err(error),
                     }
-                    parent.open_dir_nofollow(part)?
+                    open(&parent)?
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(error),
@@ -662,11 +800,27 @@ impl FileRoot {
         if let Some(guard) = &self.harness {
             match parent.symlink_metadata(name) {
                 Ok(metadata) if metadata.is_dir() => {
-                    guard.check(&parent.open_dir_nofollow(name)?.dir_metadata()?)?;
+                    #[cfg(windows)]
+                    let directory = if self.tool_home {
+                        open_windows_tool_dir(parent, name)?
+                    } else {
+                        parent.open_dir_nofollow(name)?
+                    };
+                    #[cfg(not(windows))]
+                    let directory = parent.open_dir_nofollow(name)?;
+                    guard.check(&directory.dir_metadata()?)?;
                 }
                 Ok(_) => (),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-                Err(error) => return Err(error),
+                Err(error) => {
+                    #[cfg(windows)]
+                    let error = if self.tool_home {
+                        windows_access_error(error)
+                    } else {
+                        error
+                    };
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -900,10 +1054,14 @@ struct Stage<'a> {
     dir: Dir,
     name: String,
     preserve: bool,
+    #[cfg(windows)]
+    check_access: bool,
 }
 
 impl<'a> Stage<'a> {
-    fn new(parent: &'a Dir, id: Option<&str>) -> io::Result<Self> {
+    fn new(parent: &'a Dir, id: Option<&str>, check_access: bool) -> io::Result<Self> {
+        #[cfg(not(windows))]
+        let _ = check_access;
         let name = match id {
             Some(id) => stage_name(id)?,
             None => stage_name(&uuid::Uuid::new_v4().simple().to_string())?,
@@ -916,6 +1074,8 @@ impl<'a> Stage<'a> {
             dir,
             name,
             preserve: false,
+            #[cfg(windows)]
+            check_access,
         })
     }
 
@@ -1114,7 +1274,10 @@ fn commit_windows_personal_file(
 ) -> io::Result<ApplyOutcome> {
     let expected = stage.parent.symlink_metadata(name)?;
     #[cfg(windows)]
-    require_inherited_windows_acl(&open_windows_acl_file(stage.parent, name)?)?;
+    if stage.check_access {
+        let live = open_windows_acl_file(stage.parent, name)?;
+        default_windows_child_acl(stage.parent, &live, false)?;
+    }
     if !matches_leaf(stage.parent, name, seen)? {
         return Ok(ApplyOutcome::ChangedSincePlan);
     }
@@ -1154,9 +1317,11 @@ fn commit_windows_personal_file(
         return Ok(ApplyOutcome::ChangedSincePlan);
     }
     #[cfg(windows)]
-    if let Err(error) = verify_held_windows_acl(&stage.dir, replacing) {
-        finish_windows_displacement(stage, name, displaced, true)?;
-        return Err(error);
+    if stage.check_access {
+        if let Err(error) = verify_held_windows_acl(stage, replacing) {
+            finish_windows_displacement(stage, name, displaced, true)?;
+            return Err(error);
+        }
     }
     if replacing {
         if let Err(error) = stage.dir.hard_link(INCOMING, stage.parent, name) {
@@ -1207,35 +1372,52 @@ fn restore_windows_held(
 fn open_windows_acl_file(directory: &Dir, name: &Path) -> io::Result<cap_std::fs::File> {
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
-    directory.open_with(name, &options)
+    directory
+        .open_with(name, &options)
+        .map_err(windows_access_error)
 }
 
 #[cfg(windows)]
 fn require_windows_replacement_acl(
     directory: &Dir,
     name: &Path,
-    incoming: &cap_std::fs::File,
+    incoming_owner: &[u8],
 ) -> io::Result<()> {
     let original = open_windows_acl_file(directory, name)?;
-    if require_inherited_windows_acl(&original)? != require_inherited_windows_acl(incoming)? {
+    if default_windows_child_acl(directory, &original, false)? != incoming_owner {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "The staged file has different Windows access permissions or a different owner. Delivery was stopped.",
+            "left unmanaged: the staged file has a different Windows owner",
         ));
     }
     Ok(())
 }
 
 #[cfg(windows)]
-fn verify_held_windows_acl(directory: &Dir, replacing: bool) -> io::Result<()> {
-    let held = Path::new(STAGED);
+fn verify_held_windows_acl(stage: &Stage<'_>, replacing: bool) -> io::Result<()> {
+    let held = open_windows_acl_file(&stage.dir, Path::new(STAGED))?;
+    default_windows_child_acl(stage.parent, &held, false)?;
     if replacing {
-        let incoming = open_windows_acl_file(directory, Path::new(INCOMING))?;
-        require_windows_replacement_acl(directory, held, &incoming)
-    } else {
-        let file = open_windows_acl_file(directory, held)?;
-        require_inherited_windows_acl(&file).map(|_| ())
+        let incoming = open_windows_acl_file(&stage.dir, Path::new(INCOMING))?;
+        default_windows_child_acl(stage.parent, &incoming, false)?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn check_restore_owner(
+    entry: &impl std::os::windows::io::AsRawHandle,
+    original_owner: Option<&[u8]>,
+) -> io::Result<()> {
+    if let Some(owner) = original_owner {
+        if windows_owner(entry)? != owner {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "restore conflict: the Windows owner changed since backup",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1268,6 +1450,8 @@ mod tests {
             displaced: None,
             stage_id: None,
             verify_source: None,
+            #[cfg(windows)]
+            restore_owner: None,
         }
     }
 
@@ -1289,7 +1473,7 @@ mod tests {
         fs::write(&incoming, saved).unwrap();
         let recovery = Path::new("rules.previous");
         let desired = Snapshot::file(b"Generated rules\n".to_vec());
-        let mut stage = Stage::new(&root.dir, None).unwrap();
+        let mut stage = Stage::new(&root.dir, None, false).unwrap();
         stage.write(&desired, |_| Ok(())).unwrap();
         let result = commit_windows(
             &mut stage,

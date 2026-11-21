@@ -71,20 +71,143 @@ pub const RULE_PRECEDENCE: &str =
     "When instructions disagree, project rules come first, followed by team rules and personal rules.";
 
 #[cfg(any(windows, test))]
-fn windows_acl_is_inherited(protected: bool, aces: Option<&[bool]>) -> bool {
-    !protected && aces.is_some_and(|aces| !aces.is_empty() && aces.iter().all(|&ace| ace))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowsTrustee {
+    System,
+    Administrators,
+    Owner,
+    Other,
+}
+
+#[cfg(any(windows, test))]
+struct WindowsAcl<'a> {
+    owner: &'a [u8],
+    owner_is_privileged: bool,
+    protected: bool,
+    has_security_policy: bool,
+    aces: &'a [(u8, u32, WindowsTrustee)],
+}
+
+#[cfg(any(windows, test))]
+fn windows_acl_problem(
+    acl: &WindowsAcl<'_>,
+    directory: bool,
+    parent_owner: Option<&[u8]>,
+) -> Option<&'static str> {
+    use WindowsTrustee::{Administrators, Owner, System};
+
+    if parent_owner.is_some_and(|parent| parent != acl.owner) {
+        return Some("the Windows owner differs from the parent's owner");
+    }
+    if acl.has_security_policy {
+        return Some("the Windows security descriptor has an integrity label or access policy");
+    }
+    // The ordinary profile grants full access to SYSTEM, Administrators,
+    // and the owner. Directory grants also inherit to files and directories.
+    const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+    let flags = if directory { 0x13 } else { 0x10 };
+    let trustees = if acl.owner_is_privileged {
+        &[System, Administrators][..]
+    } else {
+        &[System, Administrators, Owner][..]
+    };
+    (acl.protected
+        || acl.aces.len() != trustees.len()
+        || !trustees
+            .iter()
+            .all(|trustee| acl.aces.contains(&(flags, FILE_ALL_ACCESS, *trustee))))
+    .then_some("the Windows access list differs from the default inherited profile permissions")
+}
+
+#[cfg(test)]
+#[test]
+fn rulesync_step1h_windows_refuses_nondefault_access_permissions() {
+    use WindowsTrustee::{Administrators, Other, Owner, System};
+
+    for (directory, flags) in [(false, 0x10), (true, 0x13)] {
+        let ordinary = [
+            (flags, 0x001F_01FF, System),
+            (flags, 0x001F_01FF, Administrators),
+            (flags, 0x001F_01FF, Owner),
+        ];
+        let acl = WindowsAcl {
+            owner: b"owner SID",
+            owner_is_privileged: false,
+            protected: false,
+            has_security_policy: false,
+            aces: &ordinary,
+        };
+        let parent_owner = Some(acl.owner);
+        assert_eq!(windows_acl_problem(&acl, directory, parent_owner), None);
+        let rejected_aces = [
+            ("explicit ACE", (flags & !0x10, ordinary[2].1, Owner)),
+            ("restrictive inherited ACE", (flags, 0x0012_0089, Owner)),
+            ("extra trustee", (flags, ordinary[2].1, Other)),
+        ];
+        let mut accepted = Vec::new();
+        for (case, ace) in rejected_aces {
+            let changed = [ordinary[0], ordinary[1], ace];
+            let actual = WindowsAcl {
+                aces: &changed,
+                ..acl
+            };
+            if windows_acl_problem(&actual, directory, parent_owner).is_none() {
+                accepted.push(case);
+            }
+        }
+        for (case, actual, parent) in [
+            (
+                "different owner",
+                WindowsAcl {
+                    owner: b"other SID",
+                    ..acl
+                },
+                parent_owner,
+            ),
+            (
+                "mandatory integrity label",
+                WindowsAcl {
+                    has_security_policy: true,
+                    ..acl
+                },
+                parent_owner,
+            ),
+            (
+                "protected DACL",
+                WindowsAcl {
+                    protected: true,
+                    ..acl
+                },
+                parent_owner,
+            ),
+            ("empty DACL", WindowsAcl { aces: &[], ..acl }, parent_owner),
+        ] {
+            if windows_acl_problem(&actual, directory, parent).is_none() {
+                accepted.push(case);
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "accepted {accepted:?}, directory={directory}"
+        );
+    }
 }
 
 #[cfg(windows)]
-pub use windows_acl::require_inherited_windows_acl;
+pub use windows_acl::{
+    default_windows_child_acl, open_windows_tool_dir, windows_access_error, windows_owner,
+};
 
 #[cfg(windows)]
 mod windows_acl {
-    use super::windows_acl_is_inherited;
+    use super::{windows_acl_problem, WindowsAcl, WindowsTrustee};
+    use cap_fs_ext::DirExt as _;
+    use cap_std::fs::Dir;
     use std::{
         ffi::c_void,
         io,
         os::windows::io::{AsRawHandle, RawHandle},
+        path::Path,
         ptr::null_mut,
         slice,
     };
@@ -92,8 +215,16 @@ mod windows_acl {
     const SE_FILE_OBJECT: u32 = 1;
     const OWNER_SECURITY_INFORMATION: u32 = 1;
     const DACL_SECURITY_INFORMATION: u32 = 4;
+    const LABEL_SECURITY_INFORMATION: u32 = 0x10;
+    const ATTRIBUTE_SECURITY_INFORMATION: u32 = 0x20;
+    const SCOPE_SECURITY_INFORMATION: u32 = 0x40;
     const SE_DACL_PROTECTED: u16 = 0x1000;
-    const INHERITED_ACE: u8 = 0x10;
+    const SE_SACL_PROTECTED: u16 = 0x2000;
+    const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+    const WIN_CREATOR_OWNER_SID: i32 = 3;
+    const WIN_CREATOR_GROUP_SID: i32 = 4;
+    const WIN_LOCAL_SYSTEM_SID: i32 = 22;
+    const WIN_BUILTIN_ADMINISTRATORS_SID: i32 = 26;
 
     #[repr(C)]
     struct AclHeader {
@@ -109,6 +240,13 @@ mod windows_acl {
         kind: u8,
         flags: u8,
         size: u16,
+    }
+
+    #[repr(C)]
+    struct AllowAce {
+        header: AceHeader,
+        mask: u32,
+        sid_start: u32,
     }
 
     #[link(name = "advapi32")]
@@ -128,8 +266,16 @@ mod windows_acl {
             control: *mut u16,
             revision: *mut u32,
         ) -> i32;
+        fn GetSecurityDescriptorSacl(
+            descriptor: *mut c_void,
+            present: *mut i32,
+            sacl: *mut *mut AclHeader,
+            defaulted: *mut i32,
+        ) -> i32;
         fn GetAce(dacl: *mut AclHeader, index: u32, ace: *mut *mut c_void) -> i32;
         fn GetLengthSid(sid: *mut c_void) -> u32;
+        fn IsWellKnownSid(sid: *mut c_void, kind: i32) -> i32;
+        fn EqualSid(first: *mut c_void, second: *mut c_void) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -137,112 +283,222 @@ mod windows_acl {
         fn LocalFree(memory: *mut c_void) -> *mut c_void;
     }
 
-    struct SecurityDescriptor(*mut c_void);
+    struct SecurityDescriptor {
+        ptr: *mut c_void,
+        owner: *mut c_void,
+        dacl: *mut AclHeader,
+    }
+
+    impl SecurityDescriptor {
+        fn read(entry: &impl AsRawHandle, flags: u32) -> io::Result<Self> {
+            let mut sd = Self {
+                ptr: null_mut(),
+                owner: null_mut(),
+                dacl: null_mut(),
+            };
+            let dacl = if flags & DACL_SECURITY_INFORMATION == 0 {
+                null_mut()
+            } else {
+                &mut sd.dacl
+            };
+            // SAFETY: the handle stays open and the output pointers are writable.
+            // The owner and ACL are stored inside the owned descriptor.
+            let status = unsafe {
+                GetSecurityInfo(
+                    entry.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    flags | OWNER_SECURITY_INFORMATION,
+                    &mut sd.owner,
+                    null_mut(),
+                    dacl,
+                    null_mut(),
+                    &mut sd.ptr,
+                )
+            };
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            if sd.ptr.is_null() || sd.owner.is_null() {
+                return Err(io::Error::other("the Windows owner is unavailable"));
+            }
+            Ok(sd)
+        }
+
+        fn owner(&self) -> &[u8] {
+            // SAFETY: GetSecurityInfo supplied a valid owner SID in the
+            // descriptor. The slice is tied to the descriptor's lifetime.
+            unsafe { slice::from_raw_parts(self.owner.cast(), GetLengthSid(self.owner) as usize) }
+        }
+    }
 
     impl Drop for SecurityDescriptor {
         fn drop(&mut self) {
-            if !self.0.is_null() {
+            if !self.ptr.is_null() {
                 // SAFETY: GetSecurityInfo allocates this buffer for LocalFree.
-                unsafe { LocalFree(self.0) };
+                unsafe { LocalFree(self.ptr) };
             }
         }
     }
 
-    #[derive(PartialEq, Eq)]
-    pub struct InheritedWindowsAcl {
-        owner: Vec<u8>,
-        aces: Vec<Vec<u8>>,
+    fn unmanaged(error: io::Error) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("left unmanaged: could not preserve Windows permissions ({error})"),
+        )
     }
 
-    /// Capture the inherited access rules on the open file. A replacement's
-    /// rules and owner must match before its contents can be staged.
-    pub fn require_inherited_windows_acl(
-        file: &impl AsRawHandle,
-    ) -> io::Result<InheritedWindowsAcl> {
-        read_acl(file).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("Windows access permissions could not be kept. This file stays unmanaged. {error}"),
-            )
-        })
-    }
-
-    fn read_acl(file: &impl AsRawHandle) -> io::Result<InheritedWindowsAcl> {
-        let mut descriptor = SecurityDescriptor(null_mut());
-        let mut owner = null_mut();
-        let mut dacl = null_mut();
-        // SAFETY: the file stays open and the output pointers are writable.
-        // The resulting owner and ACL live in the owned descriptor buffer.
-        let status = unsafe {
-            GetSecurityInfo(
-                file.as_raw_handle(),
-                SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                &mut owner,
-                null_mut(),
-                &mut dacl,
-                null_mut(),
-                &mut descriptor.0,
-            )
-        };
-        if status != 0 {
-            return Err(io::Error::from_raw_os_error(status as i32));
+    pub fn windows_access_error(error: io::Error) -> io::Error {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            unmanaged(error)
+        } else {
+            error
         }
-        if descriptor.0.is_null() || owner.is_null() || dacl.is_null() {
-            return Err(io::Error::other(
-                "The file's owner or access list is unavailable.",
-            ));
+    }
+
+    pub fn windows_owner(entry: &impl AsRawHandle) -> io::Result<Vec<u8>> {
+        SecurityDescriptor::read(entry, 0)
+            .map(|sd| sd.owner().to_vec())
+            .map_err(unmanaged)
+    }
+
+    pub fn default_windows_child_acl(
+        parent: &Dir,
+        entry: &impl AsRawHandle,
+        directory: bool,
+    ) -> io::Result<Vec<u8>> {
+        default_windows_acl(entry, directory, &windows_owner(parent)?).map_err(unmanaged)
+    }
+
+    pub fn open_windows_tool_dir(parent: &Dir, name: &Path) -> io::Result<Dir> {
+        let directory = parent
+            .open_dir_nofollow(name)
+            .map_err(windows_access_error)?;
+        default_windows_child_acl(parent, &directory, true)?;
+        Ok(directory)
+    }
+
+    fn default_windows_acl(
+        entry: &impl AsRawHandle,
+        directory: bool,
+        parent_owner: &[u8],
+    ) -> io::Result<Vec<u8>> {
+        // These access-policy entries can be queried with READ_CONTROL.
+        let sd = SecurityDescriptor::read(
+            entry,
+            DACL_SECURITY_INFORMATION
+                | LABEL_SECURITY_INFORMATION
+                | ATTRIBUTE_SECURITY_INFORMATION
+                | SCOPE_SECURITY_INFORMATION,
+        )?;
+        if sd.dacl.is_null() {
+            return Err(io::Error::other("the Windows access list is unavailable"));
         }
         let mut control = 0;
         let mut revision = 0;
-        // SAFETY: descriptor is non-null and still owns the buffer.
-        if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
+        let mut present = 0;
+        let mut policy = null_mut();
+        let mut defaulted = 0;
+        // SAFETY: the descriptor and all requested outputs are valid.
+        if unsafe { GetSecurityDescriptorControl(sd.ptr, &mut control, &mut revision) } == 0
+            || unsafe {
+                GetSecurityDescriptorSacl(sd.ptr, &mut present, &mut policy, &mut defaulted)
+            } == 0
+        {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: GetSecurityInfo supplied a valid ACL header in the descriptor.
-        let count = unsafe { u32::from((*dacl).ace_count) };
-        let mut inherited = Vec::new();
+        // SAFETY: any returned SACL is stored in the live descriptor.
+        let has_security_policy = control & SE_SACL_PROTECTED != 0
+            || (present != 0 && !policy.is_null() && unsafe { (*policy).ace_count != 0 });
+        // SAFETY: the owner SID and DACL have been validated by Windows and
+        // remain in the descriptor for the duration of these reads.
+        let owner_is_privileged = unsafe {
+            IsWellKnownSid(sd.owner, WIN_LOCAL_SYSTEM_SID) != 0
+                || IsWellKnownSid(sd.owner, WIN_BUILTIN_ADMINISTRATORS_SID) != 0
+        };
         let mut aces = Vec::new();
-        for index in 0..count {
+        for index in 0..unsafe { u32::from((*sd.dacl).ace_count) } {
             let mut ace = null_mut();
-            // SAFETY: index is in the reported ACL and ace is writable.
-            if unsafe { GetAce(dacl, index, &mut ace) } == 0 {
+            // SAFETY: index is within the reported ACL and ace is writable.
+            if unsafe { GetAce(sd.dacl, index, &mut ace) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            if ace.is_null() {
-                return Err(io::Error::other("An access rule is unavailable."));
+            // SAFETY: GetAce supplied an entry with at least an ACE_HEADER.
+            let Some(header) = (unsafe { ace.cast::<AceHeader>().as_ref() }) else {
+                return Err(io::Error::other("a Windows access rule is unavailable"));
+            };
+            if header.kind != ACCESS_ALLOWED_ACE_TYPE
+                || usize::from(header.size) < std::mem::size_of::<AllowAce>()
+            {
+                return Err(io::Error::other(
+                    "the Windows access list contains a nonstandard rule",
+                ));
             }
-            // SAFETY: GetAce returns the entry starting at its header. Its
-            // size describes the complete entry inside the live descriptor.
-            let header = unsafe { &*ace.cast::<AceHeader>() };
-            inherited.push(header.flags & INHERITED_ACE != 0);
-            aces.push(
-                unsafe { slice::from_raw_parts(ace.cast(), usize::from(header.size)) }.to_vec(),
-            );
+            // SAFETY: this is a standard allow ACE. Its variable-length SID
+            // starts at SidStart and is held in the descriptor.
+            let ace = unsafe { &*ace.cast::<AllowAce>() };
+            let sid = std::ptr::addr_of!(ace.sid_start).cast_mut().cast();
+            let trustee = unsafe {
+                if IsWellKnownSid(sid, WIN_LOCAL_SYSTEM_SID) != 0 {
+                    WindowsTrustee::System
+                } else if IsWellKnownSid(sid, WIN_BUILTIN_ADMINISTRATORS_SID) != 0 {
+                    WindowsTrustee::Administrators
+                } else if IsWellKnownSid(sid, WIN_CREATOR_OWNER_SID) == 0
+                    && IsWellKnownSid(sid, WIN_CREATOR_GROUP_SID) == 0
+                    && EqualSid(sid, sd.owner) != 0
+                {
+                    WindowsTrustee::Owner
+                } else {
+                    WindowsTrustee::Other
+                }
+            };
+            aces.push((header.flags, ace.mask, trustee));
         }
-        if !windows_acl_is_inherited(control & SE_DACL_PROTECTED != 0, Some(&inherited)) {
-            return Err(io::Error::other(
-                "The file has an explicit, protected, or empty access list.",
-            ));
+        let acl = WindowsAcl {
+            owner: sd.owner(),
+            owner_is_privileged,
+            protected: control & SE_DACL_PROTECTED != 0,
+            has_security_policy,
+            aces: &aces,
+        };
+        if let Some(problem) = windows_acl_problem(&acl, directory, Some(parent_owner)) {
+            return Err(io::Error::other(problem));
         }
-        // SAFETY: owner is a valid SID inside the live descriptor returned by
-        // GetSecurityInfo. Copy only its reported size.
-        let owner = unsafe { slice::from_raw_parts(owner.cast(), GetLengthSid(owner) as usize) };
-        Ok(InheritedWindowsAcl {
-            owner: owner.to_vec(),
-            aces,
-        })
+        Ok(acl.owner.to_vec())
     }
 }
 
 #[cfg(test)]
 #[test]
 fn rulesync_step1g_windows_refuses_explicit_or_unverifiable_access_permissions() {
-    assert!(windows_acl_is_inherited(false, Some(&[true, true])));
-    assert!(!windows_acl_is_inherited(false, Some(&[true, false])));
-    assert!(!windows_acl_is_inherited(true, Some(&[true])));
-    assert!(!windows_acl_is_inherited(false, None));
-    assert!(!windows_acl_is_inherited(false, Some(&[])));
+    use WindowsTrustee::{Administrators, Owner, System};
+    let access = 0x001F_01FF;
+    let inherited = [
+        (0x10, access, System),
+        (0x10, access, Administrators),
+        (0x10, access, Owner),
+    ];
+    let explicit = [inherited[0], inherited[1], (0, access, Owner)];
+    let acl = WindowsAcl {
+        owner: b"owner SID",
+        owner_is_privileged: false,
+        protected: false,
+        has_security_policy: false,
+        aces: &inherited,
+    };
+    assert_eq!(windows_acl_problem(&acl, false, Some(acl.owner)), None);
+    for changed in [
+        WindowsAcl {
+            aces: &explicit,
+            ..acl
+        },
+        WindowsAcl {
+            protected: true,
+            ..acl
+        },
+        WindowsAcl { aces: &[], ..acl },
+    ] {
+        assert!(windows_acl_problem(&changed, false, Some(acl.owner)).is_some());
+    }
 }
 
 /// The harness is a migration source. Personal delivery owns paths in the
