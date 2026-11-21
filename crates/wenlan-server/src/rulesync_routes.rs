@@ -1416,6 +1416,12 @@ impl Setup {
                     continue;
                 }
                 Ok(current) if *expected == current => current,
+                Err(error) => {
+                    result
+                        .blocked
+                        .push(format!("{} could not be restored. {error}", path.display()));
+                    continue;
+                }
                 _ => {
                     result
                         .blocked
