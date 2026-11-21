@@ -578,6 +578,8 @@ async fn member_brief(
     let request = wenlan_types::BriefReadRequest {
         topic: params.topic,
         space: effective_space(&params.space),
+        // Members get lines only; item details stay with the host.
+        item: None,
         legacy_context_limit: None,
     };
     let response: MemberBrief = match client.post("/api/brief", &request).await {
