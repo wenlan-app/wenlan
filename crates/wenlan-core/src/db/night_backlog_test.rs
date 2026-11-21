@@ -396,7 +396,13 @@ async fn ux_graph_7_the_old_memory_pass_runs_once_and_undo_takes_it_all_back() {
         ],
         updated: vec![("mem_old".into(), "mem_new".into())],
     };
-    let pass = db.apply_backlog(&plan).await.unwrap();
+    let pass = db
+        .apply_backlog(
+            &plan,
+            &crate::db::derived_space::SpaceFacts::nothing_shared(),
+        )
+        .await
+        .unwrap();
     assert_eq!((pass.merged(), pass.updated()), (2, 1), "{pass:?}");
     assert_eq!(mode(&db, "mem_b").await.as_deref(), Some("evicted"));
     assert_eq!(mode(&db, "mem_b2").await.as_deref(), Some("evicted"));
@@ -414,7 +420,15 @@ async fn ux_graph_7_the_old_memory_pass_runs_once_and_undo_takes_it_all_back() {
     );
     assert_eq!(pass.confirmed, ["mem_a"]);
     assert_eq!(db.backlog_pass().await.unwrap(), Some(pass.clone()));
-    assert!(db.apply_backlog(&plan).await.is_err(), "it runs once");
+    assert!(
+        db.apply_backlog(
+            &plan,
+            &crate::db::derived_space::SpaceFacts::nothing_shared()
+        )
+        .await
+        .is_err(),
+        "it runs once"
+    );
 
     let undone = db.undo_backlog().await.unwrap().unwrap();
     assert_eq!(undone, pass);
@@ -449,5 +463,11 @@ async fn ux_graph_7_the_old_memory_pass_runs_once_and_undo_takes_it_all_back() {
     assert_eq!(db.backlog_pass().await.unwrap(), None);
     assert!(db.undo_backlog().await.unwrap().is_none());
     // It can run again after Undo.
-    assert!(db.apply_backlog(&plan).await.is_ok());
+    assert!(db
+        .apply_backlog(
+            &plan,
+            &crate::db::derived_space::SpaceFacts::nothing_shared()
+        )
+        .await
+        .is_ok());
 }

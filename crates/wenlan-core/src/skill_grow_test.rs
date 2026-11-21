@@ -1524,3 +1524,68 @@ fn a_quote_finds_the_sentences_it_was_taken_from() {
     );
     assert!(sentences_quoted("Deploy on Mondays.", &sentences).is_empty());
 }
+
+/// UX-CHAT-5: what the person told their tools has its own section and its
+/// own cap in the tool files; page rules cannot crowd it out, and it does not
+/// take a page rule's place.
+#[test]
+fn what_the_person_told_their_tools_has_its_own_section_and_cap() {
+    let mut lines: Vec<SkillLine> = (0..RULES_MAIN_FILE_MAX + 1)
+        .map(|n| {
+            line(
+                SkillLineKind::Rule,
+                &format!("r{n}"),
+                &format!("Page rule {n}"),
+                "q",
+            )
+        })
+        .collect();
+    for n in 0..3 {
+        let mut told = line(
+            SkillLineKind::Rule,
+            &format!("preference:m{n}"),
+            &format!("I like small commits {n}"),
+            "",
+        );
+        told.source_page_id = String::new();
+        told.source_page_title = PREFERENCES_HEADING.to_string();
+        told.general = true;
+        lines.push(told);
+    }
+    let block = tool_rules_block(&lines).unwrap();
+    assert!(block.contains("## How I work"), "{block}");
+    assert!(
+        block.contains(&format!("## {PREFERENCES_HEADING}")),
+        "{block}"
+    );
+    assert!(block.contains("- I like small commits 2"), "{block}");
+    // The page rules stop at their own cap, the 31st is not in the block.
+    assert!(
+        block.contains("- Page rule 29") && !block.contains("Page rule 30"),
+        "{block}"
+    );
+    // The count of what is written is the count a caller sees.
+    assert_eq!(tool_rules(&lines).len(), RULES_MAIN_FILE_MAX + 3);
+    let files = rules_layer_files(None, &lines);
+    let main = &files
+        .iter()
+        .find(|(name, _)| *name == RULES_MAIN_FILE)
+        .unwrap()
+        .1;
+    assert!(
+        main.contains(&format!("## {PREFERENCES_HEADING}")),
+        "{main}"
+    );
+    assert!(main.contains("I like small commits 0"), "{main}");
+    // Only preferences: a block with just them has no page-rules heading.
+    let only: Vec<SkillLine> = lines
+        .iter()
+        .filter(|l| is_person_preference_line(l))
+        .cloned()
+        .collect();
+    let block = tool_rules_block(&only).unwrap();
+    assert!(
+        !block.contains("## How I work") && block.contains(PREFERENCES_HEADING),
+        "{block}"
+    );
+}

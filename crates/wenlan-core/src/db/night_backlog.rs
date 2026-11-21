@@ -130,10 +130,15 @@ pub fn normalized(text: &str) -> String {
         .collect()
 }
 
+/// A whole live memory the pass may look at. A preference, tool problem or
+/// lesson a night kept is left out: the pass does not know kinds, and hiding
+/// one behind a fact or decision that says the same would lose what it is.
 fn live(alias: &str) -> String {
     format!(
         "{alias}.source = 'memory' AND {alias}.chunk_index = 0 AND {alias}.pending_revision = 0 \
          AND COALESCE({alias}.pinned, 0) = 0 AND COALESCE({alias}.is_recap, 0) = 0 \
+         AND NOT (COALESCE({alias}.memory_type, '') IN ('preference', 'gotcha', 'lesson') \
+                  AND COALESCE({alias}.source_agent, '') = 'wenlan') \
          AND {} AND {}",
         not_self_archived(alias),
         not_hidden_by_superseder(&ReadScope::Global, alias)
@@ -451,7 +456,11 @@ impl MemoryDB {
     /// thing is. Every row is checked again first; nothing is deleted
     /// except what the caller wrote and nothing now stands for. Refused
     /// while an earlier pass stands.
-    pub async fn apply_backlog(&self, plan: &BacklogPlan) -> Result<BacklogPass, WenlanError> {
+    pub async fn apply_backlog(
+        &self,
+        plan: &BacklogPlan,
+        facts: &super::derived_space::SpaceFacts,
+    ) -> Result<BacklogPass, WenlanError> {
         if self.backlog_pass().await?.is_some() {
             return Err(WenlanError::Conflict(
                 "the old-memory pass already ran; take it back first".into(),
@@ -462,7 +471,9 @@ impl MemoryDB {
         // and is put back if the rest fails.
         let mut filed = Vec::new();
         for (id, thing, session) in self.unfiled_night_points().await? {
-            if let Some(space) = self.dream_point_space(&thing, &session, false).await? {
+            // A Space shared with other people only when something the
+            // person set up ties the conversation to it.
+            if let Some(space) = self.derived_filing_space(facts, &thing, &session).await? {
                 self.update_memory_space(&id, &space).await?;
                 filed.push((id, space));
             }
