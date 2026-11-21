@@ -76,8 +76,12 @@ enum WindowsTrustee {
     System,
     Administrators,
     Owner,
+    ProfileUser,
     Other,
 }
+
+#[cfg(any(windows, test))]
+const WINDOWS_FILE_ALL_ACCESS: u32 = 0x001F_01FF;
 
 #[cfg(any(windows, test))]
 struct WindowsAcl<'a> {
@@ -94,7 +98,7 @@ fn windows_acl_problem(
     directory: bool,
     parent_owner: Option<&[u8]>,
 ) -> Option<&'static str> {
-    use WindowsTrustee::{Administrators, Owner, System};
+    use WindowsTrustee::{Administrators, Owner, ProfileUser, System};
 
     if parent_owner.is_some_and(|parent| parent != acl.owner) {
         return Some("the Windows owner differs from the parent's owner");
@@ -102,20 +106,26 @@ fn windows_acl_problem(
     if acl.has_security_policy {
         return Some("the Windows security descriptor has an integrity label or access policy");
     }
-    // The ordinary profile grants full access to SYSTEM, Administrators,
-    // and the owner. Directory grants also inherit to files and directories.
-    const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+    // An administrator-created entry can be owned by Administrators and
+    // still inherit the separate profile user's grant.
     let flags = if directory { 0x13 } else { 0x10 };
-    let trustees = if acl.owner_is_privileged {
-        &[System, Administrators][..]
-    } else {
+    let trustees = if !acl.owner_is_privileged {
         &[System, Administrators, Owner][..]
+    } else if acl
+        .aces
+        .iter()
+        .any(|&(_, _, trustee)| trustee == ProfileUser)
+    {
+        &[System, Administrators, ProfileUser][..]
+    } else {
+        &[System, Administrators][..]
     };
     (acl.protected
         || acl.aces.len() != trustees.len()
-        || !trustees
-            .iter()
-            .all(|trustee| acl.aces.contains(&(flags, FILE_ALL_ACCESS, *trustee))))
+        || !trustees.iter().all(|trustee| {
+            acl.aces
+                .contains(&(flags, WINDOWS_FILE_ALL_ACCESS, *trustee))
+        }))
     .then_some("the Windows access list differs from the default inherited profile permissions")
 }
 
@@ -236,7 +246,10 @@ pub use windows_acl::{
 
 #[cfg(windows)]
 mod windows_acl {
-    use super::{windows_acl_problem, windows_sacl_problem, WindowsAcl, WindowsTrustee};
+    use super::{
+        windows_acl_problem, windows_sacl_problem, WindowsAcl, WindowsTrustee,
+        WINDOWS_FILE_ALL_ACCESS,
+    };
     use cap_fs_ext::DirExt as _;
     use cap_std::fs::Dir;
     use std::{
@@ -268,6 +281,9 @@ mod windows_acl {
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     const ERROR_ACCESS_DENIED: i32 = 5;
     const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+    // GetCurrentProcessToken() in processthreadsapi.h is this query-only pseudo-handle.
+    const CURRENT_PROCESS_TOKEN: RawHandle = -4isize as RawHandle;
+    const TOKEN_USER: i32 = 1;
 
     #[repr(C)]
     struct AclHeader {
@@ -290,6 +306,20 @@ mod windows_acl {
         header: AceHeader,
         mask: u32,
         sid_start: u32,
+    }
+
+    struct AccessGrant<'a> {
+        flags: u8,
+        mask: u32,
+        sid: &'a [u8],
+    }
+
+    #[repr(C)]
+    struct TokenUserBuffer {
+        sid: *mut c_void,
+        attributes: u32,
+        // SECURITY_MAX_SID_SIZE is 68 bytes. Allow space after the aligned header.
+        sid_storage: [usize; 68_usize.div_ceil(std::mem::size_of::<usize>())],
     }
 
     #[link(name = "advapi32")]
@@ -318,7 +348,13 @@ mod windows_acl {
         fn GetAce(dacl: *mut AclHeader, index: u32, ace: *mut *mut c_void) -> i32;
         fn GetLengthSid(sid: *mut c_void) -> u32;
         fn IsWellKnownSid(sid: *mut c_void, kind: i32) -> i32;
-        fn EqualSid(first: *mut c_void, second: *mut c_void) -> i32;
+        fn GetTokenInformation(
+            token: RawHandle,
+            class: i32,
+            information: *mut c_void,
+            length: u32,
+            return_length: *mut u32,
+        ) -> i32;
     }
 
     #[link(name = "kernel32")]
@@ -397,6 +433,45 @@ mod windows_acl {
             }
             Ok(if present != 0 { list } else { null_mut() })
         }
+
+        fn allow_aces(&self) -> io::Result<Vec<AccessGrant<'_>>> {
+            // SAFETY: the DACL and each returned ACE belong to the live descriptor.
+            let list = unsafe { self.dacl.as_ref() }
+                .ok_or_else(|| io::Error::other("the Windows access list is unavailable"))?;
+            (0..u32::from(list.ace_count))
+                .map(|index| {
+                    let mut ace = null_mut();
+                    // SAFETY: index is within the ACL and the output is writable.
+                    if unsafe { GetAce(self.dacl, index, &mut ace) } == 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    // SAFETY: GetAce supplies an entry that starts with ACE_HEADER.
+                    let header = unsafe { ace.cast::<AceHeader>().as_ref() }
+                        .ok_or_else(|| io::Error::other("a Windows access rule is unavailable"))?;
+                    if header.kind != ACCESS_ALLOWED_ACE_TYPE
+                        || usize::from(header.size) < std::mem::size_of::<AllowAce>()
+                    {
+                        return Err(io::Error::other(
+                            "the Windows access list contains a nonstandard rule",
+                        ));
+                    }
+                    let ace = ace.cast::<AllowAce>();
+                    // SAFETY: this is a standard allow ACE with a variable-length
+                    // SID starting at SidStart in the live descriptor buffer.
+                    let grant = unsafe {
+                        let sid = std::ptr::addr_of!((*ace).sid_start)
+                            .cast_mut()
+                            .cast::<c_void>();
+                        AccessGrant {
+                            flags: header.flags,
+                            mask: (*ace).mask,
+                            sid: slice::from_raw_parts(sid.cast(), GetLengthSid(sid) as usize),
+                        }
+                    };
+                    Ok(grant)
+                })
+                .collect()
+        }
     }
 
     impl Drop for SecurityDescriptor {
@@ -434,7 +509,7 @@ mod windows_acl {
         entry: &impl AsRawHandle,
         directory: bool,
     ) -> io::Result<Vec<u8>> {
-        default_windows_acl(entry, directory, &windows_owner(parent)?).map_err(unmanaged)
+        default_windows_acl(parent, entry, directory).map_err(unmanaged)
     }
 
     pub fn open_windows_tool_dir(parent: &Dir, name: &Path) -> io::Result<Dir> {
@@ -490,10 +565,47 @@ mod windows_acl {
         Ok(())
     }
 
+    fn inherited_profile_user(parent: &SecurityDescriptor) -> io::Result<Option<&[u8]>> {
+        let mut user = std::mem::MaybeUninit::<TokenUserBuffer>::uninit();
+        let mut length = 0;
+        // SAFETY: the query-only pseudo-handle is valid for this process, and
+        // the aligned buffer has room for TOKEN_USER and a maximum-size SID.
+        if unsafe {
+            GetTokenInformation(
+                CURRENT_PROCESS_TOKEN,
+                TOKEN_USER,
+                user.as_mut_ptr().cast(),
+                std::mem::size_of::<TokenUserBuffer>() as u32,
+                &mut length,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the successful TokenUser query initialized the leading SID
+        // pointer and its SID in the buffer. The unused buffer tail is unread.
+        let sid = unsafe { std::ptr::addr_of!((*user.as_ptr()).sid).read() };
+        // SAFETY: the SID and all ACE SIDs remain live during these checks.
+        if unsafe { IsWellKnownSid(sid, WIN_LOCAL_SYSTEM_SID) } != 0 {
+            return Ok(None);
+        }
+        // SAFETY: the SID view is valid for the reported length in the query buffer.
+        let user = unsafe { slice::from_raw_parts(sid.cast::<u8>(), GetLengthSid(sid) as usize) };
+        Ok(parent
+            .allow_aces()?
+            .into_iter()
+            .find(|ace| {
+                matches!(ace.flags, 0x03 | 0x13)
+                    && ace.mask == WINDOWS_FILE_ALL_ACCESS
+                    && ace.sid == user
+            })
+            .map(|ace| ace.sid))
+    }
+
     fn default_windows_acl(
+        parent: &Dir,
         entry: &impl AsRawHandle,
         directory: bool,
-        parent_owner: &[u8],
     ) -> io::Result<Vec<u8>> {
         // These access-policy entries can be queried with READ_CONTROL.
         let sd = SecurityDescriptor::read(
@@ -503,9 +615,6 @@ mod windows_acl {
                 | ATTRIBUTE_SECURITY_INFORMATION
                 | SCOPE_SECURITY_INFORMATION,
         )?;
-        if sd.dacl.is_null() {
-            return Err(io::Error::other("the Windows access list is unavailable"));
-        }
         let control = sd.control()?;
         if let Some(problem) = windows_sacl_problem(control & SE_SACL_PROTECTED != 0, &[]) {
             return Err(io::Error::other(problem));
@@ -516,32 +625,25 @@ mod windows_acl {
             unsafe { policy.as_ref() }.is_some_and(|list| list.ace_count != 0);
         // SAFETY: the owner SID and DACL have been validated by Windows and
         // remain in the descriptor for the duration of these reads.
-        let owner_is_privileged = unsafe {
-            IsWellKnownSid(sd.owner, WIN_LOCAL_SYSTEM_SID) != 0
-                || IsWellKnownSid(sd.owner, WIN_BUILTIN_ADMINISTRATORS_SID) != 0
+        let owner_is_administrators =
+            unsafe { IsWellKnownSid(sd.owner, WIN_BUILTIN_ADMINISTRATORS_SID) != 0 };
+        let owner_is_privileged = owner_is_administrators
+            || unsafe { IsWellKnownSid(sd.owner, WIN_LOCAL_SYSTEM_SID) != 0 };
+        let parent_flags = if owner_is_administrators {
+            DACL_SECURITY_INFORMATION
+        } else {
+            0
+        };
+        let parent = SecurityDescriptor::read(parent, parent_flags)?;
+        let profile_user = if owner_is_administrators {
+            inherited_profile_user(&parent)?
+        } else {
+            None
         };
         let mut aces = Vec::new();
-        for index in 0..unsafe { u32::from((*sd.dacl).ace_count) } {
-            let mut ace = null_mut();
-            // SAFETY: index is within the reported ACL and ace is writable.
-            if unsafe { GetAce(sd.dacl, index, &mut ace) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: GetAce supplied an entry with at least an ACE_HEADER.
-            let Some(header) = (unsafe { ace.cast::<AceHeader>().as_ref() }) else {
-                return Err(io::Error::other("a Windows access rule is unavailable"));
-            };
-            if header.kind != ACCESS_ALLOWED_ACE_TYPE
-                || usize::from(header.size) < std::mem::size_of::<AllowAce>()
-            {
-                return Err(io::Error::other(
-                    "the Windows access list contains a nonstandard rule",
-                ));
-            }
-            // SAFETY: this is a standard allow ACE. Its variable-length SID
-            // starts at SidStart and is held in the descriptor.
-            let ace = unsafe { &*ace.cast::<AllowAce>() };
-            let sid = std::ptr::addr_of!(ace.sid_start).cast_mut().cast();
+        for ace in sd.allow_aces()? {
+            let sid = ace.sid.as_ptr().cast_mut().cast();
+            // SAFETY: the ACE's SID and the owner SID are in the live descriptor.
             let trustee = unsafe {
                 if IsWellKnownSid(sid, WIN_LOCAL_SYSTEM_SID) != 0 {
                     WindowsTrustee::System
@@ -549,14 +651,25 @@ mod windows_acl {
                     WindowsTrustee::Administrators
                 } else if IsWellKnownSid(sid, WIN_CREATOR_OWNER_SID) == 0
                     && IsWellKnownSid(sid, WIN_CREATOR_GROUP_SID) == 0
-                    && EqualSid(sid, sd.owner) != 0
+                    && ace.sid == sd.owner()
                 {
                     WindowsTrustee::Owner
+                } else if profile_user == Some(ace.sid) {
+                    WindowsTrustee::ProfileUser
                 } else {
                     WindowsTrustee::Other
                 }
             };
-            aces.push((header.flags, ace.mask, trustee));
+            aces.push((ace.flags, ace.mask, trustee));
+        }
+        if profile_user.is_some()
+            && !aces
+                .iter()
+                .any(|&(_, _, trustee)| trustee == WindowsTrustee::ProfileUser)
+        {
+            return Err(io::Error::other(
+                "the Windows access list lacks the inherited profile user's grant",
+            ));
         }
         let acl = WindowsAcl {
             owner: sd.owner(),
@@ -565,7 +678,7 @@ mod windows_acl {
             has_security_policy,
             aces: &aces,
         };
-        if let Some(problem) = windows_acl_problem(&acl, directory, Some(parent_owner)) {
+        if let Some(problem) = windows_acl_problem(&acl, directory, Some(parent.owner())) {
             return Err(io::Error::other(problem));
         }
         check_windows_audit(entry)?;
