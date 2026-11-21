@@ -76,11 +76,14 @@ const WINDOWS_INHERITED_ACE: u8 = 0x10;
 #[cfg(any(windows, test))]
 fn windows_replacement_problem(
     owner: &[u8],
-    process_user: &[u8],
+    assignable_owners: &[Vec<u8>],
     has_security_policy: bool,
 ) -> Option<&'static str> {
-    if owner != process_user {
-        return Some("the Windows owner differs from the process user");
+    // An elevated administrator's files are owned by its default owner
+    // (BUILTIN\Administrators), not its user SID. Accept any owner the
+    // process may assign itself, so the owner it keeps is the one it can set.
+    if !assignable_owners.iter().any(|sid| sid == owner) {
+        return Some("the Windows owner is not the process user or one of its owner groups");
     }
     windows_policy_problem(has_security_policy)
 }
@@ -136,14 +139,21 @@ mod rulesync_windows_descriptor_tests {
     use super::{windows_replacement_problem, windows_sacl_problem, WindowsDacl};
 
     #[test]
-    fn replacement_requires_the_process_user_and_no_security_policy() {
-        assert_eq!(windows_replacement_problem(b"user", b"user", false), None);
+    fn replacement_requires_an_assignable_owner_and_no_security_policy() {
+        let owners = [b"user".to_vec(), b"admins".to_vec()];
+        assert_eq!(windows_replacement_problem(b"user", &owners, false), None);
+        // An elevated process's files are owned by its owner group.
+        assert_eq!(windows_replacement_problem(b"admins", &owners, false), None);
         assert_eq!(
-            windows_replacement_problem(b"group", b"user", false),
-            Some("the Windows owner differs from the process user"),
+            windows_replacement_problem(b"other", &owners, false),
+            Some("the Windows owner is not the process user or one of its owner groups"),
         );
         assert_eq!(
-            windows_replacement_problem(b"user", b"user", true),
+            windows_replacement_problem(b"group", &[b"user".to_vec()], false),
+            Some("the Windows owner is not the process user or one of its owner groups"),
+        );
+        assert_eq!(
+            windows_replacement_problem(b"user", &owners, true),
             Some("the Windows entry has an integrity label or security policy"),
         );
     }
@@ -205,7 +215,7 @@ mod rulesync_windows_descriptor_tests {
 pub use windows_acl::{
     check_windows_replacement, copy_windows_dacl, open_windows_tool_dir,
     prepare_windows_file_replacement, read_windows_owner, windows_access_error,
-    windows_permissions_error, windows_process_user,
+    windows_owner_is_assignable, windows_permissions_error,
 };
 
 #[cfg(windows)]
@@ -243,6 +253,10 @@ mod windows_acl {
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     const TOKEN_QUERY: u32 = 0x0008;
     const TOKEN_USER: u32 = 1;
+    const TOKEN_GROUPS: u32 = 2;
+    const TOKEN_OWNER: u32 = 4;
+    const SE_GROUP_ENABLED: u32 = 0x4;
+    const SE_GROUP_OWNER: u32 = 0x8;
     const ERROR_ACCESS_DENIED: i32 = 5;
     const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
     const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
@@ -265,9 +279,16 @@ mod windows_acl {
 
     // TOKEN_USER contains a single SID_AND_ATTRIBUTES.
     #[repr(C)]
-    struct TokenUser {
+    struct SidAndAttributes {
         sid: *mut c_void,
         attributes: u32,
+    }
+
+    // TOKEN_GROUPS is a count followed by that many SID_AND_ATTRIBUTES.
+    #[repr(C)]
+    struct TokenGroups {
+        count: u32,
+        groups: [SidAndAttributes; 1],
     }
 
     #[link(name = "advapi32")]
@@ -495,44 +516,37 @@ mod windows_acl {
         parent.open_dir_nofollow(name).map_err(windows_access_error)
     }
 
-    pub fn windows_process_user() -> io::Result<Vec<u8>> {
-        process_user().map_err(windows_permissions_error)
+    /// Whether the process may keep `owner` as the owner of a file it writes.
+    pub fn windows_owner_is_assignable(owner: &[u8]) -> io::Result<bool> {
+        assignable_owners()
+            .map(|owners| owners.iter().any(|sid| sid == owner))
+            .map_err(windows_permissions_error)
     }
 
-    fn process_user() -> io::Result<Vec<u8>> {
-        let mut token = null_mut();
-        // SAFETY: GetCurrentProcess is a valid pseudo-handle and token is writable.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: OpenProcessToken returned a new owned handle.
-        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    fn token_information(
+        token: &OwnedHandle,
+        class: u32,
+        minimum: usize,
+    ) -> io::Result<Vec<usize>> {
         let mut length = 0;
         // SAFETY: a null buffer and zero size query the required byte count.
-        if unsafe {
-            GetTokenInformation(
-                token.as_raw_handle(),
-                TOKEN_USER,
-                null_mut(),
-                0,
-                &mut length,
-            )
-        } == 0
+        if unsafe { GetTokenInformation(token.as_raw_handle(), class, null_mut(), 0, &mut length) }
+            == 0
         {
             let error = io::Error::last_os_error();
             if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER) {
                 return Err(error);
             }
         }
-        if (length as usize) < std::mem::size_of::<TokenUser>() {
-            return Err(io::Error::other("the Windows process user is unavailable"));
+        if (length as usize) < minimum {
+            return Err(io::Error::other("the Windows process token is unavailable"));
         }
         let mut buffer = vec![0usize; (length as usize).div_ceil(std::mem::size_of::<usize>())];
-        // SAFETY: the buffer is aligned for TOKEN_USER and has at least length bytes.
+        // SAFETY: the buffer is pointer-aligned and has at least length bytes.
         if unsafe {
             GetTokenInformation(
                 token.as_raw_handle(),
-                TOKEN_USER,
+                class,
                 buffer.as_mut_ptr().cast(),
                 length,
                 &mut length,
@@ -541,11 +555,51 @@ mod windows_acl {
         {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: GetTokenInformation wrote a TOKEN_USER whose SID is in buffer.
-        let sid = unsafe { (*buffer.as_ptr().cast::<TokenUser>()).sid };
-        // SAFETY: the SID stays valid while buffer lives and is copied here.
-        let bytes = unsafe { slice::from_raw_parts(sid.cast(), GetLengthSid(sid) as usize) };
-        Ok(bytes.to_vec())
+        Ok(buffer)
+    }
+
+    fn copy_sid(sid: *mut c_void) -> Vec<u8> {
+        // SAFETY: the SID stays valid while its token buffer lives and is copied here.
+        unsafe { slice::from_raw_parts(sid.cast(), GetLengthSid(sid) as usize) }.to_vec()
+    }
+
+    /// The owners the process may assign: its user, its default owner, and
+    /// enabled groups marked as owner groups.
+    fn assignable_owners() -> io::Result<Vec<Vec<u8>>> {
+        let mut token = null_mut();
+        // SAFETY: GetCurrentProcess is a valid pseudo-handle and token is writable.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: OpenProcessToken returned a new owned handle.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let user = token_information(&token, TOKEN_USER, std::mem::size_of::<SidAndAttributes>())?;
+        // SAFETY: GetTokenInformation wrote a TOKEN_USER whose SID is in user.
+        let mut owners = vec![copy_sid(unsafe {
+            (*user.as_ptr().cast::<SidAndAttributes>()).sid
+        })];
+        let owner = token_information(&token, TOKEN_OWNER, std::mem::size_of::<*mut c_void>())?;
+        // SAFETY: GetTokenInformation wrote a TOKEN_OWNER whose SID is in owner.
+        owners.push(copy_sid(unsafe { *owner.as_ptr().cast::<*mut c_void>() }));
+        let groups = token_information(&token, TOKEN_GROUPS, std::mem::size_of::<u32>())?;
+        let list = groups.as_ptr().cast::<TokenGroups>();
+        // SAFETY: GetTokenInformation wrote a TOKEN_GROUPS with count entries in groups.
+        let count = unsafe { (*list).count } as usize;
+        // SAFETY: the entries follow the count inside the same buffer.
+        let entries = unsafe {
+            slice::from_raw_parts(
+                std::ptr::addr_of!((*list).groups).cast::<SidAndAttributes>(),
+                count,
+            )
+        };
+        let owner_group = SE_GROUP_ENABLED | SE_GROUP_OWNER;
+        owners.extend(
+            entries
+                .iter()
+                .filter(|group| group.attributes & owner_group == owner_group)
+                .map(|group| copy_sid(group.sid)),
+        );
+        Ok(owners)
     }
 
     fn reopen(entry: &impl AsRawHandle, access: u32) -> io::Result<OwnedHandle> {
@@ -621,7 +675,7 @@ mod windows_acl {
         let has_security_policy =
             unsafe { policy.as_ref() }.is_some_and(|list| list.ace_count != 0);
         if let Some(problem) =
-            windows_replacement_problem(sd.owner(), &process_user()?, has_security_policy)
+            windows_replacement_problem(sd.owner(), &assignable_owners()?, has_security_policy)
         {
             return Err(io::Error::other(problem));
         }

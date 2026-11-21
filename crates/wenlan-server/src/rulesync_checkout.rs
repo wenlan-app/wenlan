@@ -945,7 +945,9 @@ mod tests {
                 report.blocked.iter().any(|reason| {
                     reason.contains("AGENTS.md")
                         && reason.contains("revoked")
-                        && reason.contains("the Windows owner differs from the process user")
+                        && reason.contains(
+                            "the Windows owner is not the process user or one of its owner groups",
+                        )
                 }),
                 "{report:?}"
             );

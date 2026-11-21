@@ -577,7 +577,7 @@ impl FileRoot {
             {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "left unmanaged: could not preserve Windows permissions (the Windows owner differs from the process user)",
+                    "left unmanaged: could not preserve Windows permissions (the Windows owner is not the process user or one of its owner groups)",
                 ));
             }
             staged.write(desired)?;
