@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
@@ -10,6 +10,7 @@ import type { PullbackAction, PullbackCard, RulesAdoptionPlan, RulesSetupStatus 
 import { RulesSetupDiff } from "./RulesSetupDiff";
 import { RulesSetupReviews } from "./RulesSetupReviews";
 import { RulesSetupSettings } from "./RulesSetupSettings";
+import { useRulesSetup } from "./useRulesSetup";
 
 const file = ".cursor/commands/check.md";
 const other = ".codex/prompts/check.md";
@@ -62,6 +63,35 @@ const mount = (node: React.ReactNode) => render(
 beforeEach(async () => {
   mock.mockReset();
   await i18n.changeLanguage("en");
+});
+
+it("UX-SKILL-24: shows a new scope card while Rules stays open without Sync", async () => {
+  function OpenRulesReviews() {
+    const setup = useRulesSetup();
+    return setup ? <RulesSetupReviews status={setup} /> : null;
+  }
+  vi.useFakeTimers();
+  const rule = ".cursor/AGENTS.md";
+  const card = {
+    ...scope, files: [rule],
+    diff: diff(rule, "Before", "Edited in Cursor"),
+  };
+  mock.mockResolvedValueOnce(status).mockResolvedValue({
+    ...status, proposals: [card], review_tools: { [rule]: cursor },
+  });
+  const view = mount(<OpenRulesReviews />);
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(mock.mock.calls).toEqual([["rules_setup_status"]]);
+    expect(screen.queryByRole("article")).toBeNull();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(screen.getByRole("article")).toHaveTextContent("+ Edited in Cursor");
+    expect(mock.mock.calls).toEqual([["rules_setup_status"], ["rules_setup_status"]]);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
 });
 
 describe("setup review", () => {

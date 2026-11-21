@@ -1165,6 +1165,10 @@ and wait for evidence that people need them.
   and added lines with a minus or plus and a red or green tint, and mask
   paths in the changed text. Localized notes explain other changes. The
   final newline note appears only for a newline-only change.
+- **UX-SKILL-24** `shipped` After rules setup is adopted, a tool’s
+  rule-line edit that qualifies for scope review appears on Rules without
+  pressing Sync. The daemon checks every two minutes and the open Rules view
+  refreshes its status. The background check never changes tool files.
 
 ## From the terminal
 

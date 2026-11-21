@@ -16,6 +16,7 @@ export function useRulesSetup(enabled = true): RulesSetupStatus | undefined {
     queryFn: () => getRulesSetupStatus(),
     enabled: enabled && !__WENLAN_REVIEW__ && !example && !team,
     staleTime: 15_000,
+    refetchInterval: ({ state: { data } }) => data?.enabled && data.adopted ? 15_000 : false,
     refetchOnWindowFocus: "always",
     retry: false,
   });
