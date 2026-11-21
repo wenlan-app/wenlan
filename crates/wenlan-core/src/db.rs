@@ -29016,13 +29016,29 @@ impl MemoryDB {
                             .cloned()
                             .or_else(|| doc.space.clone())
                             .unwrap_or_else(|| UNFILED_SPACE_ID.to_string());
-                        conn.execute(
-                            "UPDATE memories SET confirmed = 0
-                              WHERE source_id = ?1 AND source = 'memory' AND space = ?2",
-                            libsql::params![superseded_id.to_string(), superseder_space],
-                        )
-                        .await
-                        .ok(); // Best effort
+                        let hidden = conn
+                            .execute(
+                                "UPDATE memories SET confirmed = 0
+                                  WHERE source_id = ?1 AND source = 'memory' AND space = ?2",
+                                libsql::params![superseded_id.to_string(), superseder_space],
+                            )
+                            .await
+                            .unwrap_or(0); // Best effort
+                        // A page that cited the replaced memory now cites the
+                        // one that replaces it and is marked to be rewritten,
+                        // the same as when a person accepts a revision. Without
+                        // this a direct replacement (a night's points, a trusted
+                        // AI tool) left those pages on the old text with
+                        // nothing marking them out of date.
+                        if hidden > 0 && doc.source == "memory" && superseded_id != &doc.source_id
+                        {
+                            Self::replace_memory_page_dependency_in_transaction(
+                                &conn,
+                                superseded_id,
+                                &doc.source_id,
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
@@ -33575,6 +33591,7 @@ impl MemoryDB {
     ) -> Result<(), WenlanError> {
         if source == "memory" {
             research_write::revision_removed(conn, source_id).await?;
+            Self::return_pages_to_replaced_memory(conn, source_id).await?;
         }
         if !pages_already_marked {
             Self::mark_pages_depending_on_memory_source(conn, source, source_id).await?;
@@ -35518,18 +35535,67 @@ impl MemoryDB {
     /// legacy JSON mirror move together; affected Pages become a fresh stale
     /// generation so re-distillation/citations cannot keep reading the hidden
     /// predecessor.
+    /// A memory about to be deleted that had replaced another (a night's
+    /// point undone, a decision taken back) hands the pages citing it back to
+    /// the one it replaced, which stands again once it is gone. Without this
+    /// an Undo left those pages citing nothing.
+    async fn return_pages_to_replaced_memory(
+        conn: &libsql::Connection,
+        source_id: &str,
+    ) -> Result<(), WenlanError> {
+        let replaced = {
+            let mut rows = conn
+                .query(
+                    "SELECT prior.source_id FROM memories m
+                       JOIN memories prior ON prior.source = 'memory'
+                                          AND prior.source_id = m.supersedes
+                                          AND prior.chunk_index = 0
+                      WHERE m.source = 'memory' AND m.source_id = ?1
+                        AND m.chunk_index = 0 AND m.pending_revision = 0
+                        AND m.supersedes IS NOT NULL AND m.supersedes <> ?1
+                      LIMIT 1",
+                    libsql::params![source_id],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("replaced memory lookup: {e}")))?;
+            match rows
+                .next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("replaced memory row: {e}")))?
+            {
+                Some(row) => Some(
+                    row.get::<String>(0)
+                        .map_err(|e| WenlanError::VectorDb(format!("replaced memory id: {e}")))?,
+                ),
+                None => None,
+            }
+        };
+        if let Some(replaced) = replaced {
+            Self::replace_memory_page_dependency_in_transaction(conn, source_id, &replaced).await?;
+        }
+        Ok(())
+    }
+
     async fn replace_memory_page_dependency_in_transaction(
         conn: &libsql::Connection,
         old_source_id: &str,
         new_source_id: &str,
     ) -> Result<(), WenlanError> {
+        // A page cites a memory through a live `cites` edge or, in pages
+        // written before edges, only through the `source_memory_ids` JSON
+        // mirror. Both move.
         let page_ids = {
             let mut rows = conn
                 .query(
                     "SELECT DISTINCT src_id FROM edges
                      WHERE edge_type = 'cites' AND src_kind = 'page'
                        AND dst_kind = 'memory' AND dst_id = ?1
-                       AND valid_until IS NULL",
+                       AND valid_until IS NULL
+                     UNION
+                     SELECT p.id FROM pages p, json_each(
+                         CASE WHEN json_valid(p.source_memory_ids)
+                              THEN p.source_memory_ids ELSE '[]' END) j
+                     WHERE j.value = ?1",
                     libsql::params![old_source_id],
                 )
                 .await
@@ -35657,6 +35723,34 @@ impl MemoryDB {
         }
 
         for page_id in page_ids {
+            // The mirror keeps every source it already named, in its order,
+            // with the old memory swapped for the new one; sources only an
+            // edge names are added after. Rebuilding it from edges alone
+            // dropped the sources a pre-edge page named only here.
+            let mut source_ids: Vec<String> = {
+                let mut rows = conn
+                    .query(
+                        "SELECT source_memory_ids FROM pages WHERE id = ?1",
+                        libsql::params![page_id.as_str()],
+                    )
+                    .await
+                    .map_err(|error| {
+                        WenlanError::VectorDb(format!("revision Page source mirror read: {error}"))
+                    })?;
+                let raw = match rows.next().await.map_err(|error| {
+                    WenlanError::VectorDb(format!("revision Page source mirror read row: {error}"))
+                })? {
+                    Some(row) => row.get::<Option<String>>(0).unwrap_or(None),
+                    None => None,
+                };
+                raw.and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+                    .unwrap_or_default()
+            };
+            for id in source_ids.iter_mut() {
+                if id == old_source_id {
+                    *id = new_source_id.to_string();
+                }
+            }
             let mut rows = conn
                 .query(
                     "SELECT dst_id FROM edges
@@ -35669,7 +35763,6 @@ impl MemoryDB {
                 .map_err(|error| {
                     WenlanError::VectorDb(format!("revision Page source mirror: {error}"))
                 })?;
-            let mut source_ids = Vec::new();
             while let Some(row) = rows.next().await.map_err(|error| {
                 WenlanError::VectorDb(format!("revision Page source mirror row: {error}"))
             })? {
@@ -35678,6 +35771,8 @@ impl MemoryDB {
                 })?);
             }
             drop(rows);
+            let mut seen = HashSet::new();
+            source_ids.retain(|id| id != old_source_id && seen.insert(id.clone()));
             let source_ids_json = serde_json::to_string(&source_ids).map_err(|error| {
                 WenlanError::VectorDb(format!("revision Page source JSON: {error}"))
             })?;
@@ -52237,6 +52332,11 @@ impl MemoryDB {
                     [sid.as_str()],
                 ).await.map_err(|e| WenlanError::VectorDb(format!("apply_merge archive: {}", e)))?;
             }
+            // Every original's citing pages follow the merged memory, not
+            // only the first one's (that one goes through the supersede step).
+            if sid != &merged_id {
+                Self::replace_memory_page_dependency_in_transaction(&conn, sid, &merged_id).await?;
+            }
         }
         drop(conn);
 
@@ -61454,6 +61554,10 @@ impl MemoryDB {
             .map_err(|e| {
                 WenlanError::VectorDb(format!("resolve_supersede_existing suppress: {e}"))
             })?;
+            // Pages citing the losing memory follow the winner, as in
+            // `upsert_documents`' supersede step.
+            Self::replace_memory_page_dependency_in_transaction(&conn, existing_id, incoming_id)
+                .await?;
             Ok::<(), WenlanError>(())
         }
         .await;

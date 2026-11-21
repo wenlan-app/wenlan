@@ -323,10 +323,11 @@ async fn without_a_model_new_memories_wait() {
     assert!(keep.2.lock().unwrap().is_empty());
 }
 
-/// An edit in the tool brings its own point up to date where the point is
-/// now: the new words supersede the old, so pages built on it are rewritten.
+/// An edit in the tool never replaces Wenlan's point: the old point stays,
+/// its copy is marked gone, and the new words are compared like any new
+/// memory. Wenlan changes only on a source it can trace.
 #[tokio::test]
-async fn an_edited_memory_brings_its_own_point_up_to_date() {
+async fn an_edited_memory_never_replaces_its_point() {
     let _one = ONE_AT_A_TIME.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
@@ -345,27 +346,31 @@ async fn an_edited_memory_brings_its_own_point_up_to_date() {
     let pass = follow(&db, Some(model.as_ref()), &keep, seen(vec![memory(new)]))
         .await
         .unwrap();
-    assert_eq!(
-        (pass.counts.updated, pass.counts.added),
-        (1, 0),
-        "{:?}",
-        pass.counts
-    );
-    let request = keep.2.lock().unwrap().last().unwrap().clone();
-    assert_eq!(request.supersedes.as_deref(), Some(first.as_str()));
-    assert_eq!(request.content, new);
-    assert_eq!(request.space, WriteSpaceTarget::Uncategorized);
-    assert!(point_of(&db, new).await.is_some());
+    assert_eq!(pass.counts.updated, 0, "{:?}", pass.counts);
+    let requests = keep.2.lock().unwrap().clone();
     assert!(
-        point_of(&db, old).await.is_none(),
-        "the old text is no longer followed"
+        requests.iter().all(|r| r.supersedes.is_none()),
+        "a tool's edit is a new memory to compare, never a replacement"
     );
+    assert!(
+        db.get_memory_detail(&first).await.unwrap().is_some(),
+        "the old point stays: Wenlan's memory is the record"
+    );
+    let ledger = db.ai_memory_ledger().await.unwrap();
+    let old_key = wenlan_core::ai_memory_import::memory_key(&memory(old));
+    assert!(
+        ledger.iter().any(|r| r.key == old_key && r.gone),
+        "the old copy is marked gone: {ledger:?}"
+    );
+    // The new text went through the same compare as any new memory.
+    assert!(point_of(&db, new).await.is_some());
 }
 
-/// A memory gone from the tool takes its own point with it; a point the
-/// person edited stays theirs; a point the person removed does not come back.
+/// A memory gone from the tool keeps its point: Wenlan's memory is the
+/// record and the tool's file a copy. A point the person edited stays theirs;
+/// a point the person removed does not come back.
 #[tokio::test]
-async fn a_gone_memory_takes_only_its_own_untouched_point() {
+async fn a_gone_memory_keeps_its_point() {
     let _one = ONE_AT_A_TIME.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
@@ -412,8 +417,11 @@ async fn a_gone_memory_takes_only_its_own_untouched_point() {
     let pass = follow(&db, Some(model.as_ref()), &keep, seen(vec![c.clone()]))
         .await
         .unwrap();
-    assert_eq!(pass.counts.removed, 1, "{:?}", pass.counts);
-    assert!(db.get_memory_detail(&ids[0]).await.unwrap().is_none());
+    assert_eq!(pass.counts.removed, 0, "{:?}", pass.counts);
+    assert!(
+        db.get_memory_detail(&ids[0]).await.unwrap().is_some(),
+        "a copy dropping a line keeps the point"
+    );
     assert!(
         db.get_memory_detail(&ids[1]).await.unwrap().is_some(),
         "an edited point is the person's"
@@ -423,6 +431,75 @@ async fn a_gone_memory_takes_only_its_own_untouched_point() {
         model.prompts.lock().unwrap().len(),
         asked,
         "a removed point is not brought back"
+    );
+}
+
+/// A memory that leaves the tool's copy and comes back is the same memory:
+/// nothing is asked again and no second point is written. Undo still finds
+/// the point of a memory that was gone.
+#[tokio::test]
+async fn a_gone_memory_coming_back_is_known_and_undo_still_finds_it() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    on(&db).await;
+    let model = Judge::new(false);
+    let keep = keep(&db);
+    let a = memory_in(
+        "a.md",
+        "Lore must check the license before borrowing outside code.",
+    );
+    let b = memory_in(
+        "b.md",
+        "Lore keeps every borrowed file under its original license.",
+    );
+    follow(
+        &db,
+        Some(model.as_ref()),
+        &keep,
+        seen(vec![a.clone(), b.clone()]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(keep.2.lock().unwrap().len(), 2);
+
+    // a leaves the copy: its point stays, its row says it is gone.
+    follow(&db, Some(model.as_ref()), &keep, seen(vec![b.clone()]))
+        .await
+        .unwrap();
+    assert!(db.get_memory_detail("aimem_0").await.unwrap().is_some());
+    let ledger = db.ai_memory_ledger().await.unwrap();
+    assert_eq!(ledger.iter().filter(|r| r.gone).count(), 1, "{ledger:?}");
+
+    // a comes back: known, nothing asked, nothing written.
+    let asked = model.prompts.lock().unwrap().len();
+    let pass = follow(
+        &db,
+        Some(model.as_ref()),
+        &keep,
+        seen(vec![a.clone(), b.clone()]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        model.prompts.lock().unwrap().len(),
+        asked,
+        "nothing asked again"
+    );
+    assert_eq!(pass.counts.added, 0, "{:?}", pass.counts);
+    assert_eq!(keep.2.lock().unwrap().len(), 2, "no second point");
+    assert!(db.ai_memory_ledger().await.unwrap().iter().all(|r| !r.gone));
+
+    // a leaves again; Undo still takes its point back.
+    follow(&db, Some(model.as_ref()), &keep, seen(vec![b.clone()]))
+        .await
+        .unwrap();
+    db.undo_ai_memory_import().await.unwrap();
+    assert!(
+        db.get_memory_detail("aimem_0").await.unwrap().is_none(),
+        "the point of a gone memory is still Undo's"
     );
 }
 

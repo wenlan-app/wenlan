@@ -3,14 +3,17 @@
 //! (see `wenlan_core::ai_memory_import` for the gates). Reads the tools'
 //! memory files, never writes them.
 //!
-//! Each memory's owner is the tool's file. A pass compares the files with
-//! the ledger of memories already decided:
+//! Wenlan's memory is the record; the tool's file is a copy Wenlan reads.
+//! A pass compares the files with the ledger of memories already decided:
 //! - a new memory goes through the gates and may become a point;
-//! - an edited memory brings its point up to date (the new text supersedes
-//!   it, so pages built on it are rewritten and the old text stays in
-//!   history);
-//! - a memory gone from the tool takes its point with it (pages built on it
-//!   are rewritten);
+//! - an edited memory is read as the old one gone and a new one: the copy
+//!   changing its words is no new source, so it never replaces Wenlan's
+//!   point; a new text that disagrees is a conflict, kept out and left for
+//!   that tool to be told about;
+//! - a memory gone from the tool, or edited into something the gates leave
+//!   out, keeps its point, since a copy dropping a line is not a decision
+//!   that it no longer holds; its ledger row says the copy no longer has it,
+//!   so Undo still finds the point and the memory coming back is known;
 //! - a point the person edited is theirs and is never changed or removed; a
 //!   point the person removed never comes back;
 //! - a tool whose memory folder is missing is left as it was.
@@ -18,7 +21,8 @@
 //! The person turns following on; after that a pass runs with the
 //! background reading of conversations, on the same model
 //! (`things_intake::models`, its grouping model), at most once an hour.
-//! Removals need no model; new and edited memories wait for one.
+//! Dropping what a tool no longer says needs no model; new and edited
+//! memories wait for one.
 
 use std::collections::{HashMap, HashSet};
 
@@ -26,7 +30,7 @@ use wenlan_core::ai_memory_import::{
     self as gates, Candidate, CandidateKind, FoundMemory, ImportCounts, MatchItem, MemoryTool,
     Verdict,
 };
-use wenlan_core::db::ai_memory_import::{AiMemoryImport, Decided, LedgerRow, PointState};
+use wenlan_core::db::ai_memory_import::{AiMemoryImport, Decided, LedgerRow};
 use wenlan_core::db::MemoryDB;
 use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
 use wenlan_core::read_scope::ReadScope;
@@ -78,12 +82,10 @@ pub fn count_by_tool(found: &[FoundMemory]) -> Vec<(String, usize)> {
     counts
 }
 
-/// A memory to decide, with the ledger row of the earlier text it replaces
-/// when it is an edit.
+/// A memory to decide.
 struct Fresh {
     key: String,
     memory: FoundMemory,
-    replaces: Option<(LedgerRow, String)>,
 }
 
 struct Kept {
@@ -156,59 +158,28 @@ pub async fn follow(
         let key = gates::memory_key(&memory);
         found_keys.insert(key.clone());
         if !known.contains(key.as_str()) {
-            fresh.push(Fresh {
-                key,
-                memory,
-                replaces: None,
-            });
+            fresh.push(Fresh { key, memory });
         }
+    }
+    // Back in the tool's copy after it was gone: the same memory, known.
+    for row in ledger
+        .iter()
+        .filter(|r| r.gone && found_keys.contains(&r.key))
+    {
+        db.set_ai_memory_gone(row, false).await.map_err(err)?;
     }
     let gone: Vec<LedgerRow> = ledger
         .iter()
+        .filter(|r| !r.gone)
         .filter(|r| complete && !found_keys.contains(&r.key))
         .filter(|r| gates::key_tool(&r.key).is_some_and(|t| seen.present.contains(&t)))
         .cloned()
         .collect();
 
-    // An edit: the one memory gone from a file and the one new memory in that
-    // same file, while its point is as Wenlan wrote it.
-    let mut gone_by_file: HashMap<&str, Vec<&LedgerRow>> = HashMap::new();
+    // Gone from the tool: only the copy changed. Its point stays in Wenlan,
+    // the record, and the row says the copy no longer has it.
     for row in &gone {
-        gone_by_file.entry(row.file.as_str()).or_default().push(row);
-    }
-    let mut fresh_by_file: HashMap<String, usize> = HashMap::new();
-    for f in &fresh {
-        *fresh_by_file
-            .entry(f.memory.path.to_string_lossy().into_owned())
-            .or_default() += 1;
-    }
-    let mut paired = HashSet::new();
-    for f in &mut fresh {
-        let file = f.memory.path.to_string_lossy().into_owned();
-        let (Some(rows), Some(1)) = (gone_by_file.get(file.as_str()), fresh_by_file.get(&file))
-        else {
-            continue;
-        };
-        let [row] = rows.as_slice() else { continue };
-        let Decided::Point { id, hash } = &row.decided else {
-            continue;
-        };
-        if db.ai_memory_point(id, hash).await.map_err(err)? == PointState::Untouched {
-            paired.insert(row.key.clone());
-            f.replaces = Some(((*row).clone(), id.clone()));
-        }
-    }
-
-    // Gone from the tool: its own point goes too, unless the person edited
-    // or removed it.
-    for row in gone.iter().filter(|r| !paired.contains(&r.key)) {
-        if let Decided::Point { id, hash } = &row.decided {
-            if db.ai_memory_point(id, hash).await.map_err(err)? == PointState::Untouched {
-                db.delete_by_source_id("memory", id).await.map_err(err)?;
-                counts.removed += 1;
-            }
-        }
-        db.drop_ai_memory_decided(&row.key).await.map_err(err)?;
+        db.set_ai_memory_gone(row, true).await.map_err(err)?;
     }
 
     // 1. Secrets and personal data: never sent to a model, never kept.
@@ -248,40 +219,13 @@ pub async fn follow(
         }
     }
 
-    // 3. An edit of a memory Wenlan already follows brings its point up to
-    // date, where the point is now. A new one is compared with what Wenlan
-    // already holds in its Space.
+    // 3. Each one is compared with what Wenlan already holds in its Space.
+    // An edit in the tool is read the same way: the copy changing its words
+    // is no new source, so a text that disagrees with Wenlan is a conflict to
+    // tell that tool about, not a replacement of Wenlan's point.
     let mut spaces: HashMap<std::path::PathBuf, Option<String>> = HashMap::new();
     let mut kept = Vec::new();
     for (f, personal) in knowledge {
-        if let Some((_, old)) = &f.replaces {
-            let space = db.ai_memory_point_space(old).await.map_err(err)?;
-            let target = match space {
-                Some(space) => WriteSpaceTarget::Named(space),
-                None => WriteSpaceTarget::Uncategorized,
-            };
-            let mut request = point_request(&f.memory, target);
-            request.supersedes = Some(old.clone());
-            let decided = match store(db, writer, request).await? {
-                Decided::Refused => {
-                    counts.not_knowledge += 1;
-                    settle(db, &f, Decided::Refused, &mut counts).await?;
-                    continue;
-                }
-                Decided::Already => {
-                    counts.already += 1;
-                    settle(db, &f, Decided::Already, &mut counts).await?;
-                    continue;
-                }
-                decided => decided,
-            };
-            counts.updated += 1;
-            note(db, &f, decided).await?;
-            if let Some((row, _)) = &f.replaces {
-                db.drop_ai_memory_decided(&row.key).await.map_err(err)?;
-            }
-            continue;
-        }
         let space = match &f.memory.project_dir {
             _ if personal => None,
             Some(dir) => match spaces.get(dir) {
@@ -410,25 +354,14 @@ async fn note(db: &MemoryDB, f: &Fresh, decided: Decided) -> Result<(), String> 
         .map_err(|e| e.to_string())
 }
 
-/// A memory left out: when it was an edit, the point of its earlier text
-/// goes, since the tool no longer says that.
+/// A memory left out.
 async fn settle(
     db: &MemoryDB,
     f: &Fresh,
     decided: Decided,
-    counts: &mut ImportCounts,
+    _counts: &mut ImportCounts,
 ) -> Result<(), String> {
-    note(db, f, decided).await?;
-    if let Some((row, old)) = &f.replaces {
-        db.delete_by_source_id("memory", old)
-            .await
-            .map_err(|e| e.to_string())?;
-        db.drop_ai_memory_decided(&row.key)
-            .await
-            .map_err(|e| e.to_string())?;
-        counts.removed += 1;
-    }
-    Ok(())
+    note(db, f, decided).await
 }
 
 async fn decide_and_write(

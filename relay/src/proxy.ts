@@ -58,7 +58,7 @@ export const WRITE_SCOPE = 'wenlan:write';
 export const ACCESS_HEADER = 'x-wenlan-access';
 const QUERY_TOOLS = new Set(['brief', 'recall', 'get_page_sources']);
 /** Extra tools a write grant may call, beyond QUERY_TOOLS. */
-export const WEB_WRITE_TOOLS = new Set(['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page']);
+export const WEB_WRITE_TOOLS = new Set(['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff']);
 const REQUEST_HEADERS = ['accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
 const RESPONSE_HEADERS = ['content-type', 'mcp-session-id', 'mcp-protocol-version'];
 const MAX_BODY_BYTES = 64 * 1024;
