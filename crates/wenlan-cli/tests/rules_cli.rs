@@ -102,6 +102,63 @@ fn personal_rules_dry_run_reports_extended_targets_only_with_the_flag() {
 }
 
 #[test]
+fn personal_rules_dry_run_lists_commands_and_agents_only_with_the_flag() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    let sources = [
+        (
+            ".claude/commands/check.md",
+            "---\ndescription: Check\nallowed-tools: Read\n---\nCheck $ARGUMENTS.\n",
+        ),
+        (
+            ".claude/agents/review.md",
+            "---\nname: review\ndescription: Review\nmodel: sonnet\ntools: Read\n---\nReview.\n",
+        ),
+        (
+            ".codex/agents/review.toml",
+            "name = \"review\"\ndescription = \"Review\"\ndeveloper_instructions = \"Review.\"\n",
+        ),
+    ];
+    for (path, bytes) in sources {
+        let file = home.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, bytes).unwrap();
+    }
+    fs::write(home.join(".cursorignore"), "project-only\n").unwrap();
+
+    for enabled in [false, true] {
+        let mut cmd = personal_rules_cli(state.path());
+        if enabled {
+            cmd.env("WENLAN_RULESYNC", "1");
+        }
+        let output = cmd
+            .args(["rules", "adopt", "--dry-run", "--format", "json"])
+            .assert()
+            .success();
+        let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+        for (path, bytes) in sources {
+            assert_eq!(
+                plan.files.iter().any(|change| change.path == path),
+                enabled,
+                "{path}"
+            );
+            assert_eq!(fs::read_to_string(home.join(path)).unwrap(), bytes);
+        }
+        assert!(!plan
+            .files
+            .iter()
+            .any(|change| change.path == ".cursorignore"));
+        assert_eq!(
+            plan.notes
+                .iter()
+                .any(|note| note.contains("Personal ignore: none supported")),
+            enabled
+        );
+    }
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
 fn personal_rules_dry_run_labels_skill_sources() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The personal master and the read-only side of adopting an existing setup.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, BufWriter, Write};
@@ -981,7 +981,9 @@ pub fn personal_target(id: &str) -> Option<&'static PersonalTarget> {
 
 pub fn discover_adoption(home: &Path) -> Result<Adoption> {
     let (installed, skipped) = installed_targets(home, PERSONAL_TARGETS.iter())?;
-    let mut adoption = discover_targets(home, &installed, None)?;
+    let tools = installed.iter().map(|target| target.id);
+    let files = rulesync_adopt::discover_personal_files(home, tools, &BTreeSet::new())?;
+    let mut adoption = discover_targets(home, &installed, None, Some(files))?;
     adoption.skipped_tools = skipped;
     Ok(adoption)
 }
@@ -996,14 +998,38 @@ pub fn additional_targets(
     Ok(installed_targets(home, candidates)?.0)
 }
 
-pub fn discover_additional_adoption(home: &Path, master: &PersonalMaster) -> Result<Adoption> {
+pub fn discover_additional_adoption(
+    home: &Path,
+    master: &PersonalMaster,
+    known_files: &BTreeSet<PathBuf>,
+) -> Result<Adoption> {
     let installed = additional_targets(home, master)?;
-    let mut adoption = discover_targets(home, &installed, Some(master))?;
+    let tools = master
+        .overlays
+        .keys()
+        .map(String::as_str)
+        .chain(installed.iter().map(|target| target.id));
+    let files = rulesync_adopt::discover_personal_files(home, tools, known_files)?;
+    let mut adoption = discover_targets(home, &installed, Some(master), Some(files))?;
     adoption.added_tools = installed
         .iter()
         .map(|target| target.tool.display_name().to_owned())
         .collect();
     Ok(adoption)
+}
+
+pub fn additional_personal_files(
+    home: &Path,
+    master: &PersonalMaster,
+    known_files: &BTreeSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    let tools = master.overlays.keys().map(String::as_str);
+    Ok(
+        rulesync_adopt::discover_personal_files(home, tools, known_files)?
+            .files
+            .into_keys()
+            .collect(),
+    )
 }
 
 fn installed_targets<'a>(
@@ -1032,6 +1058,7 @@ fn discover_targets(
     home: &Path,
     installed: &[&PersonalTarget],
     master: Option<&PersonalMaster>,
+    personal_files: Option<rulesync_adopt::PersonalFileDiscovery>,
 ) -> Result<Adoption> {
     let targets: Vec<_> = installed
         .iter()
@@ -1045,6 +1072,9 @@ fn discover_targets(
     if master.is_some() {
         adoption.skills.retain(|skill| !skill.locations.is_empty());
         adoption.skipped.retain(|path, _| !is_harness_path(path));
+    }
+    if let Some(files) = personal_files {
+        files.add_to(&mut adoption)?;
     }
     check_delivery_paths(home, adoption.files.keys().map(PathBuf::as_path))?;
     delivery_worktrees::review_destinations(home, &mut adoption, &targets)?;
@@ -1104,13 +1134,14 @@ pub fn fingerprint(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-const ADOPTION_TOKEN_VERSION: &str = "adopt-5";
-const ADOPTION_FIELDS: [&str; 6] = [
+const ADOPTION_TOKEN_VERSION: &str = "adopt-6";
+const ADOPTION_FIELDS: [&str; 7] = [
     "file entries",
     "skill locations and upstreams",
     "skipped paths",
     "personal rules",
     "personal skill master",
+    "personal commands and subagents",
     "Git worktree destinations",
 ];
 
@@ -1151,6 +1182,12 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
             adoption.codex_sync_replaced,
         ))?,
         fingerprint(&adoption.skills)?,
+        fingerprint(&(
+            adoption.includes_personal_files,
+            &adoption.personal_files,
+            &adoption.personal_file_notes,
+            &adoption.skipped_personal_files,
+        ))?,
         fingerprint(&adoption.worktree_writes)?,
     ])
 }
@@ -1192,12 +1229,12 @@ pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
     if enabled() {
         let mut plan = plan_adoption(home)?;
         plan.token.clear();
-        plan.notes.insert(0, "Offline inventory from the installed files. Run `wenlan rules adopt` with the local daemon to see exact skill deliveries and added tools.".into());
+        plan.notes.insert(0, "Offline inventory from the installed files. Run `wenlan rules adopt` with the local daemon to see the exact deliveries and additions to your setup.".into());
         Ok(plan)
     } else {
         let (installed, skipped) =
             installed_targets(home, [&CLAUDE_TARGET, &CODEX_TARGET].into_iter())?;
-        let mut adoption = discover_targets(home, &installed, None)?;
+        let mut adoption = discover_targets(home, &installed, None, None)?;
         adoption.skipped_tools = skipped;
         legacy_skill_previews(&mut adoption);
         adoption_plan(&adoption)
@@ -1216,6 +1253,8 @@ fn plan_path(path: &Path) -> String {
 pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     let mut files = Vec::new();
     for (path, file) in &adoption.files {
+        let personal_source = adoption.personal_files.contains_key(path);
+        let personal_note = adoption.personal_file_notes.get(path);
         let path = plan_path(path);
         let entry_text = |entry: &AdoptionEntry| match entry {
             AdoptionEntry::File(bytes) => match std::str::from_utf8(bytes) {
@@ -1240,7 +1279,13 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         let before = entry_text(&file.before);
         let after = entry_text(&file.after);
         line_changes(&before, &after).with_context(|| format!("cannot fully preview {path}"))?;
-        let (added, removed, diff) = describe_change(&path, &before, &after);
+        let (added, removed, mut diff) = describe_change(&path, &before, &after);
+        if let Some(note) = personal_note {
+            diff.push_str(note);
+            diff.push('\n');
+        } else if personal_source && diff.is_empty() {
+            diff.push_str("Import the file as a personal source at this path.\n");
+        }
         files.push(AdoptionChange {
             path,
             added,
@@ -1248,12 +1293,22 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
             diff,
         });
     }
-    for (path, reason) in adoption.skipped.iter().chain(&adoption.skipped_rules) {
+    for (path, reason) in adoption
+        .skipped
+        .iter()
+        .chain(&adoption.skipped_rules)
+        .chain(&adoption.skipped_personal_files)
+    {
+        let diff = if adoption.skipped_personal_files.contains_key(path) {
+            format!("Skipped and left unmanaged: {reason}.\n")
+        } else {
+            format!("Skipped ({reason}). Stays where it is, not managed.\n")
+        };
         files.push(AdoptionChange {
             path: plan_path(path),
             added: 0,
             removed: 0,
-            diff: format!("Skipped ({reason}). Stays where it is, not managed.\n"),
+            diff,
         });
     }
     let mut skills = adoption
@@ -1290,6 +1345,10 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     notes.push("~/.agents is left untouched. Wenlan replaces adopted links at their tool paths and leaves the shared sources in place.".into());
     notes.extend(adoption.skipped_tools.iter().cloned());
     notes.extend(adoption.worktree_notes.iter().cloned());
+    if adoption.includes_personal_files {
+        notes.push("Commands and subagents are adopted at their native tool paths. All-tools review shares compatible files with enrolled tools. Tool-specific metadata and Codex TOML subagents stay with their own tool.".into());
+        notes.push("Personal ignore: none supported by the eight tools in this setup.".into());
+    }
     Ok(AdoptionPlan {
         token: adoption_token(adoption)?,
         files,
@@ -1301,6 +1360,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 /// Wenlan keeps imported text as authored. Only Wenlan-generated additions
 /// have already passed through the UX-SKILL-8 escaping in skill_grow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(deserialize = "Content: Deserialize<'de>"))]
 pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
@@ -1454,6 +1514,36 @@ pub fn describe_change(path: &str, before: &str, after: &str) -> (usize, usize, 
     let Ok(changes) = line_changes(before, after) else {
         return (0, 0, "Too many changed lines for a safe preview.\n".into());
     };
+    describe_line_changes(path, changes)
+}
+
+/// A command or subagent is approved as one file. Show a whole-file
+/// replacement when computing a granular edit would exceed the diff budget.
+pub fn describe_personal_file_change(path: &str, before: &str, after: &str) -> String {
+    let crlf = "\r\n";
+    if before.contains(crlf) && before.replace(crlf, "\n") == after {
+        return format!(
+            "Converted {} CRLF line endings to LF.\n",
+            before.matches(crlf).count()
+        );
+    }
+    if after.contains(crlf) && after.replace(crlf, "\n") == before {
+        return format!(
+            "Converted {} LF line endings to CRLF.\n",
+            after.matches(crlf).count()
+        );
+    }
+    let changes = line_changes(before, after).unwrap_or_else(|_| {
+        vec![LineChange {
+            start: 0,
+            removed: before.split_inclusive('\n').map(str::to_owned).collect(),
+            added: after.split_inclusive('\n').map(str::to_owned).collect(),
+        }]
+    });
+    describe_line_changes(path, changes).2
+}
+
+fn describe_line_changes(path: &str, changes: Vec<LineChange>) -> (usize, usize, String) {
     if changes.is_empty() {
         return (0, 0, String::new());
     }

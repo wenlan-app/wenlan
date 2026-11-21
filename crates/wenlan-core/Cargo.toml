@@ -109,13 +109,15 @@ unicode-normalization = "0.1"
 pulldown-cmark = { version = "0.13.3", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
 # `renameat2(RENAME_NOREPLACE)` / `renamex_np(RENAME_EXCL)` for the export
 # writers' non-replacing rename. Already in the lock file at this version via
 # cap-std, so it adds no second copy of rustix to the graph.
-rustix = { version = "1.1.4", features = ["fs"] }
+rustix = { version = "1.1.6", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 fastembed = { workspace = true, features = ["ort-load-dynamic"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(not(windows))'.dependencies]
 # Keep the existing static ORT path outside Windows. The native-TLS download

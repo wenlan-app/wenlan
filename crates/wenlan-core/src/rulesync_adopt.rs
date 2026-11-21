@@ -7,11 +7,17 @@ use std::io::{ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
-use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, Metadata, OpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::SkillUpstream;
+
+use crate::rulesync_personal_files::{
+    directory_entry_identity, location_of, require_ascii_entry_name,
+    require_plain_personal_directory, PersonalFileLocation, LOCATIONS, MAX_FILE_BYTES,
+    NON_ASCII_PERSONAL_NAME,
+};
 
 #[path = "rulesync_skill_origin.rs"]
 mod skill_origin;
@@ -61,6 +67,10 @@ pub struct Adoption {
     pub links: BTreeMap<PathBuf, AdoptionLink>,
     pub skill_locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     pub skill_byte_copies: BTreeMap<PathBuf, String>,
+    pub personal_files: BTreeMap<PathBuf, Vec<u8>>,
+    pub personal_file_notes: BTreeMap<PathBuf, String>,
+    pub skipped_personal_files: BTreeMap<PathBuf, String>,
+    pub includes_personal_files: bool,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
     /// Linked rule files that stay in place outside delivery.
@@ -107,8 +117,8 @@ pub struct AdoptionFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AdoptionLink {
     resolved: ResolvedLink,
-    // The equivalent target spelling may change between preview and apply.
-    // Only the resolved bytes and modes are part of the approval.
+    // Used for apply order. Personal file approvals also bind the exact
+    // native link target and the resolved destination.
     #[serde(skip)]
     symlink_hops: usize,
 }
@@ -116,6 +126,11 @@ pub struct AdoptionLink {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 enum ResolvedLink {
     Rule(ResolvedFile),
+    PersonalFile {
+        file: ResolvedFile,
+        target: String,
+        resolved_path: PathBuf,
+    },
     Skill {
         mode: u32,
         directories: BTreeMap<PathBuf, u32>,
@@ -152,7 +167,9 @@ impl AdoptionLink {
 
     pub fn file_mode(&self, relative: &Path) -> Option<u32> {
         match &self.resolved {
-            ResolvedLink::Rule(file) => relative.as_os_str().is_empty().then_some(file.mode),
+            ResolvedLink::Rule(file) | ResolvedLink::PersonalFile { file, .. } => {
+                relative.as_os_str().is_empty().then_some(file.mode)
+            }
             ResolvedLink::Skill { files, .. } => files.get(relative).map(|file| file.mode),
         }
     }
@@ -168,7 +185,7 @@ impl AdoptionLink {
                     directories.get(relative).copied()
                 }
             }
-            ResolvedLink::Rule(_) => None,
+            ResolvedLink::Rule(_) | ResolvedLink::PersonalFile { .. } => None,
         }
     }
 
@@ -183,6 +200,15 @@ impl AdoptionLink {
                     return Ok(false);
                 };
                 Self::rule(file.text.as_bytes(), file.mode, file.node.symlink_hops)
+            }
+            ResolvedLink::PersonalFile { .. } => {
+                let Some(file) = load_personal_file(&home, path, false)? else {
+                    return Ok(false);
+                };
+                let Some(target) = &file.node.link else {
+                    return Ok(false);
+                };
+                file.personal_link(target)?
             }
             ResolvedLink::Skill { .. } => {
                 let Some(node) = home
@@ -271,6 +297,10 @@ fn discover_with_platform(
         links,
         skill_locations,
         skill_byte_copies: BTreeMap::new(),
+        personal_files: BTreeMap::new(),
+        personal_file_notes: BTreeMap::new(),
+        skipped_personal_files: BTreeMap::new(),
+        includes_personal_files: false,
         skipped,
         skipped_rules,
         skipped_tools: Vec::new(),
@@ -435,6 +465,20 @@ impl Home {
         Ok(Some(dir))
     }
 
+    fn check_personal_directories(&self, path: &Path) -> Result<()> {
+        let mut parent = self.dir.try_clone()?;
+        let mut ancestor = PathBuf::new();
+        for part in path {
+            ancestor.push(part);
+            let directory = parent.open_dir_nofollow(part)?;
+            require_ascii_entry_name(&parent, part, &directory.dir_metadata()?)?;
+            require_plain_personal_directory(&directory)
+                .with_context(|| format!("could not preserve the ACL of {}", ancestor.display()))?;
+            parent = directory;
+        }
+        Ok(())
+    }
+
     fn bytes(&self, node: &Node, limit: u64, limit_label: &str) -> Result<Vec<u8>> {
         self.read_file(node, limit, limit_label, false)
             .map(|(bytes, _)| bytes)
@@ -446,6 +490,23 @@ impl Home {
         limit: u64,
         limit_label: &str,
         check_destination_access: bool,
+    ) -> Result<(Vec<u8>, u32)> {
+        self.read_file_checked(
+            node,
+            limit,
+            limit_label,
+            check_destination_access,
+            |_, _| Ok(()),
+        )
+    }
+
+    fn read_file_checked(
+        &self,
+        node: &Node,
+        limit: u64,
+        limit_label: &str,
+        check_destination_access: bool,
+        check: impl FnOnce(&cap_std::fs::File, &Metadata) -> Result<()>,
     ) -> Result<(Vec<u8>, u32)> {
         ensure!(
             node.metadata.is_file(),
@@ -472,8 +533,9 @@ impl Home {
             file
         };
         let file = file.with_context(|| format!("open {}", node.path.display()))?;
+        let metadata = file.metadata()?;
         ensure!(
-            file.metadata()?.is_file(),
+            metadata.is_file(),
             "{} changed while reading",
             node.path.display()
         );
@@ -484,6 +546,7 @@ impl Home {
         }
         #[cfg(not(windows))]
         let _ = check_destination_access;
+        check(&file, &metadata)?;
         let mut bytes = Vec::new();
         (&file).take(limit + 1).read_to_end(&mut bytes)?;
         ensure!(
@@ -532,6 +595,318 @@ struct LoadedText {
     node: Node,
     text: String,
     mode: u32,
+}
+
+impl LoadedText {
+    fn personal_link(&self, target: &Path) -> Result<AdoptionLink> {
+        Ok(AdoptionLink {
+            resolved: ResolvedLink::PersonalFile {
+                file: ResolvedFile::new(self.text.as_bytes(), self.mode),
+                target: target
+                    .to_str()
+                    .context("invalid personal file link target")?
+                    .into(),
+                resolved_path: self.node.path.clone(),
+            },
+            symlink_hops: self.node.symlink_hops,
+        })
+    }
+}
+
+fn load_personal_file(home: &Home, path: &Path, is_windows: bool) -> Result<Option<LoadedText>> {
+    let extension = path.extension();
+    let Some(node) = home.resolve_checked(path, |candidate, leaf| {
+        ensure!(
+            candidate.as_os_str().is_ascii(),
+            "{NON_ASCII_PERSONAL_NAME}"
+        );
+        if location_of(candidate).is_none() {
+            ensure_rule_source(candidate, leaf)?;
+        }
+        ensure!(
+            !candidate
+                .iter()
+                .any(|part| part.to_str().is_some_and(|part| {
+                    [
+                        ".git",
+                        ".hg",
+                        ".svn",
+                        ".jj",
+                        ".ssh",
+                        ".aws",
+                        ".gnupg",
+                        ".credentials",
+                    ]
+                    .iter()
+                    .any(|blocked| part.eq_ignore_ascii_case(blocked))
+                })),
+            "{} points into private configuration or version-control data",
+            path.display()
+        );
+        ensure!(
+            !leaf || candidate.extension() == extension,
+            "{} links to a different file format",
+            path.display()
+        );
+        Ok(())
+    })?
+    else {
+        return Ok(None);
+    };
+    ensure!(
+        node.symlink_hops == 0 || node.link.is_some(),
+        "{} has a symlinked parent",
+        path.display()
+    );
+    ensure!(
+        symlink_replacement_supported(is_windows) || node.link.is_none(),
+        "Windows cannot replace a linked command or subagent; this file stays in place"
+    );
+    if node.link.is_some() {
+        #[cfg(target_os = "macos")]
+        {
+            let parent = home
+                .dir
+                .open_dir_nofollow(path.parent().context("missing link parent")?)?;
+            crate::rulesync_personal_files::require_plain_macos_link(
+                &parent,
+                Path::new(path.file_name().context("missing link name")?),
+            )
+            .context("could not preserve this command or subagent link's ACL")?;
+        }
+        home.check_personal_directories(node.path.parent().context("missing link parent")?)?;
+    }
+    let (bytes, mode) = home.read_file_checked(
+        &node,
+        MAX_FILE_BYTES,
+        "the 1 MiB personal file limit",
+        true,
+        |file, metadata| {
+            #[cfg(windows)]
+            let _ = file;
+            ensure!(
+                !is_windows || !metadata.permissions().readonly(),
+                "Windows cannot safely replace this read-only command or subagent"
+            );
+            ensure!(
+                node.link.is_some() || metadata.nlink() == 1,
+                "the file has multiple hard links. Adopting it could break the link"
+            );
+            if node.link.is_some() {
+                let parent = node.path.parent().context("missing link parent")?;
+                let parent = if parent.as_os_str().is_empty() {
+                    home.dir.try_clone()?
+                } else {
+                    home.dir.open_dir_nofollow(parent)?
+                };
+                require_ascii_entry_name(
+                    &parent,
+                    node.path.file_name().context("missing link name")?,
+                    metadata,
+                )?;
+            }
+            #[cfg(unix)]
+            crate::rulesync_personal_files::require_plain_unix_acl(file)
+                .context("could not preserve this command or subagent's ACL")?;
+            Ok(())
+        },
+    )?;
+    let text = String::from_utf8(bytes).context("command or subagent file is not UTF-8")?;
+    ensure!(
+        !text.contains('\0'),
+        "command or subagent file contains a NUL"
+    );
+    Ok(Some(LoadedText { node, text, mode }))
+}
+
+#[derive(Default)]
+pub(super) struct PersonalFileDiscovery {
+    is_windows: bool,
+    pub files: BTreeMap<PathBuf, AdoptionFile>,
+    links: BTreeMap<PathBuf, AdoptionLink>,
+    sources: BTreeSet<PathBuf>,
+    skipped: BTreeMap<PathBuf, String>,
+}
+
+struct KnownPersonalFiles<'a> {
+    paths: &'a BTreeSet<PathBuf>,
+    entries: BTreeSet<(u64, u64)>,
+}
+
+impl<'a> KnownPersonalFiles<'a> {
+    fn new(home: &Home, paths: &'a BTreeSet<PathBuf>) -> Self {
+        let entries = paths
+            .iter()
+            .filter_map(|path| {
+                let parent = home.resolve(path.parent()?).ok()??;
+                if parent.symlink_hops != 0 || !parent.metadata.is_dir() {
+                    return None;
+                }
+                let folder = home.dir.open_dir_nofollow(&parent.path).ok()?;
+                let metadata = folder.symlink_metadata(path.file_name()?).ok()?;
+                directory_entry_identity(&metadata)
+            })
+            .collect();
+        Self { paths, entries }
+    }
+
+    fn contains(&self, home: &Home, path: &Path) -> bool {
+        self.paths.contains(path)
+            || (!self.entries.is_empty()
+                && home
+                    .dir
+                    .symlink_metadata(path)
+                    .ok()
+                    .and_then(|metadata| directory_entry_identity(&metadata))
+                    .is_some_and(|identity| self.entries.contains(&identity)))
+    }
+}
+
+impl PersonalFileDiscovery {
+    pub(super) fn add_to(self, adoption: &mut Adoption) -> Result<()> {
+        for (path, file) in self.files {
+            let AdoptionEntry::File(bytes) = &file.after else {
+                bail!("missing personal source for {}", path.display());
+            };
+            adoption.personal_files.insert(path.clone(), bytes.clone());
+            record_file(&mut adoption.files, path, file)?;
+        }
+        adoption.links.extend(self.links);
+        adoption.sources.extend(self.sources);
+        adoption.skipped_personal_files = self.skipped;
+        adoption.includes_personal_files = true;
+        Ok(())
+    }
+
+    fn scan(
+        &mut self,
+        home: &Home,
+        spec: PersonalFileLocation,
+        directory: &Path,
+        known: &KnownPersonalFiles<'_>,
+    ) -> Result<()> {
+        let Some(node) = home.resolve(directory)? else {
+            return Ok(());
+        };
+        if !node.metadata.is_dir() && directory != Path::new(spec.directory) {
+            return Ok(());
+        }
+        ensure!(
+            node.symlink_hops == 0,
+            "the directory is linked. A byte copy cannot replace that link without hiding its other entries"
+        );
+        home.check_personal_directories(directory)?;
+        for name in home.names(&node)? {
+            let path = directory.join(&name);
+            let already_known = known.contains(home, &path);
+            if !name.is_ascii() {
+                self.skipped.insert(
+                    PathBuf::from(path.to_string_lossy().into_owned()),
+                    NON_ASCII_PERSONAL_NAME.into(),
+                );
+                continue;
+            }
+            if already_known {
+                continue;
+            }
+            let name = name.to_str().context("ASCII personal file name")?;
+            if name.starts_with('.') {
+                continue;
+            }
+            let result = if spec.file_name_matches(name) {
+                self.scan_file(home, spec, &path)
+            } else if spec.nested
+                && home
+                    .dir
+                    .symlink_metadata(&path)
+                    .is_ok_and(|node| node.is_dir() || node.is_symlink())
+            {
+                self.scan(home, spec, &path, known)
+            } else {
+                continue;
+            };
+            if let Err(error) = result {
+                self.skipped.insert(path, format!("{error:#}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn scan_file(&mut self, home: &Home, spec: PersonalFileLocation, path: &Path) -> Result<()> {
+        ensure!(
+            spec.name_at(path).is_some(),
+            "the file name is unsafe for a tool destination"
+        );
+        let Some(file) = load_personal_file(home, path, self.is_windows)? else {
+            return Ok(());
+        };
+        let before = if let Some(target) = &file.node.link {
+            self.links
+                .insert(path.to_owned(), file.personal_link(target)?);
+            AdoptionEntry::Symlink {
+                target: target.clone(),
+                bytes: Some(file.text.as_bytes().to_vec()),
+            }
+        } else {
+            AdoptionEntry::File(file.text.as_bytes().to_vec())
+        };
+        self.sources.extend([path.to_owned(), file.node.path]);
+        record_file(
+            &mut self.files,
+            path.to_owned(),
+            AdoptionFile {
+                before,
+                after: AdoptionEntry::File(file.text.into_bytes()),
+            },
+        )
+    }
+}
+
+pub(super) fn discover_personal_files<'a>(
+    home: &Path,
+    tools: impl IntoIterator<Item = &'a str>,
+    known: &BTreeSet<PathBuf>,
+) -> Result<PersonalFileDiscovery> {
+    discover_personal_files_with_platform(home, tools, known, cfg!(windows))
+}
+
+fn discover_personal_files_with_platform<'a>(
+    home: &Path,
+    tools: impl IntoIterator<Item = &'a str>,
+    known: &BTreeSet<PathBuf>,
+    is_windows: bool,
+) -> Result<PersonalFileDiscovery> {
+    let home = Home::open(home)?;
+    let known = KnownPersonalFiles::new(&home, known);
+    let tools: BTreeSet<_> = tools.into_iter().collect();
+    let mut discovery = PersonalFileDiscovery {
+        is_windows,
+        ..PersonalFileDiscovery::default()
+    };
+    for spec in LOCATIONS
+        .iter()
+        .copied()
+        .filter(|spec| tools.contains(spec.tool))
+    {
+        let path = Path::new(spec.directory);
+        if let Err(error) = discovery.scan(&home, spec, path, &known) {
+            discovery
+                .skipped
+                .insert(path.to_owned(), format!("{error:#}"));
+        }
+    }
+    if tools.contains("antigravity-ide") {
+        for folder in [
+            ".gemini/config/workflows",
+            ".gemini/antigravity/global_workflows",
+        ] {
+            let path = Path::new(folder);
+            if optional(home.dir.symlink_metadata(path))?.is_some() {
+                discovery.skipped.insert(path.to_owned(), "Antigravity generates commands as skills. Legacy workflows can collide with existing skill folders.".into());
+            }
+        }
+    }
+    Ok(discovery)
 }
 
 fn load_text(
@@ -1549,6 +1924,46 @@ mod tests {
     fn symlink_replacement_policy_is_platform_independent() {
         assert!(!symlink_replacement_supported(true));
         assert!(symlink_replacement_supported(false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_windows_leaves_linked_personal_files_unmanaged() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        put(home, "source/check.md", "Check.\n");
+        let path = Path::new(".claude/commands/check.md");
+        link(home, path.to_str().unwrap(), "../../source/check.md");
+
+        let windows =
+            discover_personal_files_with_platform(home, ["claudecode"], &BTreeSet::new(), true)
+                .unwrap();
+        assert!(windows.skipped[path].contains("Windows cannot replace"));
+        assert!(!windows.files.contains_key(path));
+        assert!(!windows.links.contains_key(path));
+
+        let unix =
+            discover_personal_files_with_platform(home, ["claudecode"], &BTreeSet::new(), false)
+                .unwrap();
+        assert!(unix.files.contains_key(path));
+        assert!(unix.links.contains_key(path));
+    }
+
+    #[test]
+    fn rulesync_windows_leaves_read_only_personal_files_unmanaged() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let path = Path::new(".claude/commands/check.md");
+        put(home, path.to_str().unwrap(), "Check.\n");
+        let absolute = home.join(path);
+        let mut permissions = std::fs::metadata(&absolute).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&absolute, permissions).unwrap();
+        let windows =
+            discover_personal_files_with_platform(home, ["claudecode"], &BTreeSet::new(), true)
+                .unwrap();
+        assert!(windows.skipped[path].contains("read-only"));
+        assert!(!windows.files.contains_key(path));
     }
 
     #[cfg(unix)]

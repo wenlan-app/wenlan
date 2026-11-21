@@ -103,6 +103,13 @@ pub struct PullbackCard {
     pub reason: String,
 }
 
+/// The selected action and source as shown to the person before approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullbackPreview {
+    pub diff: String,
+    pub plan: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullbackDecision {
     pub id: String,

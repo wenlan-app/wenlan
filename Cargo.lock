@@ -10181,6 +10181,7 @@ dependencies = [
  "hf-hub",
  "hmac 0.12.1",
  "leiden-rs",
+ "libc",
  "libsql",
  "libsql-ffi",
  "llama-cpp-2",
@@ -10215,6 +10216,7 @@ dependencies = [
  "unicode-normalization",
  "uuid",
  "wenlan-types",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

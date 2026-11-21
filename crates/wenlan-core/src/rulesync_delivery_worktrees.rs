@@ -167,6 +167,15 @@ pub(super) fn review_destinations(
             ));
         }
     }
+    for path in adoption.personal_files.keys() {
+        if let Some(root) = adoption.worktree_writes.get(path) {
+            let name = repository(root);
+            adoption.worktree_notes.push(format!(
+                "~/{} is inside the Git repository {name}. Delivery can change this checkout.",
+                path.display()
+            ));
+        }
+    }
     let shared = Path::new(SHARED_SKILLS);
     if adoption.skipped.keys().any(|path| path.starts_with(shared)) {
         if let Some(root) = worktrees.at(shared)? {

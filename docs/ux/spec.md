@@ -983,6 +983,46 @@ and wait for evidence that people need them.
   computer and are applied only through this command.
   Tests `ux_skill_17_rulesync_settings_merges_servers_and_only_previews_staged_additions` and the rest of `rulesync_settings` and `rulesync_settings_routes`.
 
+- **UX-SKILL-18** `shipped` With `WENLAN_RULESYNC=1`, the personal
+  adoption plan includes existing slash commands and subagents at their
+  native tool paths. Wenlan keeps every field and uses the original bytes
+  when pinned rulesync changes a file. The plan explains byte copies and
+  unsafe paths that stay unmanaged. Sync offers additional files and
+  tools for adoption into the existing backup.
+  Only ASCII file and directory names qualify. The plan explains skipped
+  names, including aliases of a recorded path. It keeps Unix files and
+  directories with extended ACLs or ACL extended attributes unmanaged.
+  On macOS this also covers access controls attached to a symlink itself.
+  On Windows, replacements follow the permission-preservation rules in
+  UX-SKILL-15. Wenlan stages new personal files beside their destination
+  so they inherit access rules from the destination folder.
+  A hand edit or removal appears in `wenlan rules sync` for review.
+  The person can keep it in the originating tool or share it with enrolled
+  tools that read the same format. Any `$` or `!` in a command keeps it in
+  its own tool because the characters can introduce argument expansion or
+  shell execution. Tool-specific fields and Codex TOML subagents can also
+  keep a file in its own tool.
+  Wenlan skips an alias of a recorded destination, including after deletion.
+  A separate version or pending edit needs its own decision. Before asking
+  for confirmation, `wenlan rules review`
+  shows the selected source, each file or directory to create, replace or
+  remove with its permissions, and why each other enrolled tool is skipped.
+  It spells out when an all-tools review only affects the source tool.
+  Restore uses the original bytes, modes, and link targets and removes empty
+  directories created for delivery. A retry compares already-restored originals
+  with the backup and retains it if anything differs. If an interrupted deletion
+  displaced a file with changed bytes, permissions, or links, recovery reports a
+  conflict and puts the file back when the destination is vacant. The plan reports
+  that the eight tools have no global ignore destination.
+  Tests `personal_rules_dry_run_lists_commands_and_agents_only_with_the_flag`,
+  `rulesync_personal_commands_and_subagents_round_trip_through_review`,
+  `rulesync_personal_files_offer_new_sources_without_restoring`,
+  `rulesync_personal_file_sharing_protects_other_versions_and_stale_decisions`,
+  `rulesync_personal_file_links_and_directory_modes_restore_exactly` and
+  `rulesync_personal_files_use_pinned_rendering_and_byte_copies`,
+  `rulesync_review_displays_the_selected_plan_before_asking_for_yes` and the
+  `rulesync_round4_` and `rulesync_round5_` regression groups.
+
 ## From the terminal
 
 - **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in

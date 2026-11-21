@@ -99,6 +99,7 @@ pub(crate) mod retrieval;
 pub mod router;
 pub mod rulesync_adopt;
 pub mod rulesync_personal;
+pub mod rulesync_personal_files;
 pub mod rulesync_renderer;
 pub mod rulesync_settings;
 pub mod rulesync_skill;

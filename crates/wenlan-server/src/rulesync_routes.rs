@@ -16,19 +16,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
-    additional_targets, adoption_plan, adoption_token, check_delivery_paths,
-    check_skill_frontmatter, describe_change, discover_additional_adoption, discover_adoption,
-    fingerprint, is_harness_path, line_changes, merge_rule_text, personal_target,
-    stage_adopted_skill, system_home, verify_adoption_token, write_root_rule, DeliveryWorktrees,
-    GlobalOutput, HarnessGuard, LineChange, LocalText, PersonalMaster, PersonalTarget,
-    PERSONAL_TARGETS,
+    additional_personal_files, additional_targets, adoption_plan, adoption_token,
+    check_delivery_paths, check_skill_frontmatter, describe_change, discover_additional_adoption,
+    discover_adoption, fingerprint, is_harness_path, line_changes, merge_rule_text,
+    personal_target, stage_adopted_skill, system_home, verify_adoption_token, write_root_rule,
+    DeliveryWorktrees, GlobalOutput, HarnessGuard, LineChange, LocalText, PersonalMaster,
+    PersonalTarget, PERSONAL_TARGETS,
 };
 use wenlan_core::rulesync_renderer::{self, RenderSession};
 use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
-    PullbackCard, PullbackDecision, RulesSyncReport,
+    PullbackCard, PullbackDecision, PullbackPreview, RulesSyncReport,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -44,6 +44,7 @@ use crate::rulesync_registry::{
 use crate::state::SharedState;
 
 mod displaced;
+mod personal_files;
 mod settings;
 mod storage;
 
@@ -57,6 +58,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/setup/sync", post(sync))
         .route("/api/rules/setup/skill-updates", post(skill_updates))
         .route("/api/rules/setup/review", post(review))
+        .route("/api/rules/setup/review/preview", post(review_preview))
 }
 
 pub(crate) fn require_local_person(headers: &HeaderMap) -> Result<(), ServerError> {
@@ -143,6 +145,18 @@ async fn review(
     Json(request): Json<PullbackDecision>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
     execute(state, headers, Operation::Review(request)).await
+}
+
+async fn review_preview(
+    headers: HeaderMap,
+    Json(request): Json<PullbackDecision>,
+) -> Result<Json<PullbackPreview>, ServerError> {
+    require_personal_rules_writer(&headers)?;
+    tokio::task::spawn_blocking(move || Setup::system()?.preview_review(&request))
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))?
+        .map(Json)
+        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
 enum Operation {
@@ -394,6 +408,7 @@ enum Kind {
         base: String,
     },
     Skill,
+    PersonalFile,
     Directory,
     Settings,
     RegistrySkill {
@@ -421,7 +436,7 @@ struct Delivery<Content = Vec<u8>> {
     at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pending<Content = Vec<u8>> {
     path: PathBuf,
     seen: Snapshot<Content>,
@@ -513,12 +528,27 @@ struct Manifest<Content = Vec<u8>> {
     settings_batch: Option<settings::SettingsBatch>,
     registry_skipped: BTreeMap<String, BTreeSet<PathBuf>>,
     unmanaged_skills: BTreeSet<PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    unmanaged_personal_files: BTreeMap<PathBuf, String>,
     worktree_writes: BTreeMap<PathBuf, PathBuf>,
     scope_reviews: BTreeMap<String, ScopeReview>,
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
 }
 
 impl Manifest {
+    fn case_alias(&self, root: &FileRoot, path: &Path) -> Result<Option<&Path>> {
+        for known in self
+            .backup
+            .keys()
+            .chain(self.pending.iter().map(|entry| &entry.path))
+        {
+            if root.case_alias(path, known)? {
+                return Ok(Some(known));
+            }
+        }
+        Ok(None)
+    }
+
     fn active_deliveries(&self) -> impl Iterator<Item = (&PathBuf, &Delivery)> {
         self.delivered
             .iter()
@@ -541,6 +571,7 @@ impl Manifest {
             settings_batch: None,
             registry_skipped: BTreeMap::new(),
             unmanaged_skills: BTreeSet::new(),
+            unmanaged_personal_files: BTreeMap::new(),
             worktree_writes: BTreeMap::new(),
             scope_reviews: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
@@ -780,14 +811,19 @@ impl Setup {
     fn preview_adoption(&self, expected_home: &Path) -> Result<AdoptionPlan> {
         self.check_adoption_home(expected_home)?;
         let session = RenderSession::new(&self.binary);
-        self.preview_adoption_using(|renderer, skills| {
-            self.render_skills(&session, renderer, skills)
-        })
+        self.preview_adoption_using(
+            |target, source| self.render_rule(&session, target, source),
+            |renderer, skills| self.render_skills(&session, renderer, skills),
+        )
     }
 
     fn discover_for_adoption(&self, manifest: Option<&Manifest>) -> Result<Adoption> {
         if let Some(manifest) = manifest.filter(|manifest| manifest.adopted) {
-            discover_additional_adoption(&self.home, &manifest.master)
+            discover_additional_adoption(
+                &self.home,
+                &manifest.master,
+                &personal_files::known_paths(manifest),
+            )
         } else {
             discover_adoption(&self.home)
         }
@@ -795,17 +831,19 @@ impl Setup {
 
     fn preview_adoption_using(
         &self,
+        render_rule: impl Fn(&str, &str) -> Result<SkillFiles>,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<AdoptionPlan> {
         let manifest = self.adoptable_manifest()?;
         let mut adoption = self.discover_for_adoption(manifest.as_ref())?;
-        plan_skill_deliveries(&mut adoption, &render_skills)?;
+        self.stage_adoption(&mut adoption, render_rule, render_skills)?;
         let mut plan = adoption_plan(&adoption)?;
         if adoption.overlays.is_empty()
             && plan.files.is_empty()
             && manifest.is_some_and(|manifest| manifest.adopted)
         {
-            plan.notes.push("No additional tools found.".into());
+            plan.notes
+                .push("No additional tools, commands or subagents found.".into());
         }
         Ok(plan)
     }
@@ -832,39 +870,60 @@ impl Setup {
         let manifest = self.adoptable_manifest()?;
         let mut adoption = self.discover_for_adoption(manifest.as_ref())?;
         let sources = adoption_token(&adoption)?;
-        plan_skill_deliveries(&mut adoption, &render_skills)?;
+        self.stage_adoption(&mut adoption, render_rule, render_skills)?;
         verify_adoption_token(&adoption, token)?;
-        if adoption.files.is_empty() && adoption.overlays.is_empty() {
-            let mut result = report(if manifest.is_some_and(|manifest| manifest.adopted) {
-                "No additional tools found"
+        let already_adopted = manifest.as_ref().is_some_and(|manifest| manifest.adopted);
+        if adoption.files.is_empty()
+            && adoption.overlays.is_empty()
+            && (!already_adopted || adoption.skipped_personal_files.is_empty())
+        {
+            let mut result = report(if already_adopted {
+                "No additional tools, commands or subagents found"
             } else {
                 "No installed tool files to adopt"
             });
             append_skipped_tools(&mut result, &adoption.skipped_tools);
             return Ok(result);
         }
+        verify_adoption_token(&self.discover_for_adoption(manifest.as_ref())?, &sources)
+            .context("the source changed during rendering")?;
         let master = PersonalMaster::new(&adoption);
+        let root = FileRoot::open_home(&self.home)?;
+        self.apply_adoption(&root, adoption, master)
+    }
+
+    fn stage_adoption(
+        &self,
+        adoption: &mut Adoption,
+        render_rule: impl Fn(&str, &str) -> Result<SkillFiles>,
+        render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    ) -> Result<()> {
         for target in PERSONAL_TARGETS {
             let path = Path::new(target.rules.destination);
             let Some(AdoptionEntry::File(wanted)) =
-                adoption.files.get(path).map(|file| &file.after)
+                adoption.files.get_mut(path).map(|file| &mut file.after)
             else {
                 continue;
             };
-            let output = render_rule(target.id, &master.rule_text(target.id, &[])?)?;
+            let source = std::str::from_utf8(wanted)?;
+            let mut output = render_rule(target.id, source)?;
             let actual = output
-                .get(path)
+                .remove(path)
                 .context("rulesync no longer renders the planned rules file")?;
             ensure!(
-                same_rule_lines(actual, wanted)?,
+                same_rule_lines(std::str::from_utf8(&actual)?, source),
                 "rulesync changed the lines in {}; adoption needs a fresh preview",
                 path.display()
             );
+            // The renderer can normalize edge newlines. Approve and journal
+            // those exact bytes so the first sync sees the same delivery.
+            *wanted = actual;
         }
-        verify_adoption_token(&self.discover_for_adoption(manifest.as_ref())?, &sources)
-            .context("the source changed during rendering")?;
-        let root = FileRoot::open_home(&self.home)?;
-        self.apply_adoption(&root, adoption, master)
+        plan_skill_deliveries(adoption, &render_skills)?;
+        let session = RenderSession::new(&self.binary);
+        personal_files::plan_deliveries(adoption, |spec, sources| {
+            self.render_personal_files(&session, spec, sources)
+        })
     }
 
     fn apply_adoption(
@@ -880,11 +939,14 @@ impl Setup {
             .collect();
         let links = adoption.links;
         for (path, change) in adoption.files {
+            let personal_file = adoption.personal_files.contains_key(&path);
             let linked = path
                 .ancestors()
                 .find_map(|ancestor| links.get(ancestor).map(|link| (ancestor, link)));
             let seen = if linked.is_some_and(|(ancestor, _)| ancestor != path.as_path()) {
                 Snapshot::Absent
+            } else if personal_file {
+                root.read_personal_file(&path, true)?
             } else {
                 root.read(&path, true)?
             };
@@ -931,6 +993,7 @@ impl Setup {
                     source: master.rule_text(tool, &[])?,
                     base: master.base_rule_text(tool, &[]),
                 },
+                None if personal_file => Kind::PersonalFile,
                 None if desired.is_directory() => Kind::Directory,
                 None => Kind::Skill,
             };
@@ -951,7 +1014,8 @@ impl Setup {
             self.recover(root, &mut manifest)?;
             for op in &operations {
                 ensure!(
-                    !manifest.backup.contains_key(&op.path),
+                    !manifest.backup.contains_key(&op.path)
+                        || unclaimed_original(&manifest, &op.path),
                     "{} already belongs to the local setup backup",
                     op.path.display()
                 );
@@ -968,6 +1032,8 @@ impl Setup {
         let extending = extension.is_some();
         let mut skipped = adoption.skipped.into_keys().collect::<BTreeSet<_>>();
         let skipped_skills = !skipped.is_empty();
+        let mut skipped_personal = adoption.skipped_personal_files;
+        let skipped_personal_files = !skipped_personal.is_empty();
         let mut worktree_writes = adoption.worktree_writes;
         let mode = if extending {
             BatchMode::Extend
@@ -975,16 +1041,23 @@ impl Setup {
             manifest.adopted = false;
             manifest.settings_only = false;
             manifest.unmanaged_skills.append(&mut skipped);
+            manifest
+                .unmanaged_personal_files
+                .append(&mut skipped_personal);
             manifest.worktree_writes.append(&mut worktree_writes);
             BatchMode::Adopt
         };
-        let mut result = if adoption.added_tools.is_empty() {
-            report("Adopted the local tool setup")
-        } else {
+        let mut result = if !adoption.added_tools.is_empty() {
             report(&format!(
                 "Added {} to the local tool setup",
                 adoption.added_tools.join(", ")
             ))
+        } else if extending && !operations.is_empty() {
+            report("Added commands and subagents to the local tool setup")
+        } else if extending {
+            report("No additional tool files were eligible for adoption")
+        } else {
+            report("Adopted the local tool setup")
         };
         let outcomes = self
             .run_batch(root, &mut manifest, operations, mode, Some(&links))
@@ -1011,6 +1084,15 @@ impl Setup {
             result.written.push(path.display().to_string());
         }
         if let Some(master) = extension {
+            manifest.unmanaged_personal_files.retain(|path, _| {
+                !adoption
+                    .personal_files
+                    .keys()
+                    .any(|added| added.starts_with(path))
+            });
+            manifest
+                .unmanaged_personal_files
+                .append(&mut skipped_personal);
             extend_personal_master(&mut manifest.master, master);
             manifest.unmanaged_skills.append(&mut skipped);
             manifest.worktree_writes.append(&mut worktree_writes);
@@ -1021,6 +1103,11 @@ impl Setup {
             result
                 .message
                 .push_str(". Skill paths marked unmanaged in the plan stayed in place.");
+        }
+        if skipped_personal_files {
+            result.message.push_str(
+                " The command and subagent paths marked unmanaged in the plan stayed in place.",
+            );
         }
         append_skipped_tools(&mut result, &adoption.skipped_tools);
         Ok(result)
@@ -1122,7 +1209,7 @@ impl Setup {
             );
             return Ok(restored);
         }
-        let read_path = || {
+        let planned_read = || {
             read_planned_path(
                 root,
                 &op.path,
@@ -1130,20 +1217,29 @@ impl Setup {
                 op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
             )
         };
-        let mut actual = read_path()?;
+        let read_path = || {
+            if wenlan_core::rulesync_personal_files::is_personal_path(&op.path) {
+                root.read_personal_file(&op.path, op.allow_link)
+            } else {
+                planned_read()
+            }
+        };
+        if op.seen == op.desired && !manifest.stages.contains_key(&op.path) {
+            // This operation could not have displaced anything. A newer
+            // user edit supersedes the unfinished receipt.
+            return Ok(read_path().is_ok_and(|actual| op.seen == actual));
+        }
         if let Some(stage) = manifest.stages.get(&op.path) {
             root.recover_stage(
                 &op.path,
                 &op.seen,
                 &op.desired,
-                &actual,
+                &planned_read()?,
                 stage.options(data, op.allow_link, None),
             )?;
-            if cfg!(windows) && actual == Snapshot::Absent {
-                // Recovery may have put the file back at the vacant name.
-                actual = read_path()?;
-            }
         }
+        // Recovery may have put the file back at the vacant name.
+        let actual = read_path()?;
         ensure!(
             op.desired == actual || op.seen == actual,
             "changed during an interrupted write. Save your edit and compare it with the retained backup before retrying"
@@ -1190,16 +1286,41 @@ impl Setup {
         };
         check_delivery_paths(&self.home, operations.iter().map(|op| op.path.as_path()))?;
         let mut outcomes = Vec::with_capacity(operations.len());
-        let mut ready = Vec::with_capacity(operations.len());
+        let mut ready: Vec<Pending> = Vec::with_capacity(operations.len());
         for op in operations {
-            if (reviewing
-                && !read_planned_path(
-                    root,
-                    &op.path,
-                    op.allow_link,
-                    op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
-                )
-                .is_ok_and(|actual| op.seen == actual))
+            let personal_file =
+                wenlan_core::rulesync_personal_files::location_of(&op.path).is_some();
+            let changed = if wenlan_core::rulesync_personal_files::is_personal_path(&op.path) {
+                match root.read_personal_file(&op.path, op.allow_link) {
+                    Ok(actual) => (reviewing || cfg!(windows)) && op.seen != actual,
+                    Err(_) => true,
+                }
+            } else {
+                reviewing
+                    && !read_planned_path(
+                        root,
+                        &op.path,
+                        op.allow_link,
+                        op.seen == Snapshot::Absent || op.desired == Snapshot::Absent,
+                    )
+                    .is_ok_and(|actual| op.seen == actual)
+            };
+            if personal_file && op.kind.is_some() {
+                ensure!(
+                    manifest.case_alias(root, &op.path)?.is_none(),
+                    "{} aliases a path already recorded in the local setup. Run rules sync",
+                    op.path.display()
+                );
+                for prior in &ready {
+                    ensure!(
+                        !root.case_alias(&op.path, &prior.path)?,
+                        "{} and {} alias in this setup",
+                        op.path.display(),
+                        prior.path.display()
+                    );
+                }
+            }
+            if changed
                 || manifest.pending.iter().any(|pending| {
                     op.path.starts_with(&pending.path) || pending.path.starts_with(&op.path)
                 })
@@ -1237,6 +1358,12 @@ impl Setup {
         let first = manifest.pending.len();
         manifest.pending.append(&mut ready);
         self.save(manifest)?;
+        #[cfg(test)]
+        for path in &batch_paths {
+            if let Some(name) = path.file_name() {
+                crate::rulesync_apply::crash_at("journaled", Path::new(name));
+            }
+        }
         let mut directories = BatchDirectories::default();
         let mut failed = BTreeSet::new();
         for operation in manifest.pending.split_off(first) {
@@ -1350,7 +1477,36 @@ impl Setup {
             ));
         }
         self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
-        if manifest.delivered.is_empty() && manifest.pending.is_empty() {
+        for (path, original) in &manifest.backup {
+            if *original == Snapshot::Absent
+                || manifest.delivered.contains_key(path)
+                || manifest.pending.iter().any(|op| op.path == *path)
+            {
+                continue;
+            }
+            let current = if wenlan_core::rulesync_personal_files::is_personal_path(path) {
+                root.read_personal_file(path, true)
+            } else {
+                root.read(path, true)
+            };
+            match current {
+                Ok(snapshot) if *original == snapshot => (),
+                Ok(Snapshot::Absent) => result.blocked.push(format!(
+                    "{}: The recorded original is missing after restore.",
+                    path.display()
+                )),
+                Ok(_) => result.blocked.push(format!(
+                    "{}: The restored path no longer matches the saved original.",
+                    path.display()
+                )),
+                Err(error) => result.blocked.push(format!(
+                    "{}: Could not verify the recorded original after restore ({error}).",
+                    path.display()
+                )),
+            }
+        }
+        if manifest.delivered.is_empty() && manifest.pending.is_empty() && result.blocked.is_empty()
+        {
             if !manifest.settings_only {
                 rulesync_registry::clear_delivery_state(&self.data)?;
             }
@@ -1383,6 +1539,18 @@ impl Setup {
             .filter(|path| selected(path))
             .cloned()
             .collect();
+        for path in &originals {
+            if wenlan_core::rulesync_personal_files::location_of(path).is_some() {
+                if let Some(alias) = manifest.case_alias(root, path)? {
+                    result.blocked.push(format!(
+                        "{} aliases {} in the local setup backup. Resolve the conflicting entries before restoring.",
+                        path.display(),
+                        alias.display()
+                    ));
+                    return Ok(());
+                }
+            }
+        }
         ensure!(
             manifest
                 .delivered
@@ -1429,7 +1597,11 @@ impl Setup {
                 if alias.is_some() && *expected != Snapshot::Absent {
                     return Err(std::io::Error::other("the destination spelling changed"));
                 }
-                read_planned_path(root, &path, true, *expected == Snapshot::Absent)
+                if wenlan_core::rulesync_personal_files::is_personal_path(&path) {
+                    root.read_personal_file(&path, true)
+                } else {
+                    read_planned_path(root, &path, true, *expected == Snapshot::Absent)
+                }
             };
             let seen = match read_for_restore() {
                 Ok(current) if extension_only && original == current => {
@@ -1469,14 +1641,28 @@ impl Setup {
         // Descendants are restored before their parent's final mode or link.
         operations.sort_by_key(|op| std::cmp::Reverse(op.path.components().count()));
         let mut removing = BTreeSet::new();
-        let mut retained = BTreeSet::new();
+        let mut removing_entries = BTreeSet::new();
+        let mut retained: BTreeSet<_> = operations
+            .iter()
+            .filter(|op| op.desired != Snapshot::Absent)
+            .map(|op| op.path.clone())
+            .collect();
+        let mut kept_directories = BTreeSet::new();
         for op in &mut operations {
             if op.desired != Snapshot::Absent {
                 continue;
             }
             if op.seen.is_directory() {
                 let children = root.children(&op.path)?;
-                let unplanned = children.difference(&removing).collect::<Vec<_>>();
+                let mut unplanned = Vec::new();
+                for child in children.difference(&removing) {
+                    if !root
+                        .entry_identity(child)?
+                        .is_some_and(|id| removing_entries.contains(&id))
+                    {
+                        unplanned.push(child);
+                    }
+                }
                 if !unplanned.is_empty()
                     && unplanned.iter().all(|child| {
                         retained.contains(*child)
@@ -1489,9 +1675,13 @@ impl Setup {
                     // Relinquish the directory while keeping the person's
                     // unrecorded contents in place.
                     retained.insert(op.path.clone());
+                    kept_directories.insert(op.path.clone());
                     op.desired = op.seen.clone();
                     continue;
                 }
+            }
+            if let Some(identity) = root.entry_identity(&op.path)? {
+                removing_entries.insert(identity);
             }
             removing.insert(op.path.clone());
         }
@@ -1542,14 +1732,25 @@ impl Setup {
             (directories, BatchMode::SealRestore { extension_only }),
         ] {
             for (path, status) in self.apply_batch(root, manifest, operations, mode)? {
-                if status == ApplyOutcome::Applied && !retained.contains(&path) {
+                if status == ApplyOutcome::Applied && !kept_directories.contains(&path) {
                     result.written.push(path.display().to_string());
                 } else if status != ApplyOutcome::Applied {
+                    kept_directories.remove(&path);
                     result
                         .blocked
                         .push(format!("{} could not be restored yet", path.display()));
                 }
             }
+        }
+        if !kept_directories.is_empty() {
+            result.message.push_str(&format!(
+                ". Kept these directories because they still contain files. {}",
+                kept_directories
+                    .into_iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
         Ok(())
     }
@@ -1818,6 +2019,17 @@ impl Setup {
                 "\nAdditional tools available: {tools}. Run `wenlan rules adopt` to review and add them."
             ));
         }
+        let added_files = additional_personal_files(
+            &self.home,
+            &manifest.master,
+            &personal_files::known_paths(manifest),
+        )?;
+        if !added_files.is_empty() {
+            let count = added_files.len();
+            result.message.push_str(&format!(
+                "\nFound {count} additional command or subagent file(s). Run `wenlan rules adopt` to review and add them."
+            ));
+        }
         let blocked = self.pull_back(root, manifest, &mut result)?;
         let had_issues = !std::mem::take(&mut manifest.delivery_issues).is_empty();
         let paths: Vec<_> = manifest
@@ -1940,7 +2152,7 @@ impl Setup {
             drafts,
             cards,
             mut blocked,
-        } = inspect(root, manifest)?;
+        } = inspect(&self.home, root, manifest)?;
         blocked.extend(pending_skills);
         if !drafts.is_empty() {
             manifest
@@ -1978,7 +2190,12 @@ impl Setup {
         }
         for card in cards {
             for path in card.paths {
-                blocked.insert(path, "Rule changes need your approval. Use `wenlan rules review` with the proposal below.".into());
+                let change = if matches!(manifest.delivered[&path].kind, Kind::PersonalFile) {
+                    "Command or subagent"
+                } else {
+                    "Rule"
+                };
+                blocked.insert(path, format!("{change} changes need your approval. Use `wenlan rules review` with the proposal below."));
             }
             result.proposals.push(card.wire);
         }
@@ -2591,6 +2808,32 @@ impl Setup {
         })
     }
 
+    fn preview_review(&self, request: &PullbackDecision) -> Result<PullbackPreview> {
+        let root = FileRoot::open_home(&self.home)?;
+        let manifest = self
+            .load_if_present()?
+            .context("run wenlan rules adopt first")?;
+        if let Some(scope) = manifest.scope_reviews.get(&request.id) {
+            return Ok(PullbackPreview {
+                diff: scope.card.diff.clone(),
+                plan: scope.card.reason.clone(),
+            });
+        }
+        let Pullback { drafts, cards, .. } = inspect(&self.home, &root, &manifest)?;
+        let card = cards
+            .iter()
+            .find(|card| card.wire.id == request.id)
+            .context("the proposal is no longer current. Run rules sync")?;
+        let path = card.review_path(request)?;
+        let (diff, plan) = if !card.share_plans.is_empty() {
+            let worktrees = DeliveryWorktrees::new(&self.home)?;
+            card.describe_personal_review(&drafts, path, request.action, &worktrees)?
+        } else {
+            (card.wire.diff.clone(), card.wire.reason.clone())
+        };
+        Ok(PullbackPreview { diff, plan })
+    }
+
     fn review_using(
         &self,
         request: &PullbackDecision,
@@ -2646,29 +2889,27 @@ impl Setup {
             self.save(&manifest)?;
             return sync(&root, &mut manifest);
         }
-        let Pullback { drafts, cards, .. } = inspect(&root, &manifest)?;
+        let Pullback { drafts, cards, .. } = inspect(&self.home, &root, &manifest)?;
         let card = cards
             .iter()
             .find(|card| card.wire.id == request.id)
             .context("the proposal is no longer current. Run rules sync")?;
-        let path = match (&request.file, card.paths.len(), &request.action) {
-            (_, _, PullbackAction::Dismiss) => None,
-            (Some(file), _, _) => {
-                let path = Path::new(file);
-                ensure!(
-                    card.paths.contains(path),
-                    "this file does not belong to the proposal"
-                );
-                Some(path)
-            }
-            (None, 1, _) => card.paths.first().map(PathBuf::as_path),
-            (None, _, _) => bail!("choose a file to resolve the conflicting edits"),
-        };
+        let path = card.review_path(request)?;
         let reviewed = || {
             drafts
                 .iter()
                 .filter(|draft| card.paths.contains(&draft.path))
         };
+        if !card.share_plans.is_empty() {
+            return self.review_personal_file(
+                &root,
+                &mut manifest,
+                card,
+                reviewed(),
+                path,
+                &request.action,
+            );
+        }
         let all_tools = request.action == PullbackAction::AllTools;
         if all_tools {
             for draft in reviewed() {
@@ -2690,14 +2931,16 @@ impl Setup {
                 }
                 PullbackAction::AllTools if selected => {
                     let delivery = &manifest.delivered[&draft.path];
-                    let Kind::Rule { target, .. } = &delivery.kind else {
-                        bail!("the proposal no longer belongs to a managed rule");
-                    };
-                    let before = rulesync_layers::only_personal(text(
-                        delivery.observed.as_ref().unwrap_or(&delivery.delivered),
-                    )?)?;
-                    let after = rulesync_layers::only_personal(text(&draft.current)?)?;
-                    manifest.master.promote_tool_edit(target, &before, &after)?;
+                    match &delivery.kind {
+                        Kind::Rule { target, .. } => {
+                            let before = rulesync_layers::only_personal(text(
+                                delivery.observed.as_ref().unwrap_or(&delivery.delivered),
+                            )?)?;
+                            let after = rulesync_layers::only_personal(text(&draft.current)?)?;
+                            manifest.master.promote_tool_edit(target, &before, &after)?;
+                        }
+                        _ => bail!("the proposal no longer belongs to a managed file"),
+                    }
                 }
                 PullbackAction::AllTools | PullbackAction::Dismiss => {}
             }
@@ -2844,7 +3087,7 @@ fn skill_case_alias(root: &FileRoot, path: &Path) -> std::io::Result<Option<Path
         .map(|tool| Path::new(tool.skills.destination))
         .find(|scope| path != *scope && path.starts_with(scope));
     match scope {
-        Some(scope) => root.case_alias(path, scope),
+        Some(scope) => root.case_spelling(path, scope),
         None => Ok(None),
     }
 }
@@ -3517,13 +3760,11 @@ pub(crate) fn prepare_checkout_displaced(root: &FileRoot, path: &Path) -> Result
     displaced::Batch::prepare_file(root, path)
 }
 
-fn same_rule_lines(actual: &[u8], expected: &[u8]) -> Result<bool> {
-    let actual = std::str::from_utf8(actual)?;
-    let expected = std::str::from_utf8(expected)?;
-    Ok(actual
+fn same_rule_lines(actual: &str, expected: &str) -> bool {
+    actual
         .trim_matches(['\r', '\n'])
         .lines()
-        .eq(expected.trim_matches(['\r', '\n']).lines()))
+        .eq(expected.trim_matches(['\r', '\n']).lines())
 }
 
 fn without_revoked_rules(snapshot: &Snapshot, accessible: &BTreeSet<String>) -> Result<Snapshot> {
@@ -3589,6 +3830,10 @@ fn with_missing_parents(
     Ok(batch)
 }
 
+fn unclaimed_original(manifest: &Manifest, path: &Path) -> bool {
+    !manifest.delivered.contains_key(path) && manifest.backup.get(path) == Some(&Snapshot::Absent)
+}
+
 /// Journal pathname state before the first managed operation. Adoption
 /// captures the whole managed skill tree, including empty directories;
 /// later registry plans can only touch those paths or add new ones.
@@ -3604,11 +3849,11 @@ fn record_originals(
         let Some(kind) = &op.kind else {
             continue;
         };
-        let std::collections::btree_map::Entry::Vacant(entry) =
-            manifest.backup.entry(op.path.clone())
-        else {
+        if manifest.backup.contains_key(&op.path)
+            && !(adopting && unclaimed_original(manifest, &op.path))
+        {
             continue;
-        };
+        }
         let original = if !adopting
             && matches!(
                 kind,
@@ -3627,7 +3872,7 @@ fn record_originals(
                 windows_backup_owner(root, &op.path, &original)?,
             );
         }
-        entry.insert(original);
+        manifest.backup.insert(op.path.clone(), original);
     }
     Ok(())
 }
@@ -3710,14 +3955,35 @@ pub(crate) fn text(snapshot: &Snapshot) -> Result<&str> {
 struct Draft {
     path: PathBuf,
     current: Snapshot,
-    changes: Vec<LineChange>,
+    scope: DraftScope,
     diff: String,
     needs_review: bool,
+}
+
+enum DraftScope {
+    Rule(Vec<LineChange>),
+    PersonalFile(personal_files::Scope),
 }
 
 struct Card {
     wire: PullbackCard,
     paths: BTreeSet<PathBuf>,
+    share_plans: BTreeMap<PathBuf, personal_files::SharePlan>,
+}
+
+impl Card {
+    fn review_path(&self, request: &PullbackDecision) -> Result<Option<&Path>> {
+        match (&request.file, self.paths.len(), request.action) {
+            (_, _, PullbackAction::Dismiss) => Ok(None),
+            (Some(file), _, _) => Ok(Some(
+                self.paths
+                    .get(Path::new(file))
+                    .context("this file does not belong to the proposal")?,
+            )),
+            (None, 1, _) => Ok(self.paths.first().map(PathBuf::as_path)),
+            (None, _, _) => bail!("choose a file to resolve the conflicting edits"),
+        }
+    }
 }
 
 struct Pullback {
@@ -3726,9 +3992,10 @@ struct Pullback {
     blocked: BTreeMap<PathBuf, String>,
 }
 
-fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
+fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
     let mut drafts = Vec::new();
     let mut blocked = manifest.recovery_issues.clone();
+    let mut worktrees = DeliveryWorktrees::new(home)?;
     for (path, delivery) in manifest.active_deliveries() {
         if blocked.contains_key(path) {
             continue;
@@ -3737,18 +4004,46 @@ fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
             blocked.insert(path.clone(), HARNESS_READ_ONLY.into());
             continue;
         }
-        if !matches!(delivery.kind, Kind::Rule { .. }) {
+        if !matches!(delivery.kind, Kind::Rule { .. } | Kind::PersonalFile) {
             continue;
         }
-        let current = match root.read(path, false) {
+        let current = if matches!(delivery.kind, Kind::PersonalFile) {
+            root.read_personal_file(path, false)
+        } else {
+            root.read(path, false)
+        };
+        let current = match current {
             Ok(current) => current,
             Err(error) => {
-                blocked.insert(path.clone(), format!("Cannot read this rules file ({error:#}). Check that it is a readable regular file and sync again."));
+                let message = if matches!(delivery.kind, Kind::PersonalFile) {
+                    format!("Left unmanaged: {error:#}")
+                } else {
+                    format!("Cannot read this file ({error:#}). Check that it is a readable regular file and sync again.")
+                };
+                blocked.insert(path.clone(), message);
                 continue;
             }
         };
-        let baseline = delivery.observed.as_ref().unwrap_or(&delivery.delivered);
+        let baseline = if matches!(delivery.kind, Kind::PersonalFile) {
+            // The applied batch is the receipt. An older interrupted approval
+            // can have an observed snapshot without a completed delivery.
+            &delivery.delivered
+        } else {
+            delivery.observed.as_ref().unwrap_or(&delivery.delivered)
+        };
         if *baseline == current {
+            continue;
+        }
+        if matches!(delivery.kind, Kind::PersonalFile) {
+            match personal_files::draft(root, path, baseline, current, &manifest.master) {
+                Ok(draft) => drafts.push(draft),
+                Err(error) => {
+                    blocked.insert(
+                        path.clone(),
+                        format!("Cannot preview this command or subagent edit ({error:#})."),
+                    );
+                }
+            }
             continue;
         }
         let (Ok(before), Ok(after)) = (text(baseline), text(&current)) else {
@@ -3778,7 +4073,7 @@ fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
         drafts.push(Draft {
             path: path.clone(),
             current,
-            changes,
+            scope: DraftScope::Rule(changes),
             diff,
             needs_review,
         });
@@ -3810,22 +4105,48 @@ fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
             .map(|i| (&drafts[*i].path, &drafts[*i].current, &drafts[*i].diff))
             .collect::<Vec<_>>();
         entries.sort_by_key(|(path, _, _)| *path);
-        let reason = if paths.len() > 1 {
-            "Several tools changed the same lines"
+        let mut share_plans = BTreeMap::new();
+        let (id, reason) = if matches!(drafts[group[0]].scope, DraftScope::PersonalFile(_)) {
+            let reviewed = entries
+                .iter()
+                .map(|(path, current, _)| (path.as_path(), *current))
+                .collect();
+            let mut descriptions = Vec::new();
+            if paths.len() > 1 {
+                descriptions.push(
+                    "Several tools edited the same command or subagent. Choose the source file."
+                        .into(),
+                );
+            }
+            for index in group {
+                let draft = &drafts[index];
+                let plan =
+                    personal_files::plan_shares(root, manifest, draft, &reviewed, &mut worktrees)?;
+                descriptions.push(plan.describe(draft, &worktrees));
+                share_plans.insert(draft.path.clone(), plan);
+            }
+            let reason = descriptions.join("\n");
+            (fingerprint(&(&entries, &share_plans, &reason))?, reason)
         } else {
-            "These changes do not have a verified author"
+            let reason = if paths.len() > 1 {
+                "Several tools changed the same lines"
+            } else {
+                "These changes do not have a verified author"
+            };
+            (fingerprint(&entries)?, reason.into())
         };
         cards.push(Card {
             wire: PullbackCard {
-                id: fingerprint(&entries)?,
+                id,
                 files: paths
                     .iter()
                     .map(|path| path.display().to_string())
                     .collect(),
                 diff: entries.iter().map(|(_, _, diff)| diff.as_str()).collect(),
-                reason: reason.into(),
+                reason,
             },
             paths,
+            share_plans,
         });
     }
     Ok(Pullback {
@@ -3836,8 +4157,15 @@ fn inspect(root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
 }
 
 fn competing_edits(first: &Draft, second: &Draft) -> bool {
-    first.changes.iter().any(|change| {
-        second.changes.iter().any(|other| {
+    let (first, second) = match (&first.scope, &second.scope) {
+        (DraftScope::PersonalFile(first), DraftScope::PersonalFile(second)) => {
+            return !first.destinations.is_disjoint(&second.destinations)
+        }
+        (DraftScope::Rule(first), DraftScope::Rule(second)) => (first, second),
+        _ => return false,
+    };
+    first.iter().any(|change| {
+        second.iter().any(|other| {
             change.added != other.added
                 && change
                     .removed
@@ -3864,7 +4192,14 @@ fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
     let previous = current_rule_source(&manifest.master, target, base, source)?;
     let before = rulesync_layers::only_personal(text(baseline)?)?;
     let after = rulesync_layers::only_personal(text(&draft.current)?)?;
-    let edited = merge_rule_text(&before, &after, &previous)?;
+    // A renderer can trim edge newlines or normalize line endings. When the
+    // source and the delivery still have the same rule lines, accept the edit
+    // against what the tool saw without merging those formatting differences.
+    let edited = if same_rule_lines(&before, &previous) {
+        after
+    } else {
+        merge_rule_text(&before, &after, &previous)?
+    };
     manifest.master.overrides.insert(
         target.clone(),
         LocalText {
@@ -3979,7 +4314,8 @@ mod tests {
         }
 
         fn text(&self, path: &str) -> String {
-            fs::read_to_string(self.setup.home.join(path)).unwrap()
+            fs::read_to_string(self.setup.home.join(path))
+                .unwrap_or_else(|err| panic!("{path}: {err}"))
         }
 
         fn write(&self, path: &str, text: &str) {
@@ -4099,7 +4435,11 @@ mod tests {
         };
         for target in PERSONAL_TARGETS {
             let rules = Path::new(target.rules.destination);
-            let overlay = format!("{} only.\n", target.id);
+            let overlay = if matches!(target.id, "opencode" | "cursor" | "antigravity-ide") {
+                format!("<!-- {} only. -->\n\n{SHARED}", target.id)
+            } else {
+                format!("{} only.\n", target.id)
+            };
             install(rules, &overlay);
             originals.insert(rules.to_owned(), overlay.into_bytes());
             let folder = Path::new(target.skills.destination).join("example");
@@ -4150,7 +4490,10 @@ mod tests {
             let mut manifest = f.setup.load().unwrap().unwrap();
             sync(&root, &mut manifest).unwrap()
         };
-        let plan = f.setup.preview_adoption_using(render_skills).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(render_rules, render_skills)
+            .unwrap();
         let adopted = f
             .setup
             .adopt_using(&plan.token, render_rules, render_skills)
@@ -4352,6 +4695,1817 @@ mod tests {
         personal_targets_round_trip(Some(&binary));
     }
 
+    fn pullback_file(report: &RulesSyncReport, path: &str) -> PullbackCard {
+        report
+            .proposals
+            .iter()
+            .find(|card| {
+                card.files
+                    .iter()
+                    .any(|file| Path::new(file) == Path::new(path))
+            })
+            .unwrap_or_else(|| panic!("Missing proposal for {path}: {report:?}"))
+            .clone()
+    }
+
+    fn review_file(
+        f: &Fixture,
+        card: &PullbackCard,
+        action: PullbackAction,
+        source: Option<&str>,
+    ) -> Result<RulesSyncReport> {
+        f.setup.review_using(
+            &PullbackDecision {
+                id: card.id.clone(),
+                action,
+                file: source.map(str::to_owned),
+            },
+            |root, manifest| f.sync_review(root, manifest),
+        )
+    }
+
+    #[test]
+    fn rulesync_round2_keeps_nonportable_invocations_with_their_tool() {
+        let f = Fixture::new();
+        for dir in [".claude/commands", ".config/opencode", ".cursor/agents"] {
+            fs::create_dir_all(f.setup.home.join(dir)).unwrap();
+        }
+        let command = ".claude/commands/check.md";
+        let agent = ".cursor/agents/check.md";
+        f.write(command, "Review the changes.\n");
+        f.write(
+            agent,
+            "---\nname: check\ndescription: Check\n---\nReview.\n",
+        );
+        f.adopt_from_plan();
+
+        f.write(command, "Compare $1 and $2.\n");
+        let card = pullback_file(&f.sync_with(""), command);
+        assert!(card.reason.contains("argument placeholders"), "{card:?}");
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        for path in [
+            ".cursor/commands/check.md",
+            ".codex/prompts/check.md",
+            ".config/opencode/commands/check.md",
+        ] {
+            assert!(!f.setup.home.join(path).exists(), "{path}");
+        }
+
+        f.write(
+            agent,
+            "---\nname: 'team:check'\ndescription: Check\n---\nReview carefully.\n",
+        );
+        let card = pullback_file(&f.sync_with(""), agent);
+        assert!(card.reason.contains("colon"), "{card:?}");
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert!(!f.setup.home.join(".claude/agents/check.md").exists());
+        assert!(f.text(agent).contains("team:check"));
+    }
+
+    #[test]
+    fn rulesync_round2_binds_personal_approval_to_each_destination() {
+        let f = Fixture::new();
+        let claude = ".claude/commands/check.md";
+        let cursor = ".cursor/commands/check.md";
+        let codex = ".codex/prompts/check.md";
+        for path in [claude, cursor, codex] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+        }
+        f.write(claude, "Claude original.\n");
+        f.write(cursor, "Cursor original.\n");
+        f.adopt_from_plan();
+
+        f.write(claude, "Claude edit.\n");
+        f.write(codex, "Unmanaged command.\n");
+        let occupied = pullback_file(&f.sync_with(""), claude);
+        fs::remove_file(f.setup.home.join(codex)).unwrap();
+        assert!(
+            review_file(&f, &occupied, PullbackAction::AllTools, None).is_err(),
+            "an occupied destination became a write after the preview"
+        );
+        assert!(!f.setup.home.join(codex).exists());
+        let vacant = pullback_file(&f.sync_with(""), claude);
+        assert!(
+            vacant.reason.contains(&format!("Create {codex}")),
+            "{vacant:?}"
+        );
+        review_file(&f, &vacant, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(codex), "Claude edit.\n");
+
+        f.write(claude, "Second Claude edit.\n");
+        f.write(cursor, "Second Cursor edit.\n");
+        let competing = pullback_file(&f.sync_with(""), claude);
+        assert_eq!(
+            competing.files.iter().map(Path::new).collect::<Vec<_>>(),
+            [Path::new(claude), Path::new(cursor)]
+        );
+        assert!(
+            competing.reason.contains(&format!("Replace {codex}")),
+            "{competing:?}"
+        );
+        f.write(codex, "Codex edit after preview.\n");
+        assert!(review_file(&f, &competing, PullbackAction::AllTools, Some(claude)).is_err());
+        assert_eq!(f.text(codex), "Codex edit after preview.\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round2_review_names_the_mode_of_a_shared_replacement() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let source = ".claude/commands/check.md";
+        let peer = ".codex/prompts/check.md";
+        for (path, mode) in [(source, 0o600), (peer, 0o644)] {
+            let native = f.setup.home.join(path);
+            fs::create_dir_all(native.parent().unwrap()).unwrap();
+            f.write(path, "The same original.\n");
+            fs::set_permissions(native, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        f.adopt_from_plan();
+        f.write(source, "A private revision.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        assert!(
+            card.reason
+                .contains(&format!("Replace {peer} with permissions 0644")),
+            "{card:?}"
+        );
+        assert!(card.reason.contains("More users can read"), "{card:?}");
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(peer), "A private revision.\n");
+        assert_eq!(
+            fs::metadata(f.setup.home.join(peer))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o644
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round3_review_preview_does_not_apply_and_matches_the_selected_plan() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let source = ".claude/commands/check.md";
+        let peer = ".cursor/commands/check.md";
+        let codex = ".codex/prompts/check.md";
+        for (path, mode) in [(source, 0o640), (peer, 0o644)] {
+            let destination = f.setup.home.join(path);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            f.write(path, "Original.\n");
+            fs::set_permissions(destination, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        fs::create_dir(f.setup.home.join(".gemini")).unwrap();
+        f.adopt_from_plan();
+        f.write(source, "Edited.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        let preview = |card: &PullbackCard, action| {
+            f.setup
+                .preview_review(&PullbackDecision {
+                    id: card.id.clone(),
+                    action,
+                    file: None,
+                })
+                .unwrap()
+        };
+        let journal_before = fs::read(f.setup.data.join("personal.json")).unwrap();
+        let all = preview(&card, PullbackAction::AllTools);
+        assert!(all.diff.contains("+Edited."));
+        for line in [
+            "Create directory .codex/prompts with permissions 0700",
+            "Create .codex/prompts/check.md with permissions 0640",
+            "Replace .cursor/commands/check.md with permissions 0644",
+            "Skip Gemini CLI. Gemini CLI uses its own native TOML command format.",
+        ] {
+            assert!(all.plan.contains(line), "missing {line}: {all:?}");
+        }
+        let only = preview(&card, PullbackAction::ToolOnly);
+        assert!(only.plan.contains(
+            "Keep the existing edit at .claude/commands/check.md with permissions 0640."
+        ));
+        for tool in ["Codex", "Cursor", "Gemini CLI"] {
+            assert!(
+                only.plan.contains(&format!(
+                    "Skip {tool}. This review is for Claude Code only."
+                )),
+                "{only:?}"
+            );
+        }
+        assert_eq!(
+            fs::read(f.setup.data.join("personal.json")).unwrap(),
+            journal_before
+        );
+        assert!(!f.setup.home.join(codex).exists());
+        assert_eq!(f.text(peer), "Original.\n");
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(codex), "Edited.\n");
+        assert_eq!(f.text(peer), "Edited.\n");
+
+        fs::remove_file(f.setup.home.join(source)).unwrap();
+        let card = pullback_file(&f.sync_with(""), source);
+        let removal = preview(&card, PullbackAction::AllTools);
+        assert!(removal
+            .plan
+            .contains("Remove .cursor/commands/check.md with permissions 0644"));
+        assert!(removal
+            .plan
+            .contains("Remove .codex/prompts/check.md with permissions 0640"));
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert!(!f.setup.home.join(peer).exists());
+        assert!(!f.setup.home.join(codex).exists());
+
+        f.write(source, "Use $1.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        let local = preview(&card, PullbackAction::AllTools);
+        assert!(
+            local
+                .plan
+                .contains("All-tools stays with its tool (Claude Code)."),
+            "{local:?}"
+        );
+        assert!(local
+            .plan
+            .contains("Skip Codex. Left unmanaged: '$' can introduce argument placeholders."));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round2_review_escapes_control_characters_in_destination_names() {
+        let f = Fixture::new();
+        let source = ".claude/commands/check\nnext.md";
+        fs::create_dir_all(f.setup.home.join(source).parent().unwrap()).unwrap();
+        f.write(source, "Check.\n");
+        f.adopt_from_plan();
+        f.write(source, "Check again.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        assert!(!card.reason.contains("check\nnext.md"), "{card:?}");
+        assert!(!card.diff.contains("check\nnext.md"), "{card:?}");
+        assert!(
+            card.reason
+                .contains("Create .codex/prompts/check\\nnext.md"),
+            "{card:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round2_file_only_crash_keeps_earlier_tools_enrolled() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let before = f.setup.load().unwrap().unwrap();
+        let command = ".claude/commands/new.md";
+        fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
+        f.write("source.md", "Original command.\n");
+        std::os::unix::fs::symlink("../../source.md", f.setup.home.join(command)).unwrap();
+        run9_crash_during_file_apply(&f, "displaced:new.md");
+
+        let interrupted = f.setup.load().unwrap().unwrap();
+        assert!(interrupted.adopted);
+        assert_eq!(
+            interrupted.extension_paths,
+            BTreeSet::from([command.into()])
+        );
+        assert!(!interrupted.pending.is_empty());
+        let sync = f.setup.sync(&[]).unwrap();
+        assert!(
+            sync.message.contains("Earlier tools are still managed"),
+            "{sync:?}"
+        );
+        let recovered = f.setup.load().unwrap().unwrap();
+        assert_eq!(recovered.master.overlays, before.master.overlays);
+        assert_eq!(recovered.backup, before.backup);
+        assert!(recovered.pending.is_empty() && recovered.extension_paths.is_empty());
+        assert!(f.setup.home.join(command).is_symlink());
+        let clean = f.sync_with("");
+        assert!(
+            clean.written.is_empty() && clean.blocked.is_empty(),
+            "{clean:?}"
+        );
+    }
+
+    #[test]
+    fn rulesync_round2_file_only_conflict_recovers_on_sync() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let command = Path::new(".claude/commands/check.md");
+        fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
+        f.write(command.to_str().unwrap(), "Planned command.\n");
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let original_paths = manifest.backup.keys().cloned().collect::<Vec<_>>();
+        let seen = root.read(command, false).unwrap();
+        f.write(command.to_str().unwrap(), "Saved during adoption.\n");
+        let outcome = f
+            .setup
+            .run_batch(
+                &root,
+                &mut manifest,
+                vec![Pending {
+                    path: command.to_owned(),
+                    desired: seen.clone(),
+                    seen,
+                    kind: Some(Kind::PersonalFile),
+                    allow_link: true,
+                }],
+                BatchMode::Extend,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            outcome,
+            [(command.to_owned(), ApplyOutcome::ChangedSincePlan)]
+        );
+        assert!(manifest.adopted && manifest.extension_paths.contains(command));
+        drop(lock);
+
+        let recovered = f.setup.sync(&[]).unwrap();
+        assert!(
+            recovered
+                .message
+                .contains("Earlier tools are still managed"),
+            "{recovered:?}"
+        );
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(saved.backup.into_keys().collect::<Vec<_>>(), original_paths);
+        assert!(saved.adopted && saved.extension_paths.is_empty());
+        assert_eq!(
+            f.text(command.to_str().unwrap()),
+            "Saved during adoption.\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round3_edit_after_journaling_an_unchanged_addition_recovers() {
+        let f = Fixture::new();
+        let original_claude = f.text(CLAUDE);
+        f.adopt_from_plan();
+        let command = ".claude/commands/check.md";
+        fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
+        f.write(command, "Initial command.\n");
+        run9_crash_during_file_apply(&f, "journaled:check.md");
+        let journal = f.setup.load().unwrap().unwrap();
+        assert!(journal.adopted && journal.extension_paths.contains(Path::new(command)));
+        assert!(journal.pending.iter().any(|entry| {
+            entry.path == Path::new(command)
+                && entry.seen == entry.desired
+                && !journal.stages.contains_key(&entry.path)
+        }));
+        f.write(command, "Edited while Wenlan was stopped.\n");
+
+        let recovered = f.setup.sync(&[]).unwrap();
+        assert!(
+            !recovered
+                .blocked
+                .iter()
+                .any(|reason| reason.starts_with(command)),
+            "{recovered:?}"
+        );
+        assert!(recovered
+            .message
+            .contains("Earlier tools are still managed"));
+        let journal = f.setup.load().unwrap().unwrap();
+        assert!(journal.pending.is_empty() && journal.extension_paths.is_empty());
+        assert!(!journal.backup.contains_key(Path::new(command)));
+        assert_eq!(f.text(command), "Edited while Wenlan was stopped.\n");
+
+        let next = ".claude/commands/later.md";
+        f.write(next, "Another command.\n");
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(preview.files.iter().any(|file| file.path == command));
+        assert!(preview.files.iter().any(|file| file.path == next));
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(CLAUDE), original_claude);
+        assert_eq!(f.text(command), "Edited while Wenlan was stopped.\n");
+        assert_eq!(f.text(next), "Another command.\n");
+        assert!(f.setup.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn rulesync_round2_file_only_adoption_records_unmanaged_paths() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let claude = ".claude/commands/check.md";
+        let codex = ".codex/prompts/check.md";
+        for path in [claude, codex] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+        }
+        f.write(claude, "Native command.\n");
+        fs::write(f.setup.home.join(codex), b"Invalid prompt\0\n").unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(plan
+            .files
+            .iter()
+            .any(|change| change.path == codex && change.diff.contains("Skipped")));
+        let result = f
+            .setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(
+            result.written.iter().map(Path::new).collect::<Vec<_>>(),
+            [Path::new(claude)]
+        );
+        let saved = f.setup.load().unwrap().unwrap();
+        assert!(saved.unmanaged_personal_files[Path::new(codex)].contains("NUL"));
+        assert_eq!(
+            fs::read(f.setup.home.join(codex)).unwrap(),
+            b"Invalid prompt\0\n"
+        );
+        fs::remove_file(f.setup.home.join(codex)).unwrap();
+        f.write(claude, "Changed command.\n");
+        let card = pullback_file(&f.sync_with(""), claude);
+        assert!(card.reason.contains("marked this path as unmanaged"));
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert!(!f.setup.home.join(codex).exists());
+
+        f.write(codex, "Fixed prompt.\n");
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let saved = f.setup.load().unwrap().unwrap();
+        assert!(saved.unmanaged_personal_files.is_empty());
+        assert!(matches!(
+            saved.delivered[Path::new(codex)].kind,
+            Kind::PersonalFile
+        ));
+    }
+
+    #[test]
+    fn rulesync_round2_restore_keeps_a_created_directory_with_an_adopted_file() {
+        let f = Fixture::new();
+        let source = ".claude/commands/share.md";
+        let shared = ".cursor/commands/share.md";
+        let later = ".cursor/commands/own.md";
+        fs::create_dir_all(f.setup.home.join(source).parent().unwrap()).unwrap();
+        fs::create_dir(f.setup.home.join(".cursor")).unwrap();
+        f.write(source, "Original command.\n");
+        f.adopt_from_plan();
+        f.write(source, "Shared edit.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(shared), "Shared edit.\n");
+
+        f.write(later, "My later command.\n");
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(!f.setup.home.join(shared).exists());
+        assert_eq!(f.text(later), "My later command.\n");
+        assert_eq!(f.text(source), "Original command.\n");
+        assert!(f.setup.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn rulesync_round3_case_only_rename_tracks_the_filesystem_entry() {
+        let f = Fixture::new();
+        let command = ".claude/commands/Review.md";
+        let copied = ".cursor/commands/Review.md";
+        let renamed = ".cursor/commands/review.md";
+        fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
+        fs::create_dir(f.setup.home.join(".cursor")).unwrap();
+        f.write(command, "An original command.\n");
+        f.adopt_from_plan();
+        f.write(command, "An edited command.\n");
+        let card = pullback_file(&f.sync_with(""), command);
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(copied), "An edited command.\n");
+
+        let case_insensitive = f.setup.home.join(renamed).is_file();
+        let temporary = f.setup.home.join(".cursor/commands/.rename-test");
+        fs::rename(f.setup.home.join(copied), &temporary).unwrap();
+        fs::rename(&temporary, f.setup.home.join(renamed)).unwrap();
+        assert!(fs::read_dir(f.setup.home.join(".cursor/commands"))
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "review.md"));
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(
+            plan.files.iter().any(|file| file.path == renamed),
+            !case_insensitive,
+            "{plan:?}"
+        );
+        if case_insensitive {
+            assert!(!f.sync_with("").message.contains("additional command"));
+            let restored = f.setup.restore().unwrap();
+            assert!(restored.blocked.is_empty(), "{restored:?}");
+            assert!(!f.setup.home.join(renamed).exists());
+            assert!(!f.setup.home.join(".cursor/commands").exists());
+            assert_eq!(f.text(command), "An original command.\n");
+            assert!(f.setup.load().unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn rulesync_round4_share_respects_a_deleted_case_alias() {
+        let f = Fixture::new();
+        let original = ".claude/commands/Review.md";
+        let alias = ".claude/commands/review.md";
+        let source = ".cursor/commands/review.md";
+        for path in [original, source] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, "Original command.\n");
+        }
+        let aliases = f.setup.home.join(alias).exists();
+        f.adopt_from_plan();
+        fs::remove_file(f.setup.home.join(original)).unwrap();
+        let deletion = pullback_file(&f.sync_with(""), original);
+        review_file(&f, &deletion, PullbackAction::ToolOnly, None).unwrap();
+
+        f.write(source, "Edited command.\n");
+        let share = pullback_file(&f.sync_with(""), source);
+        assert_eq!(
+            share.reason.contains("aliases a path"),
+            aliases,
+            "{share:?}"
+        );
+        review_file(&f, &share, PullbackAction::AllTools, None).unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(manifest.backup.contains_key(Path::new(alias)), !aliases);
+        assert_eq!(f.setup.home.join(alias).exists(), !aliases);
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(f.text(original), "Original command.\n");
+    }
+
+    #[test]
+    fn rulesync_round5_keeps_non_ascii_personal_names_unmanaged() {
+        let f = Fixture::new();
+        let ascii = ".claude/commands/cross-platform.md";
+        let files = [
+            ascii,
+            ".claude/commands/café.md",
+            ".claude/commands/café/check.md",
+        ];
+        for file in files {
+            let path = f.setup.home.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            f.write(file, "Original command.\n");
+        }
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let alias = Path::new(".claude/commands/croẞ-platform.md");
+        let inode = root.entry_identity(Path::new(ascii)).unwrap().unwrap();
+        let live_alias = root.entry_identity(alias).unwrap() == Some(inode);
+        let detects_alias = root.case_alias(alias, Path::new(ascii)).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(
+            (!live_alias || detects_alias)
+                && [files[1], ".claude/commands/café"].iter().all(|path| {
+                    plan.files
+                        .iter()
+                        .any(|file| file.path == *path && file.diff.contains("ASCII"))
+                }),
+            "live alias={live_alias}, detected={detects_alias}, {plan:?}",
+        );
+        f.adopt_from_plan();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(manifest.backup.contains_key(Path::new(ascii)));
+        for file in &files[1..] {
+            assert!(!manifest.backup.contains_key(Path::new(file)));
+            assert_eq!(f.text(file), "Original command.\n");
+        }
+        if live_alias {
+            let temporary = f.setup.home.join(".claude/commands/rename.tmp");
+            fs::rename(f.setup.home.join(ascii), &temporary).unwrap();
+            fs::rename(&temporary, f.setup.home.join(alias)).unwrap();
+            let error = root
+                .read_personal_file(Path::new(ascii), false)
+                .unwrap_err();
+            assert!(error.to_string().contains("ASCII"), "{error}");
+            let restored = f.setup.restore().unwrap();
+            assert!(restored
+                .blocked
+                .iter()
+                .any(|reason| reason.contains("ASCII")));
+            assert!(f.setup.load().unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn rulesync_round4_restore_preserves_original_with_a_legacy_case_alias() {
+        let f = Fixture::new();
+        let original = Path::new(".claude/commands/Review.md");
+        let alias = Path::new(".claude/commands/review.md");
+        fs::create_dir_all(f.setup.home.join(original).parent().unwrap()).unwrap();
+        f.write(original.to_str().unwrap(), "Original command.\n");
+        let aliases = f.setup.home.join(alias).exists();
+        f.adopt_from_plan();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let delivered = manifest.backup[original].clone();
+        if !aliases {
+            fs::copy(f.setup.home.join(original), f.setup.home.join(alias)).unwrap();
+        }
+        manifest.backup.insert(alias.to_owned(), Snapshot::Absent);
+        settle(
+            &mut manifest,
+            Pending {
+                path: alias.to_owned(),
+                seen: Snapshot::Absent,
+                desired: delivered,
+                kind: Some(Kind::PersonalFile),
+                allow_link: false,
+            },
+        )
+        .unwrap();
+        f.setup.save(&manifest).unwrap();
+
+        let restored = f.setup.restore().unwrap();
+        assert!(f.setup.home.join(original).is_file(), "{restored:?}");
+        assert_eq!(restored.blocked.is_empty(), !aliases, "{restored:?}");
+        assert_eq!(f.setup.load().unwrap().is_some(), aliases);
+        assert_eq!(f.setup.home.join(alias).exists(), aliases);
+    }
+
+    #[test]
+    fn rulesync_round4_restore_reports_a_missing_recorded_original() {
+        let f = Fixture::new();
+        let original = Path::new(".claude/commands/check.md");
+        fs::create_dir_all(f.setup.home.join(original).parent().unwrap()).unwrap();
+        f.write(original.to_str().unwrap(), "Original command.\n");
+        f.adopt_from_plan();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        // Simulate a receipt already settled during interrupted restore.
+        manifest.delivered.remove(original).unwrap();
+        f.setup.save(&manifest).unwrap();
+        fs::remove_file(f.setup.home.join(original)).unwrap();
+
+        let result = f.setup.restore().unwrap();
+        assert!(
+            result.blocked.iter().any(|reason| {
+                reason.contains("original is missing")
+                    && reason.contains(original.to_str().unwrap())
+            }),
+            "{result:?}"
+        );
+        assert!(f
+            .setup
+            .load()
+            .unwrap()
+            .unwrap()
+            .backup
+            .contains_key(original));
+    }
+
+    #[test]
+    fn rulesync_round5_restore_checks_settled_originals_on_retry() {
+        let f = Fixture::new();
+        let first = ".claude/commands/a.md";
+        let second = ".claude/commands/b.md";
+        fs::create_dir_all(f.setup.home.join(".claude/commands")).unwrap();
+        for path in [first, second] {
+            f.write(path, "Original command.\n");
+        }
+        f.adopt_from_plan();
+        f.write(first, "Approved edit.\n");
+        let card = pullback_file(&f.sync_with(""), first);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        f.write(second, "Unapproved edit.\n");
+
+        let result = f.setup.restore().unwrap();
+        assert!(result.blocked.iter().any(|reason| reason.contains(second)));
+        assert_eq!(f.text(first), "Original command.\n");
+        assert!(!f
+            .setup
+            .load()
+            .unwrap()
+            .unwrap()
+            .delivered
+            .contains_key(Path::new(first)));
+
+        let path = f.setup.home.join(first);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        f.write(second, "Original command.\n");
+        let retry = f.setup.restore().unwrap();
+        assert!(
+            retry.blocked.iter().any(|reason| reason.contains(first)),
+            "{retry:?}"
+        );
+        assert!(f
+            .setup
+            .load()
+            .unwrap()
+            .unwrap()
+            .backup
+            .contains_key(Path::new(first)));
+        assert!(path.is_dir());
+
+        fs::remove_dir(path).unwrap();
+        f.write(first, "Original command.\n");
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert!(f.setup.load().unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round4_personal_review_crash_helper() {
+        let Some(root) = std::env::var_os("WENLAN_TEST_PERSONAL_REVIEW_ROOT").map(PathBuf::from)
+        else {
+            return;
+        };
+        let setup = Setup {
+            home: root.join("home"),
+            data: root.join("data"),
+            binary: "unused".into(),
+        };
+        setup
+            .review_using(
+                &PullbackDecision {
+                    id: std::env::var("WENLAN_TEST_PERSONAL_REVIEW_ID").unwrap(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |_, _| unreachable!("personal review uses the common applier directly"),
+            )
+            .unwrap();
+        panic!("the injected process exit was not reached");
+    }
+
+    #[cfg(unix)]
+    fn crash_during_personal_review(f: &Fixture, card: &PullbackCard, point: &str) {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "rulesync_routes::tests::rulesync_round4_personal_review_crash_helper",
+            ])
+            .env("WENLAN_TEST_PERSONAL_REVIEW_ROOT", f._temp.path())
+            .env("WENLAN_TEST_PERSONAL_REVIEW_ID", &card.id)
+            .env("WENLAN_TEST_FILE_APPLY_CRASH", point)
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(76), "{child:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round4_recovery_restores_a_newer_displaced_file() {
+        use std::io::Write as _;
+
+        let f = Fixture::new();
+        let source = ".claude/commands/check.md";
+        let peer = ".cursor/commands/check.md";
+        for path in [source, peer] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, "Original command.\n");
+        }
+        f.adopt_from_plan();
+        fs::remove_file(f.setup.home.join(source)).unwrap();
+        let card = pullback_file(&f.sync_with(""), source);
+        let peer_path = f.setup.home.join(peer);
+        let mut editor = fs::OpenOptions::new().write(true).open(&peer_path).unwrap();
+        crash_during_personal_review(&f, &card, "displaced:check.md");
+        assert!(!peer_path.exists());
+        editor.set_len(0).unwrap();
+        editor.write_all(b"Newer command.\n").unwrap();
+        editor.sync_all().unwrap();
+        drop(editor);
+
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let _lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        f.setup.recover_pending(&root, &mut manifest).unwrap();
+        assert_eq!(
+            fs::read(peer_path).ok().as_deref(),
+            Some(&b"Newer command.\n"[..])
+        );
+        assert_ne!(
+            manifest.delivered[Path::new(peer)].delivered,
+            Snapshot::Absent
+        );
+        assert!(manifest.recovery_issues[Path::new(peer)].contains("newer"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rulesync_round5_recovery_puts_back_protected_deletions() {
+        for retained in [false, true] {
+            let f = Fixture::new();
+            let source = ".claude/commands/check.md";
+            let peer = Path::new(".cursor/commands/check.md");
+            for path in [source, peer.to_str().unwrap()] {
+                fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+                f.write(path, "Original command.\n");
+            }
+            f.adopt_from_plan();
+            fs::remove_file(f.setup.home.join(source)).unwrap();
+            let card = pullback_file(&f.sync_with(""), source);
+            crash_during_personal_review(&f, &card, "displaced:check.md");
+            let live = f.setup.home.join(peer);
+            assert!(!live.exists());
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            let stage = &manifest.stages[peer];
+            let staged = live
+                .parent()
+                .unwrap()
+                .join(format!(".wenlan-rules-stage-{}", stage.id))
+                .join("entry");
+            let held = if retained {
+                let saved = f.setup.data.join(stage.displaced.as_ref().unwrap());
+                fs::rename(staged, &saved).unwrap();
+                saved
+            } else {
+                staged
+            };
+            add_round5_deny_acl(&held);
+            let root = FileRoot::open_home(&f.setup.home).unwrap();
+            let _lock = f.setup.lock().unwrap();
+            f.setup.recover_pending(&root, &mut manifest).unwrap();
+            assert!(
+                manifest
+                    .recovery_issues
+                    .get(peer)
+                    .is_some_and(|reason| reason.contains("ACL")),
+                "retained={retained}, issues={:?}",
+                manifest.recovery_issues,
+            );
+            assert_eq!(fs::read(&live).unwrap(), b"Original command.\n");
+            assert!(root.read_personal_file(peer, false).is_err());
+            assert!(!held.exists());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn add_round5_deny_acl(path: &Path) {
+        let chmod = std::process::Command::new("/bin/chmod")
+            .args(["-h", "+a", "everyone deny writeattr"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(chmod.status.success(), "{chmod:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round4_interrupted_share_keeps_the_source_for_retry() {
+        let f = Fixture::new();
+        let source = ".claude/commands/check.md";
+        let peer = ".cursor/commands/check.md";
+        for path in [source, peer] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, "Original command.\n");
+        }
+        f.adopt_from_plan();
+        f.write(source, "Shared edit.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        crash_during_personal_review(&f, &card, "staged:check.md");
+        {
+            let root = FileRoot::open_home(&f.setup.home).unwrap();
+            let _lock = f.setup.lock().unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            f.setup.recover_pending(&root, &mut manifest).unwrap();
+        }
+        assert_eq!(f.text(peer), "Original command.\n");
+        let retry = pullback_file(&f.sync_with(""), source);
+        review_file(&f, &retry, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(peer), "Shared edit.\n");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn rulesync_round4_adoption_leaves_a_personal_file_with_an_acl_unmanaged() {
+        let f = Fixture::new();
+        let command = Path::new(".claude/commands/check.md");
+        let path = f.setup.home.join(command);
+        let xattr_command = Path::new(".claude/commands/metadata.md");
+        let xattr_path = f.setup.home.join(xattr_command);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        f.write(command.to_str().unwrap(), "Private command.\n");
+        f.write(
+            xattr_command.to_str().unwrap(),
+            "Command with ACL metadata.\n",
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let chmod = std::process::Command::new("/bin/chmod")
+                .args(["+a", "everyone deny execute"])
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(chmod.status.success(), "{chmod:?}");
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let mut acl = 2_u32.to_le_bytes().to_vec();
+            for (tag, perm, id) in [
+                (1_u16, 6_u16, u32::MAX),
+                (2, 4, 12345),
+                (4, 0, u32::MAX),
+                (16, 4, u32::MAX),
+                (32, 0, u32::MAX),
+            ] {
+                acl.extend(tag.to_le_bytes());
+                acl.extend(perm.to_le_bytes());
+                acl.extend(id.to_le_bytes());
+            }
+            rustix::fs::setxattr(
+                &path,
+                "system.posix_acl_access",
+                &acl,
+                rustix::fs::XattrFlags::empty(),
+            )
+            .unwrap();
+        }
+        let xattr_name = if cfg!(target_os = "macos") {
+            "com.wenlan.fixture_acl"
+        } else {
+            "user.wenlan_fixture_acl"
+        };
+        rustix::fs::setxattr(
+            &xattr_path,
+            xattr_name,
+            b"fixture ACL",
+            rustix::fs::XattrFlags::empty(),
+        )
+        .unwrap();
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for unmanaged in [command, xattr_command] {
+            assert!(
+                preview.files.iter().any(|file| {
+                    Path::new(&file.path) == unmanaged && file.diff.contains("ACL")
+                }),
+                "{preview:?}"
+            );
+        }
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(!manifest.backup.contains_key(command));
+        assert!(!manifest.backup.contains_key(xattr_command));
+        assert_eq!(fs::read(path).unwrap(), b"Private command.\n");
+        assert_eq!(
+            fs::read(xattr_path).unwrap(),
+            b"Command with ACL metadata.\n"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rulesync_round5_leaves_protected_personal_directories_and_links_unmanaged() {
+        use std::os::unix::fs::symlink;
+
+        let f = Fixture::new();
+        let directory = ".claude/commands";
+        let command = ".claude/commands/check.md";
+        let link = ".claude/agents/linked.md";
+        let link_path = f.setup.home.join(link);
+        fs::create_dir(f.setup.home.join(directory)).unwrap();
+        fs::create_dir(link_path.parent().unwrap()).unwrap();
+        f.write(command, "Original command.\n");
+        f.write("source.md", "Ordinary source.\n");
+        symlink("../../source.md", &link_path).unwrap();
+        add_round5_deny_acl(&f.setup.home.join(directory));
+        add_round5_deny_acl(&link_path);
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for path in [directory, link] {
+            assert!(
+                plan.files
+                    .iter()
+                    .any(|file| file.path == path && file.diff.contains("ACL")),
+                "{plan:?}",
+            );
+        }
+        f.adopt_from_plan();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(!manifest.backup.contains_key(Path::new(command)));
+        assert!(!manifest.backup.contains_key(Path::new(link)));
+        assert_eq!(f.text(command), "Original command.\n");
+        assert_eq!(
+            fs::read_link(link_path).unwrap(),
+            Path::new("../../source.md")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rulesync_round4_windows_leaves_an_immediate_child_deny_unmanaged() {
+        let f = Fixture::new();
+        let command = ".claude/commands/check.md";
+        let path = f.setup.home.join(command);
+        let parent = path.parent().unwrap();
+        fs::create_dir_all(parent).unwrap();
+        let acl = std::process::Command::new("icacls")
+            .arg(parent)
+            .args(["/deny", "*S-1-1-0:(OI)(IO)(NP)(X)"])
+            .output()
+            .unwrap();
+        assert!(acl.status.success(), "{acl:?}");
+
+        let has_deny = |path: &Path| {
+            let result = std::process::Command::new("icacls")
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{result:?}");
+            String::from_utf8_lossy(&result.stdout)
+                .lines()
+                .any(|line| line.contains("(I)") && line.contains("(DENY)") && line.contains("(X)"))
+        };
+        f.write(command, "Original command.\n");
+        assert!(has_deny(&path), "fixture did not inherit the deny ACE");
+        let nested = parent.join("another-directory");
+        fs::create_dir(&nested).unwrap();
+        let control = nested.join("control.txt");
+        fs::write(&control, "Created one level deeper.\n").unwrap();
+        assert!(
+            !has_deny(&control),
+            "fixture deny ACE unexpectedly propagated"
+        );
+
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(
+            preview
+                .files
+                .iter()
+                .any(|file| { file.path == ".claude/commands" && file.diff.contains("ACL") }),
+            "{preview:?}"
+        );
+        f.adopt_from_plan();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(!manifest.backup.contains_key(Path::new(command)));
+        assert_eq!(f.text(command), "Original command.\n");
+        assert!(has_deny(&path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round2_dismiss_restores_private_bytes_and_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let command = ".claude/commands/private.md";
+        let path = f.setup.home.join(command);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        f.write(command, "Private original.\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        f.adopt_from_plan();
+        f.write(command, "Public replacement.\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let card = pullback_file(&f.sync_with(""), command);
+        assert!(card.diff.contains("0600 to 0644"));
+        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        assert_eq!(f.text(command), "Private original.\n");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round2_new_shared_file_preserves_the_approved_source_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let f = Fixture::new();
+        let command = ".claude/commands/check.md";
+        let path = f.setup.home.join(command);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        f.write(command, "Check.\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        f.adopt_from_plan();
+        f.write(command, "Check again.\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
+        let card = pullback_file(&f.sync_with(""), command);
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        let copied = f.setup.home.join(".codex/prompts/check.md");
+        assert_eq!(fs::read_to_string(&copied).unwrap(), "Check again.\n");
+        assert_eq!(
+            fs::metadata(&copied).unwrap().permissions().mode() & 0o7777,
+            0o750
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o750
+        );
+        assert!(f.sync_with("").proposals.is_empty());
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o640
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round2_rejects_a_retargeted_equal_content_link() {
+        use std::os::unix::fs::symlink;
+
+        let f = Fixture::new();
+        let command = f.setup.home.join(".claude/commands/check.md");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        f.write("before.md", "Check.\n");
+        f.write("after.md", "Check.\n");
+        symlink("../../before.md", &command).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        fs::remove_file(&command).unwrap();
+        symlink("../../after.md", &command).unwrap();
+        let error = f
+            .setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap_err();
+        assert!(error.to_string().contains("plan changed"), "{error:#}");
+        assert_eq!(
+            fs::read_link(command).unwrap().as_os_str(),
+            "../../after.md"
+        );
+        assert!(f.setup.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn rulesync_round2_leaves_hard_linked_personal_files_unmanaged() {
+        let f = Fixture::new();
+        let command = ".claude/commands/check.md";
+        let native = f.setup.home.join(command);
+        fs::create_dir_all(native.parent().unwrap()).unwrap();
+        f.write("linked-source.md", "Check.\n");
+        fs::hard_link(f.setup.home.join("linked-source.md"), &native).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let change = plan
+            .files
+            .iter()
+            .find(|change| change.path == command)
+            .unwrap();
+        assert!(
+            change.diff.contains("hard link") && change.diff.contains("Skipped"),
+            "{change:?}"
+        );
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup.restore().unwrap();
+        f.write("linked-source.md", "Still linked.\n");
+        assert_eq!(f.text(command), "Still linked.\n");
+    }
+
+    #[test]
+    fn rulesync_round2_preserves_hard_links_created_after_adoption() {
+        let f = Fixture::new();
+        let command = ".claude/commands/check.md";
+        let native = f.setup.home.join(command);
+        fs::create_dir_all(native.parent().unwrap()).unwrap();
+        f.write(command, "Original command.\n");
+        f.adopt_from_plan();
+        f.write(command, "Approved command.\n");
+        let card = pullback_file(&f.sync_with(""), command);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+
+        let alias = f.setup.home.join("alias.md");
+        fs::hard_link(&native, &alias).unwrap();
+        let synced = f.sync_with("");
+        assert!(synced
+            .blocked
+            .iter()
+            .any(|item| item.contains("multiple hard links")));
+        let restore = f.setup.restore().unwrap();
+        assert!(restore
+            .blocked
+            .iter()
+            .any(|item| item.contains("multiple hard links")));
+        assert_eq!(f.text(command), "Approved command.\n");
+        assert_eq!(f.text("alias.md"), "Approved command.\n");
+        assert!(f.setup.load().unwrap().is_some());
+
+        fs::remove_file(alias).unwrap();
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(f.text(command), "Original command.\n");
+    }
+
+    #[test]
+    fn rulesync_round2_adopts_gemini_and_nested_opencode_native_files() {
+        let f = Fixture::new();
+        let native = [
+            (".gemini/commands/review.toml", "# Keep TOML\nprompt = \"Review {{args}}\"\n"),
+            (".gemini/commands/git/check.toml", "# Keep namespace\nprompt = \"Check {{args}}\"\n"),
+            (".gemini/agents/review.md", "---\nname: review\ndescription: Review\nkind: local\ntools: [read_file]\n---\nReview.\n"),
+            (".config/opencode/commands/git/check.md", "---\ndescription: 'Check' # Keep\n---\nCheck the output.\n"),
+        ];
+        for (path, contents) in native {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, contents);
+        }
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for (path, _) in native {
+            assert!(plan.files.iter().any(|change| change.path == path && change.diff.contains("Adopt at this path")), "missing {path}");
+        }
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for (path, contents) in native {
+            assert_eq!(f.text(path), contents);
+            f.write(
+                path,
+                &contents
+                    .replace("Check", "Verify")
+                    .replace("Review", "Compare"),
+            );
+            let card = pullback_file(&f.sync_with(""), path);
+            if path.ends_with(".toml") {
+                assert!(card.reason.contains("native TOML"));
+            } else if path.starts_with(".config/opencode/") {
+                assert!(card.reason.contains("different invocation name"));
+            }
+            review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        }
+        assert!(!f.setup.home.join(".claude/commands/git/check.md").exists());
+        assert!(!f.setup.home.join(".claude/commands/review.md").exists());
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        for (path, contents) in native {
+            assert_eq!(f.text(path), contents);
+        }
+    }
+
+    #[test]
+    fn rulesync_round2_previews_a_large_line_ending_edit() {
+        let f = Fixture::new();
+        let path = ".claude/commands/steps.md";
+        fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+        let original = "Check the output.\r\n".repeat(2001);
+        let edited = original.replace("\r\n", "\n");
+        f.write(path, &original);
+        f.adopt_from_plan();
+        f.write(path, &edited);
+        let card = pullback_file(&f.sync_with(""), path);
+        assert!(
+            card.diff.contains("CRLF") && card.diff.contains("LF"),
+            "{card:?}"
+        );
+        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        assert_eq!(f.text(path), original);
+        f.write(path, &edited);
+        let card = pullback_file(&f.sync_with(""), path);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        assert_eq!(f.text(path), edited);
+        assert!(f.sync_with("").proposals.is_empty());
+
+        let different = "Review the result.\n".repeat(2001);
+        f.write(path, &different);
+        let card = pullback_file(&f.sync_with(""), path);
+        assert!(card.diff.contains("@@ -1,2001 +1,2001 @@"));
+        assert_eq!(card.diff.matches("-Check the output.\n").count(), 2001);
+        assert_eq!(card.diff.matches("+Review the result.\n").count(), 2001);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        assert_eq!(f.text(path), different);
+    }
+
+    #[test]
+    fn rulesync_round2_adoption_makes_the_first_rule_sync_clean() {
+        let f = Fixture::new();
+        let paths = [
+            ".config/opencode/AGENTS.md",
+            ".cursor/AGENTS.md",
+            ".gemini/config/GEMINI.md",
+        ];
+        let original = format!("<!-- Generated setup -->\n\n{SHARED}");
+        for path in paths {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, &original);
+        }
+        let normalized = |target: &str, source: &str| {
+            fixture_rule_renderer(target, &format!("{}\n", source.trim()))
+        };
+        let plan = f
+            .setup
+            .preview_adoption_using(normalized, fixture_skill_renderer)
+            .unwrap();
+        let expected = format!("{SHARED}<!-- Generated setup -->\n");
+        for path in paths {
+            let change = plan.files.iter().find(|item| item.path == path).unwrap();
+            assert_eq!(change.diff, describe_change(path, &original, &expected).2);
+        }
+        let stale = f
+            .setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap_err();
+        assert!(stale.to_string().contains("plan changed in file entries"));
+        assert!(f.setup.load().unwrap().is_none());
+        for path in paths {
+            assert_eq!(f.text(path), original);
+        }
+        f.setup
+            .adopt_using(&plan.token, normalized, fixture_skill_renderer)
+            .unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let synced = f
+            .setup
+            .sync_locked(
+                &root,
+                &mut manifest,
+                &[],
+                normalized,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert!(
+            synced.written.is_empty() && synced.blocked.is_empty() && synced.proposals.is_empty(),
+            "{synced:?}"
+        );
+        for path in paths {
+            assert_eq!(f.text(path), expected);
+        }
+
+        let path = paths[2];
+        let edited = format!("{expected}Keep this rule for Antigravity.\n");
+        f.write(path, &edited);
+        let sync = |root: &FileRoot, manifest: &mut Manifest| {
+            f.setup
+                .sync_locked(root, manifest, &[], normalized, fixture_skill_renderer)
+        };
+        let proposal = pullback_file(&sync(&root, &mut manifest).unwrap(), path);
+        let accepted = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: proposal.id,
+                    action: PullbackAction::ToolOnly,
+                    file: None,
+                },
+                sync,
+            )
+            .unwrap();
+        assert!(accepted.blocked.is_empty() && accepted.proposals.is_empty());
+        assert_eq!(f.text(path), edited);
+        assert_eq!(f.text(paths[0]), expected);
+        assert_eq!(f.text(paths[1]), expected);
+
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        for path in paths {
+            assert_eq!(f.text(path), original);
+        }
+    }
+    #[test]
+    fn rulesync_personal_commands_and_subagents_round_trip_through_review() {
+        const COMMAND: &str = ".claude/commands/check.md";
+        const CURSOR_COMMAND: &str = ".cursor/commands/check.md";
+        const CODEX_COMMAND: &str = ".codex/prompts/check.md";
+        const CLAUDE_AGENT: &str = ".claude/agents/review.md";
+        const CODEX_AGENT: &str = ".codex/agents/review.toml";
+        const CURSOR_AGENT: &str = ".cursor/agents/review.md";
+        const SIMPLE_AGENT: &str = ".claude/agents/summary.md";
+        const SIMPLE_CURSOR_AGENT: &str = ".cursor/agents/summary.md";
+        let f = Fixture::new();
+        let command =
+            "---\r\ndescription: 'Check' # Keep this comment\r\n---\r\n\r\nReview the changes.\r\n";
+        let claude = "---\r\nname: review\r\ndescription: 'Review'\r\nmodel: sonnet\r\ntools: [Read, Grep]\r\nx-extra: 'Keep'\r\n---\r\n\r\nReview.\r\n";
+        let codex = "# Keep this TOML comment\nname = \"review\"\ndescription = \"Review\"\nmodel = \"gpt-5.4\"\nmodel_reasoning_effort = \"high\"\ndeveloper_instructions = \"Review.\"\n";
+        let simple = "---\nname: summary\ndescription: Summary\n---\nSummarize.\n";
+        for (path, source) in [
+            (COMMAND, command),
+            (CLAUDE_AGENT, claude),
+            (CODEX_AGENT, codex),
+            (SIMPLE_AGENT, simple),
+            ("project/.cursorignore", "leave/\n"),
+        ] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, source);
+        }
+        fs::create_dir_all(f.setup.home.join(".cursor/agents")).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for path in [COMMAND, CLAUDE_AGENT, CODEX_AGENT, SIMPLE_AGENT] {
+            assert!(plan.files.iter().any(|change| change.path == path && change.diff.contains("Adopt at this path")), "{path}");
+        }
+        assert!(!plan
+            .files
+            .iter()
+            .any(|change| change.path.contains("cursorignore")));
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(f.text(COMMAND), command);
+        assert_eq!(f.text(CLAUDE_AGENT), claude);
+        assert_eq!(f.text(CODEX_AGENT), codex);
+
+        let edited = command.replace("Review ", "Compare ");
+        f.write(COMMAND, &edited);
+        let first = f.sync_with("");
+        let card = pullback_file(&first, COMMAND);
+        assert!(card.reason.contains("compatible") || card.reason.contains("All-tools"));
+        assert!(card.diff.contains("+Compare the changes."));
+        assert!(!f.setup.home.join(CODEX_COMMAND).exists());
+        let approved = review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert!(approved.blocked.is_empty(), "{approved:?}");
+        assert_eq!(f.text(CODEX_COMMAND), edited);
+        assert_eq!(f.text(CURSOR_COMMAND), edited);
+
+        let claude_edit = claude.replace("model: sonnet", "model: opus");
+        f.write(CLAUDE_AGENT, &claude_edit);
+        let card = pullback_file(&f.sync_with(""), CLAUDE_AGENT);
+        assert!(card.reason.contains("stays with its tool"));
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(CLAUDE_AGENT), claude_edit);
+        assert_eq!(f.text(CODEX_AGENT), codex);
+        assert!(!f.setup.home.join(CURSOR_AGENT).exists());
+
+        let codex_edit = codex.replace("high", "medium");
+        f.write(CODEX_AGENT, &codex_edit);
+        let card = pullback_file(&f.sync_with(""), CODEX_AGENT);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        assert_eq!(f.text(CODEX_AGENT), codex_edit);
+        assert_eq!(f.text(CLAUDE_AGENT), claude_edit);
+
+        let simple_edit = simple.replace("Summarize.", "Write a summary.");
+        f.write(SIMPLE_AGENT, &simple_edit);
+        let card = pullback_file(&f.sync_with(""), SIMPLE_AGENT);
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(SIMPLE_CURSOR_AGENT), simple_edit);
+        assert!(!f.setup.home.join(".codex/agents/summary.toml").exists());
+
+        fs::remove_file(f.setup.home.join(CURSOR_COMMAND)).unwrap();
+        let card = pullback_file(&f.sync_with(""), CURSOR_COMMAND);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        assert_eq!(f.text(CODEX_COMMAND), edited);
+        assert!(!f.setup.home.join(CURSOR_COMMAND).exists());
+        assert!(f.sync_with("").proposals.is_empty());
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        for (path, original) in [
+            (COMMAND, command),
+            (CLAUDE_AGENT, claude),
+            (CODEX_AGENT, codex),
+            (SIMPLE_AGENT, simple),
+            ("project/.cursorignore", "leave/\n"),
+        ] {
+            assert_eq!(f.text(path), original, "{path}");
+        }
+        assert!(!f.setup.home.join(".codex/prompts").exists());
+        assert!(!f.setup.home.join(".cursor/commands").exists());
+        assert!(f.setup.home.join(".cursor/agents").is_dir());
+        assert!(!f.setup.home.join(SIMPLE_CURSOR_AGENT).exists());
+    }
+
+    #[test]
+    fn rulesync_personal_files_offer_new_sources_without_restoring() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let saved = f.text(CLAUDE);
+        let new_agent = ".claude/agents/late.md";
+        let new_tool = ".cursor/agents/added.md";
+        let body = "---\nname: late\ndescription: Later\n---\nNew agent.\n";
+        for path in [new_agent, new_tool] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, body);
+        }
+        let report = f.sync_with("");
+        assert!(report
+            .message
+            .contains("Additional tools available: Cursor"));
+        assert!(report
+            .message
+            .contains("Found 1 additional command or subagent file"));
+        assert!(report.proposals.is_empty());
+        let preview = || {
+            f.setup
+                .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+                .unwrap()
+        };
+        let plan = preview();
+        for path in [new_agent, new_tool] {
+            assert!(plan.files.iter().any(|change| change.path == path));
+        }
+        assert!(!plan.files.iter().any(|change| change.path == CLAUDE));
+
+        let changed = format!("{body}An edit since preview.\n");
+        f.write(new_agent, &changed);
+        let stale = f
+            .setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer);
+        assert!(stale.unwrap_err().to_string().contains("plan changed"));
+        let plan = preview();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(saved, f.text(CLAUDE));
+        assert!(preview().files.is_empty());
+        assert!(!f.sync_with("").message.contains("additional"));
+
+        f.write(new_agent, body);
+        let card = pullback_file(&f.sync_with(""), new_agent);
+        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        assert_eq!(f.text(new_agent), changed);
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(new_agent), changed);
+        assert_eq!(f.text(new_tool), body);
+    }
+
+    #[test]
+    fn rulesync_round3_adopts_and_keeps_opencode_legacy_directories() {
+        let f = Fixture::new();
+        let source = ".claude/commands/review.md";
+        let legacy = ".config/opencode/command/review.md";
+        let canonical = ".config/opencode/commands/review.md";
+        let nested = ".config/opencode/command/team/check.md";
+        let agent = ".config/opencode/agent/team/reviewer.md";
+        let command = "---\ndescription: Review\n---\nOriginal.\n";
+        let native_agent = "---\ndescription: Review\nmode: subagent\n---\nKeep this agent.\n";
+        for (path, content) in [
+            (source, command),
+            (legacy, command),
+            (nested, command),
+            (agent, native_agent),
+        ] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, content);
+        }
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for path in [legacy, nested, agent] {
+            assert!(
+                plan.files.iter().any(|change| change.path == path),
+                "{path}"
+            );
+        }
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(f.text(agent), native_agent);
+
+        let edited = "Edited original.\n";
+        f.write(source, edited);
+        let card = pullback_file(&f.sync_with(""), source);
+        assert!(
+            card.reason.contains(&format!("Replace {legacy}")),
+            "{card:?}"
+        );
+        assert!(
+            !card.reason.contains(&format!("Create {canonical}")),
+            "{card:?}"
+        );
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(legacy), edited);
+        assert!(!f.setup.home.join(canonical).exists());
+
+        fs::create_dir_all(f.setup.home.join(canonical).parent().unwrap()).unwrap();
+        f.write(canonical, "A separate definition.\n");
+        f.write(source, "Another edit.\n");
+        let card = pullback_file(&f.sync_with(""), source);
+        assert!(
+            card.reason.contains("both legacy and current definitions"),
+            "{card:?}"
+        );
+        review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_eq!(f.text(legacy), edited);
+        assert_eq!(f.text(canonical), "A separate definition.\n");
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        assert_eq!(f.text(legacy), command);
+        assert_eq!(f.text(nested), command);
+        assert_eq!(f.text(agent), native_agent);
+        assert_eq!(f.text(canonical), "A separate definition.\n");
+    }
+
+    #[test]
+    fn rulesync_personal_file_sharing_protects_other_versions_and_stale_decisions() {
+        const CLAUDE_COMMAND: &str = ".claude/commands/check.md";
+        const CURSOR_COMMAND: &str = ".cursor/commands/check.md";
+        const CODEX_COMMAND: &str = ".codex/prompts/check.md";
+        let f = Fixture::new();
+        for (path, text) in [
+            (CLAUDE_COMMAND, "Claude original.\n"),
+            (CURSOR_COMMAND, "Cursor original.\n"),
+        ] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, text);
+        }
+        f.adopt_from_plan();
+        f.write(CLAUDE_COMMAND, "Claude edit.\n");
+        let card = pullback_file(&f.sync_with(""), CLAUDE_COMMAND);
+        let approved = review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert!(approved
+            .blocked
+            .iter()
+            .any(|note| note.contains("has its own version")));
+        assert_eq!(f.text(CURSOR_COMMAND), "Cursor original.\n");
+        assert_eq!(f.text(CODEX_COMMAND), "Claude edit.\n");
+
+        f.write(CLAUDE_COMMAND, "Choose this Claude edit.\n");
+        f.write(CURSOR_COMMAND, "New Cursor edit.\n");
+        let card = pullback_file(&f.sync_with(""), CLAUDE_COMMAND);
+        assert_eq!(card.files.len(), 2);
+        fs::create_dir(f.setup.home.join(".codex/.git")).unwrap();
+        assert!(review_file(&f, &card, PullbackAction::AllTools, Some(CLAUDE_COMMAND)).is_err());
+        let card = pullback_file(&f.sync_with(""), CLAUDE_COMMAND);
+        assert!(card.reason.contains("Git checkout") && card.reason.contains("~/.codex"));
+        f.write(CURSOR_COMMAND, "Cursor edit saved after preview.\n");
+        assert!(review_file(&f, &card, PullbackAction::AllTools, Some(CLAUDE_COMMAND)).is_err());
+        assert_eq!(f.text(CURSOR_COMMAND), "Cursor edit saved after preview.\n");
+        let card = pullback_file(&f.sync_with(""), CLAUDE_COMMAND);
+        review_file(&f, &card, PullbackAction::AllTools, Some(CLAUDE_COMMAND)).unwrap();
+        for path in [CLAUDE_COMMAND, CURSOR_COMMAND, CODEX_COMMAND] {
+            assert_eq!(f.text(path), "Choose this Claude edit.\n");
+        }
+        assert!(f.sync_with("").proposals.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_personal_file_links_and_directory_modes_restore_exactly() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        fs::create_dir_all(home.join(".claude/agents")).unwrap();
+        fs::create_dir_all(home.join(".claude/linked")).unwrap();
+        fs::create_dir_all(home.join("sources")).unwrap();
+        fs::create_dir_all(home.join(".cursor")).unwrap();
+        let source = "sources/local.md";
+        let original = "---\nname: link\ndescription: Link\n---\nRead.\n";
+        f.write(source, original);
+        let linked = ".claude/agents/link.md";
+        let raw = "../../sources/./local.md";
+        symlink(raw, home.join(linked)).unwrap();
+        symlink("../../missing.md", home.join(".claude/agents/unsafe.md")).unwrap();
+        symlink("../.claude/linked", home.join(".cursor/agents")).unwrap();
+        fs::set_permissions(
+            home.join(".claude/agents"),
+            fs::Permissions::from_mode(0o750),
+        )
+        .unwrap();
+        fs::set_permissions(home.join(source), fs::Permissions::from_mode(0o640)).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        for unsafe_path in [".claude/agents/unsafe.md", ".cursor/agents"] {
+            assert!(plan
+                .files
+                .iter()
+                .any(|change| change.path == unsafe_path && change.diff.contains("Skipped")));
+        }
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(!home.join(linked).is_symlink());
+        assert_eq!(
+            fs::metadata(home.join(linked))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o640
+        );
+        f.write(linked, &original.replace("Read.", "Read carefully."));
+        let card = pullback_file(&f.sync_with(""), linked);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(fs::read_link(home.join(linked)).unwrap().as_os_str(), raw);
+        assert_eq!(
+            fs::read_link(home.join(".cursor/agents"))
+                .unwrap()
+                .as_os_str(),
+            "../.claude/linked"
+        );
+        assert_eq!(f.text(source), original);
+        assert_eq!(
+            fs::metadata(home.join(".claude/agents"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o750
+        );
+        assert_eq!(
+            fs::metadata(home.join(source))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o640
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the pinned rulesync binary and a fake tool home"]
+    fn rulesync_personal_files_use_pinned_rendering_and_byte_copies() {
+        let f = Fixture::new();
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let files = [
+            (".claude/commands/check.md", "---\r\ndescription: 'Check'\r\nallowed-tools: [Read]\r\nx-extra: 'Exact bytes'\r\n---\r\n\r\nCheck $1.\r\n"),
+            (".cursor/agents/plain.md", "---\nname: plain\ndescription: Plain\n---\nRead.\n"),
+            (".cursor/agents/rich.md", "---\nname: rich\ndescription: Rich\nreadonly: true\nx-extra: 'Exact bytes'\n---\nRead.\n"),
+            (".codex/agents/check.toml", "# Keep comment\nname = \"check\"\ndescription = \"Check\"\nmodel = \"gpt-5.4\"\nsandbox_mode = \"read-only\"\ndeveloper_instructions = \"Read.\"\n"),
+            (".gemini/commands/git/check.toml", "# Keep Gemini TOML\nprompt = \"Check {{args}}\"\n"),
+            (".gemini/agents/review.md", "---\nname: review\ndescription: Review\nkind: local\ntools: [read_file]\n---\nReview.\n"),
+            (".config/opencode/commands/git/check.md", "---\ndescription: 'Check' # Keep\n---\nCheck $1.\n"),
+        ];
+        for (path, bytes) in files {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, bytes);
+        }
+        let preview = || {
+            let mut adoption = f.setup.discover_for_adoption(None).unwrap();
+            personal_files::plan_deliveries(&mut adoption, |spec, sources| {
+                let generated = render_fixture_tree(
+                    &f.setup.data,
+                    &binary,
+                    spec.tool,
+                    spec.feature.as_str(),
+                    |input| personal_files::write_sources(input, sources),
+                )?;
+                if matches!(spec.tool, "claudecode" | "codexcli" | "cursor") {
+                    assert!(!generated.is_empty(), "renderer skipped {spec:?}");
+                }
+                Ok(generated)
+            })
+            .unwrap();
+            adoption
+        };
+        let plan = adoption_plan(&preview()).unwrap();
+        for (path, _) in files {
+            let note = &plan
+                .files
+                .iter()
+                .find(|change| change.path == path)
+                .unwrap()
+                .diff;
+            let expected = if path.ends_with("plain.md") {
+                "matches every original byte"
+            } else if path.starts_with(".gemini/") || path.starts_with(".config/opencode/") {
+                "byte for byte because"
+            } else {
+                "byte for byte because rulesync changed"
+            };
+            println!("{path} {note}");
+            assert!(note.contains(expected), "{path}: {note}");
+        }
+        let adoption = preview();
+        verify_adoption_token(&adoption, &plan.token).unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let master = PersonalMaster::new(&adoption);
+        {
+            let _lock = f.setup.lock().unwrap();
+            f.setup.apply_adoption(&root, adoption, master).unwrap();
+        }
+        for (path, bytes) in files {
+            assert_eq!(f.text(path), bytes);
+        }
+        assert!(f.setup.restore().unwrap().blocked.is_empty());
+        for (path, bytes) in files {
+            assert_eq!(f.text(path), bytes);
+        }
+    }
+
     #[test]
     #[ignore = "requires the pinned binary and a disposable copied tool home under .scratch"]
     fn rulesync_copied_home_adopts_and_restores_with_pinned_binary() {
@@ -4389,7 +6543,9 @@ mod tests {
         let render_skills = |renderer: &str, skills: &SkillPackages| {
             render_fixture_skills(&setup.data, &setup.binary, renderer, skills)
         };
-        let plan = setup.preview_adoption_using(render_skills).unwrap();
+        let plan = setup
+            .preview_adoption_using(render_rule, render_skills)
+            .unwrap();
         assert!(!setup.data.join("personal.json").exists());
         let copies: BTreeSet<_> = plan
             .skills
@@ -4476,7 +6632,7 @@ mod tests {
         let original_codex = f.text(CODEX);
         let preview = || {
             f.setup
-                .preview_adoption_using(fixture_skill_renderer)
+                .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
                 .unwrap()
         };
         let adopt = |plan: &AdoptionPlan| {
@@ -4666,7 +6822,7 @@ mod tests {
         let calls = std::cell::Cell::new(0);
         let error = f
             .setup
-            .preview_adoption_using(|_, _| {
+            .preview_adoption_using(fixture_rule_renderer, |_, _| {
                 calls.set(calls.get() + 1);
                 bail!("rulesync checksum mismatch")
             })
@@ -4674,7 +6830,10 @@ mod tests {
         assert!(format!("{error:#}").contains("checksum mismatch"));
         assert_eq!(calls.get(), 1);
         assert!(!f.setup.data.join("personal.json").exists());
-        let plan = f.setup.preview_adoption_using(renderer).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, renderer)
+            .unwrap();
         let copies: Vec<_> = plan
             .skills
             .iter()
@@ -4712,7 +6871,7 @@ mod tests {
         symlink("../../.agents/skills/example", &destination).unwrap();
         let plan = f
             .setup
-            .preview_adoption_using(fixture_skill_renderer)
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         assert!(plan.skills.iter().any(
             |skill| skill.path == ".cursor/skills/example" && skill.byte_copy_reason.is_some()
@@ -4758,7 +6917,7 @@ mod tests {
 
         let plan = f
             .setup
-            .preview_adoption_using(fixture_skill_renderer)
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         assert!(plan.skills.iter().any(|skill| {
             skill.path == ".cursor/skills/example"
@@ -4786,7 +6945,7 @@ mod tests {
 
         let plan = f
             .setup
-            .preview_adoption_using(fixture_skill_renderer)
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         f.setup
             .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
@@ -4828,7 +6987,7 @@ mod tests {
         }
         let plan = f
             .setup
-            .preview_adoption_using(fixture_skill_renderer)
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         assert!(plan.skills[0].byte_copy_reason.is_some(), "{plan:?}");
         f.setup
@@ -5319,7 +7478,7 @@ mod tests {
         f.write(".cursor/AGENTS.md", "Cursor's rules.\n");
         let plan = f
             .setup
-            .preview_adoption_using(fixture_skill_renderer)
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         f.setup
             .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
@@ -5830,7 +7989,7 @@ mod tests {
         let codex = write_step1d_skill(&f, ".codex", "Original body.", "# New tool's helper\n");
         let plan = f
             .setup
-            .preview_adoption_using(fixture_skill_renderer)
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         f.setup
             .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
@@ -6327,8 +8486,14 @@ mod tests {
         }
 
         let home = f.setup.home.canonicalize().unwrap();
-        f.setup.preview_adoption(&home).unwrap();
-        f.adopt_from_plan();
+        f.setup.check_adoption_home(&home).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
         assert_eq!(root.read(config, false).unwrap(), desired);
 
         let restored = f.setup.restore().unwrap();
@@ -6448,8 +8613,11 @@ mod tests {
                 Err(error) => println!("\nadoption error {error:#}"),
             }
         } else {
+            setup
+                .check_adoption_home(&setup.home.canonicalize().unwrap())
+                .unwrap();
             let plan = setup
-                .preview_adoption(&setup.home.canonicalize().unwrap())
+                .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
                 .unwrap();
             println!(
                 "\nadoption preview {}",
@@ -6870,7 +9038,10 @@ mod tests {
             }
             Ok(output)
         };
-        let plan = f.setup.preview_adoption_using(render_skills).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, render_skills)
+            .unwrap();
         assert!(plan
             .notes
             .iter()
@@ -7184,7 +9355,10 @@ mod tests {
         f.write(file, original);
         let preview =
             |_: &str, _: &SkillPackages| Ok(BTreeMap::from([(staged.into(), rendered.to_vec())]));
-        let plan = f.setup.preview_adoption_using(preview).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, preview)
+            .unwrap();
         let skill = plan
             .files
             .iter()

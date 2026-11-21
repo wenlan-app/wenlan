@@ -508,7 +508,7 @@ Arguments:
 
 #### `wenlan rules adopt`
 
-Bring your existing personal rules and skills under Wenlan management.
+Bring your personal rules, skills, commands and subagents under Wenlan management.
 
 ```text
 wenlan rules adopt [OPTIONS]
@@ -528,7 +528,7 @@ wenlan rules restore [OPTIONS]
 
 #### `wenlan rules sync`
 
-Collect tool edits for review and deliver current personal rules and skills.
+Review local changes and deliver the current personal tool setup.
 
 ```text
 wenlan rules sync [OPTIONS]
@@ -569,11 +569,11 @@ wenlan rules review [OPTIONS] <ID> <ACTION>
 Arguments:
 
 - `<ID>`: The proposal ID shown by `wenlan rules sync`.
-- `<ACTION>` Possible values: `tool-only` (Keep the change for the tool that made it), `all-tools` (Use the change in all tools), `dismiss` (Discard the proposal).
+- `<ACTION>` Possible values: `tool-only` (Keep the change for the tool that made it), `all-tools` (Share the change with all compatible tools), `dismiss` (Discard the proposal).
 
 Options:
 
-- `--file <PATH>`: Choose which file's change to keep when several tools changed the same line.
+- `--file <PATH>`: Choose the source file when a proposal contains competing edits.
 
 ### `wenlan pages`
 
