@@ -414,8 +414,9 @@ enum Kind {
     Settings,
     // Settle entry ownership with the settings receipt, including on recovery.
     PersonalSettings {
-        entries: Vec<wenlan_core::rulesync_settings::personal::Key>,
+        updates: Vec<personal_settings::Update>,
     },
+    SettingsParent,
     RegistrySkill {
         name: String,
     },
@@ -1249,7 +1250,7 @@ impl Setup {
             )
         };
         let read_path = || {
-            if wenlan_core::rulesync_personal_files::is_personal_path(&op.path) {
+            if crate::rulesync_apply::is_personal_entry(&op.path) {
                 root.read_personal_file(&op.path, op.allow_link)
             } else {
                 planned_read()
@@ -1319,11 +1320,15 @@ impl Setup {
         let mut outcomes = Vec::with_capacity(operations.len());
         let mut ready: Vec<Pending> = Vec::with_capacity(operations.len());
         for op in operations {
-            let personal_file =
-                wenlan_core::rulesync_personal_files::location_of(&op.path).is_some();
-            let changed = if wenlan_core::rulesync_personal_files::is_personal_path(&op.path) {
+            let settings_path =
+                wenlan_core::rulesync_settings::personal::is_settings_path(&op.path);
+            let personal_file = settings_path
+                || wenlan_core::rulesync_personal_files::location_of(&op.path).is_some();
+            let changed = if crate::rulesync_apply::is_personal_entry(&op.path) {
                 match root.read_personal_file(&op.path, op.allow_link) {
-                    Ok(actual) => (reviewing || cfg!(windows)) && op.seen != actual,
+                    Ok(actual) => {
+                        (reviewing || cfg!(windows) || settings_path) && op.seen != actual
+                    }
                     Err(_) => true,
                 }
             } else {
@@ -1515,7 +1520,7 @@ impl Setup {
             {
                 continue;
             }
-            let current = if wenlan_core::rulesync_personal_files::is_personal_path(path) {
+            let current = if crate::rulesync_apply::is_personal_entry(path) {
                 root.read_personal_file(path, true)
             } else {
                 root.read(path, true)
@@ -1556,22 +1561,26 @@ impl Setup {
         result: &mut RulesSyncReport,
         extension_only: bool,
     ) -> Result<()> {
-        let selected = |path: &Path| !extension_only || manifest.extension_paths.contains(path);
+        let selected = |manifest: &Manifest, path: &Path| {
+            !extension_only || manifest.extension_paths.contains(path)
+        };
         result.blocked.extend(
             manifest
                 .recovery_issues
                 .iter()
-                .filter(|(path, _)| selected(path))
+                .filter(|(path, _)| selected(manifest, path))
                 .map(|(path, reason)| format!("{}: {reason}", path.display())),
         );
         let originals: Vec<_> = manifest
             .backup
             .keys()
-            .filter(|path| selected(path))
+            .filter(|path| selected(manifest, path))
             .cloned()
             .collect();
         for path in &originals {
-            if wenlan_core::rulesync_personal_files::location_of(path).is_some() {
+            if wenlan_core::rulesync_personal_files::location_of(path).is_some()
+                || wenlan_core::rulesync_settings::personal::is_settings_path(path)
+            {
                 if let Some(alias) = manifest.case_alias(root, path)? {
                     result.blocked.push(format!(
                         "{} aliases {} in the local setup backup. Resolve the conflicting entries before restoring.",
@@ -1586,7 +1595,7 @@ impl Setup {
             manifest
                 .delivered
                 .keys()
-                .filter(|path| selected(path))
+                .filter(|path| selected(manifest, path))
                 .all(|path| manifest.backup.contains_key(path)),
             "the backup is incomplete"
         );
@@ -1608,11 +1617,35 @@ impl Setup {
                 continue;
             }
             let original = manifest.backup[&path].clone();
+            if matches!(delivered.kind, Kind::PersonalSettings { .. }) {
+                match personal_settings::restore_operation(
+                    &self.home, root, manifest, &path, &original,
+                ) {
+                    Ok(Some(op)) => {
+                        #[cfg(windows)]
+                        if let Err(reason) =
+                            check_windows_restore(manifest, &path, &op.seen, &original)
+                        {
+                            result.blocked.push(format!(
+                                "{} could not be restored. {reason}",
+                                path.display()
+                            ));
+                            continue;
+                        }
+                        operations.push(op);
+                    }
+                    Ok(None) => personal_settings::forget_restore(manifest, &path),
+                    Err(error) => result
+                        .blocked
+                        .push(format!("{} could not be restored. {error}", path.display())),
+                }
+                continue;
+            }
             let expected = &delivered.delivered;
             let read_for_restore = || {
                 let alias = root.restore_leaf_alias(&path, |parent| {
                     (original == Snapshot::Absent && *expected == Snapshot::Absent)
-                        || (selected(parent)
+                        || (selected(manifest, parent)
                             && !manifest.recovery_issues.contains_key(parent)
                             && manifest
                                 .backup
@@ -1628,7 +1661,7 @@ impl Setup {
                 if alias.is_some() && *expected != Snapshot::Absent {
                     return Err(std::io::Error::other("the destination spelling changed"));
                 }
-                if wenlan_core::rulesync_personal_files::is_personal_path(&path) {
+                if crate::rulesync_apply::is_personal_entry(&path) {
                     root.read_personal_file(&path, true)
                 } else {
                     read_planned_path(root, &path, true, *expected == Snapshot::Absent)
@@ -3856,7 +3889,15 @@ fn with_missing_parents(
                         path: path.to_owned(),
                         seen: Snapshot::Absent,
                         desired: Snapshot::private_directory(),
-                        kind: op.kind.as_ref().map(|_| Kind::Directory),
+                        // A missing parent can be recreated for delivery
+                        // without claiming its pathname for restore.
+                        kind: op.kind.as_ref().map(|kind| {
+                            if matches!(kind, Kind::PersonalSettings { .. }) {
+                                Kind::SettingsParent
+                            } else {
+                                Kind::Directory
+                            }
+                        }),
                         allow_link: false,
                     });
                 }
@@ -3886,6 +3927,9 @@ fn record_originals(
         let Some(kind) = &op.kind else {
             continue;
         };
+        if matches!(kind, Kind::SettingsParent) {
+            continue;
+        }
         if manifest.backup.contains_key(&op.path)
             && !(adopting && unclaimed_original(manifest, &op.path))
         {
@@ -3962,27 +4006,40 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
         return Ok(());
     }
     if let Some(kind) = operation.kind {
-        let kind = match kind {
+        let (kind, delivered) = match kind {
             Kind::Settings => {
                 settings::settle(manifest, &operation.path);
-                Kind::Settings
+                (Kind::Settings, operation.desired)
             }
-            Kind::PersonalSettings { entries } => {
-                personal_settings::settle(manifest, &operation.path, &entries);
-                Kind::Settings
+            Kind::PersonalSettings { updates } => {
+                personal_settings::settle(manifest, &operation.path, updates);
+                // Only the in-flight compare-and-swap needs a full snapshot.
+                (
+                    Kind::PersonalSettings {
+                        updates: Vec::new(),
+                    },
+                    Snapshot::Absent,
+                )
             }
-            kind => kind,
+            Kind::SettingsParent => return Ok(()),
+            kind => (kind, operation.desired),
         };
         manifest.delivered.insert(
             operation.path,
             Delivery {
                 kind,
-                delivered: operation.desired,
+                delivered,
                 observed: None,
                 reviewed: false,
                 at: chrono::Utc::now().timestamp(),
             },
         );
+    } else if manifest
+        .delivered
+        .get(&operation.path)
+        .is_some_and(|delivery| matches!(delivery.kind, Kind::PersonalSettings { .. }))
+    {
+        personal_settings::forget_restore(manifest, &operation.path);
     } else {
         manifest.delivered.remove(&operation.path);
     }
@@ -4667,9 +4724,14 @@ mod tests {
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         for (path, before) in files {
+            let original = if path == ".claude/settings.json" {
+                before.replace("\"defaultMode\":\"default\"", "\"defaultMode\":\"plan\"")
+            } else {
+                before.to_owned()
+            };
             assert_eq!(
                 fs::read(home.join(path)).unwrap(),
-                before.as_bytes(),
+                original.as_bytes(),
                 "{path}"
             );
         }
@@ -5075,6 +5137,116 @@ mod tests {
                 fs::metadata(&claude).unwrap().permissions().mode() & 0o777,
                 0o600
             );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_restore_owns_only_recorded_entries() {
+        let f = Fixture::new();
+        let claude = ".claude.json";
+        let codex = ".codex/config.toml";
+        let copilot = ".copilot/hooks/copilot-hooks.json";
+        let parent = Path::new(".copilot/hooks");
+        let cursor = ".cursor/mcp.json";
+        let original =
+            r#"{"mcpServers":{"shared":{"command":"before"},"removed":{"command":"local"}}}"#;
+        let base = "# user comment\r\nmodel = 'keep'\n\r\n[mcp_servers.shared]\r\ncommand = 'before'\r\n\n[unrelated]\r\nother = 'original'\n";
+        let hook =
+            r#"{"version":1,"hooks":{"sessionStart":[{"type":"command","bash":"local-hook"}]}}"#;
+        fs::create_dir_all(f.setup.home.join(parent)).unwrap();
+        fs::create_dir_all(f.setup.home.join(".cursor")).unwrap();
+        f.write(claude, original);
+        f.write(codex, base);
+        f.write(copilot, hook);
+        f.write(cursor, r#"{"mcpServers":{"linked":{"command":"fixture"}}}"#);
+        let hard_link = f.setup.home.join("settings-link.json");
+        fs::hard_link(f.setup.home.join(cursor), &hard_link).unwrap();
+
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let linked_listed = preview
+            .notes
+            .iter()
+            .any(|note| note.contains(cursor) && note.contains("hard link"));
+        let linked_offered = preview.files.iter().any(|change| change.path == cursor);
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        let review = |needle: &str, action| {
+            let result = f.sync_with("");
+            let proposal = result
+                .proposals
+                .iter()
+                .find(|card| card.diff.contains(needle))
+                .unwrap_or_else(|| panic!("missing {needle}: {result:?}"));
+            f.setup
+                .review_using(
+                    &PullbackDecision {
+                        id: proposal.id.clone(),
+                        action,
+                        file: None,
+                    },
+                    |root, manifest| f.sync_review(root, manifest),
+                )
+                .unwrap()
+        };
+
+        let independent = base.replace("other = 'original'", "other = 'unowned'");
+        f.write(codex, &independent);
+        let shared = original.replace("before", "after");
+        f.write(claude, &shared);
+        review("after", PullbackAction::AllTools);
+        let delivered = f.text(codex);
+        let kept_layout = delivered
+            .starts_with("# user comment\r\nmodel = 'keep'\n\r\n[mcp_servers.shared]\r\n")
+            && delivered.ends_with("\r\n\n[unrelated]\r\nother = 'unowned'\n")
+            && delivered.contains("after");
+        let manifest = f.setup.load().unwrap().unwrap();
+        let receipt = &manifest.delivered[Path::new(codex)];
+        let receipt_claimed_sibling = snapshot_mentions(&receipt.delivered, b"unowned");
+
+        let edited = delivered
+            .replace("after", "dismissed")
+            .replace("'unowned'", "'newest'");
+        f.write(codex, &edited);
+        review("dismissed", PullbackAction::Dismiss);
+        let dismissed = f.text(codex);
+        assert!(dismissed.contains("after") && dismissed.contains("'newest'"));
+
+        let deletion = shared.replace(",\"removed\":{\"command\":\"local\"}", "");
+        f.write(claude, &deletion);
+        review("removed", PullbackAction::ToolOnly);
+        fs::remove_dir_all(f.setup.home.join(parent)).unwrap();
+        review("local-hook", PullbackAction::Dismiss);
+        let parent_claimed = f
+            .setup
+            .load()
+            .unwrap()
+            .unwrap()
+            .delivered
+            .contains_key(parent);
+
+        let result = f.setup.restore().unwrap();
+        assert!(result.blocked.is_empty() && linked_listed && !linked_offered
+            && kept_layout && !receipt_claimed_sibling && !parent_claimed,
+            "restore={result:?}, hard-link notice={linked_listed}, hard link offered={linked_offered}, mixed endings retained={kept_layout} in {delivered:?}, receipt captured sibling={receipt_claimed_sibling}, receipt captured parent={parent_claimed}");
+        assert_eq!(f.text(codex), base.replace("'original'", "'newest'"));
+        assert_eq!(f.text(claude), deletion.replace("after", "before"));
+        assert!(f.text(copilot).contains("local-hook"));
+        assert_eq!(
+            fs::read(hard_link).unwrap(),
+            fs::read(f.setup.home.join(cursor)).unwrap()
+        );
+
+        fn snapshot_mentions(snapshot: &Snapshot, needle: &[u8]) -> bool {
+            matches!(snapshot, Snapshot::File { bytes, .. }
+                if bytes.windows(needle.len()).any(|part| part == needle))
         }
     }
 

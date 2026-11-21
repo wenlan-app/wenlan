@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_personal::{check_delivery_paths, fingerprint, DeliveryWorktrees};
 use wenlan_core::rulesync_settings::personal::{
     enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Key, Location,
+    RecordedEntry,
 };
 use wenlan_types::rulesync::{PullbackAction, PullbackCard, PullbackDecision, RulesSyncReport};
 
@@ -26,14 +27,16 @@ pub(super) struct Managed {
     // approved previous entry (or absence) can be replaced on a retry.
     before: Option<Entry>,
     wanted: Option<Entry>,
+    receipt: Option<RecordedEntry>,
 }
 
 impl Managed {
-    fn kept(key: Key, entry: Option<Entry>) -> Self {
+    fn kept(entry: Entry, receipt: Option<RecordedEntry>) -> Self {
         Self {
-            key,
-            before: entry.clone(),
-            wanted: entry,
+            key: entry.key.clone(),
+            before: Some(entry.clone()),
+            wanted: Some(entry),
+            receipt,
         }
     }
 
@@ -44,12 +47,33 @@ impl Managed {
 
 pub(super) type Source = BTreeMap<PathBuf, Vec<Managed>>;
 
-pub(super) fn settle(manifest: &mut Manifest, path: &Path, keys: &[Key]) {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct Update {
+    key: Key,
+    receipt: RecordedEntry,
+}
+
+pub(super) fn settle(manifest: &mut Manifest, path: &Path, updates: Vec<Update>) {
     if let Some(managed) = manifest.personal_settings.get_mut(path) {
-        for entry in managed.iter_mut().filter(|entry| keys.contains(&entry.key)) {
+        for Update { key, receipt } in updates {
+            let Some(index) = managed.iter().position(|entry| entry.key == key) else {
+                continue;
+            };
+            // Preserve delivery order for reversing nested or adjacent insertions.
+            let mut entry = managed.remove(index);
             entry.before.clone_from(&entry.wanted);
+            entry.receipt = Some(receipt);
+            managed.push(entry);
         }
     }
+}
+
+pub(super) fn forget_restore(manifest: &mut Manifest, path: &Path) {
+    manifest.delivered.remove(path);
+    manifest.backup.remove(path);
+    manifest.personal_settings.remove(path);
+    #[cfg(windows)]
+    manifest.windows_backup_owners.remove(path);
 }
 
 pub(super) fn prepare_adoption(
@@ -109,22 +133,28 @@ pub(super) fn adopt(
             );
         }
         count += entries.len();
+        let claimed = entries
+            .into_iter()
+            .map(|entry| {
+                let receipt = snapshot_bytes(&file.snapshot)
+                    .filter(|_| file.safe && entry.can_reapply())
+                    .and_then(|bytes| location.record_original(bytes, &file.doc, &entry).ok());
+                Managed::kept(entry, receipt)
+            })
+            .collect::<Vec<_>>();
+        let has_receipt = claimed.iter().any(|entry| entry.receipt.is_some());
         let known = manifest.personal_settings.entry(path.clone()).or_default();
-        known.retain(|known| !entries.iter().any(|entry| entry.key == known.key));
-        known.extend(
-            entries
-                .into_iter()
-                .map(|entry| Managed::kept(entry.key.clone(), Some(entry))),
-        );
+        known.retain(|known| !claimed.iter().any(|entry| entry.key == known.key));
+        known.extend(claimed);
         // Settings already present in a tool are adopted in place. Record an
         // exact original only when the whole file is safe to back up.
-        if file.safe && !manifest.delivered.contains_key(&path) && !reserved(manifest, &path) {
+        if has_receipt && !manifest.delivered.contains_key(&path) && !reserved(manifest, &path) {
             operations.push(Pending {
                 path,
                 seen: file.snapshot.clone(),
                 desired: file.snapshot,
                 kind: Some(Kind::PersonalSettings {
-                    entries: Vec::new(),
+                    updates: Vec::new(),
                 }),
                 allow_link: false,
             });
@@ -143,8 +173,8 @@ fn read(home: &Path, root: &FileRoot, location: &Location) -> Result<LiveFile, &
     check_delivery_paths(home, [location.path.as_path()])
         .map_err(|_| "the file aliases the shared harness or its path is unsafe")?;
     let snapshot = root
-        .read(&location.path, false)
-        .map_err(|_| "the settings file is linked, unreadable, or too large")?;
+        .read_personal_file(&location.path, false)
+        .map_err(|_| "the file is linked (including hard links), unreadable, too large, or its permissions cannot be preserved")?;
     let bytes = match &snapshot {
         Snapshot::File { bytes, .. } => Some(bytes.as_slice()),
         Snapshot::Absent => None,
@@ -170,6 +200,67 @@ fn snapshot_bytes(snapshot: &Snapshot) -> Option<&[u8]> {
         Snapshot::File { bytes, .. } => Some(bytes),
         _ => None,
     }
+}
+
+pub(super) fn restore_operation(
+    home: &Path,
+    root: &FileRoot,
+    manifest: &Manifest,
+    path: &Path,
+    original: &Snapshot,
+) -> Result<Option<Pending>> {
+    let changes = manifest
+        .personal_settings
+        .get(path)
+        .into_iter()
+        .flatten()
+        .rev()
+        .filter_map(|entry| {
+            Some((
+                &entry.key,
+                entry.receipt.as_ref().filter(|record| record.changed())?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    if changes.is_empty() {
+        return Ok(None);
+    }
+    let mut catalog = Catalog::read(home)?;
+    catalog.retain_managed_locations([path]);
+    let location = catalog
+        .locations
+        .iter()
+        .find(|location| location.path == path)
+        .context("the settings path is no longer recognized")?;
+    ensure!(
+        root.restore_leaf_alias(path, |_| false)?.is_none(),
+        "the settings path changed spelling"
+    );
+    let live = read(home, root, location).map_err(anyhow::Error::msg)?;
+    ensure!(live.safe, "the settings file contains possible credentials");
+    let mut bytes = snapshot_bytes(&live.snapshot)
+        .context("the settings file is missing")?
+        .to_vec();
+    for (key, receipt) in changes {
+        location.restore_entry(&mut bytes, key, receipt)?;
+    }
+    let doc = location.document(Some(&bytes))?;
+    ensure!(
+        location.snapshot_safe(&bytes, &doc),
+        "the restored settings would contain possible credentials"
+    );
+    let desired = if *original == Snapshot::Absent && location.is_initial(&bytes) {
+        Snapshot::Absent
+    } else {
+        with_bytes(&live.snapshot, bytes)
+    };
+    Ok(Some(Pending {
+        path: path.to_owned(),
+        seen: live.snapshot,
+        desired,
+        kind: None,
+        allow_link: false,
+    }))
 }
 
 struct View {
@@ -279,7 +370,7 @@ fn reserved(manifest: &Manifest, path: &Path) -> bool {
         || manifest
             .delivered
             .get(path)
-            .is_some_and(|delivery| !matches!(delivery.kind, Kind::Settings))
+            .is_some_and(|delivery| !matches!(delivery.kind, Kind::PersonalSettings { .. }))
 }
 
 fn proposal(
@@ -453,7 +544,7 @@ impl Setup {
                 continue;
             }
             let mut next = None;
-            let mut entries = Vec::new();
+            let mut updates = Vec::new();
             for state in managed {
                 let label = label(state);
                 let current = file.doc.entry(&state.key);
@@ -482,17 +573,32 @@ impl Setup {
                     if !wanted.can_reapply() {
                         continue;
                     }
+                    if state.before.is_some() && state.receipt.is_none() {
+                        result.blocked.push(format!(
+                            "{display}: {label} has no exact native restore fragment."
+                        ));
+                        continue;
+                    }
                     if !file.safe {
                         result.blocked.push(format!("{display}: {label} stayed in place because this file cannot be backed up without copying possible credentials."));
                         continue;
                     }
-                    match location.edit(
-                        next.as_deref().or_else(|| snapshot_bytes(&file.snapshot)),
-                        wanted,
-                    ) {
-                        Ok(bytes) => {
+                    let previous = next.as_deref().or_else(|| snapshot_bytes(&file.snapshot));
+                    match location.edit(previous, wanted).and_then(|bytes| {
+                        let receipt = location.record_write(
+                            state.receipt.as_ref(),
+                            previous,
+                            &bytes,
+                            wanted,
+                        )?;
+                        Ok((bytes, receipt))
+                    }) {
+                        Ok((bytes, receipt)) => {
                             next = Some(bytes);
-                            entries.push(state.key.clone());
+                            updates.push(Update {
+                                key: state.key.clone(),
+                                receipt,
+                            });
                         }
                         Err(_) => result.blocked.push(format!(
                             "{display}: {label} conflicts with a native entry or settings shape."
@@ -520,7 +626,7 @@ impl Setup {
                     path: path.clone(),
                     seen: file.snapshot.clone(),
                     desired: with_bytes(&file.snapshot, bytes),
-                    kind: Some(Kind::PersonalSettings { entries }),
+                    kind: Some(Kind::PersonalSettings { updates }),
                     allow_link: false,
                 });
             }
@@ -602,7 +708,7 @@ impl Setup {
                     "this file does not belong to the settings proposal"
                 );
                 ensure!(
-                    root.read(path, false)? == file.snapshot,
+                    root.read_personal_file(path, false)? == file.snapshot,
                     "the tool edited this settings file again. Run rules sync."
                 );
                 let key = state.key.clone();
@@ -623,23 +729,14 @@ impl Setup {
                         .unwrap();
                     entry.before = proposed.observed.clone();
                     entry.wanted = wanted;
-                }
-                if request.action != PullbackAction::Dismiss && file.safe {
-                    if let (Some(delivery), Some(entry), Some(live)) = (
-                        manifest.delivered.get_mut(path),
-                        current,
-                        snapshot_bytes(&file.snapshot),
-                    ) {
-                        // Approving one entry does not approve unowned edits.
-                        // Mask the reviewed value on both versions and retain
-                        // the receipt only if every other byte still matches.
-                        if let Some(old) = snapshot_bytes(&delivery.delivered) {
-                            if matches!((location.edit(Some(old), entry), location.edit(Some(live), entry)),
-                                (Ok(before), Ok(after)) if before == after)
-                            {
-                                delivery.delivered = file.snapshot.clone();
-                            }
-                        }
+                    if !dismiss_write {
+                        entry.receipt = entry.receipt.as_ref().and_then(|receipt| {
+                            let current = current.filter(|entry| entry.can_reapply())?;
+                            let live = snapshot_bytes(&file.snapshot).filter(|_| file.safe)?;
+                            location
+                                .record_review(receipt, live, &file.doc, current)
+                                .ok()
+                        });
                     }
                 }
                 let mut blocked = Vec::new();
@@ -651,15 +748,16 @@ impl Setup {
                             .entry(destination.path.clone())
                             .or_default();
                         let key = destination.wanted.key.clone();
-                        let next = Managed {
-                            key: key.clone(),
-                            before: destination.before,
-                            wanted: Some(destination.wanted),
-                        };
                         if let Some(current) = entries.iter_mut().find(|entry| entry.key == key) {
-                            *current = next;
+                            current.before = destination.before;
+                            current.wanted = Some(destination.wanted);
                         } else {
-                            entries.push(next);
+                            entries.push(Managed {
+                                key,
+                                before: destination.before,
+                                wanted: Some(destination.wanted),
+                                receipt: None,
+                            });
                         }
                         if let Some(worktree) = destination.worktree {
                             manifest.worktree_writes.insert(destination.path, worktree);

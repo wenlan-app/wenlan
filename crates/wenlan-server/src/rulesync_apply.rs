@@ -20,8 +20,14 @@ use wenlan_core::rulesync_personal::{
 };
 use wenlan_core::rulesync_personal_files::{
     directory_entry_identity, directory_is_case_sensitive, is_personal_path, location_of,
-    require_ascii_entry_name, require_plain_personal_directory, NON_ASCII_PERSONAL_NAME,
+    readonly_personal_file, require_ascii_entry_name, require_plain_personal_directory,
+    require_plain_personal_file, NON_ASCII_PERSONAL_NAME,
 };
+use wenlan_core::rulesync_settings::personal::is_settings_path;
+
+pub(crate) fn is_personal_entry(path: &Path) -> bool {
+    is_personal_path(path) || is_settings_path(path)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
@@ -612,7 +618,7 @@ impl FileRoot {
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
         self.check_tool_path(path)?;
-        let personal = self.tool_home && is_personal_path(path);
+        let personal = self.tool_home && is_personal_entry(path);
         if personal {
             require_ascii_personal_path(path)?;
         }
@@ -807,7 +813,7 @@ impl FileRoot {
                 }
             }
         }
-        let personal = self.tool_home && is_personal_path(path);
+        let personal = self.tool_home && is_personal_entry(path);
         let read: ReadLeaf = if personal {
             read_single_link_leaf
         } else {
@@ -1118,29 +1124,8 @@ fn read_single_link_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::
 }
 
 fn single_link_contents(file: &cap_std::fs::File, metadata: &Metadata) -> io::Result<Vec<u8>> {
-    {
-        if cfg!(windows) && metadata.permissions().readonly() {
-            return Err(readonly_personal_file());
-        }
-        if metadata.nlink() != 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "the file has multiple hard links. Its link will be kept in place",
-            ));
-        }
-        #[cfg(unix)]
-        wenlan_core::rulesync_personal_files::require_plain_unix_acl(file)?;
-        #[cfg(windows)]
-        check_windows_replacement(file)?;
-        read_file_contents(file)
-    }
-}
-
-fn readonly_personal_file() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Unsupported,
-        "Windows cannot safely replace this read-only command or subagent",
-    )
+    require_plain_personal_file(file, metadata)?;
+    read_file_contents(file)
 }
 
 fn require_ascii_personal_path(path: &Path) -> io::Result<()> {

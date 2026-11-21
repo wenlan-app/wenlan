@@ -6,9 +6,10 @@ use std::{ops::Range, sync::LazyLock};
 use anyhow::{bail, ensure, Context, Result};
 use regex::Regex;
 use serde_json::{Map, Value};
-use toml_edit::{DocumentMut, Item};
+use toml_edit::{DocumentMut, ImDocument, Item};
 
 use super::parse_jsonc_value;
+use crate::rulesync_personal::line_changes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Part<'a> {
@@ -61,7 +62,8 @@ pub(super) fn edit(
             Ok(next)
         }
         Format::Toml => {
-            let mut doc = std::str::from_utf8(bytes)?
+            let text = std::str::from_utf8(bytes)?;
+            let mut doc = text
                 .parse::<DocumentMut>()
                 .map_err(|_| anyhow::anyhow!("invalid TOML settings"))?;
             let native = match toml::Value::try_from(value) {
@@ -69,7 +71,7 @@ pub(super) fn edit(
                 Err(_) => bail!("the settings entry cannot be expressed in TOML"),
             };
             edit_toml(doc.as_item_mut(), path, native)?;
-            Ok(doc.to_string().into_bytes())
+            Ok(keep_toml_line_endings(text, doc.to_string())?.into_bytes())
         }
         Format::CommandRules => {
             let [Part::Key("rules"), Part::Index(index)] = path else {
@@ -96,6 +98,82 @@ pub(super) fn edit(
             }
             Ok(next)
         }
+    }
+}
+
+// toml_edit's encoder normalizes CRLF even in untouched decoration.
+// Apply its changes to the original lines and keep their individual endings.
+fn keep_toml_line_endings(original: &str, rendered: String) -> Result<String> {
+    if !original.contains("\r\n") {
+        return Ok(rendered);
+    }
+    let normalized = original.replace("\r\n", "\n");
+    let lines: Vec<_> = original.split_inclusive('\n').collect();
+    let mut next = String::new();
+    let mut at = 0;
+    for change in line_changes(&normalized, &rendered)? {
+        next.extend(lines[at..change.start].iter().copied());
+        let old_end = change.start + change.removed.len();
+        let boundary = lines
+            .get(change.start)
+            .or_else(|| lines.last())
+            .copied()
+            .unwrap_or_default();
+        for (i, line) in change.added.iter().enumerate() {
+            let original_line = lines[change.start..old_end]
+                .get(i)
+                .copied()
+                .unwrap_or(boundary);
+            if let Some(content) = line
+                .strip_suffix('\n')
+                .filter(|_| original_line.ends_with("\r\n"))
+            {
+                next.push_str(content);
+                next.push_str("\r\n");
+            } else {
+                next.push_str(line);
+            }
+        }
+        at = old_end;
+    }
+    next.extend(lines[at..].iter().copied());
+    Ok(next)
+}
+
+pub(super) fn entry_span(format: Format, bytes: &[u8], path: &[Part<'_>]) -> Result<Range<usize>> {
+    let span = match format {
+        Format::Json => json_tree(bytes)?
+            .node_at(path)
+            .map(|node| node.span.clone()),
+        Format::Toml => {
+            let doc = ImDocument::parse(std::str::from_utf8(bytes)?)
+                .map_err(|_| anyhow::anyhow!("invalid TOML settings"))?;
+            toml_span(doc.as_item(), path)
+        }
+        Format::CommandRules => None,
+    };
+    span.context("the native setting has no contiguous editable span")
+}
+
+fn toml_span(item: &Item, path: &[Part<'_>]) -> Option<Range<usize>> {
+    // Child tables may be declared later with unrelated tables in between.
+    // Require a contiguous table before treating it as an owned fragment.
+    let table_span = |table: &toml_edit::Table| {
+        table
+            .iter()
+            .all(|(_, item)| item.is_value())
+            .then(|| table.span())
+            .flatten()
+    };
+    match path {
+        [] if item.is_table() => table_span(item.as_table()?),
+        [] => item.as_value()?.span(),
+        [Part::Key(key), rest @ ..] => toml_span(item.as_table_like()?.get(key)?, rest),
+        [Part::Index(index)] if item.is_array_of_tables() => {
+            table_span(item.as_array_of_tables()?.get(*index)?)
+        }
+        [Part::Index(index)] => item.as_array()?.get(*index)?.span(),
+        _ => None,
     }
 }
 
@@ -227,6 +305,20 @@ enum Items {
 }
 
 impl Node {
+    fn node_at(&self, path: &[Part<'_>]) -> Option<&Self> {
+        let Some((first, rest)) = path.split_first() else {
+            return Some(self);
+        };
+        let next = match (first, &self.items) {
+            (Part::Key(key), Items::Object(items)) => {
+                &items.iter().find(|(name, _)| name == key)?.1
+            }
+            (Part::Index(index), Items::Array(items)) => items.get(*index)?,
+            _ => return None,
+        };
+        next.node_at(rest)
+    }
+
     fn object_order(&self, path: &mut Vec<String>, order: &mut Vec<Vec<String>>) {
         if let Items::Object(items) = &self.items {
             for (key, value) in items {

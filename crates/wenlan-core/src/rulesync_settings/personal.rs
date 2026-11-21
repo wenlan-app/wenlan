@@ -4,6 +4,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::ErrorKind,
+    ops::Range,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
@@ -21,6 +22,7 @@ use super::{
 };
 use crate::{
     rulesync_personal::{check_delivery_paths, personal_target},
+    rulesync_personal_files::{require_plain_personal_directory, require_plain_personal_file},
     skill_registry::printable,
 };
 use wenlan_types::rulesync::AdoptionChange;
@@ -146,7 +148,7 @@ fn opencode_sections(raw: &Value) -> Result<&'static [Section]> {
     }
 }
 
-fn defaults() -> Vec<Location> {
+static DEFAULTS: LazyLock<Vec<Location>> = LazyLock::new(|| {
     vec![
         json_file("claudecode", ".claude.json", &[Section(Mcp, &["mcpServers"], Named)]),
         json_file("claudecode", ".claude/settings.json", &[
@@ -202,6 +204,22 @@ fn defaults() -> Vec<Location> {
         versioned("musecode", ".config/muse/settings.json", &[Section(Mcp, &["mcp_servers"], Named)],
             "{\"schema_version\":1}\n"),
     ]
+});
+
+const DYNAMIC_LOCATIONS: &[(&str, &str)] = &[
+    (".copilot/hooks", "json"),
+    (".gemini/policies", "toml"),
+    (".codex/rules", "rules"),
+    (".config/opencode/plugins", ""),
+];
+
+pub fn is_settings_path(path: &Path) -> bool {
+    DEFAULTS.iter().any(|location| location.path == path)
+        || DYNAMIC_LOCATIONS.iter().any(|(dir, ext)| {
+            !ext.is_empty()
+                && path.parent() == Some(Path::new(dir))
+                && path.extension().is_some_and(|extension| extension == *ext)
+        })
 }
 
 const POLICIES: &[Section] = &[Section(Permission, &["rule"], PolicyRules)];
@@ -215,15 +233,10 @@ pub struct Catalog {
 impl Catalog {
     pub fn read(home: &Path) -> Result<Self> {
         let root = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
-        let mut locations = defaults();
+        let mut locations = DEFAULTS.clone();
         let defaults_len = locations.len();
         let mut notes = Vec::new();
-        for (dir, ext) in [
-            (".copilot/hooks", "json"),
-            (".gemini/policies", "toml"),
-            (".codex/rules", "rules"),
-            (".config/opencode/plugins", ""),
-        ] {
+        for &(dir, ext) in DYNAMIC_LOCATIONS {
             let dir_path = Path::new(dir);
             let Ok(Some(directory)) = open_parent(&root, dir_path) else {
                 if present(&root, dir_path) {
@@ -322,7 +335,10 @@ fn open_parent(root: &Dir, path: &Path) -> std::io::Result<Option<Dir>> {
     let mut directory = root.try_clone()?;
     for component in path.components() {
         match directory.open_dir_nofollow(Path::new(component.as_os_str())) {
-            Ok(next) => directory = next,
+            Ok(next) => {
+                require_plain_personal_directory(&next)?;
+                directory = next;
+            }
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         }
@@ -356,10 +372,12 @@ fn read_local(root: &Dir, path: &Path) -> Result<Option<Vec<u8>>> {
         options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
     }
     let file = parent.open_with(name, &options)?;
+    let metadata = file.metadata()?;
     ensure!(
-        file.metadata()?.is_file(),
+        metadata.is_file(),
         "settings file changed during inspection"
     );
+    require_plain_personal_file(&file, &metadata)?;
     super::read_limited(file).map(Some)
 }
 
@@ -430,6 +448,30 @@ pub struct Document {
     entries: BTreeMap<Key, Vec<(Entry, Option<usize>)>>,
 }
 
+/// The exact fragment delivered at one native setting. The insertion layout
+/// includes only the separators and scaffolding needed to undo that edit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordedEntry {
+    original: OriginalEntry,
+    delivered: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum OriginalEntry {
+    Existing(Vec<u8>),
+    Inserted {
+        prefix: Vec<u8>,
+        suffix: Vec<u8>,
+        replaced: Vec<u8>,
+    },
+}
+
+impl RecordedEntry {
+    pub fn changed(&self) -> bool {
+        !matches!(&self.original, OriginalEntry::Existing(bytes) if *bytes == self.delivered)
+    }
+}
+
 impl Location {
     pub fn unsupported_shape(&self) -> &'static str {
         if self.tool == "opencode" {
@@ -487,21 +529,7 @@ impl Location {
         );
         let bytes = bytes.unwrap_or(self.initial.as_bytes());
         let doc = self.document(Some(bytes))?;
-        let mut path = entry
-            .container
-            .iter()
-            .map(|part| Part::Key(part))
-            .collect::<Vec<_>>();
-        if entry.key.member.is_some() {
-            let index = match doc.entries.get(&entry.key).map(Vec::as_slice) {
-                Some([(old, Some(index))]) if old.container == entry.container => *index,
-                Some(_) => anyhow::bail!("this entry is ambiguous or moved to a different list"),
-                None => lookup(&doc.raw, entry.container.iter().map(String::as_str))
-                    .and_then(Value::as_array)
-                    .map_or(0, Vec::len),
-            };
-            path.push(Part::Index(index));
-        }
+        let path = doc.path_to(entry)?;
         let next = document::edit(self.format, bytes, &path, entry.value.clone())?;
         let checked = self.document(Some(&next))?;
         ensure!(
@@ -509,6 +537,114 @@ impl Location {
             "the native settings entry did not round trip"
         );
         Ok(next)
+    }
+
+    fn span(&self, bytes: &[u8], doc: &Document, entry: &Entry) -> Result<Range<usize>> {
+        document::entry_span(self.format, bytes, &doc.path_to(entry)?)
+    }
+
+    pub fn record_original(
+        &self,
+        bytes: &[u8],
+        doc: &Document,
+        entry: &Entry,
+    ) -> Result<RecordedEntry> {
+        let delivered = bytes[self.span(bytes, doc, entry)?].to_vec();
+        Ok(RecordedEntry {
+            original: OriginalEntry::Existing(delivered.clone()),
+            delivered,
+        })
+    }
+
+    pub fn record_review(
+        &self,
+        receipt: &RecordedEntry,
+        bytes: &[u8],
+        doc: &Document,
+        entry: &Entry,
+    ) -> Result<RecordedEntry> {
+        Ok(RecordedEntry {
+            original: receipt.original.clone(),
+            delivered: bytes[self.span(bytes, doc, entry)?].to_vec(),
+        })
+    }
+
+    pub fn record_write(
+        &self,
+        receipt: Option<&RecordedEntry>,
+        before: Option<&[u8]>,
+        after: &[u8],
+        entry: &Entry,
+    ) -> Result<RecordedEntry> {
+        let doc = self.document(Some(after))?;
+        if let Some(receipt) = receipt {
+            return self.record_review(receipt, after, &doc, entry);
+        }
+        let before = before.unwrap_or(self.initial.as_bytes());
+        let span = self.span(after, &doc, entry)?;
+        let start = before
+            .iter()
+            .zip(after)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(span.start);
+        let tail = before[start..]
+            .iter()
+            .rev()
+            .zip(after[span.end..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        Ok(RecordedEntry {
+            original: OriginalEntry::Inserted {
+                prefix: after[start..span.start].to_vec(),
+                suffix: after[span.end..after.len() - tail].to_vec(),
+                replaced: before[start..before.len() - tail].to_vec(),
+            },
+            delivered: after[span].to_vec(),
+        })
+    }
+
+    pub fn restore_entry(
+        &self,
+        bytes: &mut Vec<u8>,
+        key: &Key,
+        receipt: &RecordedEntry,
+    ) -> Result<()> {
+        let doc = self.document(Some(bytes))?;
+        let entry = doc
+            .entry(key)
+            .context("the recorded entry is missing or ambiguous")?;
+        let span = self.span(bytes, &doc, entry)?;
+        ensure!(
+            bytes[span.clone()] == receipt.delivered,
+            "the recorded entry changed"
+        );
+        match &receipt.original {
+            OriginalEntry::Existing(original) => {
+                bytes.splice(span, original.iter().copied());
+            }
+            OriginalEntry::Inserted {
+                prefix,
+                suffix,
+                replaced,
+            } => {
+                let start = span
+                    .start
+                    .checked_sub(prefix.len())
+                    .context("the entry layout changed")?;
+                let end = span.end + suffix.len();
+                ensure!(
+                    bytes[start..span.start] == *prefix && bytes.get(span.end..end) == Some(suffix),
+                    "the entry layout changed"
+                );
+                bytes.splice(start..end, replaced.iter().copied());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_initial(&self, bytes: &[u8]) -> bool {
+        bytes == self.initial.as_bytes()
     }
 
     /// A whole-file backup and exchange would also copy unrelated secrets.
@@ -548,6 +684,25 @@ impl Location {
 }
 
 impl Document {
+    fn path_to<'a>(&self, entry: &'a Entry) -> Result<Vec<Part<'a>>> {
+        let mut path = entry
+            .container
+            .iter()
+            .map(|part| Part::Key(part))
+            .collect::<Vec<_>>();
+        if entry.key.member.is_some() {
+            let index = match self.entries.get(&entry.key).map(Vec::as_slice) {
+                Some([(old, Some(index))]) if old.container == entry.container => *index,
+                Some(_) => anyhow::bail!("this entry is ambiguous or moved to a different list"),
+                None => lookup(&self.raw, entry.container.iter().map(String::as_str))
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+            };
+            path.push(Part::Index(index));
+        }
+        Ok(path)
+    }
+
     pub fn entry(&self, key: &Key) -> Option<&Entry> {
         match self.entries.get(key).map(Vec::as_slice) {
             Some([(entry, _)]) => Some(entry),
@@ -732,7 +887,7 @@ impl Adoption {
                 Ok(None) => continue,
                 Err(_) => {
                     adoption.notes.push(format!(
-                        "{path}: unmanaged because the file is linked, unreadable, or too large."
+                        "{path}: unmanaged because the file is unreadable, has an unsupported mode or ACL, is too large, or has a symlink or hard link."
                     ));
                     continue;
                 }
@@ -1184,9 +1339,10 @@ mod tests {
     use std::fs;
 
     fn file(path: &str) -> Location {
-        defaults()
-            .into_iter()
+        DEFAULTS
+            .iter()
             .find(|location| location.path == Path::new(path))
+            .cloned()
             .unwrap()
     }
 
