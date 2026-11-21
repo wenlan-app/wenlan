@@ -244,7 +244,7 @@ def validate_session_brief_flow(
         required = [
             "Read the Brief before composing deltas",
             "This read is mandatory before any Brief delta is authored for a registered Space.",
-            "brief update --file",
+            "handoff --file",
             "Never fuzzy-match",
             "Never auto-demote",
             "one-way human receipt",

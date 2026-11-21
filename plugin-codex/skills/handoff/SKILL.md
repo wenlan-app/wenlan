@@ -4,7 +4,7 @@ description: >
   End a work session. Stores durable captures, writes a narrative session log,
   and automatically applies typed item-level deltas to the current Space Brief.
   Invoked as `/handoff`.
-allowed-tools: ["Bash", "mcp__wenlan__update_brief", "mcp__wenlan__list_pages", "mcp__wenlan__read_page", "mcp__wenlan__write_page", "mcp__wenlan__page_basis", "mcp__wenlan__page_code_basis"]
+allowed-tools: ["Bash", "mcp__wenlan__handoff", "mcp__wenlan__list_pages", "mcp__wenlan__read_page", "mcp__wenlan__write_page", "mcp__wenlan__page_basis", "mcp__wenlan__page_code_basis"]
 user-invocable: true
 ---
 
