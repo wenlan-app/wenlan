@@ -554,6 +554,80 @@ async fn lookups_that_name_the_session_are_listed_with_note_titles() {
     assert_eq!(reads[2]["label"], "single writer");
 }
 
+/// A recall also records the notes it returned, so the night can find them;
+/// the session card lists the query only.
+#[tokio::test]
+async fn a_recall_records_the_notes_it_returned_but_the_card_does_not_list_them() {
+    let (app, _temp, db) = common::test_app_no_gate().await;
+    // Notes reach a recall only for a caller with review or full trust.
+    db.register_agent("recall-reader").await.unwrap();
+    db.update_agent("recall-reader", None, None, None, Some("review"), None)
+        .await
+        .unwrap();
+    let headers = [
+        (SESSION_HEADER, SESSION_A),
+        ("x-agent-name", "recall-reader"),
+    ];
+    store_memory(
+        &app,
+        "the sync design uses a single writer",
+        Some(SESSION_A),
+    )
+    .await;
+    announce(&app, SESSION_A, json!({})).await;
+    let (status, page) = send(
+        &app,
+        Method::POST,
+        "/api/pages",
+        Some(json!({
+            "title": "Single writer sync design",
+            "content": "The sync design uses a single writer.",
+            "creation_kind": "authored"
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let page_id = page["id"].as_str().unwrap().to_string();
+
+    let (status, recalled) = send(
+        &app,
+        Method::POST,
+        "/api/memory/search",
+        Some(json!({"query": "single writer sync design", "limit": 10})),
+        &headers,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recalled}");
+    let returned: Vec<&str> = recalled["supplemental_pages"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the recall returned no note: {recalled}"))
+        .iter()
+        .map(|hit| hit["source_id"].as_str().unwrap())
+        .collect();
+    assert!(returned.contains(&page_id.as_str()), "{recalled}");
+
+    let mut seen = Vec::new();
+    for _ in 0..100 {
+        seen = db.session_pages_seen(&session_id(SESSION_A)).await.unwrap();
+        if !seen.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }
+    assert_eq!(seen, std::slice::from_ref(&page_id));
+
+    let detail = detail_with_reads(&app, SESSION_A, 1).await;
+    let kinds: Vec<&str> = detail["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|read| read["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["recall"], "{detail}");
+    assert_eq!(detail["reads_total"], 1, "{detail}");
+}
+
 #[tokio::test]
 async fn a_lookup_never_creates_a_session() {
     let (app, _temp, db) = common::test_app_no_gate().await;

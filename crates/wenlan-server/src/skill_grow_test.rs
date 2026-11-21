@@ -6188,3 +6188,138 @@ async fn ux_hist_1_a_rules_page_with_the_old_nightly_entry_still_serves_its_hist
         [(page.version + 1, 1_700_000_100, Some("later write"))]
     );
 }
+
+/// Design v5 F4: after the one yes for the whole library, a Space nobody
+/// looked at gets only lines that trace to the person. A line taken from what
+/// an AI tool wrote waits; the same line on the person's own page goes.
+#[tokio::test]
+async fn after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unseen() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let first = scratch.db.create_space("First", None, false).await.unwrap();
+    create_person_page(&scratch.db, &scratch.pages, "First", "Rules", SOURCE_QUOTE).await;
+    let model = GrowModel::new();
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    let accepted = handle_accept_space_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        AxumPath(first.id.clone()),
+        Query(SpaceAnswerScope::default()),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(accepted.status, "accepted");
+    assert!(wenlan_core::config::load_config().skills_answered);
+
+    // Two Spaces come later: one page an AI tool wrote, one the person did.
+    scratch
+        .db
+        .create_space("Later AI", None, false)
+        .await
+        .unwrap();
+    let ai_page = create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Later AI",
+        "Checks",
+        "Placeholder to fill in.",
+    )
+    .await;
+    scratch
+        .db
+        .update_page_content(&ai_page, SOURCE_QUOTE, &[], "agent_refresh")
+        .await
+        .unwrap();
+    scratch
+        .db
+        .create_space("Later Person", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Later Person",
+        "Checks",
+        SOURCE_QUOTE,
+    )
+    .await;
+
+    // A third: an AI tool wrote the sentence, citing a memory that keeps the
+    // line the person typed.
+    scratch
+        .db
+        .create_space("Later Cited", None, false)
+        .await
+        .unwrap();
+    scratch
+        .db
+        .upsert_documents(vec![wenlan_core::sources::RawDocument {
+            source: "memory".into(),
+            source_id: "mem_said".into(),
+            title: "Check the output".into(),
+            content: SOURCE_QUOTE.into(),
+            memory_type: Some("preference".into()),
+            space: Some("Later Cited".into()),
+            source_agent: Some("claude-code".into()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    scratch
+        .db
+        .keep_memory_said(
+            "mem_said",
+            &[wenlan_types::conversations::ConversationLine {
+                speaker: wenlan_types::conversations::ConversationSpeaker::You,
+                text: "always look at what it rendered before saying it works".into(),
+                at: None,
+            }],
+        )
+        .await
+        .unwrap();
+    let cited_page = create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Later Cited",
+        "Checks",
+        "Placeholder to fill in.",
+    )
+    .await;
+    scratch
+        .db
+        .update_page_content(
+            &cited_page,
+            &format!("{SOURCE_QUOTE}[1]"),
+            &["mem_said"],
+            "agent_refresh",
+        )
+        .await
+        .unwrap();
+    let citation = serde_json::json!([{"occurrence": 1, "marker": 1, "source_kind": "memory",
+        "locator": "mem_said", "score": 0.9, "status": "verified"}])
+    .to_string();
+    scratch
+        .db
+        .set_page_citations(&cited_page, Some(&citation))
+        .await
+        .unwrap();
+
+    refresh(&scratch, &model).await;
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Later Cited")).await),
+        vec![RULE_TEXT],
+        "a line whose memory keeps the person's own words goes"
+    );
+    assert!(
+        texts(&read_rules_as_codex(&scratch, Some("Later AI")).await).is_empty(),
+        "a line only an AI wrote went to every tool with nobody seeing it"
+    );
+    assert_eq!(
+        texts(&read_rules_as_codex(&scratch, Some("Later Person")).await),
+        vec![RULE_TEXT]
+    );
+}

@@ -121,6 +121,11 @@ pub async fn handle_get_session(
         |page| page.id.as_str(),
     )
     .await?;
+    // The notes a recall returned are kept for the night, not for this card:
+    // a recall already shows as one line, its query.
+    detail
+        .reads
+        .retain(|read| read.kind != SessionReadKind::RecallPage);
     // Note reads name a note: list only the ones this caller may see.
     let read_pages: Vec<String> = detail
         .reads

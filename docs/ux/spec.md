@@ -325,7 +325,21 @@ and wait for evidence that people need them.
   saved line out, and never changes or removes a sentence that was already
   there. It is not the AI nodding for you either: it lands only where you
   asked in so many words, and the Lock still holds.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。「如果這體驗比較好，那就這樣改」（2026-11-21，回覆：來源變了時，你改過的頁不再整頁等你收，改成一句一句：AI 寫的句子直接改，你寫的只建議；鎖住的才整頁出草稿。同日：依賴其他頁的頁，沒鎖就讓 AI 判斷直接改）。存成規則的補充（2026-11-17）：選擇卡 08:29Z，見 UX-SKILL-14；這段補充的英文字句待 Qi-Xuan 確認。
+  A page an AI tool only read in a conversation, without citing anything that
+  conversation wrote, is a candidate and nothing more (the tool reads a page
+  with `read_page`, and a recall returns pages too): the night changes one of
+  its sentences only when a new point from that conversation, in the same
+  Space, clearly contradicts that sentence, and changes nothing else on the
+  page. An AI-written sentence on an unlocked page changes in place, as in the
+  automatic update; a sentence you wrote, and any sentence on a locked page,
+  only gets a proposal that names the point it came from. Tests:
+  `a_night_changes_the_ai_sentence_a_new_point_contradicts_on_a_note_a_recall_returned`,
+  `a_night_only_proposes_when_the_contradicted_sentence_is_the_persons`,
+  `a_night_only_proposes_on_a_locked_note_even_for_the_ais_sentence`,
+  `a_read_note_with_no_contradicted_sentence_is_not_written`,
+  `a_note_read_in_another_space_is_never_a_candidate`,
+  `a_recall_records_the_notes_it_returned_but_the_card_does_not_list_them`.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。「如果這體驗比較好，那就這樣改」（2026-11-21，回覆：來源變了時，你改過的頁不再整頁等你收，改成一句一句：AI 寫的句子直接改，你寫的只建議；鎖住的才整頁出草稿。同日：依賴其他頁的頁，沒鎖就讓 AI 判斷直接改）。「這次讀過但沒引用的頁只當候選；夜裡對到句子確實衝突才改那一句」（F6／D15：只讀過的頁，夜裡只在新的一點確實和某一句衝突時改那一句；AI 寫的句子直接改，人寫的只給建議，鎖住的頁只給建議）。存成規則的補充（2026-11-17）：選擇卡 08:29Z，見 UX-SKILL-14；這段補充的英文字句待 Qi-Xuan 確認。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -408,7 +422,21 @@ and wait for evidence that people need them.
   back to the map, both seen moving. With reduced motion everything jumps
   instead. Each night keeps one record of what it changed, and Undo takes its
   connections back too.
-  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）選擇卡「可以，讀一次再收」（2026-11-03 17:24）。「在睡觉的时候…会把东西给存进到长期记忆里面去…你视觉上它可以留在那里待一周，但是实际上呢，它背后的东西在晚上就已经处理好了」（2026-11-03 17:25）「能在界面上什么地方可以显示说，哦，他晚上的时候经过整理的，所以让用户感觉到价值，而不是哦默默做完就默默做完」（2026-11-03 17:48）「应该要更优雅的说法…我们之前一直在强调那个 steeping」（2026-11-03 17:59）「一个线板在那里长长的，要是离得很远，那不就拉了超长的一个线？」選「點去各自主題旁」並要動畫（2026-11-05 11:57 PT）「還是有線喔？」「你能不能找 Fable 設計一切好」，看了 Fable 的整套設計（不畫線、遠的主題在畫面邊上）說「可以」（2026-11-05 14:50 PT）
+  A conversation a night did not read is told apart on the thing's page, one
+  quiet line each and only when there is one: "Didn't get one conversation"
+  for one with no transcript to read (its tool keeps none Wenlan can read, or
+  it was deleted; counted only since the thing was last read, in the Space you
+  can see), naming the tool when it is one; "will be read once AI is
+  available" for one due on a night when this computer had no AI model for
+  the night (or background AI is off), until a later night reads it. That wait
+  is kept in memory, per computer, and cleared whenever the model is there.
+  Read ones stay in the steeped line. Tests:
+  `ux_chat_5_a_conversation_from_a_tool_with_no_transcript_reader_is_not_got`,
+  `ux_chat_5_a_due_conversation_is_waiting_until_a_night_reads_it`,
+  `ux_chat_5_conversations_wait_only_while_the_night_has_no_model`, and in
+  `ThingDetail.test.tsx` the "didn't get", "once AI is available" and
+  "Traditional Chinese" lines.
+  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）選擇卡「可以，讀一次再收」（2026-11-03 17:24）。「在睡觉的时候…会把东西给存进到长期记忆里面去…你视觉上它可以留在那里待一周，但是实际上呢，它背后的东西在晚上就已经处理好了」（2026-11-03 17:25）「能在界面上什么地方可以显示说，哦，他晚上的时候经过整理的，所以让用户感觉到价值，而不是哦默默做完就默默做完」（2026-11-03 17:48）「应该要更优雅的说法…我们之前一直在强调那个 steeping」（2026-11-03 17:59）「一个线板在那里长长的，要是离得很远，那不就拉了超长的一个线？」選「點去各自主題旁」並要動畫（2026-11-05 11:57 PT）「還是有線喔？」「你能不能找 Fable 設計一切好」，看了 Fable 的整套設計（不畫線、遠的主題在畫面邊上）說「可以」（2026-11-05 14:50 PT）「讀不到對話的工具顯示「沒拿到這段對話」；分清「無逐字稿／模型沒跑／已存好」」（design v5 F7，2026-11-21）
 - **UX-CHAT-6** `shipped` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
@@ -666,7 +694,16 @@ and wait for evidence that people need them.
   changes the answer later. Suggested edits to the person's own skills are still
   asked one by one. The ask, a No and the switch are about what Wenlan takes
   from pages; a rule the person wrote themselves needs none of them
-  (UX-SKILL-10).
+  (UX-SKILL-10). A line nobody sees before every AI tool reads it (a later
+  Space covered by that one yes, or a line new on a night in a Space that
+  already said yes) goes only when what it quotes traces to the person: a
+  sentence they wrote, edited or accepted, one citing a memory that keeps
+  their own words, or one on a page that follows only their pages. A line
+  quoting only what an AI wrote from its own reading is left out; one the
+  person saw on the ask counts by their yes.
+  Tests `after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unseen`
+  and `a_rule_from_a_following_page_changes_the_night_after_that_page_catches_up`.
+  原文（後一段）：「上述提到的問題都要修好」（2026-11-21，設計 v5 F4「推斷的點升規則前對到你的原句」）。
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. They sit in a "…"

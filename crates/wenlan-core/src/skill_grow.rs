@@ -132,6 +132,30 @@ pub fn meaning_is_consistent(text: &str, quote: &str) -> bool {
     text == quote
 }
 
+/// Which of a page's sentences a rule's quote was taken from: the one sentence
+/// holding the whole quote, or, for a quote across sentences, every sentence
+/// inside it. Compared without case, spacing, punctuation or citation markers.
+/// Empty when the quote matches no sentence of the page as it is now.
+pub fn sentences_quoted(quote: &str, sentences: &[&str]) -> Vec<usize> {
+    let quote = normalized(&citation_free(quote));
+    if quote.is_empty() {
+        return Vec::new();
+    }
+    let texts: Vec<String> = sentences
+        .iter()
+        .map(|text| normalized(&citation_free(text)))
+        .collect();
+    if let Some(idx) = texts.iter().position(|text| text.contains(&quote)) {
+        return vec![idx];
+    }
+    texts
+        .iter()
+        .enumerate()
+        .filter(|(_, text)| !text.is_empty() && quote.contains(text.as_str()))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
 /// The text with numbered citation markers (`[1]`, `[12]`) removed. Pages
 /// that end every sentence with one would otherwise offer no span a model can
 /// quote as a clean sentence; the model sees, and grounding checks against,
