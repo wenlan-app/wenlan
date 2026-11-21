@@ -580,6 +580,7 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),
     (RegisteredMethod::Patch, "/api/brief"),
+    (RegisteredMethod::Post, "/api/handoff"),
     // Renaming a thing; its read is the sensitive GET row.
     (RegisteredMethod::Patch, "/api/things/{id}"),
     (RegisteredMethod::Put, "/api/profile"),

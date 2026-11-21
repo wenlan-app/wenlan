@@ -456,6 +456,28 @@ impl WenlanClient {
         self.patch_json("/api/brief", request).await
     }
 
+    /// POST /api/handoff — the canonical handoff write contract.
+    pub async fn handoff(
+        &self,
+        request: &wenlan_types::HandoffRequest,
+        session: Option<&SessionRef>,
+    ) -> Result<wenlan_types::HandoffReceipt> {
+        if session == self.session.as_ref() {
+            self.announce_session().await;
+        }
+        let url = format!("{}/api/handoff", self.base_url);
+        let mut builder = self.http.post(&url).json(request);
+        if let Some(session) = session {
+            builder = builder.header(SESSION_HEADER, session.to_string());
+        }
+        let response = self.send(builder, &format!("POST {url} failed")).await?;
+        ensure_ok(response, &url)
+            .await?
+            .json()
+            .await
+            .context("parsing /api/handoff response")
+    }
+
     /// GET /api/brief/history — past Brief updates, newest first.
     pub async fn brief_history(&self, limit: usize) -> Result<BriefHistoryResponse> {
         self.get_json(&format!("/api/brief/history?limit={limit}"), true)

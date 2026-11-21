@@ -179,7 +179,7 @@ fn format_brief(response: &BriefReadResponse) -> String {
                 .into()
         }
         BriefReadState::BriefNotCreated => format!(
-            "No Brief exists for Space '{}'. Run `wenlan brief update --file <json>` \
+            "No Brief exists for Space '{}'. Run `wenlan handoff --file <json>` \
              (or the /handoff plugin command) to create it.\n",
             response.space.as_deref().unwrap_or("unknown")
         ),
@@ -296,6 +296,9 @@ fn format_items(output: &mut String, heading: &str, items: &[BriefItem]) {
             output.push_str(gate);
             output.push(']');
         }
+        if item.filled_by_wenlan {
+            output.push_str(" [filled in by Wenlan / Wenlan 補的; not confirmed]");
+        }
         output.push('\n');
     }
 }
@@ -353,6 +356,8 @@ mod tests {
                     added_at: 1,
                     gate: Some("CI green".into()),
                     version: 2,
+                    confirmed: true,
+                    filled_by_wenlan: false,
                 }],
                 backlog: Vec::new(),
             }),
@@ -429,6 +434,8 @@ mod tests {
                 added_at: 1,
                 gate: None,
                 version: 1,
+                confirmed: true,
+                filled_by_wenlan: false,
             }],
             backlog: Vec::new(),
         };
@@ -487,9 +494,8 @@ mod tests {
 
         let output = format_brief(&response);
 
-        // The CLI has no `handoff` subcommand; the hint must point at
-        // something a CLI user can actually run.
+        // The hint names the canonical write verb a CLI user can actually run.
         assert!(!output.contains("The first handoff"));
-        assert!(output.contains("wenlan brief update"));
+        assert!(output.contains("wenlan handoff --file"));
     }
 }

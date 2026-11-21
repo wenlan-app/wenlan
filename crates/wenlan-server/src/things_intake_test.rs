@@ -107,6 +107,7 @@ fn conv(id: &str, said: &[&str], minutes_ago: i64) -> FoundConversation {
         said: said.iter().map(|s| s.to_string()).collect(),
         last_reply: "done".into(),
         first_at: now - minutes_ago * 60 - 600,
+        last_content_at: now - minutes_ago * 60,
         last_at: now - minutes_ago * 60,
         automated: false,
         on_behalf: false,

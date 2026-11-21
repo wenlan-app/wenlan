@@ -54,6 +54,8 @@ const DREAM_SETTLED_SECS: i64 = 30 * 60;
 const DREAM_DAYTIME_SECS: i64 = 24 * 60 * 60;
 /// How far back transcripts are looked up for a night's reading.
 const DREAM_LOOKUP_SECS: i64 = 30 * 24 * 60 * 60;
+/// Rule 2: a conversation still for this long is considered stopped.
+pub const HANDOFF_IDLE_SECS: i64 = 50 * 60;
 
 /// Waits after a model failed, so a conversation the everyday model cannot
 /// read, or a grouping answer that will not parse, does not spend the
@@ -116,6 +118,8 @@ pub struct LookReport {
     /// Spaces whose Brief got plain lines, and Brief items closed.
     pub briefs: usize,
     pub briefs_closed: usize,
+    /// Brief items filled from an idle local transcript.
+    pub handoffs_filled: usize,
 }
 
 /// Start the loop.
@@ -148,7 +152,8 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
                 if report.labelled > 0
                     || report.grouped > 0
                     || report.dreamed > 0
-                    || report.briefs > 0 =>
+                    || report.briefs > 0
+                    || report.handoffs_filled > 0 =>
             {
                 tracing::info!("[things] read conversations: {report:?}");
             }
@@ -236,6 +241,43 @@ pub async fn look_once(
     shared: &SharedState,
     backoff: &mut Backoff,
 ) -> Result<Option<LookReport>, String> {
+    let db = shared
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or_else(|| "the database is not ready".to_string())?;
+    let roots = wenlan_types::session_context::TranscriptRoots::from_env(dirs::home_dir());
+    let now = chrono::Utc::now().timestamp();
+    let found =
+        tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
+            .await
+            .map_err(|e| e.to_string())?;
+    // UX-HAND-8: without a readable team list no Space is filled, so private
+    // conversation text never reaches a team Space. A fill problem skips only
+    // the fill; intake and the night pass go on.
+    let handoffs_filled = match wenlan_core::shared_space::team_names_by_space(
+        &wenlan_core::shared_space::settings_path(),
+    ) {
+        Ok(teams) => {
+            let team_spaces = teams.into_keys().collect();
+            match db
+                .fill_idle_handoffs(&found, &team_spaces, now, HANDOFF_IDLE_SECS)
+                .await
+            {
+                Ok(filled) => filled,
+                Err(error) => {
+                    tracing::warn!("[things] idle handoff fill failed: {error}");
+                    0
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!("[things] idle handoff fill skipped, team Spaces unreadable: {error}");
+            0
+        }
+    };
+
     let Some(models) = models(shared).await else {
         // No everyday model yet (an on-device one waits for an idle
         // computer): the skills night pass only needs the grouping model.
@@ -244,22 +286,15 @@ pub async fn look_once(
                 crate::skill_grow::spawn_nightly_if_idle(shared.clone(), group);
             }
         }
-        return Ok(None);
+        return Ok((handoffs_filled > 0).then_some(LookReport {
+            found: found.len(),
+            handoffs_filled,
+            ..LookReport::default()
+        }));
     };
-    let db = shared
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or_else(|| "the database is not ready".to_string())?;
     let language = intake::language_name(wenlan_core::config::load_config().ui_language.as_deref());
-    let roots = wenlan_types::session_context::TranscriptRoots::from_env(dirs::home_dir());
-    let now = chrono::Utc::now().timestamp();
-    let found =
-        tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
-            .await
-            .map_err(|e| e.to_string())?;
     let mut report = look_with_until(&db, found, &models, language, backoff, &still_quiet).await?;
+    report.handoffs_filled = handoffs_filled;
     if !still_quiet() {
         return Ok(Some(report));
     }

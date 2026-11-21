@@ -29,6 +29,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/brief/history", get(handle_brief_history))
         .route("/api/brief/plain", get(handle_brief_plain))
         .route("/api/brief/history/{version}", get(handle_brief_version))
+        .route("/api/handoff", post(handle_handoff))
 }
 
 const HISTORY_DEFAULT_LIMIT: usize = 20;
@@ -358,6 +359,16 @@ pub async fn handle_update_brief(
     }
 
     Ok(Json(receipt).into_response())
+}
+
+/// POST /api/handoff — the canonical Brief write verb. `PATCH /api/brief`
+/// remains a compatibility route and calls the same implementation.
+pub async fn handle_handoff(
+    state: State<SharedState>,
+    headers: HeaderMap,
+    request: Json<wenlan_types::HandoffRequest>,
+) -> Result<Response, ServerError> {
+    handle_update_brief(state, headers, request).await
 }
 
 /// GET /api/brief/history — successful Brief updates for the resolved Space,

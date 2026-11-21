@@ -20,6 +20,7 @@ fn found(id: &str, last_at: i64, said: &[&str]) -> FoundConversation {
         said: said.iter().map(|s| s.to_string()).collect(),
         last_reply: String::new(),
         first_at: last_at - 60,
+        last_content_at: last_at,
         last_at,
         automated: false,
         on_behalf: false,

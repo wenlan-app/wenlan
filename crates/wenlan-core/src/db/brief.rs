@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS brief_items (
     added_at INTEGER NOT NULL,
     gate TEXT,
     version INTEGER NOT NULL DEFAULT 1,
+    confirmed INTEGER NOT NULL DEFAULT 1,
+    filled_by_wenlan INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );
 
@@ -98,6 +100,49 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("m102 brief bump: {error}")))?;
         log::info!("[migration] Migration 102 applied: Space-owned Brief tables");
+        Ok(())
+    }
+
+    /// Migration 168: distinguish a real handoff from the deterministic idle
+    /// fallback that Wenlan derives from a local transcript.
+    pub(super) async fn migrate_168_handoff_origin(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(168, prior_version).await?;
+        let conn = self.conn.lock().await;
+        for (name, ddl) in [
+            (
+                "confirmed",
+                "ALTER TABLE brief_items ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1",
+            ),
+            (
+                "filled_by_wenlan",
+                "ALTER TABLE brief_items ADD COLUMN filled_by_wenlan INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            let mut rows = conn
+                .query(
+                    "SELECT 1 FROM pragma_table_info('brief_items') WHERE name=?1",
+                    libsql::params![name],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m168 brief columns: {e}")))?;
+            let exists = rows
+                .next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m168 brief column row: {e}")))?
+                .is_some();
+            drop(rows);
+            if !exists {
+                conn.execute(ddl, ())
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("m168 {name}: {e}")))?;
+            }
+        }
+        conn.execute("PRAGMA user_version = 168", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m168 bump: {e}")))?;
         Ok(())
     }
 }
@@ -273,7 +318,7 @@ async fn read_brief(
 
     let mut rows = conn
         .query(
-            "SELECT id, text, state, added_at, gate, version
+            "SELECT id, text, state, added_at, gate, version, confirmed, filled_by_wenlan
                FROM brief_items
               WHERE space_id=?1
               ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END,
@@ -306,6 +351,8 @@ async fn read_brief(
             added_at: row.get::<i64>(3).unwrap_or_default(),
             gate: row.get::<Option<String>>(4).unwrap_or(None),
             version: row.get::<i64>(5).unwrap_or(1),
+            confirmed: row.get::<i64>(6).unwrap_or(1) != 0,
+            filled_by_wenlan: row.get::<i64>(7).unwrap_or(0) != 0,
         };
         match state {
             wenlan_types::BriefItemState::Active => active.push(item),
@@ -360,6 +407,16 @@ impl MemoryDB {
         &self,
         request: &wenlan_types::BriefUpdateRequest,
         session: Option<&wenlan_types::SessionRef>,
+    ) -> Result<BriefUpdateOutcome, WenlanError> {
+        self.apply_brief_update_with_origin(request, session, false)
+            .await
+    }
+
+    async fn apply_brief_update_with_origin(
+        &self,
+        request: &wenlan_types::BriefUpdateRequest,
+        session: Option<&wenlan_types::SessionRef>,
+        filled_by_wenlan: bool,
     ) -> Result<BriefUpdateOutcome, WenlanError> {
         validate_update_request(request)?;
         let request_digest = update_request_digest(request)?;
@@ -532,8 +589,9 @@ impl MemoryDB {
                         .filter(|value| !value.is_empty());
                     tx.execute(
                         "INSERT INTO brief_items
-                            (id, space_id, text, state, added_at, gate, version, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+                            (id, space_id, text, state, added_at, gate, version,
+                             confirmed, filled_by_wenlan, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 1, 0, ?7)",
                         libsql::params![
                             item_id.as_str(),
                             space_id.as_str(),
@@ -571,9 +629,17 @@ impl MemoryDB {
                     let updated = tx
                         .execute(
                             "UPDATE brief_items
-                                SET text=?1, version=version+1, updated_at=?2
-                              WHERE space_id=?3 AND id=?4",
-                            libsql::params![text.trim(), now, space_id.as_str(), item_id.as_str()],
+                                SET text=?1, version=version+1, confirmed=?2,
+                                    filled_by_wenlan=?3, updated_at=?4
+                              WHERE space_id=?5 AND id=?6",
+                            libsql::params![
+                                text.trim(),
+                                i64::from(!filled_by_wenlan),
+                                i64::from(filled_by_wenlan),
+                                now,
+                                space_id.as_str(),
+                                item_id.as_str()
+                            ],
                         )
                         .await
                         .map_err(|error| {
@@ -831,6 +897,136 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("brief update commit: {error}")))?;
         Ok(BriefUpdateOutcome::Applied(receipt))
+    }
+
+    /// Rule 2: once a local conversation has been idle for `idle_secs`, fill
+    /// its last handed-off item from the later transcript if the session has
+    /// not made a newer handoff. `now` is injected so tests never sleep.
+    pub async fn fill_idle_handoffs(
+        &self,
+        conversations: &[crate::conversation_intake::FoundConversation],
+        team_spaces: &std::collections::BTreeSet<String>,
+        now: i64,
+        idle_secs: i64,
+    ) -> Result<usize, WenlanError> {
+        let mut filled = 0;
+        for conversation in conversations {
+            if conversation.last_at > now.saturating_sub(idle_secs) {
+                continue;
+            }
+            let Some(session_id) = super::intake::found_session_id(conversation) else {
+                continue;
+            };
+            let latest = {
+                let conn = self.conn.lock().await;
+                let mut rows = conn
+                    .query(
+                        "SELECT h.created_at, h.mutations_json, h.snapshot_json, s.name
+                           FROM brief_history h
+                           JOIN spaces s ON s.id=h.space_id
+                          WHERE h.session_id=?1
+                          ORDER BY h.created_at DESC, h.brief_version DESC
+                          LIMIT 1",
+                        libsql::params![session_id],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("idle handoff lookup: {e}")))?;
+                rows.next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("idle handoff row: {e}")))?
+                    .map(|row| {
+                        (
+                            row.get::<i64>(0).unwrap_or_default(),
+                            row.get::<String>(1).unwrap_or_default(),
+                            row.get::<String>(2).unwrap_or_default(),
+                            row.get::<String>(3).unwrap_or_default(),
+                        )
+                    })
+            };
+            let Some((handed_at, mutations_json, snapshot_json, space)) = latest else {
+                continue;
+            };
+            if team_spaces.contains(&space) {
+                continue;
+            }
+            if handed_at >= conversation.last_content_at {
+                continue;
+            }
+            let mutations: Vec<wenlan_types::BriefAppliedMutation> =
+                serde_json::from_str(&mutations_json)?;
+            let Some((item_id, handed_version)) = mutations
+                .iter()
+                .rev()
+                .find_map(|mutation| Some((mutation.item_id.clone()?, mutation.version?)))
+            else {
+                continue;
+            };
+            let snapshot: wenlan_types::Brief = serde_json::from_str(&snapshot_json)?;
+            let Some(prior) = snapshot
+                .active
+                .iter()
+                .chain(snapshot.backlog.iter())
+                .find(|item| item.id == item_id)
+            else {
+                continue;
+            };
+            let Some(current) = self
+                .get_brief_by_space_name(&space)
+                .await?
+                .and_then(|brief| {
+                    brief
+                        .active
+                        .into_iter()
+                        .chain(brief.backlog)
+                        .find(|item| item.id == item_id)
+                })
+            else {
+                continue;
+            };
+            if current.filled_by_wenlan || current.version != handed_version {
+                continue;
+            }
+            let transcript = if conversation.last_reply.trim().is_empty() {
+                conversation.said.last().map(String::as_str).unwrap_or("")
+            } else {
+                conversation.last_reply.as_str()
+            };
+            let transcript = transcript
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("");
+            if transcript.is_empty() {
+                continue;
+            }
+            let fragment: String = transcript.chars().take(240).collect();
+            let text: String = format!("{} — {}", prior.text.trim(), fragment)
+                .chars()
+                .take(500)
+                .collect();
+            let request = wenlan_types::BriefUpdateRequest {
+                space,
+                caller_id: "wenlan-idle-fill".into(),
+                operation_id: format!(
+                    "idle-{}-{}-{}",
+                    conversation.tool, conversation.external_id, conversation.last_at
+                ),
+                summary: None,
+                mutations: vec![wenlan_types::BriefMutation::Edit {
+                    item_id,
+                    expected_version: current.version,
+                    text,
+                }],
+            };
+            let receipt = self
+                .apply_brief_update_with_origin(&request, None, true)
+                .await?
+                .into_receipt();
+            if !receipt.applied.is_empty() {
+                filled += 1;
+            }
+        }
+        Ok(filled)
     }
 }
 

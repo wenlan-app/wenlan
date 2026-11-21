@@ -18,6 +18,7 @@ fn found(id: &str, last_at: i64) -> FoundConversation {
         said: vec!["a".into(), "b".into()],
         last_reply: String::new(),
         first_at: last_at - 60,
+        last_content_at: last_at,
         last_at,
         automated: false,
         on_behalf: false,

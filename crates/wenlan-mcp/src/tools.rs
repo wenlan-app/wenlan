@@ -163,7 +163,7 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "capture",
     "save_source",
     "keep_original",
-    "update_brief",
+    "handoff",
     "write_page",
     "rename_page",
     "delete_page",
@@ -3142,6 +3142,9 @@ fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::B
         ));
         if let Some(gate) = item.gate.as_deref() {
             output.push_str(&format!(" [gate: {gate}]"));
+        }
+        if item.filled_by_wenlan {
+            output.push_str(" [filled in by Wenlan / Wenlan 補的; not confirmed]");
         }
         output.push('\n');
     }
@@ -6507,6 +6510,25 @@ impl WenlanMcpServer {
         &self,
         params: UpdateBriefParams,
     ) -> Result<CallToolResult, McpError> {
+        self.handoff_write_impl(params, "/api/brief", "update_brief", false)
+            .await
+    }
+
+    pub async fn handoff_impl(
+        &self,
+        params: UpdateBriefParams,
+    ) -> Result<CallToolResult, McpError> {
+        self.handoff_write_impl(params, "/api/handoff", "handoff", true)
+            .await
+    }
+
+    async fn handoff_write_impl(
+        &self,
+        params: UpdateBriefParams,
+        endpoint: &str,
+        verb: &str,
+        post: bool,
+    ) -> Result<CallToolResult, McpError> {
         let Some(space) = effective_space(&params.space) else {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
                 "Nothing was saved: this folder has no Space yet. Pass `space`, or have the user run `wenlan init` inside their repository to make one.".to_string(),
@@ -6514,7 +6536,7 @@ impl WenlanMcpServer {
         };
         if params.summary.is_none() && params.mutations.is_empty() {
             return Err(McpError::invalid_params(
-                "update_brief needs a summary or at least one mutation",
+                format!("{verb} needs a summary or at least one mutation"),
                 None,
             ));
         }
@@ -6534,8 +6556,11 @@ impl WenlanMcpServer {
                 }),
             mutations: params.mutations.into_iter().map(Into::into).collect(),
         };
-        let receipt: wenlan_types::brief::BriefUpdateReceipt =
-            try_call!(client.patch("/api/brief", &request), "update_brief");
+        let receipt: wenlan_types::brief::HandoffReceipt = if post {
+            try_call!(client.post(endpoint, &request), verb)
+        } else {
+            try_call!(client.patch(endpoint, &request), verb)
+        };
         let value = serde_json::to_value(receipt)
             .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         Ok(CallToolResult::structured(value))
@@ -7899,6 +7924,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Hand off to the next session through the Space Brief: replace the summary (guarded by expected_version) and add, edit, move, gate, or complete items. Read brief first and reuse its brief_version and item versions; conflicts are reported, never silently overwritten. Reuse operation_id to retry safely.",
+        annotations(
+            title = "Handoff",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn handoff(
+        &self,
+        Parameters(params): Parameters<UpdateBriefParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.handoff_impl(params).await
+    }
+
+    #[tool(
         description = "Keep the map of what this conversation is working through. Call it only when the shape changes: a new question comes up, an option is added or dropped, a reason matters, or something is decided or reopened. Not every turn. Pick the shape from the conversation: working toward a decision or fixing a problem means a question with options, reasons, and decided / open / dropped; exploring or learning means a topic tree. One short sentence per point, in the conversation's language. Points the person wrote or edited are changed only as proposals. Do not tell the person you updated the map. Read first, then change with the revision you read; on a conflict, read again and redo.",
         annotations(
             title = "Thing map",
@@ -8228,6 +8270,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "lint_repair_apply",
     "lint_repair_verify",
     "update_brief",
+    "handoff",
     "forget",
     "confirm_memory",
     "rename_page",
@@ -8505,11 +8548,11 @@ impl ServerHandler for WenlanMcpServer {
              - capture feeds it: one durable insight per call (a preference, decision, correction, or fact), \
                with the why. What to store and what to skip is spelled out in the capture tool description.\n\
              - brief carries work across sessions: read it when resuming project work or when the user asks to \
-               catch up; update_brief hands off to the next session.\n\
+               catch up; handoff writes it for the next session.\n\
              - recall finds one specific thing (\"what's Alice's role?\", \"our auth decision\").\n\
              - get_page_sources shows what a page rests on.\n\n\
              BRIEF vs RECALL: brief is the Space-owned project snapshot; recall is a targeted lookup. \
-             Brief reads never create or mutate state; only update_brief writes.\n\n\
+             Brief reads never create or mutate state; handoff writes.\n\n\
              You set each capture's type and entity yourself, in every mode. When Steep runs automatically, \
              the backend also scores quality, adds tags, and deduplicates in the background; when it runs on \
              demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
@@ -8922,6 +8965,7 @@ mod tests {
             "lint_repair_apply",
             "lint_repair_verify",
             "update_brief",
+            "handoff",
             "forget",
             "confirm_memory",
             "delete_page",
@@ -8943,7 +8987,7 @@ mod tests {
                 .get_info()
                 .instructions
                 .expect("standard instructions");
-            assert!(standard.contains("update_brief hands off"));
+            assert!(standard.contains("handoff writes it for the next session"));
 
             let query = make_server_with_profile(transport, "agent", None, ToolProfile::QueryOnly)
                 .get_info()
@@ -9430,6 +9474,7 @@ mod tests {
         for name in [
             "future_tool",
             "update_brief",
+            "handoff",
             "distill",
             "page_basis",
             "lint",
@@ -15017,7 +15062,7 @@ mod tests {
             "read_page",
             "capture",
             "brief",
-            "update_brief",
+            "handoff",
             "recall",
         ] {
             assert!(i.contains(tool), "with_instructions must place {tool}");
@@ -15200,7 +15245,7 @@ mod tests {
         let instructions = server_instructions();
         assert!(instructions.contains("BRIEF vs RECALL"));
         assert!(instructions.contains("Brief reads never create or mutate state"));
-        assert!(instructions.contains("only update_brief writes"));
+        assert!(instructions.contains("handoff writes"));
         assert!(!instructions.contains("FIRST THING EVERY SESSION"));
     }
 
@@ -16242,6 +16287,7 @@ mod tests {
             ("set_page_space", (false, false, false)),
             ("steep", (false, false, false)),
             ("thing_map", (false, false, false)),
+            ("handoff", (false, false, false)),
             ("update_brief", (false, false, false)),
             ("write_page", (false, true, false)),
         ]);
@@ -16669,6 +16715,7 @@ mod tests {
             "steep",
             "thing_map",
             "theme",
+            "handoff",
             "update_brief",
             "write_page",
         ]

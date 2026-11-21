@@ -18,6 +18,8 @@ fn brief(items: &[(&str, &str)]) -> Brief {
                 added_at: 1_790_000_000,
                 gate: None,
                 version: 1,
+                confirmed: true,
+                filled_by_wenlan: false,
             })
             .collect(),
         backlog: vec![],

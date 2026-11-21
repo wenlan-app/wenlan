@@ -8,10 +8,10 @@ const items = ["Sign the Windows builds", "Record this week's update video", "Le
 
 function withBrief() {
   const fixture = createSpaceProjectFixture();
-  return { ...fixture, spaceBriefs: { Wenlan: { summary: "The trust fixes are all merged.", handed_off_at: Math.floor(Date.now() / 1000) - 3 * 3600, active: items.map((line, i) => ({ id: `item-${i}`, line, raw: false })) } } };
+  return { ...fixture, spaceBriefs: { Wenlan: { summary: "The trust fixes are all merged.", handed_off_at: Math.floor(Date.now() / 1000) - 3 * 3600, active: items.map((line, i) => ({ id: `item-${i}`, line, raw: false, filled_by_wenlan: i === 0 })) } } };
 }
 
-test("UX-SPACE-1 a Space opens on its Brief above its pages, with no tabs", async ({ page }) => {
+test("UX-SPACE-1 UX-HAND-3 a Space opens on its Brief above its pages, with no tabs", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const controller = await installTauriMock(page, { locale: "en", rawActions: [], fixture: withBrief(), localStorage: { "wenlan-spaces-view-mode": "rows" } });
   await page.goto("/");
@@ -20,6 +20,7 @@ test("UX-SPACE-1 a Space opens on its Brief above its pages, with no tabs", asyn
   const brief = page.getByRole("region", { name: "Where this stands", exact: true });
   await expect(brief).toContainText("The trust fixes are all merged.");
   await expect(brief).toContainText("Last handoff");
+  await expect(brief).toContainText("Filled in by Wenlan · not confirmed");
   await expect(brief.getByRole("listitem")).toHaveCount(3);
   await brief.getByRole("button", { name: "2 more", exact: true }).click();
   await expect(brief.getByRole("listitem")).toHaveCount(5);

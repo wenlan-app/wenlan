@@ -3,7 +3,10 @@
 use rmcp::model::{CallToolResult, ContentBlock};
 use wenlan_mcp::{
     client::WenlanClient,
-    tools::{BriefParams, TransportMode, WenlanMcpServer},
+    tools::{
+        BriefItemStateParam, BriefMutationParam, BriefParams, TransportMode, UpdateBriefParams,
+        WenlanMcpServer,
+    },
 };
 use wenlan_types::{
     Brief, BriefItem, BriefItemState, BriefReadResponse, BriefReadState, BriefRelatedContext,
@@ -54,6 +57,8 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
                 added_at: 1_785_110_400,
                 gate: Some("MCP tests pass".into()),
                 version: 3,
+                confirmed: true,
+                filled_by_wenlan: false,
             }],
             backlog: Vec::new(),
         }),
@@ -65,6 +70,46 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
         code_basis_pending_explained: false,
         getting_started: None,
     }
+}
+
+#[tokio::test]
+async fn handoff_tool_posts_the_shared_write_shape() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/handoff"))
+        .and(body_json(serde_json::json!({
+            "space": "wenlan",
+            "caller_id": "test-agent",
+            "operation_id": "handoff-op",
+            "mutations": [{"kind": "add", "text": "Ship it", "state": "active"}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "space": "wenlan",
+            "brief_version": 1,
+            "applied": [{"mutation_index": 0, "kind": "add", "item_id": "item-1", "version": 1}],
+            "conflicts": [],
+            "warnings": []
+        })))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let result = make_server(&mock)
+        .handoff_impl(UpdateBriefParams {
+            space: Some("wenlan".into()),
+            operation_id: Some("handoff-op".into()),
+            summary: None,
+            mutations: vec![BriefMutationParam::Add {
+                text: "Ship it".into(),
+                state: BriefItemStateParam::Active,
+                gate: None,
+            }],
+            session: None,
+        })
+        .await
+        .expect("handoff succeeds");
+
+    assert_eq!(result.structured_content.unwrap()["brief_version"], 1);
 }
 
 #[tokio::test]

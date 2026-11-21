@@ -354,15 +354,17 @@ fn manifest_counts_match_the_spec() {
     // Personal adoption, settings, checkout and skill routes, and project review/opt-in.
     // Then 411 after the four hosted team sign-in routes (POST
     // `/api/team/invites`, `/api/team/members/{id}/invite`, `/approve` and
-    // `/compromised`): invite and account changes, no page text.
+    // `/compromised`): invite and account changes, no page text. Then 412
+    // after POST `/api/handoff` (the canonical Brief write contract).
     assert_eq!(
         HTTP_READERS.len(),
-        411,
+        412,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
-    // with `add_rule` and `remove_rule`, and 64 with `save_skill`.
-    assert_eq!(MCP_READERS.len(), 64, "#[tool( declarations");
+    // with `add_rule` and `remove_rule`, 64 with `save_skill`, and 65 with
+    // the canonical `handoff` Brief writer.
+    assert_eq!(MCP_READERS.len(), 65, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -370,7 +372,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        423,
+        424,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -378,7 +380,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        406,
+        407,
         "main builder entries"
     );
     assert_eq!(

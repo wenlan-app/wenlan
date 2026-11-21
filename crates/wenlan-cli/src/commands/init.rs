@@ -136,7 +136,7 @@ fn codex_plugin_enabled(config_toml: &str) -> bool {
 }
 
 /// Where Codex keeps its settings: `CODEX_HOME`, or `.codex` in the home folder.
-fn codex_home(home: Option<&Path>) -> Option<std::path::PathBuf> {
+pub(super) fn codex_home(home: Option<&Path>) -> Option<std::path::PathBuf> {
     std::env::var_os("CODEX_HOME")
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from)
@@ -165,6 +165,13 @@ pub(super) struct Tools {
 }
 
 impl Tools {
+    pub(super) fn has_codex(&self) -> bool {
+        self.connected
+            .iter()
+            .chain(&self.waiting)
+            .any(|tool| *tool == CODEX)
+    }
+
     pub(super) fn connect_names(&self) -> Vec<&'static str> {
         self.connected.iter().map(|tool| tool.connect_as).collect()
     }

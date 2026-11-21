@@ -28,6 +28,16 @@ pub struct BriefItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<String>,
     pub version: i64,
+    /// False only for an idle fallback synthesized from a local transcript.
+    #[serde(default = "default_confirmed")]
+    pub confirmed: bool,
+    /// The UI label for an idle fallback ("filled in by Wenlan" / 「Wenlan 補的」).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub filled_by_wenlan: bool,
+}
+
+const fn default_confirmed() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -245,6 +255,22 @@ pub struct BriefUpdateReceipt {
     pub projection_path: Option<String>,
     #[serde(default)]
     pub warnings: Vec<String>,
+}
+
+/// The write contract exposed as `handoff` over HTTP, CLI, and MCP.
+/// `update_brief` remains a compatibility HTTP surface with this same shape.
+pub type HandoffRequest = BriefUpdateRequest;
+pub type HandoffReceipt = BriefUpdateReceipt;
+
+pub const HANDOFF_FILE_SCHEMA: &str = "wenlan.handoff.v1";
+
+/// Portable handoff file used when the local daemon cannot be reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffFile {
+    pub schema: String,
+    pub request: HandoffRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 /// A Space Brief said for people (UX-SPACE-2): what `GET /api/brief/plain`

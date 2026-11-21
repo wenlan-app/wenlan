@@ -140,7 +140,7 @@ impl RerankerModeArg {
 
 pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result<()> {
     if args.finish {
-        return finish(client).await;
+        return finish(client, args.yes).await;
     }
     if let Some(note) = super::home_bin::refresh_for_setup() {
         println!("{note}");
@@ -165,22 +165,25 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
     }
     print_browser_address();
     if !args.config_only {
-        finish(client).await?;
+        finish(client, args.yes).await?;
     }
     Ok(())
 }
 
 /// What follows the settings, so that one `wenlan setup` leaves nothing to do
 /// by hand but restarting the AI tools: connect every AI tool found on this
-/// computer, offer to bring one folder in, and say what to try. The installer
-/// (`npx wenlan setup`) runs this as its own step, after Wenlan has started,
+/// computer, offer Codex's user hooks and one folder, and say what to try. The
+/// installer (`npx wenlan setup`) runs this as its own step, after Wenlan has started,
 /// because bringing a folder in needs it running.
-async fn finish(client: &WenlanClient) -> anyhow::Result<()> {
+async fn finish(client: &WenlanClient, yes: bool) -> anyhow::Result<()> {
     println!();
     let tools = super::init::connect_tools(client, super::init::Connect::All).await?;
     tools.print();
     if tools.new > 0 {
         println!("Restart them to pick Wenlan up. `wenlan connect --help` lists more tools.");
+    }
+    if tools.has_codex() {
+        offer_codex_hooks(yes)?;
     }
 
     let running = client.health().await.is_ok();
@@ -213,6 +216,40 @@ async fn finish(client: &WenlanClient) -> anyhow::Result<()> {
         .is_ok_and(|cwd| wenlan_core::repo_wiki::repository_top_level(&cwd).is_ok());
     if in_repository {
         println!("This folder is a git repository. `wenlan init` gives it its own Space.");
+    }
+    Ok(())
+}
+
+fn offer_codex_hooks(yes: bool) -> anyhow::Result<()> {
+    let Some(codex_home) = super::init::codex_home(dirs::home_dir().as_deref()) else {
+        return Ok(());
+    };
+    let plan = super::codex_hooks::plan(&codex_home)?;
+    if !plan.needs_install {
+        println!("Codex SessionStart and Stop hooks are already configured.");
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "Codex hook preview — exact contents for {}:",
+        codex_home.join("hooks.json").display()
+    );
+    print!("{}", plan.merged_json);
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    let approved = yes
+        || (interactive
+            && matches!(
+                prompt_line("Add these Wenlan hooks to Codex? [y/N]: ")?
+                    .trim()
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "y" | "yes"
+            ));
+    if super::codex_hooks::apply_if_approved(&plan, approved)? {
+        println!("Added Wenlan's Codex hooks. Codex will ask you to trust each hook on first use.");
+    } else {
+        println!("Codex hooks were not changed. Run `wenlan setup --finish --yes` to add them.");
     }
     Ok(())
 }

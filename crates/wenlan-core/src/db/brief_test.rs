@@ -2,8 +2,12 @@
 
 use super::tests::test_db;
 use super::MemoryDB;
+use crate::conversation_intake::FoundConversation;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 use wenlan_types::{
     BriefConflictReason, BriefItemState, BriefMutation, BriefSummaryUpdate, BriefUpdateRequest,
+    SessionRef,
 };
 
 #[tokio::test]
@@ -49,6 +53,72 @@ async fn brief_migration_creates_fk_backed_tables() {
             .get::<i64>(0)
             .unwrap(),
         102
+    );
+}
+
+#[tokio::test]
+async fn handoff_origin_migration_marks_existing_items_confirmed() {
+    let (db, _temp) = test_db().await;
+    let created = db
+        .apply_brief_update(&update_request(
+            "work",
+            "before-168",
+            vec![
+                add("Existing line", BriefItemState::Active),
+                add("No legacy thing", BriefItemState::Active),
+            ],
+        ))
+        .await
+        .unwrap();
+    let legacy_item_id = created.applied[0].item_id.as_deref().unwrap();
+    let unlinked_item_id = created.applied[1].item_id.as_deref().unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO things
+                (id, title, title_by, brief_item_id, created_at, updated_at)
+             VALUES ('thg_legacy_brief', 'Existing line', 'ai', ?1, 1, 1)",
+            libsql::params![legacy_item_id],
+        )
+        .await
+        .unwrap();
+        conn.execute_batch(
+            "ALTER TABLE brief_items DROP COLUMN filled_by_wenlan;
+             ALTER TABLE brief_items DROP COLUMN confirmed;
+             PRAGMA user_version=167;",
+        )
+        .await
+        .unwrap();
+    }
+
+    db.migrate_168_handoff_origin(167).await.unwrap();
+    let brief = db.get_brief_by_space_name("work").await.unwrap().unwrap();
+    assert!(brief.active.iter().all(|item| item.confirmed));
+    assert!(brief.active.iter().all(|item| !item.filled_by_wenlan));
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM things WHERE brief_item_id=?1",
+            libsql::params![legacy_item_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1,
+        "migration preserves a thing made by an older daemon"
+    );
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM things WHERE brief_item_id=?1",
+            libsql::params![unlinked_item_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        0,
+        "migration does not backfill a thing for a Brief item"
     );
 }
 
@@ -264,7 +334,7 @@ async fn brief_mutations_require_current_item_version_and_completion_removes_ite
 }
 
 #[tokio::test]
-async fn brief_stale_item_conflict_does_not_block_unrelated_mutation() {
+async fn ux_hand_4_stale_item_conflict_does_not_overwrite_and_unrelated_mutation_applies() {
     let (db, _temp) = test_db().await;
     let created = db
         .apply_brief_update(&update_request(
@@ -397,7 +467,7 @@ async fn brief_same_request_can_apply_multiple_deltas_from_one_item_snapshot() {
 }
 
 #[tokio::test]
-async fn brief_operation_replay_is_idempotent_and_digest_mismatch_conflicts() {
+async fn ux_hand_4_replay_is_idempotent_and_digest_mismatch_conflicts() {
     let (db, _temp) = test_db().await;
     let request = update_request(
         "replay",
@@ -418,6 +488,323 @@ async fn brief_operation_replay_is_idempotent_and_digest_mismatch_conflicts() {
     );
     let error = db.apply_brief_update(&reused).await.unwrap_err();
     assert!(matches!(error, crate::error::WenlanError::Conflict(_)));
+}
+
+#[tokio::test]
+async fn handoff_add_makes_no_thing_and_replay_stays_single() {
+    let (db, _temp) = test_db().await;
+    let request = update_request(
+        "work",
+        "handoff-linked",
+        vec![add("Ship the handoff route", BriefItemState::Active)],
+    );
+
+    let first = db.apply_brief_update(&request).await.unwrap();
+    let replay = db.apply_brief_update(&request).await.unwrap();
+    assert_eq!(first, replay);
+    let brief = db.get_brief_by_space_name("work").await.unwrap().unwrap();
+    assert_eq!(brief.active.len(), 1, "the replay applies the add once");
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM things WHERE brief_item_id IS NOT NULL",
+            (),
+        )
+        .await
+        .unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    assert_eq!(row.get::<i64>(0).unwrap(), 0, "a Brief item is not a thing");
+}
+
+#[tokio::test]
+async fn ux_hand_3_idle_fill_is_replaced_by_a_real_handoff() {
+    let (db, _temp) = test_db().await;
+    let session = SessionRef::parse("claude-code:idle-session").unwrap();
+    let created = db
+        .apply_brief_update_in_session(
+            &update_request(
+                "work",
+                "real-1",
+                vec![add("Implement Rule 2", BriefItemState::Active)],
+            ),
+            Some(&session),
+        )
+        .await
+        .unwrap();
+    let item_id = created.applied[0].item_id.clone().unwrap();
+    let handed_at = chrono::Utc::now().timestamp();
+    let conversation = FoundConversation {
+        tool: "claude-code".into(),
+        external_id: "idle-session".into(),
+        path: PathBuf::from("/tmp/idle.jsonl"),
+        len: 10,
+        cwd: None,
+        branch: None,
+        said: vec!["keep going".into()],
+        last_reply: "Regression test is now passing.".into(),
+        first_at: handed_at - 60,
+        last_content_at: handed_at + 1,
+        last_at: handed_at + 1,
+        automated: false,
+        on_behalf: false,
+        touched: vec![],
+    };
+
+    assert_eq!(
+        db.fill_idle_handoffs(
+            &[conversation.clone()],
+            &BTreeSet::new(),
+            handed_at + 3001,
+            3000,
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.fill_idle_handoffs(
+            &[conversation.clone()],
+            &BTreeSet::new(),
+            handed_at + 4000,
+            3000,
+        )
+        .await
+        .unwrap(),
+        0
+    );
+    let filled = db.get_brief_by_space_name("work").await.unwrap().unwrap();
+    let filled = &filled.active[0];
+    assert!(!filled.confirmed);
+    assert!(filled.filled_by_wenlan);
+    assert!(filled.text.contains("Regression test is now passing."));
+
+    db.apply_brief_update_in_session(
+        &update_request(
+            "work",
+            "real-2",
+            vec![BriefMutation::Edit {
+                item_id,
+                expected_version: filled.version,
+                text: "Rule 2 is verified".into(),
+            }],
+        ),
+        Some(&session),
+    )
+    .await
+    .unwrap();
+    let real = db.get_brief_by_space_name("work").await.unwrap().unwrap();
+    assert!(real.active[0].confirmed);
+    assert!(!real.active[0].filled_by_wenlan);
+    assert_eq!(real.active[0].text, "Rule 2 is verified");
+
+    let older_transcript = FoundConversation {
+        last_content_at: handed_at,
+        last_at: handed_at,
+        ..conversation
+    };
+    assert_eq!(
+        db.fill_idle_handoffs(
+            &[older_transcript],
+            &BTreeSet::new(),
+            handed_at + 4000,
+            3000,
+        )
+        .await
+        .unwrap(),
+        0,
+        "a handoff at or after the last transcript line prevents another fill"
+    );
+}
+
+#[tokio::test]
+async fn idle_fill_skips_item_changed_after_sessions_last_handoff() {
+    let (db, _temp) = test_db().await;
+    let session_a = SessionRef::parse("claude-code:session-a").unwrap();
+    let session_b = SessionRef::parse("claude-code:session-b").unwrap();
+    let created = db
+        .apply_brief_update_in_session(
+            &update_request(
+                "work",
+                "session-a-handoff",
+                vec![add("A started the work", BriefItemState::Active)],
+            ),
+            Some(&session_a),
+        )
+        .await
+        .unwrap();
+    let item_id = created.applied[0].item_id.clone().unwrap();
+    let version = created.applied[0].version.unwrap();
+    db.apply_brief_update_in_session(
+        &update_request(
+            "work",
+            "session-b-handoff",
+            vec![BriefMutation::Edit {
+                item_id,
+                expected_version: version,
+                text: "B finished the newer work".into(),
+            }],
+        ),
+        Some(&session_b),
+    )
+    .await
+    .unwrap();
+
+    let handed_at = chrono::Utc::now().timestamp();
+    let conversation = FoundConversation {
+        tool: "claude-code".into(),
+        external_id: "session-a".into(),
+        path: PathBuf::from("/tmp/session-a.jsonl"),
+        len: 10,
+        cwd: None,
+        branch: None,
+        said: vec!["continue".into()],
+        last_reply: "A private later reply".into(),
+        first_at: handed_at - 60,
+        last_content_at: handed_at + 1,
+        last_at: handed_at + 1,
+        automated: false,
+        on_behalf: false,
+        touched: vec![],
+    };
+
+    assert_eq!(
+        db.fill_idle_handoffs(&[conversation], &BTreeSet::new(), handed_at + 3001, 3000,)
+            .await
+            .unwrap(),
+        0
+    );
+    let brief = db.get_brief_by_space_name("work").await.unwrap().unwrap();
+    assert_eq!(brief.active[0].text, "B finished the newer work");
+    assert!(!brief.active[0].filled_by_wenlan);
+}
+
+#[tokio::test]
+async fn idle_fill_skips_when_only_non_content_events_are_newer_than_handoff() {
+    let (db, _temp) = test_db().await;
+    let session = SessionRef::parse("claude-code:metadata-after-handoff").unwrap();
+    db.apply_brief_update_in_session(
+        &update_request(
+            "metadata-work",
+            "confirmed-handoff",
+            vec![add("Confirmed after the reply", BriefItemState::Active)],
+        ),
+        Some(&session),
+    )
+    .await
+    .unwrap();
+    let handed_at = db.list_brief_history("metadata-work", 1).await.unwrap()[0].created_at;
+    let conversation = FoundConversation {
+        tool: "claude-code".into(),
+        external_id: "metadata-after-handoff".into(),
+        path: PathBuf::from("/tmp/metadata-after-handoff.jsonl"),
+        len: 10,
+        cwd: None,
+        branch: None,
+        said: vec!["old person message".into()],
+        last_reply: "old AI reply".into(),
+        first_at: handed_at - 60,
+        last_content_at: handed_at,
+        last_at: handed_at + 1,
+        automated: false,
+        on_behalf: false,
+        touched: vec![],
+    };
+
+    assert_eq!(
+        db.fill_idle_handoffs(&[conversation], &BTreeSet::new(), handed_at + 3002, 3000,)
+            .await
+            .unwrap(),
+        0
+    );
+    let brief = db
+        .get_brief_by_space_name("metadata-work")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(brief.active[0].text, "Confirmed after the reply");
+    assert!(brief.active[0].confirmed);
+    assert!(!brief.active[0].filled_by_wenlan);
+}
+
+#[tokio::test]
+async fn ux_hand_8_idle_fill_skips_team_space() {
+    let (db, _temp) = test_db().await;
+    let session = SessionRef::parse("claude-code:team-session").unwrap();
+    db.apply_brief_update_in_session(
+        &update_request(
+            "team-work",
+            "team-handoff",
+            vec![add("Shared status", BriefItemState::Active)],
+        ),
+        Some(&session),
+    )
+    .await
+    .unwrap();
+
+    let handed_at = chrono::Utc::now().timestamp();
+    let conversation = FoundConversation {
+        tool: "claude-code".into(),
+        external_id: "team-session".into(),
+        path: PathBuf::from("/tmp/team-session.jsonl"),
+        len: 10,
+        cwd: None,
+        branch: None,
+        said: vec!["continue".into()],
+        last_reply: "PRIVATE TEAM CONVERSATION TEXT".into(),
+        first_at: handed_at - 60,
+        last_content_at: handed_at + 1,
+        last_at: handed_at + 1,
+        automated: false,
+        on_behalf: false,
+        touched: vec![],
+    };
+    let team_spaces = BTreeSet::from(["team-work".to_string()]);
+
+    assert_eq!(
+        db.fill_idle_handoffs(&[conversation], &team_spaces, handed_at + 3001, 3000)
+            .await
+            .unwrap(),
+        0
+    );
+    let brief = db
+        .get_brief_by_space_name("team-work")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(brief.active[0].text, "Shared status");
+    assert!(!brief.active[0]
+        .text
+        .contains("PRIVATE TEAM CONVERSATION TEXT"));
+    assert!(!brief.active[0].filled_by_wenlan);
+}
+
+#[tokio::test]
+async fn ux_hand_7_handoff_writes_no_memory_rows() {
+    let (db, _temp) = test_db().await;
+    let before = {
+        let conn = db.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM memories", ())
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap()
+    };
+    db.apply_brief_update(&update_request(
+        "work",
+        "brief-only",
+        vec![add("Brief only", BriefItemState::Active)],
+    ))
+    .await
+    .unwrap();
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query("SELECT COUNT(*) FROM memories", ())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        before
+    );
 }
 
 #[tokio::test]
