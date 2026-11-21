@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use wenlan_types::team::{
     TeamAccess, TeamInfo, TeamLinkedAccount, TeamMe, TeamMember, TeamMemberSignIn, TeamPerson,
-    TeamRole, TeamSpaceAccess,
+    TeamRole, TeamSpaceAccess, TeamToolKey,
 };
 
 use crate::error::WenlanError;
@@ -236,8 +236,22 @@ impl Member {
             providers,
             invited: self.invite.is_some() && pending.is_none(),
             waiting_email,
+            tools: u32::try_from(self.tool_keys().len()).unwrap_or(u32::MAX),
         };
         (sign_in != TeamMemberSignIn::default()).then_some(sign_in)
+    }
+
+    /// Their AI tools: the tool keys not revoked, oldest first.
+    pub fn tool_keys(&self) -> Vec<TeamToolKey> {
+        self.keys
+            .iter()
+            .filter(|key| key.revoked_at.is_none())
+            .map(|key| TeamToolKey {
+                id: key.id.clone(),
+                name: key.name.clone(),
+                created_at: key.created_at.clone(),
+            })
+            .collect()
     }
 
     /// The accounts linked to them, for their own menu: the provider and the

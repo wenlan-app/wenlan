@@ -1341,6 +1341,15 @@ export interface TeamMemberSignIn {
   /** An account used the invite and waits for the owner: its email, already
    *  masked by the server (`e***@studio.io`). */
   waiting_email?: string | null;
+  /** How many AI tools they have connected. Left out when none. */
+  tools?: number;
+}
+
+/** One of a member's AI tools: its name and when it was added, never the key. */
+export interface TeamToolKey {
+  id: string;
+  name: string;
+  created_at: string;
 }
 
 /** The team a server is for: the same id and name for everyone on it.
@@ -1436,6 +1445,17 @@ export async function teamApproveMember(id: string): Promise<TeamMember> {
  *  account ends, and a new key is made (in the answer, shown once). */
 export async function teamMemberCompromised(id: string, url?: string): Promise<TeamMemberKey> {
   return invoke("team_member_compromised", { id, url: url ?? null });
+}
+
+/** A member's AI tools, for the owner. */
+export async function teamMemberTools(id: string): Promise<TeamToolKey[]> {
+  return invoke("team_member_tools", { id });
+}
+
+/** Removes one of a member's AI tools; it stops at its next request.
+ *  Resolves to the tools left. */
+export async function teamRemoveMemberTool(id: string, key: string): Promise<TeamToolKey[]> {
+  return invoke("team_remove_member_tool", { id, key });
 }
 
 export async function teamHostSpace(space: string): Promise<SharedSyncCounts> {

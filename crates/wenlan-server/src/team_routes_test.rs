@@ -11,6 +11,9 @@ use wenlan_types::team::{TeamFileList, TeamSpaceAccess};
 #[path = "team_member_view_test.rs"]
 mod member_view;
 
+#[path = "team_device_test.rs"]
+mod device_flow;
+
 struct Fixture {
     _dir: tempfile::TempDir,
     state: TeamState,
@@ -67,6 +70,7 @@ fn fixture() -> Fixture {
             mcp: Arc::default(),
             sessions: Arc::default(),
             auth: Arc::default(),
+            device: Arc::default(),
         },
         _dir: dir,
         folder,
@@ -1630,8 +1634,17 @@ fn the_route_table_gives_a_browser_session_the_web_only() {
         "/team/v1/app/api/pages",
         "/auth/logout",
         "/auth/logout-all",
+        "/team/v1/account/keys",
+        "/team/v1/account/keys/k1",
+        "/team/v1/account/desktop-link",
+        "/auth/device/lookup",
+        "/auth/device/approve",
     ] {
         assert!(credential_may_reach(BrowserSession, path), "{path}");
+        assert!(
+            credential_may_reach(LegacyKey, path) || path.starts_with("/auth/logout"),
+            "{path}"
+        );
     }
     for path in [
         "/mcp",
@@ -1640,7 +1653,7 @@ fn the_route_table_gives_a_browser_session_the_web_only() {
         "/team/v1/admin/members/x/compromised",
         "/team/v1/spaces/design/files",
         "/team/v1/spaces/design/versions/p/n",
-        "/team/v1/account/keys",
+        "/team/v1/accounts",
         "/team/v1/mex",
         "/",
     ] {
@@ -1665,6 +1678,9 @@ fn the_route_table_gives_a_tool_key_only_mcp() {
         "/team/v1/admin/members/x/compromised",
         "/team/v1/app/anything",
         "/team/v1/spaces/design/files",
+        "/team/v1/account/keys",
+        "/team/v1/account/desktop-link",
+        "/auth/device/approve",
         "/mcpx",
         "/",
     ] {
@@ -2229,7 +2245,6 @@ async fn a_session_cookie_reaches_me_and_the_app_gate_and_nothing_else() {
             Method::POST,
             "/team/v1/admin/members/x/compromised".to_string(),
         ),
-        (Method::GET, "/team/v1/account/keys".to_string()),
     ] {
         let response = browser(
             &f.state,

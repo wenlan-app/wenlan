@@ -2,8 +2,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { setTeamPeople } from "../components/memory/sharing/teamPeople";
+import { DevicePage } from "./DevicePage";
 import { SignInPage } from "./SignInPage";
-import { readTeamKey, teamMe, teamProviders } from "./team";
+import { peekAfter, readTeamKey, rememberAfter, takeAfter, teamMe, teamProviders, type TeamMe } from "./team";
 import { TeamAccessProvider, teamAccessFor, type TeamAccess } from "./teamAccess";
 
 type State =
@@ -11,7 +12,13 @@ type State =
   | { kind: "no-key" }
   | { kind: "sign-in"; team: string | null; providers: string[] }
   | { kind: "dead" }
-  | { kind: "ready"; access: TeamAccess };
+  | { kind: "ready"; access: TeamAccess; me: TeamMe };
+
+const DEVICE_PATH = "/app/device";
+
+function onDevicePage(): boolean {
+  return window.location.pathname.replace(/\/+$/, "") === DEVICE_PATH;
+}
 
 /**
  * A team server's `/app`: who this browser is, by its session cookie or the
@@ -22,6 +29,8 @@ type State =
 export function TeamMemberApp({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [state, setState] = useState<State>({ kind: "checking" });
+  // What was left to do on `/app/device` before signing in again, read once.
+  const [deviceAfter] = useState(() => (onDevicePage() ? takeAfter() : null));
   useEffect(() => {
     if (state.kind !== "checking") return;
     let live = true;
@@ -30,8 +39,13 @@ export function TeamMemberApp({ children }: { children: ReactNode }) {
       const me = await teamMe();
       if (!live) return;
       if (me) {
+        // Back from signing in (again) on the way to allowing an AI tool.
+        if (!onDevicePage() && peekAfter()?.kind === "device") {
+          window.location.replace(DEVICE_PATH);
+          return;
+        }
         setTeamPeople(me.member_id, me.people ?? []);
-        setState({ kind: "ready", access: teamAccessFor(me) });
+        setState({ kind: "ready", access: teamAccessFor(me), me });
         return;
       }
       // A key that no longer works keeps its own sentence.
@@ -41,6 +55,8 @@ export function TeamMemberApp({ children }: { children: ReactNode }) {
       }
       const offered = await teamProviders();
       if (!live) return;
+      // Signing in from `/app/device` lands on `/app`: come back here after.
+      if (onDevicePage() && offered.providers.length > 0) rememberAfter({ kind: "device" });
       setState(offered.providers.length > 0 ? { kind: "sign-in", team: offered.team, providers: offered.providers } : { kind: "no-key" });
     })();
     return () => {
@@ -57,6 +73,9 @@ export function TeamMemberApp({ children }: { children: ReactNode }) {
         </p>
       </main>
     );
+  }
+  if (onDevicePage()) {
+    return <DevicePage me={state.me} initialCode={deviceAfter?.kind === "device" ? deviceAfter.code : undefined} />;
   }
   return <TeamAccessProvider value={state.access}>{children}</TeamAccessProvider>;
 }

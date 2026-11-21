@@ -376,6 +376,10 @@ main|post|/api/team/invites|wenlan_server::team_routes::handle_create_invite
 main|post|/api/team/members/{id}/invite|wenlan_server::team_routes::handle_reissue_invite
 main|post|/api/team/members/{id}/approve|wenlan_server::team_routes::handle_approve_member
 main|post|/api/team/members/{id}/compromised|wenlan_server::team_routes::handle_compromised
+main|get|/api/team/members/{id}/keys|wenlan_server::team_routes::handle_member_keys
+main|delete|/api/team/members/{id}/keys/{key}|wenlan_server::team_routes::handle_revoke_member_key
+main|get|/api/team/my-tools|wenlan_server::team_routes::handle_my_tools
+main|delete|/api/team/my-tools/{id}|wenlan_server::team_routes::handle_remove_my_tool
 main|post|/api/team/spaces|wenlan_server::team_routes::handle_host_space
 main|post|/api/team/join|wenlan_server::team_routes::handle_join
 main|post|/api/team/start|wenlan_server::team_routes::handle_start_team

@@ -6,17 +6,21 @@
 // they can sign in from any device, and signs out of this browser.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { SignOut } from "@phosphor-icons/react";
+import { Desktop, Plug, SignOut } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { confirmAction } from "../lib/confirmAction";
 import { ProviderMark } from "./ProviderMarks";
+import { DesktopDialog, ToolsDialog } from "./TeamOwnDialogs";
 import {
   forgetTeamKey,
   linkProvider,
+  peekAfter,
   signOutBrowser,
   signOutEverywhere,
+  takeAfter,
   teamMe,
   teamProviders,
+  teamTools,
   type TeamMe,
 } from "./team";
 import "./teamWeb.css";
@@ -40,14 +44,30 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   const [place, setPlace] = useState<{ left: number; bottom: number } | null>(null);
+  const [tools, setTools] = useState<number | null>(null);
+  const [dialog, setDialog] = useState<"tools" | "desktop" | null>(null);
   const rowRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let live = true;
-    void teamMe().then((found) => { if (live) setMe(found); });
+    void teamMe().then((found) => {
+      if (!live) return;
+      setMe(found);
+      // Back from confirming it's them, to make the desktop link.
+      if (found?.signed_in_with === "browser" && peekAfter()?.kind === "desktop") {
+        takeAfter();
+        setDialog("desktop");
+      }
+    });
     return () => { live = false; };
   }, []);
+  useEffect(() => {
+    if (!me || !open) return;
+    let live = true;
+    void teamTools().then((found) => { if (live && found) setTools(found.length); });
+    return () => { live = false; };
+  }, [me, open]);
   const key = me?.signed_in_with === "key";
   useEffect(() => {
     if (!key) return;
@@ -85,6 +105,18 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
 
   if (!me) return null;
   const account = me.accounts?.[0];
+  const team = me.team?.name ?? t("teamWeb.teamFallback");
+  const pick = (next: "tools" | "desktop") => {
+    setOpen(false);
+    setDialog(next);
+  };
+  const toolsItem = (
+    <button type="button" role="menuitem" className="team-account-item" data-testid="team-account-tools" onClick={() => pick("tools")}>
+      <Plug size={18} aria-hidden="true" />
+      <span className="team-account-item-text">{t("teamWeb.toolsItem")}</span>
+      {tools !== null && tools > 0 && <span className="team-account-count">{tools}</span>}
+    </button>
+  );
 
   const everywhere = async () => {
     setOpen(false);
@@ -153,6 +185,7 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
                   {failed && <p className="team-account-error" role="alert">{t("teamWeb.linkFailed")}</p>}
                 </div>
               )}
+              {toolsItem}
               <button type="button" role="menuitem" className="team-account-item" data-testid="team-web-forget" onClick={forgetTeamKey}>
                 <SignOut size={18} aria-hidden="true" />
                 <span className="team-account-item-text">
@@ -163,6 +196,14 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
             </>
           ) : (
             <>
+              <div className="team-account-separator" role="separator" />
+              {toolsItem}
+              {account && (
+                <button type="button" role="menuitem" className="team-account-item" data-testid="team-account-desktop" onClick={() => pick("desktop")}>
+                  <Desktop size={18} aria-hidden="true" />
+                  <span className="team-account-item-text">{t("teamWeb.desktopItem")}</span>
+                </button>
+              )}
               <div className="team-account-separator" role="separator" />
               <button type="button" role="menuitem" className="team-account-item" data-testid="team-account-signout" onClick={() => void signOutBrowser()}>
                 <SignOut size={18} aria-hidden="true" />
@@ -178,6 +219,8 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
         </div>,
         document.body,
       )}
+      {dialog === "tools" && <ToolsDialog team={team} onChanged={setTools} onClose={() => setDialog(null)} />}
+      {dialog === "desktop" && account && <DesktopDialog team={team} provider={account.provider} onClose={() => setDialog(null)} />}
     </>
   );
 }

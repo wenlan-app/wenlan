@@ -132,6 +132,22 @@ pub enum TeamCmd {
         #[arg(value_name = "TEAM")]
         team: Option<String>,
     },
+    /// List the AI tools you connected to a team with `wenlan login`.
+    Keys {
+        /// The team's name or its server's address. Left out, every team
+        /// this computer joined.
+        #[arg(long, value_name = "TEAM")]
+        team: Option<String>,
+    },
+    /// Remove an AI tool you connected: it stops working at its next request.
+    RevokeKey {
+        /// The tool's id, from `wenlan team keys`.
+        id: String,
+        /// The team's name or its server's address. Not needed when this
+        /// computer is on one team.
+        #[arg(long, value_name = "TEAM")]
+        team: Option<String>,
+    },
 }
 
 fn parse_everyone(raw: &str) -> Result<TeamEveryone, String> {
@@ -272,7 +288,65 @@ pub async fn run(
             (None, false) => join_all(client, format, quiet, &code).await,
         },
         TeamCmd::Leave { team } => leave(client, format, quiet, team).await,
+        TeamCmd::Keys { team } => tool_keys(client, format, quiet, team).await,
+        TeamCmd::RevokeKey { id, team } => revoke_tool_key(client, format, quiet, id, team).await,
     }
+}
+
+/// The server a `--team` names, when one is named.
+async fn named_team(client: &WenlanClient, given: Option<&str>) -> Result<Option<String>> {
+    let Some(given) = given else { return Ok(None) };
+    let (joined, _) = joined(client).await?;
+    Ok(Some(pick_team(&joined, Some(given))?.url.clone()))
+}
+
+fn print_tools(on: &wenlan_types::team::TeamToolsOnServer) {
+    let label = match on.team.as_ref().and_then(|info| info.name.as_deref()) {
+        Some(name) => format!("{name} ({})", on.url),
+        None => on.url.clone(),
+    };
+    if let Some(error) = &on.error {
+        println!("{label}: {error}");
+        return;
+    }
+    if on.tools.is_empty() {
+        println!(
+            "{label}: no AI tools. Connect one with `wenlan login {}`.",
+            on.url
+        );
+        return;
+    }
+    println!("{label}:");
+    for tool in &on.tools {
+        let day = tool.created_at.get(..10).unwrap_or(&tool.created_at);
+        println!("  {}  {}  added {day}", tool.id, tool.name);
+    }
+}
+
+async fn tool_keys(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    team: Option<String>,
+) -> Result<()> {
+    let url = named_team(client, team.as_deref()).await?;
+    let found = client.team_my_tools(url.as_deref()).await?;
+    output(format, quiet, &found, || found.iter().for_each(print_tools))
+}
+
+async fn revoke_tool_key(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    id: String,
+    team: Option<String>,
+) -> Result<()> {
+    let url = named_team(client, team.as_deref()).await?;
+    let left = client.team_remove_my_tool(&id, url.as_deref()).await?;
+    output(format, quiet, &left, || {
+        println!("Removed. It stops working at its next request.");
+        print_tools(&left);
+    })
 }
 
 async fn start(
