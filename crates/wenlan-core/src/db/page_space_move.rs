@@ -98,6 +98,12 @@ impl MemoryDB {
     /// Space row has (older data), so their pages get a folder too.
     pub async fn space_names(&self) -> Result<Vec<String>, WenlanError> {
         let conn = self.conn.lock().await;
+        Self::space_names_on(&conn).await
+    }
+
+    pub(super) async fn space_names_on(
+        conn: &libsql::Connection,
+    ) -> Result<Vec<String>, WenlanError> {
         let mut rows = conn
             .query(
                 "SELECT name FROM spaces

@@ -57,6 +57,7 @@ mod m5_page_size_snapshot;
 mod maintenance_duplicate_reads;
 mod maintenance_queue;
 mod maintenance_retro_scan;
+pub(crate) mod member_sync;
 mod memory_point_reads;
 mod memory_sync;
 mod metadata_json;
@@ -54242,6 +54243,17 @@ impl MemoryDB {
         created_at: i64,
         minor: bool,
     ) -> Result<(), libsql::Error> {
+        Self::append_page_snapshot_on(conn, page_id, edited_by, created_at, minor).await?;
+        page_basis::refresh_basis_state(conn, page_id).await
+    }
+
+    async fn append_page_snapshot_on(
+        conn: &libsql::Connection,
+        page_id: &str,
+        edited_by: &str,
+        created_at: i64,
+        minor: bool,
+    ) -> Result<(), libsql::Error> {
         conn.execute(
             "INSERT INTO page_history \
                (page_id, version, title, content, source_memory_ids, edited_by, created_at, minor) \
@@ -54250,9 +54262,7 @@ impl MemoryDB {
             libsql::params![page_id, edited_by, created_at, i64::from(minor)],
         )
         .await?;
-        page_export::capture_history_on(conn, page_id).await?;
-        page_basis::refresh_basis_state(conn, page_id).await?;
-        Ok(())
+        page_export::capture_history_on(conn, page_id).await
     }
 
     /// Batch-resolve typed `page_evidence.source_kind` values
@@ -55171,6 +55181,15 @@ impl MemoryDB {
         id: &str,
         fence_entity: bool,
     ) -> Result<Option<Page>, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::get_page_on(&conn, id, fence_entity).await
+    }
+
+    async fn get_page_on(
+        conn: &libsql::Connection,
+        id: &str,
+        fence_entity: bool,
+    ) -> Result<Option<Page>, WenlanError> {
         let fence_sql = if fence_entity {
             " AND COALESCE(kind, 'concept') != 'entity'"
         } else {
@@ -55180,7 +55199,6 @@ impl MemoryDB {
         // `pages.entity_id`, so the browse twin has to resolve it the same way
         // the browse listings do or the row opens with no dossier to link to.
         let entity_id_column = page_entity_id_column("");
-        let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 &format!(
@@ -55194,7 +55212,7 @@ impl MemoryDB {
         match rows.next().await {
             Ok(Some(row)) => {
                 let mut page = Self::row_to_page(&row)?;
-                citation_provenance::apply_on(&conn, &mut page).await?;
+                citation_provenance::apply_on(conn, &mut page).await?;
                 Ok(Some(page))
             }
             Ok(None) => Ok(None),
@@ -59041,159 +59059,7 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("replace_page_links begin: {e}")))?;
-        let exec = async {
-            // Keep the identity of a resolved backlink when this body is
-            // saved again after its target was renamed. Its old display label
-            // may no longer resolve by title, and a newly created page may
-            // later reuse that label. Only retain an active, same-space,
-            // ordinary target already linked from this exact source page.
-            // Imported concept links are resolved by their concept registry;
-            // preserving them here would resurrect removed concept targets.
-            let mut stable_targets: HashMap<String, Option<String>> = HashMap::new();
-            let mut existing_edges = conn
-                .query(
-                    "SELECT e.dst_id,e.payload
-                       FROM edges e
-                       JOIN pages source ON source.id=e.src_id
-                       JOIN pages target ON target.id=e.dst_id
-                      WHERE e.src_id=?1 AND e.src_kind='page' AND e.dst_kind='page'
-                        AND e.edge_type='links' AND e.valid_until IS NULL
-                        AND source.status='active' AND target.status='active'
-                        AND COALESCE(target.kind,'concept')!='entity'
-                        AND target.space IS source.space
-                        AND target.workspace IS source.workspace
-                        AND NOT EXISTS (
-                            SELECT 1 FROM okf_concept_links concept_link
-                            WHERE concept_link.page_id=e.src_id
-                              AND concept_link.target_key=CASE WHEN json_valid(e.payload)
-                                  THEN lower(json_extract(e.payload,'$.label')) END
-                        )",
-                    libsql::params![source_page_id],
-                )
-                .await?;
-            while let Some(row) = existing_edges.next().await? {
-                let target_id = row.get::<String>(0)?;
-                let payload = row.get::<Option<String>>(1)?.unwrap_or_default();
-                let Some(label) = serde_json::from_str::<serde_json::Value>(&payload)
-                    .ok()
-                    .and_then(|value| {
-                        value
-                            .get("label")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string)
-                    })
-                else {
-                    continue;
-                };
-                let key = Self::page_title_key(&label);
-                stable_targets
-                    .entry(key)
-                    .and_modify(|existing| *existing = None)
-                    .or_insert(Some(target_id));
-            }
-            drop(existing_edges);
-
-            // Dual-write (M2 PR-1): invalidate every active `links` edge
-            // from this page up front; the loop below re-asserts (or
-            // reactivates, via `dual_write_edge`'s upsert) an edge for each
-            // link still present, so a link dropped from the new set stays
-            // invalidated and a link that survives round-trips back to
-            // active within this same transaction.
-            let now = chrono::Utc::now().timestamp();
-            conn.execute(
-                "UPDATE edges SET valid_until = ?2, superseded_by = NULL \
-                 WHERE edge_type = 'links' AND src_id = ?1 AND valid_until IS NULL",
-                libsql::params![source_page_id, now],
-            )
-            .await?;
-
-            conn.execute(
-                "DELETE FROM page_links WHERE source_page_id = ?1",
-                libsql::params![source_page_id],
-            )
-            .await?;
-            let mut src_space: Option<Option<String>> = None;
-            for link in links {
-                let label_key = Self::page_title_key(&link.label);
-                let stable_target = stable_targets.get(&label_key).and_then(Option::as_deref);
-                let target_page_id = stable_target.or(link.target_page_id.as_deref());
-
-                let Some(target_page_id) = target_page_id else {
-                    // G6 Stage 2 PR 2b: orphan-only narrowing (item 3) --
-                    // page_links keeps writing unresolved wikilinks only. A
-                    // resolved link's row stops here; the edge minted below
-                    // is its sole canonical representation going forward.
-                    conn.execute(
-                        "INSERT INTO page_links (source_page_id, target_page_id, label_key, label) \
-                         VALUES (?1, NULL, ?2, ?3)",
-                        libsql::params![source_page_id, label_key.clone(), link.label.clone()],
-                    )
-                    .await?;
-                    continue; // orphan wikilink: no destination, no edge (matrix row 5)
-                };
-                let space = match &src_space {
-                    Some(s) => s.clone(),
-                    None => {
-                        let mut rows = conn
-                            .query(
-                                "SELECT space FROM pages WHERE id = ?1",
-                                libsql::params![source_page_id],
-                            )
-                            .await?;
-                        let s: Option<String> = match rows.next().await? {
-                            Some(row) => row.get(0).unwrap_or(None),
-                            None => None,
-                        };
-                        drop(rows);
-                        src_space = Some(s.clone());
-                        s
-                    }
-                };
-                let Some(space) = space else {
-                    continue; // source page unresolvable: skip (shouldn't happen, FK-backed)
-                };
-                let mut dst_rows = conn
-                    .query(
-                        "SELECT space FROM pages WHERE id = ?1",
-                        libsql::params![target_page_id],
-                    )
-                    .await?;
-                let dst_space: Option<String> = match dst_rows.next().await? {
-                    Some(row) => row.get(0).unwrap_or(None),
-                    None => None,
-                };
-                drop(dst_rows);
-                let cross_space_downgrade =
-                    Self::resolved_space_downgrades(dst_space.as_deref(), &space);
-                let lineage = if cross_space_downgrade {
-                    "legacy"
-                } else {
-                    "synthesis"
-                };
-                // G6 Stage 1: the display label (only its lowercased
-                // label_key hashes into the edge id).
-                let semantic_patch = serde_json::json!({ "label": link.label }).to_string();
-                Self::dual_write_edge_with_payload(
-                    &conn,
-                    "links",
-                    "page",
-                    source_page_id,
-                    "page",
-                    target_page_id,
-                    &label_key,
-                    lineage,
-                    &space,
-                    cross_space_downgrade,
-                    None,
-                    None,
-                    None,
-                    Some(&semantic_patch),
-                )
-                .await?;
-            }
-            Ok::<_, libsql::Error>(())
-        }
-        .await;
+        let exec = Self::replace_page_links_on(&conn, source_page_id, links, false).await;
         match exec {
             Ok(()) => {
                 commit_or_rollback(&conn).await.map_err(|e| {
@@ -59206,6 +59072,172 @@ impl MemoryDB {
                 Err(WenlanError::VectorDb(format!("replace_page_links: {e}")))
             }
         }
+    }
+
+    /// Same edge replacement for writers that already own the transaction.
+    async fn replace_page_links_on(
+        conn: &libsql::Connection,
+        source_page_id: &str,
+        links: &[crate::synthesis::wikilinks::Wikilink],
+        member: bool,
+    ) -> Result<(), libsql::Error> {
+        // Keep the identity of a resolved backlink when this body is
+        // saved again after its target was renamed. Its old display label
+        // may no longer resolve by title, and a newly created page may
+        // later reuse that label. Only retain an active, same-space,
+        // ordinary target already linked from this exact source page.
+        // Imported concept links are resolved by their concept registry;
+        // preserving them here would resurrect removed concept targets.
+        let mut stable_targets: HashMap<String, Option<String>> = HashMap::new();
+        let member_filter = if member {
+            format!(" AND {}", scoped_pages::shared_page_predicate("target."))
+        } else {
+            String::new()
+        };
+        let mut existing_edges = conn
+            .query(
+                &format!(
+                    "SELECT e.dst_id,e.payload
+                   FROM edges e
+                   JOIN pages source ON source.id=e.src_id
+                   JOIN pages target ON target.id=e.dst_id
+                  WHERE e.src_id=?1 AND e.src_kind='page' AND e.dst_kind='page'
+                    AND e.edge_type='links' AND e.valid_until IS NULL
+                    AND source.status='active' AND target.status='active'
+                    AND COALESCE(target.kind,'concept')!='entity'
+                    AND target.space IS source.space
+                    AND target.workspace IS source.workspace
+                    AND NOT EXISTS (
+                        SELECT 1 FROM okf_concept_links concept_link
+                        WHERE concept_link.page_id=e.src_id
+                          AND concept_link.target_key=CASE WHEN json_valid(e.payload)
+                              THEN lower(json_extract(e.payload,'$.label')) END
+                    ){member_filter}"
+                ),
+                libsql::params![source_page_id],
+            )
+            .await?;
+        while let Some(row) = existing_edges.next().await? {
+            let target_id = row.get::<String>(0)?;
+            let payload = row.get::<Option<String>>(1)?.unwrap_or_default();
+            let Some(label) = serde_json::from_str::<serde_json::Value>(&payload)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("label")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+            else {
+                continue;
+            };
+            let key = Self::page_title_key(&label);
+            stable_targets
+                .entry(key)
+                .and_modify(|existing| *existing = None)
+                .or_insert(Some(target_id));
+        }
+        drop(existing_edges);
+
+        // Dual-write (M2 PR-1): invalidate every active `links` edge
+        // from this page up front; the loop below re-asserts (or
+        // reactivates, via `dual_write_edge`'s upsert) an edge for each
+        // link still present, so a link dropped from the new set stays
+        // invalidated and a link that survives round-trips back to
+        // active within this same transaction.
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE edges SET valid_until = ?2, superseded_by = NULL \
+             WHERE edge_type = 'links' AND src_id = ?1 AND valid_until IS NULL",
+            libsql::params![source_page_id, now],
+        )
+        .await?;
+
+        conn.execute(
+            "DELETE FROM page_links WHERE source_page_id = ?1",
+            libsql::params![source_page_id],
+        )
+        .await?;
+        let mut src_space: Option<Option<String>> = None;
+        for link in links {
+            let label_key = Self::page_title_key(&link.label);
+            let stable_target = stable_targets.get(&label_key).and_then(Option::as_deref);
+            let target_page_id = stable_target.or(link.target_page_id.as_deref());
+
+            let Some(target_page_id) = target_page_id else {
+                // G6 Stage 2 PR 2b: orphan-only narrowing (item 3) --
+                // page_links keeps writing unresolved wikilinks only. A
+                // resolved link's row stops here; the edge minted below
+                // is its sole canonical representation going forward.
+                conn.execute(
+                    "INSERT INTO page_links (source_page_id, target_page_id, label_key, label) \
+                     VALUES (?1, NULL, ?2, ?3)",
+                    libsql::params![source_page_id, label_key.clone(), link.label.clone()],
+                )
+                .await?;
+                continue; // orphan wikilink: no destination, no edge (matrix row 5)
+            };
+            let space = match &src_space {
+                Some(s) => s.clone(),
+                None => {
+                    let mut rows = conn
+                        .query(
+                            "SELECT space FROM pages WHERE id = ?1",
+                            libsql::params![source_page_id],
+                        )
+                        .await?;
+                    let s: Option<String> = match rows.next().await? {
+                        Some(row) => row.get(0).unwrap_or(None),
+                        None => None,
+                    };
+                    drop(rows);
+                    src_space = Some(s.clone());
+                    s
+                }
+            };
+            let Some(space) = space else {
+                continue; // source page unresolvable: skip (shouldn't happen, FK-backed)
+            };
+            let mut dst_rows = conn
+                .query(
+                    "SELECT space FROM pages WHERE id = ?1",
+                    libsql::params![target_page_id],
+                )
+                .await?;
+            let dst_space: Option<String> = match dst_rows.next().await? {
+                Some(row) => row.get(0).unwrap_or(None),
+                None => None,
+            };
+            drop(dst_rows);
+            let cross_space_downgrade =
+                Self::resolved_space_downgrades(dst_space.as_deref(), &space);
+            let lineage = if cross_space_downgrade {
+                "legacy"
+            } else {
+                "synthesis"
+            };
+            // G6 Stage 1: the display label (only its lowercased
+            // label_key hashes into the edge id).
+            let semantic_patch = serde_json::json!({ "label": link.label }).to_string();
+            Self::dual_write_edge_with_payload(
+                conn,
+                "links",
+                "page",
+                source_page_id,
+                "page",
+                target_page_id,
+                &label_key,
+                lineage,
+                &space,
+                cross_space_downgrade,
+                None,
+                None,
+                None,
+                Some(&semantic_patch),
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     /// Group every still-orphan label by count, restricted to active source
