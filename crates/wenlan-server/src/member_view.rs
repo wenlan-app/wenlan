@@ -157,6 +157,8 @@ enum ProblemCode {
     PageTitleFixed,
     PageNotRestorable,
     PageNotRemovable,
+    PageIsThePersons,
+    PermanentDeleteNeedsPerson,
 }
 
 impl ProblemCode {
@@ -173,6 +175,16 @@ impl ProblemCode {
             Self::PageTitleFixed => "This page's title cannot be changed.",
             Self::PageNotRestorable => "This page cannot be restored.",
             Self::PageNotRemovable => "This page cannot be removed.",
+            // The removal refusals name no page or person; the hosted MCP
+            // client switches on these codes.
+            Self::PageIsThePersons => wenlan_core::post_write::page_removal_refusal_message(
+                wenlan_types::responses::PageRemovalErrorCode::PageIsThePersons,
+            ),
+            Self::PermanentDeleteNeedsPerson => {
+                wenlan_core::post_write::page_removal_refusal_message(
+                    wenlan_types::responses::PageRemovalErrorCode::PermanentDeleteNeedsPerson,
+                )
+            }
         }
     }
 
