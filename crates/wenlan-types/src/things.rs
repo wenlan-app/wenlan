@@ -107,11 +107,19 @@ pub struct ThingDetailResponse {
     /// Points steeped from this thing that are still open, not settled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_points: Vec<String>,
-    /// Its conversations that went on but could not be read overnight,
-    /// because their transcript was gone (UX-CHAT-5). Older daemons leave it
+    /// Its conversations a night cannot read: the transcript was gone, or the
+    /// AI tool keeps none Wenlan can read (UX-CHAT-5). Older daemons leave it
     /// out.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unread: usize,
+    /// The AI tools those unread conversations came from, each once, sorted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unread_tools: Vec<String>,
+    /// Its conversations that are due but wait for a later night, because
+    /// the latest night had no AI model (UX-CHAT-5). Older daemons leave it
+    /// out.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub waiting: usize,
     /// What its nights tidied that can still be taken back, one change at a
     /// time, from the memory that stands now (UX-GRAPH-7). Older daemons
     /// leave it out.

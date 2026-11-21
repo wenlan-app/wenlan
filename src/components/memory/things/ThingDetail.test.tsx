@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { answerThingMapProposal, answerThingMerge, getMemorySaid, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, undoThingTidy, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
+import { i18n } from "../../../i18n";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -343,15 +344,63 @@ describe("ThingDetail", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: /overnight/ })).toBeNull());
   });
 
-  it("UX-CHAT-5: a conversation a night could not read is said once, quietly", async () => {
+  it("UX-CHAT-5: a conversation a night didn't get is said once, quietly, naming the tool", async () => {
     vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 1 });
     renderThing();
-    expect(await screen.findByText("One conversation couldn't be read overnight.")).toBeTruthy();
+    expect(await screen.findByText("Didn't get this conversation.")).toBeTruthy();
+    expect(screen.queryByText(/wait for a model|waits for a model/)).toBeNull();
+    cleanup();
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 2, unread_tools: ["cursor"] });
+    renderThing();
+    expect(await screen.findByText("Didn't get 2 conversations from Cursor.")).toBeTruthy();
+    cleanup();
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 2, unread_tools: ["cursor", "claude-code"] });
+    renderThing();
+    expect(await screen.findByText("Didn't get 2 conversations.")).toBeTruthy();
     cleanup();
     vi.mocked(getThing).mockResolvedValue(tagline);
     renderThing();
     await screen.findByRole("heading", { level: 1, name: "New tagline" });
-    expect(screen.queryByText(/couldn't be read/)).toBeNull();
+    expect(screen.queryByText(/Didn't get/)).toBeNull();
+  });
+
+  it("UX-CHAT-5: conversations waiting for a model are said apart from ones it didn't get", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, waiting: 1 });
+    renderThing();
+    expect(await screen.findByText("One conversation waits for a model.")).toBeTruthy();
+    expect(screen.queryByText(/Didn't get/)).toBeNull();
+    cleanup();
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, waiting: 3, unread: 1 });
+    renderThing();
+    expect(await screen.findByText("3 conversations wait for a model.")).toBeTruthy();
+    expect(screen.getByText("Didn't get this conversation.")).toBeTruthy();
+    cleanup();
+    vi.mocked(getThing).mockResolvedValue(tagline);
+    renderThing();
+    await screen.findByRole("heading", { level: 1, name: "New tagline" });
+    expect(screen.queryByText(/wait for a model|waits for a model/)).toBeNull();
+  });
+
+  it("UX-CHAT-5: the unread and waiting lines read naturally in Traditional Chinese", async () => {
+    await i18n.changeLanguage("zh-Hant");
+    try {
+      vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 1, unread_tools: ["cursor"], waiting: 2 });
+      renderThing();
+      expect(await screen.findByText("沒拿到 Cursor 的 1 段對話。")).toBeTruthy();
+      expect(screen.getByText("有 2 個對話在等模型來讀。")).toBeTruthy();
+      cleanup();
+      vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 3 });
+      renderThing();
+      expect(await screen.findByText("沒拿到 3 段對話。")).toBeTruthy();
+      expect(screen.queryByText(/在等模型/)).toBeNull();
+      cleanup();
+      vi.mocked(getThing).mockResolvedValue(tagline);
+      renderThing();
+      await screen.findByRole("heading", { level: 1, name: "New tagline" });
+      expect(screen.queryByText(/沒拿到|在等模型/)).toBeNull();
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
 
   it("UX-CHAT-5: a steeped thing opens on the big map from its night's line", async () => {

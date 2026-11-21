@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { undoThingDream, undoThingTidy, type ThingDetail, type ThingTidy } from "../../../lib/tauri";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
+import { familyDisplayName } from "../../../lib/agents";
 import { steepedToday } from "../../../lib/graph/lastNight";
 
 /** A small crescent: the mark for what Wenlan steeped overnight. */
@@ -66,13 +67,27 @@ export function ThingSteeped({
   );
 }
 
-/** A night came to read some of the thing's conversations and could not:
- *  said once, quietly, so a point that is missing is not a surprise. */
+/** Conversations a night did not read, each said once and quietly so a point
+ *  that is missing is not a surprise (UX-CHAT-5): ones it didn't get (no
+ *  transcript to read, naming the tool when it is one), and ones waiting for
+ *  a model, which a later night reads. */
 export function ThingUnread({ thing }: { readonly thing: ThingDetail }) {
   const { t } = useTranslation();
   const count = thing.unread ?? 0;
-  if (count === 0) return null;
-  return <p className="thing-unread">{t("thing.unreadConversations", { count })}</p>;
+  const waiting = thing.waiting ?? 0;
+  if (count === 0 && waiting === 0) return null;
+  const tools = thing.unread_tools ?? [];
+  const tool = tools.length === 1 ? familyDisplayName(tools[0]) : "";
+  return (
+    <>
+      {count > 0 ? (
+        <p className="thing-unread">
+          {tool ? t("thing.unreadConversationsFrom", { count, tool }) : t("thing.unreadConversations", { count })}
+        </p>
+      ) : null}
+      {waiting > 0 ? <p className="thing-unread">{t("thing.waitingConversations", { count: waiting })}</p> : null}
+    </>
+  );
 }
 
 /**

@@ -1134,3 +1134,130 @@ async fn ux_graph_7_a_tidy_keeps_what_it_hid_hidden_and_checks_again_when_it_rec
     assert_eq!(mode(&db, "mem_n").await, "hide");
     assert_eq!(mode(&db, "mem_p").await, p_before);
 }
+
+/// Design v5 F7: a conversation from an AI tool Wenlan has no transcript
+/// reader for never gets a label, so no night reads it. The thing's page says
+/// it didn't get it, and names the tool; a gone transcript counts the same.
+#[tokio::test]
+async fn ux_chat_5_a_conversation_from_a_tool_with_no_transcript_reader_is_not_got() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _) = two_things(&db, now).await;
+    for name in ["cursor:s1", "codex:s2"] {
+        let session = db
+            .upsert_session_metadata(&wenlan_types::UpsertSessionRequest {
+                session: name.into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // Sorted into the thing, as `sort_sessions_into_things` does.
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO thing_sessions (thing_id, session_id, assigned_by, at)
+             VALUES (?1, ?2, 'ai', ?3)",
+            libsql::params![site.as_str(), session.id.as_str(), now],
+        )
+        .await
+        .unwrap();
+    }
+    let detail = db
+        .get_thing_detail(&site, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.sessions.len(), 4, "c0, c1 and the two unlabelled");
+    assert_eq!(
+        (detail.unread, detail.unread_tools.as_slice()),
+        (1, ["cursor".to_string()].as_slice()),
+        "only the tool with no reader; codex has one and is not yet read"
+    );
+    assert_eq!(detail.waiting, 0);
+
+    // A gone transcript counts too, under its own tool.
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let c0 = due
+        .iter()
+        .find(|d| d.thing_id == site)
+        .unwrap()
+        .conversations
+        .iter()
+        .find(|c| c.external_id == "c0")
+        .unwrap()
+        .clone();
+    db.mark_dream_unread(std::slice::from_ref(&c0))
+        .await
+        .unwrap();
+    let detail = db
+        .get_thing_detail(&site, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.unread, 2);
+    assert_eq!(detail.unread_tools, ["claude-code", "cursor"]);
+}
+
+/// Design v5 F7: a night with no AI model leaves what is due waiting, and
+/// the thing says so, until a night with a model reads it. A conversation
+/// whose transcript was gone is "didn't get", not waiting.
+#[tokio::test]
+async fn ux_chat_5_a_due_conversation_waits_for_a_model_until_a_night_reads_it() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, notes) = two_things(&db, now).await;
+    let waiting = |thing: String| {
+        let db = &db;
+        async move {
+            db.get_thing_detail(&thing, &ReadScope::Global)
+                .await
+                .unwrap()
+                .unwrap()
+                .waiting
+        }
+    };
+    assert_eq!(waiting(site.clone()).await, 0, "no night has run yet");
+
+    // A night with no model: what was quiet by then waits. c2 (Release
+    // notes) ended five minutes ago and was not due.
+    db.note_dreams_waiting(now - 1_800).await.unwrap();
+    assert_eq!(waiting(site.clone()).await, 2);
+    assert_eq!(waiting(notes.clone()).await, 0);
+
+    // A later night reads c1; c0's transcript is gone.
+    let due = db.things_to_dream(now - 1_800, 10).await.unwrap();
+    let conv = |id: &str| {
+        due[0]
+            .conversations
+            .iter()
+            .find(|c| c.external_id == id)
+            .unwrap()
+            .clone()
+    };
+    db.record_dream(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        std::slice::from_ref(&conv("c1")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(waiting(site.clone()).await, 1, "c0 still waits");
+    db.mark_dream_unread(std::slice::from_ref(&conv("c0")))
+        .await
+        .unwrap();
+    let detail = db
+        .get_thing_detail(&site, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((detail.waiting, detail.unread), (0, 1));
+
+    // A model is back: nothing waits for one, whatever is due.
+    db.clear_dreams_waiting().await.unwrap();
+    assert_eq!(waiting(notes).await, 0);
+    db.note_dreams_waiting(now).await.unwrap();
+    db.clear_dreams_waiting().await.unwrap();
+    assert_eq!(db.thing_waiting_conversations(&site).await.unwrap(), 0);
+}

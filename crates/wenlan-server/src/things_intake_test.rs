@@ -1030,6 +1030,58 @@ async fn ux_chat_5_a_night_keeps_its_lines_and_says_what_it_could_not_read() {
         .unwrap()
         .unwrap();
     assert_eq!(detail.unread, 1);
+    assert_eq!(detail.unread_tools, ["claude-code"]);
+    assert_eq!(detail.waiting, 0, "a gone transcript is not waiting");
+}
+
+async fn waiting_unread(db: &MemoryDB, thing: &str) -> (usize, usize) {
+    let d = db
+        .get_thing_detail(thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    (d.waiting, d.unread)
+}
+
+/// Design v5 F7: a night with no model leaves its due conversations waiting
+/// and the thing's page says so; a later night that has a model reads them
+/// and the line goes. A gone transcript is "didn't get", never "waiting".
+#[tokio::test]
+async fn ux_chat_5_a_night_with_no_model_leaves_conversations_waiting_for_a_later_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "wenlan", "wenlan").await;
+    let thing = db.list_things(&ReadScope::Global, None).await.unwrap()[0].clone();
+    let now = chrono::Utc::now().timestamp();
+    assert_eq!(waiting_unread(&db, &thing.id).await, (0, 0));
+
+    note_waiting_for_model(&db, now, 3).await;
+    assert_eq!(
+        waiting_unread(&db, &thing.id).await,
+        (2, 0),
+        "no model ran: both are waiting"
+    );
+
+    let group = Scripted::new(&[
+        r#"{"points": [
+            {"text": "The release ships on Tuesday.", "settled": true, "from": "C0", "line": "L0"}
+        ]}"#,
+        r#"{"conclusion": []}"#,
+    ]);
+    // Only one transcript is still there on the later night.
+    let a = found.values().next().unwrap().clone();
+    let only: HashMap<String, FoundConversation> = [(found_session_id(&a).unwrap(), a)].into();
+    let keep = Keep(&db, Default::default());
+    dream_with(&db, &due, &only, group.as_ref(), "English", &keep, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting_unread(&db, &thing.id).await,
+        (0, 1),
+        "one was read, one is gone: nothing waits any more"
+    );
 }
 
 /// The dry run of UX-GRAPH-7 on a copy of a real database: what a week of

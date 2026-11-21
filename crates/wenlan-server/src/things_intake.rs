@@ -236,6 +236,16 @@ fn group_from(
         })
 }
 
+/// A night had no model: record that what is due waits for a later one.
+async fn note_waiting_for_model(db: &MemoryDB, now: i64, local_hour: u32) {
+    if let Err(error) = db
+        .note_dreams_waiting(dream_quiet_since(now, local_hour))
+        .await
+    {
+        tracing::warn!("[things] noting conversations that wait for a model: {error}");
+    }
+}
+
 /// One look, now. `None` when it did not run.
 pub async fn look_once(
     shared: &SharedState,
@@ -291,6 +301,9 @@ pub async fn look_once(
     };
 
     let Some(models) = models else {
+        // No model to read with: what is due waits for a later night, and
+        // the thing's page says so (UX-CHAT-5).
+        note_waiting_for_model(&db, now, chrono::Local::now().hour()).await;
         // No everyday model yet (an on-device one waits for an idle
         // computer): the skills night pass only needs the grouping model.
         if NIGHT_HOURS.contains(&chrono::Local::now().hour()) && still_quiet() {
@@ -428,6 +441,8 @@ async fn dream_once(
     if now < backoff.dream.1 {
         return Ok((0, 0));
     }
+    // A model is here: nothing waits for one any more.
+    db.clear_dreams_waiting().await.map_err(|e| e.to_string())?;
     let due = db
         .things_to_dream(dream_quiet_since(now, local_hour), DREAM_BATCH)
         .await

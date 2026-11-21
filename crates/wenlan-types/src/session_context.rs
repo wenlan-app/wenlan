@@ -170,6 +170,10 @@ pub fn strip_url_credentials(url: &str) -> String {
     }
 }
 
+/// The AI tools whose transcripts Wenlan can read (`find_transcript`, and the
+/// nightly conversation scan). A conversation from any other tool has none.
+pub const TRANSCRIPT_TOOLS: [&str; 2] = ["claude-code", "codex"];
+
 /// Directories the transcript lookup reads from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TranscriptRoots {

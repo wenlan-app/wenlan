@@ -31,6 +31,9 @@ use wenlan_types::{
     ThingNightPoint, ThingNightPoints, ThingReplaced, ThingTidy,
 };
 
+/// `app_metadata` key: the cutoff of the last night that had no AI model.
+const DREAMS_WAITING_KEY: &str = "things_dream_waiting_since";
+
 /// `thing_history` with the two operations added. Same columns, rows and
 /// sequence numbers as before.
 const HISTORY_REBUILD: &str = "
@@ -937,6 +940,99 @@ impl MemoryDB {
             .await
             .map_err(db_err("thing unread"))?;
         let count = match rows.next().await.map_err(db_err("thing unread row"))? {
+            Some(row) => row.get::<i64>(0).unwrap_or(0),
+            None => 0,
+        };
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
+
+    /// The AI tools of a thing's conversations a night cannot read: those
+    /// whose transcript was gone (see [`Self::thing_unread_conversations`])
+    /// and those from a tool Wenlan has no transcript reader for. The second
+    /// kind never gets a `conversation_labels` row (labels come only from a
+    /// scanned transcript), only an `agent_sessions` row from the tool's own
+    /// MCP calls, so they are found there. One entry per conversation.
+    pub async fn thing_unread_tools(&self, thing_id: &str) -> Result<Vec<String>, WenlanError> {
+        let readers = wenlan_types::session_context::TRANSCRIPT_TOOLS
+            .iter()
+            .map(|tool| format!("'{tool}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT cl.tool FROM conversation_labels cl
+                       JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                      WHERE ts.thing_id = ?1 AND cl.work = 1
+                        AND cl.unread_at IS NOT NULL AND cl.unread_at >= cl.last_at
+                        AND (cl.dreamed_at IS NULL OR cl.dreamed_at < cl.last_at)
+                     UNION ALL
+                     SELECT s.tool FROM agent_sessions s
+                       JOIN thing_sessions ts ON ts.session_id = s.id
+                      WHERE ts.thing_id = ?1 AND s.tool NOT IN ({readers})
+                        AND NOT EXISTS (SELECT 1 FROM conversation_labels l
+                                         WHERE l.session_id = s.id)"
+                ),
+                libsql::params![thing_id],
+            )
+            .await
+            .map_err(db_err("thing unread tools"))?;
+        let mut tools = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(db_err("thing unread tools row"))?
+        {
+            tools.push(row.get::<String>(0).unwrap_or_default());
+        }
+        Ok(tools)
+    }
+
+    /// A night with no AI model came to read what was due and could not:
+    /// everything whose last line is at or before `quiet_since` is waiting
+    /// for a later night. Nothing is marked on the conversations; the next
+    /// night that has a model clears this ([`Self::clear_dreams_waiting`]).
+    pub async fn note_dreams_waiting(&self, quiet_since: i64) -> Result<(), WenlanError> {
+        self.set_app_metadata(DREAMS_WAITING_KEY, &quiet_since.to_string())
+            .await
+    }
+
+    /// A night has a model again: nothing is waiting for one.
+    pub async fn clear_dreams_waiting(&self) -> Result<(), WenlanError> {
+        if self.get_app_metadata(DREAMS_WAITING_KEY).await?.is_some() {
+            self.set_app_metadata(DREAMS_WAITING_KEY, "").await?;
+        }
+        Ok(())
+    }
+
+    /// How many of a thing's conversations are due for reading but waited
+    /// because the latest night had no AI model. Read, gone and still
+    /// going-on conversations are not counted.
+    pub async fn thing_waiting_conversations(&self, thing_id: &str) -> Result<usize, WenlanError> {
+        let Some(quiet_since) = self
+            .get_app_metadata(DREAMS_WAITING_KEY)
+            .await?
+            .and_then(|raw| raw.parse::<i64>().ok())
+        else {
+            return Ok(0);
+        };
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM conversation_labels cl
+                   JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                   JOIN things t ON t.id = ts.thing_id
+                  WHERE ts.thing_id = ?1 AND cl.work = 1
+                    AND t.merged_into IS NULL AND t.title IS NOT NULL
+                    AND (cl.dreamed_at IS NULL OR cl.last_at > cl.dreamed_at)
+                    AND (cl.unread_at IS NULL OR cl.last_at > cl.unread_at)
+                    AND cl.last_at <= ?2",
+                libsql::params![thing_id, quiet_since],
+            )
+            .await
+            .map_err(db_err("thing waiting"))?;
+        let count = match rows.next().await.map_err(db_err("thing waiting row"))? {
             Some(row) => row.get::<i64>(0).unwrap_or(0),
             None => 0,
         };
