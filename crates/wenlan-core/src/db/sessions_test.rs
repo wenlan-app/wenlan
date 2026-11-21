@@ -413,6 +413,11 @@ async fn recall_pages_have_their_own_list_and_never_push_real_reads_out() {
     let seen = db.session_pages_seen(&id).await.unwrap();
     assert_eq!(seen.len() as i64, SESSION_RECALL_PAGES_KEPT);
     assert_eq!(seen[0], "page_229");
+    // A note recalled again counts as the newest, for the trim and the order.
+    db.record_session_read(&a, SessionReadKind::RecallPage, "page_100", None)
+        .await
+        .unwrap();
+    assert_eq!(db.session_pages_seen(&id).await.unwrap()[0], "page_100");
     assert!(!seen.contains(&"page_0".to_string()));
     // Fifty real reads do not take the notes away.
     for i in 0..60 {
@@ -463,6 +468,10 @@ async fn migration_170_lets_an_old_session_reads_table_hold_recall_pages() {
     db.record_session_read(&a, SessionReadKind::Recall, "kept query", None)
         .await
         .unwrap();
+    db.record_session_read(&a, SessionReadKind::Brief, "work", None)
+        .await
+        .unwrap();
+    let ids_before = read_ids(&db).await;
     assert!(db
         .record_session_read(&a, SessionReadKind::RecallPage, "page_x", None)
         .await
@@ -481,6 +490,23 @@ async fn migration_170_lets_an_old_session_reads_table_hold_recall_pages() {
         .unwrap()
         .unwrap();
     assert!(detail.reads.iter().any(|r| r.label == "kept query"));
+    // The rows keep their ids; the new one comes after them.
+    let ids_after = read_ids(&db).await;
+    assert_eq!(ids_after[..ids_before.len()], ids_before[..]);
+    assert!(ids_after.len() == ids_before.len() + 1 && ids_after.last() > ids_before.last());
+}
+
+async fn read_ids(db: &super::MemoryDB) -> Vec<i64> {
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query("SELECT id FROM session_reads ORDER BY id", ())
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next().await.unwrap() {
+        ids.push(row.get::<i64>(0).unwrap());
+    }
+    ids
 }
 
 #[tokio::test]

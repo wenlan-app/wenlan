@@ -4031,7 +4031,7 @@ export interface SessionHandoffEntry {
 }
 
 /** `recall`: a memory search (label is the query). `brief`: a Space Brief read (label is the Space). `read_page`: a note read in full (label is the note id). */
-export type SessionReadKind = "recall" | "brief" | "read_page";
+export type SessionReadKind = "recall" | "brief" | "read_page" | "recall_page";
 
 export interface SessionReadEntry {
   kind: SessionReadKind;

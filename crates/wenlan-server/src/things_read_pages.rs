@@ -40,6 +40,9 @@ pub(crate) struct NewPoint {
     /// The Space the point was kept in; a note is checked only against the
     /// points of its own Space.
     pub space: Option<String>,
+    /// The conversation (its session id) the point came from. A note is
+    /// checked only against the points of conversations that read it.
+    pub session_id: String,
 }
 
 /// One sentence a point clearly contradicts, after validation.
@@ -56,33 +59,48 @@ struct Contradiction {
 pub(crate) struct ReadPagesReport {
     pub changed: usize,
     pub proposed: usize,
+    /// Whole-page revision cards the write path staged instead of landing.
+    pub staged: usize,
 }
 
 /// Check the notes `session_ids` read against `points`. `already_following`
 /// holds the memories the group wrote or replaced: a note citing one of them
-/// is not a candidate, the refresh follows it. A failure on one note is
-/// logged and the next is tried; nothing here fails the night.
+/// is not a candidate, the refresh follows it. A note is checked only against
+/// the points of the conversations that read it, in its own Space.
+/// `knowledge_path` is the pages folder the write projects into. The caller
+/// has already ruled out a computer that may not write page text. A failure
+/// on one note is logged and the next is tried; nothing here fails the night.
 pub(crate) async fn check_read_pages(
     db: &MemoryDB,
     session_ids: &[&str],
     points: &[NewPoint],
     already_following: &HashSet<String>,
     model: &dyn LlmProvider,
+    knowledge_path: Option<&std::path::Path>,
 ) -> ReadPagesReport {
     let mut report = ReadPagesReport::default();
     if points.is_empty() {
         return report;
     }
-    let mut seen = HashSet::new();
-    let mut page_ids = Vec::new();
+    // Each note with the conversations that read it, in the order first read.
+    let mut readers: Vec<(String, HashSet<&str>)> = Vec::new();
     for session in session_ids {
         match db.session_pages_seen(session).await {
-            Ok(ids) => page_ids.extend(ids.into_iter().filter(|id| seen.insert(id.clone()))),
+            Ok(ids) => {
+                for id in ids {
+                    match readers.iter_mut().find(|(seen, _)| *seen == id) {
+                        Some((_, sessions)) => {
+                            sessions.insert(session);
+                        }
+                        None => readers.push((id, HashSet::from([*session]))),
+                    }
+                }
+            }
             Err(error) => tracing::warn!("[things] the notes {session} read: {error}"),
         }
     }
     let mut asked = 0;
-    for page_id in page_ids {
+    for (page_id, sessions) in readers {
         if asked >= READ_PAGES_CHECKED {
             break;
         }
@@ -96,16 +114,21 @@ pub(crate) async fn check_read_pages(
         };
         let own: Vec<&NewPoint> = points
             .iter()
-            .filter(|p| p.space.is_some() && p.space == page.space)
+            .filter(|p| {
+                sessions.contains(p.session_id.as_str())
+                    && p.space.is_some()
+                    && p.space == page.space
+            })
             .collect();
         if own.is_empty() {
             continue;
         }
         asked += 1;
-        match check_page(db, &page, &own, model).await {
+        match check_page(db, &page, &own, model, knowledge_path).await {
             Ok(done) => {
                 report.changed += done.changed;
                 report.proposed += done.proposed;
+                report.staged += done.staged;
             }
             Err(error) => tracing::warn!("[things] note {page_id} left as it is: {error}"),
         }
@@ -152,14 +175,18 @@ async fn check_page(
     page: &Page,
     points: &[&NewPoint],
     model: &dyn LlmProvider,
+    knowledge_path: Option<&std::path::Path>,
 ) -> Result<ReadPagesReport, String> {
     let sentences = wenlan_core::sentences::page_sentences(db, &page.id)
         .await
         .map_err(|e| e.to_string())?;
+    // What the model is shown, and the only thing its answer is checked
+    // against. A sentence longer than the limit is left out whole rather than
+    // cut, so a replacement never drops text the model did not see.
     let shown: Vec<&PageSentence> = sentences
         .sentences
         .iter()
-        .filter(|s| !s.text.starts_with('#'))
+        .filter(|s| !s.text.starts_with('#') && s.text.chars().count() <= SENTENCE_CHARS)
         .take(SENTENCES_SHOWN)
         .collect();
     if shown.is_empty() {
@@ -179,14 +206,36 @@ async fn check_page(
         })
         .await
         .map_err(|e| e.to_string())?;
-    let found = parse(&answer, &sentences.sentences, points.len());
+    let found = parse(&answer, &shown, points.len());
     let mut report = ReadPagesReport::default();
+    // Before either path: a point that no longer stands (replaced or hidden
+    // since it was kept) contradicts nothing.
+    let mut standing: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
     // Proposals first: they leave the page's version alone, so the version the
     // note was read at still holds for each of them.
     let mut in_place = Vec::new();
     for item in found {
-        let sentence = &sentences.sentences[item.sentence];
+        let sentence = shown[item.sentence];
         let point = points[item.point];
+        let stands = match standing.get(point.memory_id.as_str()) {
+            Some(stands) => *stands,
+            None => {
+                let stands = matches!(
+                    db.get_memory_detail(&point.memory_id).await,
+                    Ok(Some(memory)) if !memory.is_archived
+                );
+                standing.insert(point.memory_id.as_str(), stands);
+                stands
+            }
+        };
+        if !stands {
+            tracing::warn!(
+                "[things] point {} no longer stands; note {} is left as it is",
+                point.memory_id,
+                page.id
+            );
+            continue;
+        }
         let ai_unlocked =
             sentence.author == SentenceAuthor::Ai && !sentence.protected && !page.review_required;
         if ai_unlocked {
@@ -209,7 +258,11 @@ async fn check_page(
         )
         .await
         {
-            Ok(_) => report.proposed += 1,
+            Ok(Some(_)) => report.proposed += 1,
+            Ok(None) => tracing::info!(
+                "[things] a proposal for {} is already waiting or was refused; not filed again",
+                page.id
+            ),
             Err(error) => tracing::warn!("[things] a proposal for {} not filed: {error}", page.id),
         }
     }
@@ -224,18 +277,29 @@ async fn check_page(
             &sentence.hash,
             &text,
             &point.memory_id,
+            knowledge_path,
         )
         .await
         {
-            Ok(Some(next)) => {
+            Ok(InPlace::Wrote(next)) => {
                 version = next;
                 report.changed += 1;
             }
-            Ok(None) => {
+            Ok(InPlace::Moved) => {
                 tracing::warn!(
                     "[things] note {} moved on; its sentence is left as it is",
                     page.id
                 );
+                break;
+            }
+            Ok(InPlace::Staged {
+                cards,
+                proposals,
+                what,
+            }) => {
+                tracing::info!("[things] note {}: the write {what}", page.id);
+                report.staged += cards;
+                report.proposed += proposals;
                 break;
             }
             Err(error) => {
@@ -247,11 +311,24 @@ async fn check_page(
     Ok(report)
 }
 
+/// How a machine write of one sentence came out.
+enum InPlace {
+    /// It landed; the note is now at this version.
+    Wrote(i64),
+    /// The note was no longer at the version it was read at.
+    Moved,
+    /// The write path did not land it and staged something for the person
+    /// instead (or nothing); `what` says which, from the write's own result.
+    Staged {
+        cards: usize,
+        proposals: usize,
+        what: String,
+    },
+}
+
 /// Replace one sentence through the machine write the automatic refresh uses
 /// (`re_distill`), so authorship, history and the sentence gate treat it as
 /// any other refresh. The new point's memory joins the note's sources.
-/// Returns the new version, or `None` when the note was no longer at
-/// `expected_version` or the write did not land.
 async fn change_in_place(
     db: &MemoryDB,
     page_id: &str,
@@ -259,12 +336,13 @@ async fn change_in_place(
     hash: &str,
     text: &str,
     memory_id: &str,
-) -> Result<Option<i64>, String> {
+    knowledge_path: Option<&std::path::Path>,
+) -> Result<InPlace, String> {
     let Some(current) = db.get_page(page_id).await.map_err(|e| e.to_string())? else {
-        return Ok(None);
+        return Ok(InPlace::Moved);
     };
     if current.version != expected_version {
-        return Ok(None);
+        return Ok(InPlace::Moved);
     }
     let (content, citations) =
         wenlan_core::sentences::body_with_replaced_sentence(&current, hash, text)
@@ -285,15 +363,49 @@ async fn change_in_place(
         },
         "re_distill",
         false,
-        None,
+        knowledge_path,
         citations,
     )
     .await
     .map_err(|e| e.to_string())?;
-    if !result.wrote {
-        return Ok(None);
+    if result.wrote {
+        let now = db
+            .get_page(page_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .map_or(expected_version + 1, |page| page.version);
+        return Ok(InPlace::Wrote(now));
     }
-    Ok(Some(expected_version + 1))
+    if let Some(card) = result.revision_card_id {
+        return Ok(InPlace::Staged {
+            cards: 1,
+            proposals: 0,
+            what: format!("was staged as revision card {card} for the person"),
+        });
+    }
+    if !result.sentence_proposals.is_empty() {
+        return Ok(InPlace::Staged {
+            cards: 0,
+            proposals: result.sentence_proposals.len(),
+            what: format!(
+                "filed {} sentence proposal(s) instead of landing",
+                result.sentence_proposals.len()
+            ),
+        });
+    }
+    Ok(InPlace::Staged {
+        cards: 0,
+        proposals: 0,
+        what: format!(
+            "did not land ({:?}){}",
+            result.outcome,
+            if result.warnings.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", result.warnings.join("; "))
+            }
+        ),
+    })
 }
 
 fn prompt(sentences: &[&PageSentence], points: &[&NewPoint]) -> String {
@@ -314,18 +426,17 @@ fn prompt(sentences: &[&PageSentence], points: &[&NewPoint]) -> String {
     }
     out.push_str("\nSentences of the note:\n");
     for sentence in sentences {
-        let text: String = sentence.text.chars().take(SENTENCE_CHARS).collect();
-        out.push_str(&format!("S{}: {text}\n", sentence.idx));
+        out.push_str(&format!("S{}: {}\n", sentence.idx, sentence.text));
     }
     out
 }
 
 /// The contradictions the answer names that hold up. Dropped: a sentence or
-/// point that is not offered, a heading, a replacement that reads as the
+/// point that was not shown to the model, a heading, a replacement that reads as the
 /// sentence already does, and a second change to the same sentence. A
 /// replacement carrying a citation marker is dropped too: nothing the note
 /// cites backs it.
-fn parse(answer: &str, sentences: &[PageSentence], points: usize) -> Vec<Contradiction> {
+fn parse(answer: &str, shown: &[&PageSentence], points: usize) -> Vec<Contradiction> {
     #[derive(serde::Deserialize)]
     struct Item {
         sentence: serde_json::Value,
@@ -358,11 +469,12 @@ fn parse(answer: &str, sentences: &[PageSentence], points: usize) -> Vec<Contrad
         let (Some(wanted), Some(point)) = (number(&item.sentence), number(&item.point)) else {
             continue;
         };
-        // The number is the sentence's own `idx`, as the prompt printed it.
-        let Some(position) = sentences.iter().position(|s| s.idx as usize == wanted) else {
+        // The number is the sentence's own `idx`, as the prompt printed it,
+        // and only a sentence the prompt actually showed counts.
+        let Some(position) = shown.iter().position(|s| s.idx as usize == wanted) else {
             continue;
         };
-        let sentence = &sentences[position];
+        let sentence = shown[position];
         let text = item.text.trim();
         if point >= points
             || sentence.text.starts_with('#')

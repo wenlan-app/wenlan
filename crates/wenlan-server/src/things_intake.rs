@@ -695,6 +695,7 @@ pub async fn dream_with(
                 memory_id: id.clone(),
                 text: point.text.clone(),
                 space: point_space.clone(),
+                session_id: from.session_id.clone(),
             });
             following.insert(id.clone());
             if let Some(p) = point.replaces {
@@ -731,13 +732,7 @@ pub async fn dream_with(
         // With a synced library only the main computer tidies: two computers
         // hiding the same memories could each keep a different one, and the
         // hides sync to both.
-        let tidy_here = tokio::task::spawn_blocking(|| {
-            wenlan_core::shared_space::library::page_writing_allowed_at(
-                &wenlan_core::shared_space::settings_path(),
-            )
-        })
-        .await
-        .unwrap_or(false);
+        let tidy_here = page_writing_here().await;
         let mut tidied = if tidy_here {
             tidy_thing(db, &thing.thing_id, model, writer).await
         } else {
@@ -774,20 +769,29 @@ pub async fn dream_with(
             .iter()
             .map(|(c, _)| c.session_id.as_str())
             .collect();
-        let read_pages = crate::things_read_pages::check_read_pages(
-            db,
-            &session_ids,
-            &kept_points,
-            &following,
-            model,
-        )
-        .await;
+        // Page text, proposals included, is written only by the main computer
+        // of a shared library (the same gate as the tidy above).
+        let read_pages = if tidy_here {
+            let pages_folder = wenlan_core::config::load_config().knowledge_path_or_default();
+            crate::things_read_pages::check_read_pages(
+                db,
+                &session_ids,
+                &kept_points,
+                &following,
+                model,
+                Some(&pages_folder),
+            )
+            .await
+        } else {
+            Default::default()
+        };
         if read_pages != Default::default() {
             tracing::info!(
-                "[things] {}: {} sentence(s) changed, {} proposed on notes that were read",
+                "[things] {}: {} sentence(s) changed, {} proposed, {} revision card(s) staged on notes that were read",
                 thing.thing_id,
                 read_pages.changed,
-                read_pages.proposed
+                read_pages.proposed,
+                read_pages.staged
             );
         }
         // Then what the work has come to, from every point that stands now,
@@ -802,6 +806,31 @@ pub async fn dream_with(
         }
     }
     Ok((due.len(), points_written))
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Lets a test play a computer that is not the main one of a shared library.
+    pub(crate) static NOT_THE_MAIN_COMPUTER: bool;
+}
+
+/// Whether AI may write page text on this computer: always, unless it shares
+/// the library and another computer is the main one.
+async fn page_writing_here() -> bool {
+    #[cfg(test)]
+    if NOT_THE_MAIN_COMPUTER
+        .try_with(|not_main| *not_main)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    tokio::task::spawn_blocking(|| {
+        wenlan_core::shared_space::library::page_writing_allowed_at(
+            &wenlan_core::shared_space::settings_path(),
+        )
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Tidy the memories an AI wrote around one thing's night (UX-GRAPH-7):

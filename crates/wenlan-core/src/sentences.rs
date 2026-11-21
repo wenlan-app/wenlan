@@ -393,6 +393,20 @@ fn proposals_from(entries: &[HistoryEntry], page_id: &str) -> Vec<SentencePropos
         .collect()
 }
 
+/// The proposal already waiting for this sentence with exactly this text, if
+/// any: filing it again would only repeat it.
+fn pending_same<'a>(
+    existing: &'a [SentenceProposal],
+    sentence_hash: &str,
+    after: &str,
+) -> Option<&'a SentenceProposal> {
+    existing.iter().find(|p| {
+        p.status == SentenceProposalStatus::Pending
+            && p.sentence_hash == sentence_hash
+            && p.after == after
+    })
+}
+
 /// What staging a gate plan did: the proposals it added, and every change the
 /// write wanted that did not land, for the caller to report.
 pub(crate) struct StagedGate {
@@ -437,11 +451,6 @@ pub(crate) async fn stage_gate_proposals(
     member_scope: Option<&crate::read_scope::ReadScope>,
 ) -> Result<StagedGate, WenlanError> {
     let existing = proposals_from(&db.list_sentence_history("page", page_id).await?, page_id);
-    let pending: HashMap<(&str, &str), &str> = existing
-        .iter()
-        .filter(|p| p.status == SentenceProposalStatus::Pending)
-        .map(|p| ((p.sentence_hash.as_str(), p.after.as_str()), p.id.as_str()))
-        .collect();
     let actor = HistoryActor {
         kind: ActorKind::Ai,
         name: edited_by.to_string(),
@@ -452,10 +461,8 @@ pub(crate) async fn stage_gate_proposals(
     let mut ids = Vec::new();
     let mut report = Vec::new();
     for proposal in &plan.proposals {
-        if let Some(waiting) =
-            pending.get(&(proposal.sentence_hash.as_str(), proposal.after.as_str()))
-        {
-            report.push(not_applied(proposal, Some((*waiting).to_string())));
+        if let Some(waiting) = pending_same(&existing, &proposal.sentence_hash, &proposal.after) {
+            report.push(not_applied(proposal, Some(waiting.id.clone())));
             continue;
         }
         let id = format!("sp_{}", uuid::Uuid::new_v4().simple());
@@ -472,6 +479,7 @@ pub(crate) async fn stage_gate_proposals(
             Some("the facts behind a sentence that is yours changed, so it is a proposal"),
             proposal.reason,
             member_scope,
+            None,
         )
         .await?;
         report.push(not_applied(proposal, Some(id.clone())));
@@ -502,12 +510,16 @@ async fn append_proposal(
     why: Option<&str>,
     reason: Option<WeakReason>,
     member_scope: Option<&crate::read_scope::ReadScope>,
+    contradicted_by: Option<&str>,
 ) -> Result<i64, WenlanError> {
     let mut data = serde_json::json!({
         "proposal_id": id,
         "sentence_hash": sentence_hash,
         "before": before,
     });
+    if let Some(memory_id) = contradicted_by {
+        data["contradicted_by"] = serde_json::json!(memory_id);
+    }
     if let Some(reason) = reason {
         data["reason"] = serde_json::to_value(reason)?;
     }
@@ -581,16 +593,23 @@ enum ProposalGrant {
 /// sentence of a note a conversation read but did not cite. For a sentence
 /// that only the person may change, this is the one way past `reason_required`
 /// for a sentence whose own sources did not change: the grant is the
-/// contradicting memory, which must exist and be current, and the proposal
-/// says which one it came from so the person can judge it. The page is not
-/// touched; the person decides.
+/// contradicting memory, which must exist, stand now and be in the page's own
+/// Space, and the proposal says which one it came from so the person can judge
+/// it. The page is not touched; the person decides.
+///
+/// `None` when nothing was filed because the same proposal already waits, or
+/// the person already rejected one for this sentence from this memory.
+///
+/// Only the night (`wenlan-server`'s `things_read_pages`) may call this. It is
+/// `pub` because that caller lives in another crate; no route reaches it, and
+/// the HTTP propose route keeps using [`propose_sentence`].
 pub async fn propose_contradicted_sentence(
     db: &MemoryDB,
     page_id: &str,
     req: &wenlan_types::authorship::SentenceProposeRequest,
     agent: &str,
     memory_id: &str,
-) -> Result<SentenceProposal, WenlanError> {
+) -> Result<Option<SentenceProposal>, WenlanError> {
     let actor = HistoryActor {
         kind: ActorKind::Ai,
         name: agent.to_string(),
@@ -606,6 +625,31 @@ pub async fn propose_contradicted_sentence(
                 "contradicting_memory_not_current: memory {memory_id} does not stand now"
             ))
         })?;
+    let page = load_page(db, page_id).await?;
+    if !same_space(db, memory.space.as_deref(), page.space.as_deref()).await {
+        return Err(WenlanError::Validation(format!(
+            "contradicting_memory_other_space: memory {memory_id} is not in the page's Space"
+        )));
+    }
+    let entries = db.list_sentence_history("page", page_id).await?;
+    let existing = proposals_from(&entries, page_id);
+    if pending_same(&existing, &req.sentence_hash, req.text.trim()).is_some() {
+        return Ok(None);
+    }
+    let rejected: HashSet<&str> = existing
+        .iter()
+        .filter(|p| p.status == SentenceProposalStatus::Rejected)
+        .map(|p| p.id.as_str())
+        .collect();
+    let refused_before = entries.iter().any(|entry| {
+        entry.op == OP_SENTENCE_PROPOSE
+            && str_field(entry, "sentence_hash") == Some(req.sentence_hash.as_str())
+            && str_field(entry, "contradicted_by") == Some(memory_id)
+            && str_field(entry, "proposal_id").is_some_and(|id| rejected.contains(id))
+    });
+    if refused_before {
+        return Ok(None);
+    }
     // The person reads the new point beside the sentence it would replace.
     let mut req = req.clone();
     req.why = Some(match req.why.as_deref().map(str::trim) {
@@ -625,6 +669,25 @@ pub async fn propose_contradicted_sentence(
         ProposalGrant::ContradictedBy(memory_id.to_string()),
     )
     .await
+    .map(Some)
+}
+
+/// Whether two Space references (a name or an id, either may be absent) name
+/// the same Space. Absent on either side is never the same.
+async fn same_space(db: &MemoryDB, a: Option<&str>, b: Option<&str>) -> bool {
+    let (Some(a), Some(b)) = (a, b) else {
+        return false;
+    };
+    if a == b {
+        return true;
+    }
+    async fn id_of(db: &MemoryDB, space: &str) -> String {
+        match db.get_space(space).await {
+            Ok(Some(found)) => found.id,
+            _ => space.to_string(),
+        }
+    }
+    id_of(db, a).await == id_of(db, b).await
 }
 
 /// An AI's proposal for one sentence, made by name instead of by rewriting
@@ -725,6 +788,10 @@ async fn propose_as(
         req.why.as_deref(),
         req.reason,
         None,
+        match &grant {
+            ProposalGrant::ContradictedBy(memory_id) => Some(memory_id.as_str()),
+            _ => None,
+        },
     )
     .await?;
     find_proposal(db, page_id, &id).await

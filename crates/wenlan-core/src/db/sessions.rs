@@ -458,7 +458,7 @@ impl MemoryDB {
                 "CREATE TABLE IF NOT EXISTS session_reads (",
                 "CREATE TABLE session_reads_wide (",
             );
-            conn.execute_batch(&format!(
+            let rebuild = format!(
                 "BEGIN;
                  DROP TABLE IF EXISTS session_reads_wide;
                  {wide}
@@ -469,9 +469,15 @@ impl MemoryDB {
                  CREATE INDEX IF NOT EXISTS idx_session_reads_session
                      ON session_reads(session_id, id);
                  COMMIT;"
-            ))
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("m170 rebuild session_reads: {e}")))?;
+            );
+            // A failed batch leaves its BEGIN open; roll it back (as
+            // migration 148 does) so the connection is not stuck in it.
+            if let Err(error) = conn.execute_batch(&rebuild).await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!(
+                    "m170 rebuild session_reads: {error}"
+                )));
+            }
         }
         conn.execute("PRAGMA user_version = 170", ())
             .await
@@ -659,7 +665,7 @@ impl MemoryDB {
     ///   newest entry's time instead of adding a row.
     /// - Only the newest `SESSION_READS_KEPT` rows of a session are kept. The
     ///   notes a recall returned (`RecallPage`) are a separate list: one row
-    ///   per note and Space (a repeat moves its time), the newest
+    ///   per note and Space (a repeat moves it to the newest place), the newest
     ///   `SESSION_RECALL_PAGES_KEPT` kept, and they never count toward or
     ///   interrupt the list above.
     ///
@@ -737,12 +743,18 @@ impl MemoryDB {
             });
         drop(rows);
 
+        // One ordering key, the row id, for the trim and for
+        // `session_pages_seen`: a repeated note is moved to the newest place
+        // by replacing its row, so a note recalled again counts as recent.
+        let same = newest
+            .as_ref()
+            .is_some_and(|(_, newest_kind, newest_label, newest_space)| {
+                newest_kind == kind.as_str()
+                    && *newest_label == label
+                    && newest_space.as_deref() == space
+            });
         match newest {
-            Some((row_id, newest_kind, newest_label, newest_space))
-                if newest_kind == kind.as_str()
-                    && newest_label == label
-                    && newest_space.as_deref() == space =>
-            {
+            Some((row_id, ..)) if same && !recall_page => {
                 tx.execute(
                     "UPDATE session_reads SET created_at = ?1 WHERE id = ?2",
                     libsql::params![now, row_id],
@@ -750,7 +762,15 @@ impl MemoryDB {
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("record session read touch: {e}")))?;
             }
-            _ => {
+            other => {
+                if let (true, Some((row_id, ..))) = (same, other) {
+                    tx.execute(
+                        "DELETE FROM session_reads WHERE id = ?1",
+                        libsql::params![row_id],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("record session read move: {e}")))?;
+                }
                 tx.execute(
                     "INSERT INTO session_reads (session_id, kind, label, space, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5)",

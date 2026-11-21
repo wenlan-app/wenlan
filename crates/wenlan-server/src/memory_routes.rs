@@ -1588,8 +1588,13 @@ async fn handle_search_memory_inner(
     // The notes this recall showed the AI tool, so the night can find them if
     // the conversation turns out to contradict a sentence in one. Only what the
     // caller was actually given (after the grant filter), so a note it never
-    // saw is never a candidate. Same contract as the query line above.
-    if let Some(pages) = supplemental_pages.as_deref() {
+    // saw is never a candidate. Same contract as the query line above. Only an
+    // explicit recall counts: the "recent context" request an AI tool makes
+    // when it starts a session is not the tool reading those notes.
+    if let Some(pages) = supplemental_pages
+        .as_deref()
+        .filter(|_| req.query != "recent context")
+    {
         for page in pages.iter().filter(|row| row.source == "page") {
             crate::session_routes::note_session_read(
                 db.clone(),
