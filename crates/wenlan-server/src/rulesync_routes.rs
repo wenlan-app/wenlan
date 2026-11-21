@@ -1287,12 +1287,10 @@ impl Setup {
         let mut result = report("Restored the managed files from the local setup backup");
         self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
         if manifest.delivered.is_empty() && manifest.pending.is_empty() {
-            self.retire_backup()?;
-            if let Err(error) = rulesync_registry::clear_review_holds(&self.data) {
-                result.blocked.push(format!(
-                    "Could not clear interrupted skill reviews: {error:#}"
-                ));
+            if !manifest.settings_only {
+                rulesync_registry::clear_delivery_state(&self.data)?;
             }
+            self.retire_backup()?;
         } else {
             result.message =
                 "Some paths could not be restored. The backup is still available".into();
@@ -5066,6 +5064,48 @@ mod tests {
         let restored = restored.unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         assert_eq!(after, before);
+    }
+
+    #[test]
+    fn rulesync_step1f_readoption_reoffers_the_saved_skill() {
+        let f = Fixture::new();
+        fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
+        fs::create_dir(f.setup.home.join(".cursor")).unwrap();
+        f.write(".cursor/AGENTS.md", "Cursor's rules.\n");
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        write_step1d_skill(&f, ".claude", "Saved skill.", "# Saved helper\n");
+        let peer = f.setup.home.join(".cursor/skills/example/SKILL.md");
+        share_step1e_skill(&f);
+        assert!(peer.exists());
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(!peer.exists());
+        // Re-enroll just the peer to show that the retained shared source
+        // can produce another delivery even without its original tool.
+        fs::remove_dir_all(f.setup.home.join(".claude")).unwrap();
+        f.adopt_from_plan();
+        allow_fixture_tool_folders(&f);
+        let sync = f.sync_with("");
+        assert!(
+            peer.exists()
+                || sync.blocked.iter().any(|message| {
+                    message.contains(".cursor") && message.contains("wenlan skills pending")
+                }),
+            "The saved skill must be offered to Cursor again: {sync:?}"
+        );
+        if !peer.exists() {
+            let preview = preview_step1e_skill(&f);
+            assert!(!preview.files.is_empty(), "{preview:?}");
+            assert!(preview
+                .files
+                .iter()
+                .all(|change| change.path.starts_with(".cursor/")));
+            accept_step1e_skill(&f, &preview);
+        }
+        assert!(fs::read_to_string(peer).unwrap().contains("Saved skill."));
+        assert!(f.sync_with("").blocked.is_empty());
     }
 
     #[test]

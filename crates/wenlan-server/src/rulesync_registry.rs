@@ -14,7 +14,7 @@ mod saved_skills;
 #[cfg(test)]
 pub(crate) use saved_skills::{accept_only_tool_proposal, review_only_tool_proposal};
 pub(crate) use saved_skills::{
-    authored_rows, check_skill_format, clear_review_holds, collect_tool_proposals, register,
+    authored_rows, check_skill_format, clear_delivery_state, collect_tool_proposals, register,
     remove_saved_source, saved_skill_deliveries, ApprovedSkills, ManagedSkill,
     SavedSkillDeliveries, SkillHome, SkillModes,
 };

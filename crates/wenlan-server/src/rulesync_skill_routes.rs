@@ -961,6 +961,17 @@ impl SkillState<Vec<u8>> {
             .collect()
     }
 
+    fn clear_delivery_state(&mut self) {
+        self.review_holds.clear();
+        self.approved_local.clear();
+        self.proposals
+            .retain(|_, draft| matches!(draft.source, Candidate::Agent { .. }));
+        for skill in self.kept.values_mut() {
+            skill.shared_reviewed.clear();
+            skill.reviewed_tools.clear();
+        }
+    }
+
     fn remove_kept(&mut self, name: &str) -> Result<bool> {
         ensure!(
             !self.review_holds.contains_key(name),
@@ -1360,10 +1371,10 @@ pub(crate) fn remove_saved_source(name: &str) -> Result<bool> {
 }
 
 /// Called under the setup lock after restoration undoes all managed writes.
-pub(crate) fn clear_review_holds(data: &Path) -> Result<()> {
+pub(crate) fn clear_delivery_state(data: &Path) -> Result<()> {
     let mut store = SkillStore::open(data)?;
-    if !store.state.review_holds.is_empty() {
-        store.state.review_holds.clear();
+    if store.seen != Snapshot::Absent {
+        store.state.clear_delivery_state();
         store.save()?;
     }
     Ok(())
@@ -1859,7 +1870,7 @@ mod tests {
             saved_skill_deliveries(&data).unwrap().names[&SavedSkillTool::Codex].contains(name)
         );
 
-        clear_review_holds(&data).unwrap();
+        clear_delivery_state(&data).unwrap();
         let mut store = SkillStore::open(&data).unwrap();
         assert!(store
             .state
