@@ -6,11 +6,11 @@
 // they can sign in from any device, and signs out of this browser.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Desktop, Plug, SignOut } from "@phosphor-icons/react";
+import { Desktop, Plug, SignOut, UserCircle } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { confirmAction } from "../lib/confirmAction";
 import { ProviderMark } from "./ProviderMarks";
-import { DesktopDialog, ToolsDialog } from "./TeamOwnDialogs";
+import { AccountsDialog, DesktopDialog, ToolsDialog } from "./TeamOwnDialogs";
 import {
   forgetTeamKey,
   linkProvider,
@@ -45,7 +45,7 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
   const [failed, setFailed] = useState(false);
   const [place, setPlace] = useState<{ left: number; bottom: number } | null>(null);
   const [tools, setTools] = useState<number | null>(null);
-  const [dialog, setDialog] = useState<"tools" | "desktop" | null>(null);
+  const [dialog, setDialog] = useState<"tools" | "desktop" | "accounts" | null>(null);
   const rowRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -106,7 +106,7 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
   if (!me) return null;
   const account = me.accounts?.[0];
   const team = me.team?.name ?? t("teamWeb.teamFallback");
-  const pick = (next: "tools" | "desktop") => {
+  const pick = (next: "tools" | "desktop" | "accounts") => {
     setOpen(false);
     setDialog(next);
   };
@@ -115,6 +115,12 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
       <Plug size={18} aria-hidden="true" />
       <span className="team-account-item-text">{t("teamWeb.toolsItem")}</span>
       {tools !== null && tools > 0 && <span className="team-account-count">{tools}</span>}
+    </button>
+  );
+  const accountsItem = me.accounts && me.accounts.length > 0 && (
+    <button type="button" role="menuitem" className="team-account-item" data-testid="team-account-accounts" onClick={() => pick("accounts")}>
+      <UserCircle size={18} aria-hidden="true" />
+      <span className="team-account-item-text">{t("teamWeb.accountsItem")}</span>
     </button>
   );
 
@@ -186,6 +192,7 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
                 </div>
               )}
               {toolsItem}
+              {accountsItem}
               <button type="button" role="menuitem" className="team-account-item" data-testid="team-web-forget" onClick={forgetTeamKey}>
                 <SignOut size={18} aria-hidden="true" />
                 <span className="team-account-item-text">
@@ -198,6 +205,7 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
             <>
               <div className="team-account-separator" role="separator" />
               {toolsItem}
+              {accountsItem}
               {account && (
                 <button type="button" role="menuitem" className="team-account-item" data-testid="team-account-desktop" onClick={() => pick("desktop")}>
                   <Desktop size={18} aria-hidden="true" />
@@ -220,6 +228,9 @@ export function TeamAccountMenu({ compact = false, className, labelClassName, gl
         document.body,
       )}
       {dialog === "tools" && <ToolsDialog team={team} onChanged={setTools} onClose={() => setDialog(null)} />}
+      {dialog === "accounts" && me.accounts && (
+        <AccountsDialog accounts={me.accounts} onChanged={(accounts) => setMe({ ...me, accounts })} onClose={() => setDialog(null)} />
+      )}
       {dialog === "desktop" && account && <DesktopDialog team={team} provider={account.provider} onClose={() => setDialog(null)} />}
     </>
   );

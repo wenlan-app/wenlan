@@ -277,6 +277,10 @@ h1 + .team-device-quiet { margin: -2px 0 18px; }
   font-size: 14px;
   cursor: pointer;
 }
+.team-own-list .team-own-account { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.team-own-list .team-own-ask { margin-left: auto; display: flex; gap: 14px; }
+.team-own-list .team-own-ask button { margin-left: 0; }
+.team-own-list .team-own-ask button:first-child { color: var(--mem-text-secondary); }
 .team-own-dialog code { font-family: var(--mem-font-mono, ui-monospace, monospace); font-size: 12.5px; }
 .team-own-link {
   display: flex;
