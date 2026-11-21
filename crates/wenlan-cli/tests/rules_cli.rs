@@ -102,7 +102,7 @@ fn personal_rules_dry_run_reports_extended_targets_only_with_the_flag() {
 }
 
 #[test]
-fn personal_rules_dry_run_lists_commands_and_agents_only_with_the_flag() {
+fn ux_skill_18_personal_rules_dry_run_lists_commands_and_agents_only_with_the_flag() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
     let sources = [

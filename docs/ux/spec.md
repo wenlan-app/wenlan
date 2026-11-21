@@ -1014,7 +1014,7 @@ and wait for evidence that people need them.
   displaced a file with changed bytes, permissions, or links, recovery reports a
   conflict and puts the file back when the destination is vacant. The plan reports
   that the eight tools have no global ignore destination.
-  Tests `personal_rules_dry_run_lists_commands_and_agents_only_with_the_flag`,
+  Tests `ux_skill_18_personal_rules_dry_run_lists_commands_and_agents_only_with_the_flag`,
   `rulesync_personal_commands_and_subagents_round_trip_through_review`,
   `rulesync_personal_files_offer_new_sources_without_restoring`,
   `rulesync_personal_file_sharing_protects_other_versions_and_stale_decisions`,
