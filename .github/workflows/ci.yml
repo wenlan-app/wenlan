@@ -503,6 +503,8 @@ jobs:
               - 'crates/wenlan-cli/src/commands/web.rs'
               # `wenlan login` keeps AI tool keys in a 0600 file on Unix (`cfg(unix)`).
               - 'crates/wenlan-cli/src/commands/login.rs'
+              # `wenlan handoff` import tests symlink refusal on Unix only (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/handoff.rs'
               - 'crates/wenlan-cli/src/commands/service.rs'
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
@@ -655,6 +657,8 @@ jobs:
               - 'crates/wenlan-cli/src/commands/web.rs'
               # `wenlan login` keeps AI tool keys in a 0600 file on Unix (`cfg(unix)`).
               - 'crates/wenlan-cli/src/commands/login.rs'
+              # `wenlan handoff` import tests symlink refusal on Unix only (`cfg(unix)`).
+              - 'crates/wenlan-cli/src/commands/handoff.rs'
               - 'crates/wenlan-cli/src/commands/windows_task.rs'
               - 'scripts/resolve-backend-dir.test.ps1'
               - 'crates/wenlan-cli/src/commands/service.rs'
