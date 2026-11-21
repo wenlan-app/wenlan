@@ -6323,3 +6323,248 @@ async fn after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unse
         vec![RULE_TEXT]
     );
 }
+
+async fn seed_memory_for_preferences(
+    db: &MemoryDB,
+    id: &str,
+    text: &str,
+    memory_type: &str,
+    space: Option<&str>,
+    confirmed: bool,
+) {
+    db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+        source: "memory".into(),
+        source_id: id.into(),
+        title: text.into(),
+        content: text.into(),
+        memory_type: Some(memory_type.into()),
+        space: space.map(str::to_string),
+        confirmed: Some(confirmed),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+}
+
+const SMALL_COMMITS: &str = "I prefer small commits with a clear message.";
+
+/// UX-CHAT-5: what the person said once about how they work, kept outside any
+/// Space, is given to their own AI tools in every Space; one that waits for
+/// their OK, one that was replaced, and one a tool kept in a Space are not.
+#[tokio::test]
+async fn ux_chat_5_a_preference_in_no_space_reaches_the_persons_tools_in_every_space() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    for name in ["Alpha", "Beta"] {
+        scratch.db.create_space(name, None, false).await.unwrap();
+    }
+    scratch.db.register_trusted_agent("codex").await.unwrap();
+    let db = &scratch.db;
+    seed_memory_for_preferences(db, "p_ok", SMALL_COMMITS, "preference", None, true).await;
+    seed_memory_for_preferences(
+        db,
+        "p_wait",
+        "I like long, detailed pull request descriptions.",
+        "preference",
+        None,
+        false,
+    )
+    .await;
+    seed_memory_for_preferences(
+        db,
+        "p_space",
+        "I like tabs over spaces in the Alpha project.",
+        "preference",
+        Some("Alpha"),
+        true,
+    )
+    .await;
+    seed_memory_for_preferences(
+        db,
+        "p_old",
+        "I prefer big commits that bundle a whole day of work.",
+        "preference",
+        None,
+        true,
+    )
+    .await;
+    // A newer memory replaces the old one.
+    db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+        source: "memory".into(),
+        source_id: "p_old_next".into(),
+        title: "I prefer to commit often.".into(),
+        content: "I prefer to commit often, in small steps.".into(),
+        memory_type: Some("preference".into()),
+        confirmed: Some(true),
+        supersedes: Some("p_old".into()),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    seed_memory_for_preferences(
+        db,
+        "f_ok",
+        "The release is on Friday for everyone.",
+        "fact",
+        None,
+        true,
+    )
+    .await;
+
+    for space in [Some("Alpha"), Some("Beta"), None] {
+        let lines = read_rules_as_codex(&scratch, space).await;
+        let got = texts(&lines);
+        assert!(got.contains(&SMALL_COMMITS), "{space:?}: {got:?}");
+        assert!(
+            got.contains(&"I prefer to commit often, in small steps."),
+            "{space:?}: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|t| t.contains("long, detailed")),
+            "waiting for the person's OK: {space:?}: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|t| t.contains("bundle a whole day")),
+            "replaced: {space:?}: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|t| t.contains("The release is on Friday")),
+            "only preferences: {space:?}: {got:?}"
+        );
+        let line = lines
+            .lines
+            .iter()
+            .find(|l| l.text == SMALL_COMMITS)
+            .unwrap();
+        assert!(line.general && line.source_page_id.is_empty());
+    }
+    // One a tool kept in a Space is that Space's, not the person's everywhere.
+    let beta = read_rules_as_codex(&scratch, Some("Beta")).await;
+    assert!(!texts(&beta).iter().any(|t| t.contains("tabs over spaces")));
+    // The tool files the person's tools read at start carry it too.
+    let files = general_tool_rules(&scratch.shared)
+        .await
+        .unwrap()
+        .join("\n");
+    assert!(files.contains(SMALL_COMMITS), "{files}");
+    assert!(!files.contains("long, detailed"), "{files}");
+    // The app's own list of rules does not mix them in, and a tool reading
+    // them is not counted as borrowing a page.
+    let shown = handle_read_rules(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        Query(RulesQuery { space: None }),
+    )
+    .await
+    .unwrap()
+    .into_test_json()
+    .0;
+    assert!(!texts(&shown).contains(&SMALL_COMMITS));
+}
+
+/// A Space shared with other people never gets the person's preferences in
+/// its own rules or page, and a team member's read never returns them.
+#[tokio::test]
+async fn ux_chat_5_a_preference_is_not_written_into_the_rules_of_a_space_shared_with_others() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    scratch.db.create_space("Club", None, false).await.unwrap();
+    seed_memory_for_preferences(&scratch.db, "p_ok", SMALL_COMMITS, "preference", None, true).await;
+    let (general, layers) = rules_by_layer(&scratch.db, Some(&scratch.pages))
+        .await
+        .unwrap();
+    // The person's own tool files get it as a general rule ...
+    assert!(general.iter().any(|l| l.text == SMALL_COMMITS));
+    // ... and no Space's own folder carries it.
+    assert!(layers
+        .values()
+        .all(|(_, lines)| !lines.iter().any(|l| l.text == SMALL_COMMITS)));
+    let project = project_rules(&scratch.db, Some(&scratch.pages), "Club").await;
+    assert!(
+        !format!("{project:?}").contains(SMALL_COMMITS),
+        "{project:?}"
+    );
+}
+
+/// UX-CHAT-5: the rules files follow a preference: confirming one puts it in
+/// the files the person's tools read, forgetting it takes it out again.
+#[tokio::test]
+async fn ux_chat_5_the_rules_files_follow_a_preference_being_confirmed_and_forgotten() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    seed_memory_for_preferences(&scratch.db, "p1", SMALL_COMMITS, "preference", None, false).await;
+    let general = scratch.data.join("AGENTS.md");
+    let wait_for = |want: bool| {
+        let general = general.clone();
+        async move {
+            for _ in 0..400 {
+                let has = std::fs::read_to_string(&general)
+                    .map(|text| text.contains(SMALL_COMMITS))
+                    .unwrap_or(false);
+                if has == want {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            false
+        }
+    };
+    assert!(!general.exists());
+    let _ = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("p1".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        wait_for(true).await,
+        "confirming did not reach the rules files"
+    );
+    // Unconfirming takes it out; confirming again and forgetting does too.
+    let _ = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("p1".to_string()),
+        Some(Json(wenlan_types::requests::ConfirmRequest {
+            confirmed: false,
+        })),
+    )
+    .await
+    .unwrap();
+    assert!(
+        wait_for(false).await,
+        "unconfirming did not reach the rules files"
+    );
+    let _ = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("p1".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(wait_for(true).await);
+    let _ = crate::memory_routes::handle_delete_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("p1".to_string()),
+        axum::extract::Query(Default::default()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        wait_for(false).await,
+        "forgetting did not reach the rules files"
+    );
+}

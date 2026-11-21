@@ -125,6 +125,7 @@ pub(crate) struct PageSpaceWriteContext<'a> {
 }
 pub mod ai_memory_import;
 pub mod citation_provenance;
+pub mod derived_space;
 pub mod night_backlog;
 pub mod night_tidy;
 pub mod research_disputes;
@@ -27637,16 +27638,21 @@ impl MemoryDB {
     /// Check if a memory with this content already exists.
     /// Uses prefix matching (first 200 chars) so long memories that were
     /// chunked by `upsert_documents` can still be detected as duplicates.
+    /// A memory a live superseder hides does not count: a replaced decision
+    /// may be stated again (Friday, then Monday, then Friday). Forgotten and
+    /// pending ones still do.
     pub async fn has_memory_content(&self, content: &str) -> Result<bool, WenlanError> {
         let prefix: String = content.chars().take(200).collect();
         let pattern = format!("{}%", prefix.replace('%', "\\%").replace('_', "\\_"));
+        let sql = format!(
+            "SELECT 1 FROM memories m WHERE m.source = 'memory' AND m.chunk_index = 0
+             AND (m.content LIKE ?1 ESCAPE '\\' OR m.source_text LIKE ?1 ESCAPE '\\')
+             AND {} LIMIT 1",
+            not_hidden_by_superseder(&ReadScope::Global, "m"),
+        );
         let conn = self.conn.lock().await;
         let mut rows = conn
-            .query(
-                "SELECT 1 FROM memories WHERE source = 'memory' AND chunk_index = 0
-                 AND (content LIKE ?1 ESCAPE '\\' OR source_text LIKE ?1 ESCAPE '\\') LIMIT 1",
-                libsql::params![pattern],
-            )
+            .query(&sql, libsql::params![pattern])
             .await
             .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
         Ok(rows

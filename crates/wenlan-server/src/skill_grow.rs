@@ -1338,7 +1338,7 @@ pub async fn handle_read_rules(
     };
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
-        let general = general_lines(&db, &own, None).await?;
+        let general = general_lines(&db, &own, None, by_tool).await?;
         if by_tool {
             record_general_reads(&db, &tool, &general).await?;
         }
@@ -1357,7 +1357,7 @@ pub async fn handle_read_rules(
             .await?;
     }
     // General lines from other Spaces apply here too (UX-SKILL-5).
-    let general = general_lines(&db, &own, Some(&space.id)).await?;
+    let general = general_lines(&db, &own, Some(&space.id), by_tool).await?;
     let known: HashSet<String> = response
         .lines
         .iter()
@@ -1395,11 +1395,15 @@ fn no_space_named(headers: &HeaderMap, query_space: Option<&str>) -> bool {
 /// empty Space id), then the approved general lines of every accepted Space
 /// other than `except`, each still checked against its own Space's rules
 /// page, with that Space's id. The same sentence from two places is listed
-/// once.
+/// once. With `preferences`, then what the person said once about how they
+/// work, kept outside every Space (UX-CHAT-5): only the person's own AI tools
+/// are given it, in every Space, never the app's list, a team member or a
+/// Space's own rules.
 async fn general_lines(
     db: &MemoryDB,
     own: &OwnRulePages,
     except: Option<&str>,
+    preferences: bool,
 ) -> Result<Vec<(String, SkillLine)>, ServerError> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -1418,7 +1422,44 @@ async fn general_lines(
             }
         }
     }
+    if preferences {
+        for line in preference_lines(db).await? {
+            if seen.insert(line.text.trim().to_lowercase()) {
+                out.push((String::new(), line));
+            }
+        }
+    }
     Ok(out)
+}
+
+/// How many preferences a tool is given at most: a rules file is read at the
+/// start of every session.
+const PREFERENCE_LINE_CAP: usize = skill_grow::PERSON_PREFERENCES_MAX;
+
+/// The person's confirmed preferences that live in no Space, as general
+/// rule lines. They have no rules page behind them, so no source page and
+/// nothing counted as borrowed.
+async fn preference_lines(db: &MemoryDB) -> Result<Vec<SkillLine>, ServerError> {
+    Ok(db
+        .person_preferences(PREFERENCE_LINE_CAP)
+        .await?
+        .into_iter()
+        .map(|(id, text)| SkillLine {
+            id: format!("preference:{id}"),
+            kind: wenlan_types::SkillLineKind::Rule,
+            text: text.trim().to_string(),
+            source_page_id: String::new(),
+            source_page_title: "What you told your tools".to_string(),
+            source_revision: 0,
+            source_revision_at: 0,
+            source_quote: String::new(),
+            person_edited: false,
+            general: true,
+            hand_written: false,
+            saved_from: None,
+            saved_by: None,
+        })
+        .collect())
 }
 
 async fn record_general_reads(
@@ -2144,13 +2185,18 @@ async fn rules_by_layer(
             }
         }
     }
+    for line in preference_lines(db).await? {
+        if seen.insert(line.text.trim().to_lowercase()) {
+            general.push(line);
+        }
+    }
     Ok((general, layers))
 }
 
 pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
     let (db, page_root) = db_and_page_root(state).await?;
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
-    let general: Vec<_> = general_lines(&db, &own, None)
+    let general: Vec<_> = general_lines(&db, &own, None, true)
         .await?
         .into_iter()
         .map(|(_, line)| line)
@@ -2604,6 +2650,19 @@ pub(crate) fn request_rules_sync(db: Arc<MemoryDB>, page_root: Option<PathBuf>) 
             }
         }
     });
+}
+
+/// Whether the memory is a preference kept in no Space: what the person's
+/// own tools are given as rules (UX-CHAT-5). A change to one (confirmed,
+/// unconfirmed, forgotten, restored, edited, replaced) changes the rules files.
+pub(crate) async fn is_person_preference(db: &MemoryDB, source_id: &str) -> bool {
+    match db.get_memory_detail(source_id).await {
+        Ok(Some(memory)) => {
+            memory.memory_type.as_deref() == Some("preference")
+                && memory.space.as_deref().is_none_or(str::is_empty)
+        }
+        _ => false,
+    }
 }
 
 /// For a route that changed some page without naming it (an accepted
@@ -4099,7 +4158,7 @@ pub async fn handle_self_report(
             .find(|line| line.id == request.rule_id)
         {
             Some(line) => (space_id.unwrap_or_default(), line),
-            None => general_lines(&db, &own, space_id.as_deref())
+            None => general_lines(&db, &own, space_id.as_deref(), true)
                 .await?
                 .into_iter()
                 .find(|(_, line)| line.id == request.rule_id)
@@ -4109,6 +4168,16 @@ pub async fn handle_self_report(
     let tool = crate::memory_routes::extract_agent_name(&headers, None);
     if tool == "unknown" {
         return Err(ServerError::BadRequest("x-agent-name is required".into()));
+    }
+    // What the person told their tools has no page to record a report on.
+    if skill_grow::is_person_preference_line(&line) {
+        return Ok(PageResponse::for_caller(
+            SkillReportResponse {
+                recorded: false,
+                rule_id: Some(request.rule_id),
+            },
+            private,
+        ));
     }
     db.record_skill_self_report(&tool, &owner, &line, request.report)
         .await?;
