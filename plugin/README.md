@@ -9,7 +9,7 @@ Wenlan is local-first. Memories, pages, and session notes live on your machine u
 - **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, page lookup, repository docs, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Knowledge organization and maintenance share the Steep (沉澱) workflow. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
 - **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools, including the internal `distill` operation, to Claude Code and Cowork. User-directed knowledge organization and maintenance use the Steep Skill as their guided workflow. Claude chat on the web ignores local MCP servers.
 - **Three `SessionStart` hooks.** `session-context.sh` carries Claude Code's session id into Wenlan commands, `check-daemon.sh` reports local runtime or version problems without blocking startup, and `brief-context.sh` quietly brings in each current Brief item's id and one line (about 2,000 tokens at most). The Brief hook prints nothing when Wenlan is unavailable.
-- **A `UserPromptSubmit` hook and two `Stop` hooks.** `prompt-context.sh` and `stop-check.sh` provide the optional in-chat check against earlier decisions. `handoff-reminder.sh` reads the latest assistant usage from Claude Code's local transcript and, once per session after 80%, asks Claude to run the Wenlan handoff before finishing the turn. All stay local and fail quietly when their inputs or Wenlan are unavailable.
+- **A `UserPromptSubmit` hook and two `Stop` hooks.** `prompt-context.sh` and `stop-check.sh` provide the optional in-chat check against earlier decisions. `handoff-reminder.sh` reads the latest assistant usage from Claude Code's local transcript and, once per session after 80%, asks Claude to run the Wenlan handoff before finishing the turn. The context window is the first of `WENLAN_CONTEXT_WINDOW` or `CLAUDE_CODE_AUTO_COMPACT_WINDOW` that is set, else 1M for a `[1m]` model or usage above 200k, and 200k otherwise. These variables apply to Claude Code only: in Codex the reminder reads `model_context_window` from the Codex session file. All stay local and fail quietly when their inputs or Wenlan are unavailable.
 
 ## Setup
 
@@ -45,7 +45,7 @@ The MCP runner picks a binary in this order: the `WENLAN_MCP_DEV_BIN` environmen
 
 ```text
 ~/.wenlan/pages/               wiki pages distilled from memories (Markdown)
-~/.wenlan/sessions/            session logs by date (Markdown)
+~/.wenlan/sessions/            older session logs by date (Markdown; no longer written)
 ~/.wenlan/sessions/_status/    current per-project goals and last-handoff timestamp
 ~/.wenlan/bin/                 installed binaries
 ```
@@ -77,7 +77,7 @@ The daemon stays the single writer and storage owner. The connected AI handles o
 - `/brief [topic]` - load the Brief for the current Space (optional; not a boot step)
 - `/capture <x>` - save one durable memory in flow, or this conversation as one note on request
 - `/recall <q>` - search local memory
-- `/handoff` - end-of-session debrief: captures, session log, Brief update
+- `/handoff` - end of session: update the Brief and the pages this session used
 - `/how-i-work` - read this Space's approved rules before choosing an approach
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely

@@ -92,8 +92,8 @@ Answer these from here, without a tool call, and only the part asked:
 
 - Data lives under `~/.wenlan/` (under `$WENLAN_DATA_DIR` when that is set,
   as it is for a test daemon): `pages/` holds notes as Markdown,
-  `sessions/` holds session logs by date, and `sessions/_status/` holds the
-  receipts written from each project's Brief. Memories and links live in a
+  `sessions/` holds older session logs by date (no longer written), and
+  `sessions/_status/` holds the receipts written from each project's Brief. Memories and links live in a
   local database; `docs/setup-and-data.md` says where.
 - Read notes in a terminal: `wenlan pages` lists recent notes;
   `wenlan pages "<query>" --print` prints one with its sources. The folder

@@ -30,7 +30,7 @@ All user-facing data lives under `~/.wenlan/`:
 
 ```text
 ~/.wenlan/pages/               wiki pages distilled from your memories (md)
-~/.wenlan/sessions/            session logs by date (md, written by /handoff)
+~/.wenlan/sessions/            older session logs by date (md; /handoff no longer writes them)
 ~/.wenlan/sessions/_status/    current per-project goals + last-handoff timestamps
 ~/.wenlan/db/                  symlink to the libSQL store
 ~/.wenlan/bin/                 installed binaries
