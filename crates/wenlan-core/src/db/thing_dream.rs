@@ -252,10 +252,32 @@ impl MemoryDB {
     /// The points earlier nights wrote for a thing that still stand: not
     /// taken back, not forgotten, not replaced. Oldest first.
     pub async fn dream_points(&self, thing_id: &str) -> Result<Vec<PriorPoint>, WenlanError> {
+        self.dream_points_where(thing_id, |_| true).await
+    }
+
+    /// [`Self::dream_points`] kept in one Space (`""` for unfiled points), so
+    /// a night reading one Space's conversations is never shown another's.
+    pub async fn dream_points_in(
+        &self,
+        thing_id: &str,
+        space: &str,
+    ) -> Result<Vec<PriorPoint>, WenlanError> {
+        self.dream_points_where(thing_id, |point| {
+            point.space.as_deref().unwrap_or_default() == space
+        })
+        .await
+    }
+
+    async fn dream_points_where(
+        &self,
+        thing_id: &str,
+        keep: impl Fn(&StandingPoint) -> bool,
+    ) -> Result<Vec<PriorPoint>, WenlanError> {
         Ok(self
             .standing_dream_points(thing_id)
             .await?
             .into_iter()
+            .filter(|point| keep(point))
             .map(|point| PriorPoint {
                 id: point.id,
                 text: point.text,

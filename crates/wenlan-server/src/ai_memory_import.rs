@@ -449,7 +449,9 @@ async fn candidates(
         .search_memory(text, CANDIDATE_POINTS, None, scope, None, None, None, None)
         .await
         .map_err(|e| e.to_string())?;
-    for point in points {
+    // A replaced point is not what Wenlan holds now; matching a tool's copy
+    // against it would count the copy as agreeing with an old decision.
+    for point in crate::memory_routes::current_only(points) {
         out.push(Candidate {
             kind: CandidateKind::Point,
             id: point.source_id,

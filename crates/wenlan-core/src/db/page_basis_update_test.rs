@@ -446,47 +446,93 @@ async fn an_identical_body_stages_no_card_reports_unchanged_and_confirms_nothing
     );
 }
 
-/// The automatic refresh leaves a note with a basis alone and says so on the
-/// page (`has_basis`, rendered as "update blocked", never as an endless
-/// update). A later explicit Update from sources clears the marker.
-#[tokio::test]
-async fn the_automatic_refresh_skips_a_note_with_a_basis_and_a_user_run_clears_the_marker() {
-    let (db, _dir) = pair().await;
-    let llm = provider(BODY);
-    let dyn_llm: Arc<dyn LlmProvider> = llm.clone();
-
-    let skipped = refresh_page(
-        &db,
-        &dyn_llm,
+async fn refresh_after_a_source_change(
+    db: &MemoryDB,
+    llm: &Arc<RecordingProvider>,
+    page_id: &str,
+) -> RefreshOutcome {
+    let llm: Arc<dyn LlmProvider> = llm.clone();
+    refresh_page(
+        db,
+        &llm,
         &PromptRegistry::default(),
-        "b",
+        page_id,
         RefreshReason::SourceChanged,
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+}
 
-    assert!(!skipped.wrote && !skipped.gated && skipped.revision_card_id.is_none());
-    assert!(
-        llm.prompts.lock().await.is_empty(),
-        "the model is never called"
-    );
-    let marked = db.get_page("b").await.unwrap().unwrap();
-    assert_eq!(
-        marked.refresh_blocked_reason.as_deref(),
-        Some(REFRESH_BLOCKED_HAS_BASIS)
-    );
-    assert_eq!(marked.content, "Old beta body.");
+/// A note with a basis that nobody locked, wrote or edited follows its
+/// sources like any other note: the automatic refresh rewrites it in place
+/// and confirms the basis it read. No card waits for the person.
+#[tokio::test]
+async fn the_automatic_refresh_rewrites_an_unowned_note_with_a_basis() {
+    let (db, _dir) = pair().await;
+    edit_a(&db, "The launch moved to 2026-04-01.").await;
+    db.set_page_stale("b", "source_updated").await.unwrap();
+    let a = db.get_page("a").await.unwrap().unwrap();
+    let llm = provider(BODY);
+
+    let outcome = refresh_after_a_source_change(&db, &llm, "b").await;
+
+    assert!(outcome.wrote && !outcome.gated, "{outcome:?}");
     assert!(cards(&db, "b").await.is_empty());
-
-    let outcome = update_from_sources(&db, &llm, "b").await;
-    assert!(outcome.gated, "{outcome:?}");
-    let cleared = db.get_page("b").await.unwrap().unwrap();
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.content, BODY);
+    assert_eq!(after.stale_reason, None);
+    assert_eq!(after.refresh_blocked_reason, None);
+    let basis = basis_of(&db, "b", "a").await.unwrap();
     assert_eq!(
-        cleared.refresh_blocked_reason, None,
-        "a user run clears the marker"
+        basis.state, BASIS_STATE_OK,
+        "the basis it read is confirmed"
     );
-    assert_eq!(cleared.stale_reason, None);
+    assert_eq!(basis.confirmed_version, a.version);
+}
+
+/// A note with a basis that the person edited is never written over: the
+/// automatic refresh goes sentence by sentence, so the person's sentence stays
+/// as they wrote it, and no whole-page card waits for them (UX-WHO-2).
+#[tokio::test]
+async fn the_automatic_refresh_keeps_the_persons_sentence_in_a_note_with_a_basis() {
+    let (db, _dir) = pair().await;
+    db.update_page_content(
+        "b",
+        "Beta, as the person wrote it.",
+        &["mem_src"],
+        "manual_edit",
+    )
+    .await
+    .unwrap();
+    db.set_page_stale("b", "source_updated").await.unwrap();
+    let llm = provider(BODY);
+
+    let outcome = refresh_after_a_source_change(&db, &llm, "b").await;
+
+    assert!(!outcome.gated, "{outcome:?}");
+    assert!(cards(&db, "b").await.is_empty());
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.content, "Beta, as the person wrote it.");
+}
+
+/// A locked note with a basis waits as the preview card "Update from sources"
+/// would stage; the page stays as it was until the person accepts it.
+#[tokio::test]
+async fn the_automatic_refresh_stages_a_preview_for_a_locked_note_with_a_basis() {
+    let (db, _dir) = pair().await;
+    db.set_page_review_required("b", true).await.unwrap();
+    db.set_page_stale("b", "source_updated").await.unwrap();
+    let before = db.get_page("b").await.unwrap().unwrap();
+    let llm = provider(BODY);
+
+    let outcome = refresh_after_a_source_change(&db, &llm, "b").await;
+
+    assert!(outcome.gated && !outcome.wrote, "{outcome:?}");
+    assert_eq!(cards(&db, "b").await.len(), 1);
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version, "no version was written");
 }
 
 /// The skip marker belongs to the basis rows: when the last one goes, the
@@ -494,18 +540,9 @@ async fn the_automatic_refresh_skips_a_note_with_a_basis_and_a_user_run_clears_t
 #[tokio::test]
 async fn removing_the_last_basis_clears_the_skip_marker_and_requeues_the_note() {
     let (db, _dir) = pair().await;
-    let llm = provider(BODY);
-    let dyn_llm: Arc<dyn LlmProvider> = llm.clone();
-    refresh_page(
-        &db,
-        &dyn_llm,
-        &PromptRegistry::default(),
-        "b",
-        RefreshReason::SourceChanged,
-        None,
-    )
-    .await
-    .unwrap();
+    db.set_page_refresh_blocked_reason("b", REFRESH_BLOCKED_HAS_BASIS)
+        .await
+        .unwrap();
     assert_eq!(
         db.get_page("b")
             .await
@@ -645,10 +682,11 @@ impl LlmProvider for MarkingProvider {
     }
 }
 
-/// A basis marked while the automatic refresh is generating is not missed:
-/// the write itself refuses, the body stays, and the skip is recorded.
+/// A basis marked while the automatic refresh is generating does not stop an
+/// unowned note from following its sources: the write lands, nothing is
+/// marked blocked, and no card waits.
 #[tokio::test]
-async fn a_basis_marked_during_the_automatic_refresh_blocks_its_write() {
+async fn a_basis_marked_during_the_automatic_refresh_does_not_block_its_write() {
     let (db, _dir) = crate::db::tests::test_db().await;
     let db = Arc::new(db);
     memory(&db, "mem_src", SOURCE_TEXT).await;
@@ -685,16 +723,10 @@ async fn a_basis_marked_during_the_automatic_refresh_blocks_its_write() {
     .unwrap();
 
     assert!(db.page_has_basis("b").await.unwrap(), "the mark landed");
-    assert!(
-        !outcome.wrote && !outcome.gated && outcome.revision_card_id.is_none(),
-        "{outcome:?}"
-    );
+    assert!(outcome.wrote && !outcome.gated, "{outcome:?}");
     let after = db.get_page("b").await.unwrap().unwrap();
-    assert_eq!(after.content, "Old beta body.");
-    assert_eq!(after.version, before.version, "no version was written");
-    assert_eq!(
-        after.refresh_blocked_reason.as_deref(),
-        Some(REFRESH_BLOCKED_HAS_BASIS)
-    );
+    assert_eq!(after.content, BODY);
+    assert!(after.version > before.version);
+    assert_eq!(after.refresh_blocked_reason, None);
     assert!(cards(&db, "b").await.is_empty());
 }

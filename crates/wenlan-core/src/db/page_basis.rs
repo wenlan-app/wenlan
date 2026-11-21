@@ -1153,6 +1153,30 @@ async fn entry_for(
 }
 
 impl MemoryDB {
+    /// Confirms the bases a rewrite of `page_id` read, each only while it is
+    /// still exactly what the rewrite read (the R9 rule an accepted preview
+    /// card follows). Used after the automatic refresh wrote a note that relies
+    /// on other notes directly.
+    pub(crate) async fn confirm_basis_snapshot(
+        &self,
+        page_id: &str,
+        snapshot: &[BasisSnapshotEntry],
+        confirmed_by: &str,
+    ) -> Result<(), BasisError> {
+        if snapshot.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().await;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await?;
+        for entry in snapshot {
+            confirm_snapshot_entry_on_conn(&tx, page_id, entry, confirmed_by).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Mark `basis_page_id` as a basis of `page_id` at the version the caller
     /// read. See [`mark_page_basis_on_conn`] for the rules.
     pub async fn mark_page_basis(

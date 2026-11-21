@@ -1178,3 +1178,140 @@ async fn ux_graph_7_the_old_memory_pass_hides_copies_and_says_passed_dates_again
     assert!(db.get_memory_detail("mem_0").await.unwrap().is_none());
     assert!(db.backlog_pass().await.unwrap().is_none());
 }
+
+/// One thing with two conversations, `a` labelled into `space_a` and `b` into
+/// `space_b`, both quiet for over half an hour: what the night tests below
+/// read. Returns the transcripts by session and what is due tonight.
+async fn one_thing_two_conversations(
+    db: &MemoryDB,
+    space_a: &str,
+    space_b: &str,
+) -> (HashMap<String, FoundConversation>, Vec<DreamDue>) {
+    for space in [space_a, space_b] {
+        if db.get_space(space).await.unwrap().is_none() {
+            db.create_space(space, None, false).await.unwrap();
+        }
+    }
+    let a = conv("a", &["ship the release on Tuesday", "yes"], 90);
+    let b = conv("b", &["my dentist is on Friday", "ok"], 80);
+    let label = Scripted::new(&[
+        &format!(
+            r#"{{"work": true, "title": "Release", "space": "{space_a}", "about": "a", "status": "s"}}"#
+        ),
+        &format!(
+            r#"{{"work": true, "title": "Release", "space": "{space_b}", "about": "b", "status": "s"}}"#
+        ),
+    ]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "Release", "conversations": ["C0", "C1"], "now": "Going"}]}"#,
+    ]);
+    let models = IntakeModels { label, group };
+    let mut backoff = Backoff::default();
+    look_with(
+        db,
+        vec![a.clone(), b.clone()],
+        &models,
+        "English",
+        &mut backoff,
+    )
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let due = db
+        .things_to_dream(dream_quiet_since(now, 3), 10)
+        .await
+        .unwrap();
+    let found = [a, b]
+        .into_iter()
+        .map(|c| (found_session_id(&c).unwrap(), c))
+        .collect();
+    (found, due)
+}
+
+/// Design v5 D14: a night never puts one Space's conversation in the prompt
+/// that writes another Space's points, so a personal conversation cannot leak
+/// into a shared Space. A thing spanning two Spaces is read once per Space.
+#[tokio::test]
+async fn a_night_reads_each_spaces_conversations_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "home").await;
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].conversations.len(), 2);
+    let night = Scripted::new(&[
+        r#"{"points": [{"text": "The dentist visit is on Friday.", "settled": true, "from": "C0"}]}"#,
+        r#"{"conclusion": []}"#,
+        r#"{"points": [{"text": "The release ships on Tuesday.", "settled": true, "from": "C0"}]}"#,
+        r#"{"conclusion": []}"#,
+    ]);
+    let keep = Keep(&db, Default::default());
+    dream_with(&db, &due, &found, night.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+
+    let prompts = night.prompts.lock().unwrap().clone();
+    let reads: Vec<&String> = prompts.iter().filter(|p| p.contains("C0")).collect();
+    assert!(reads.len() >= 2, "{prompts:?}");
+    let home = reads.iter().find(|p| p.contains("dentist")).unwrap();
+    assert!(!home.contains("release on Tuesday"), "{home}");
+    let team = reads
+        .iter()
+        .find(|p| p.contains("release on Tuesday"))
+        .unwrap();
+    assert!(!team.contains("dentist"), "{team}");
+    let space_of = |id: &str| {
+        let db = &db;
+        let id = id.to_string();
+        async move { db.get_memory_detail(&id).await.unwrap().unwrap().space }
+    };
+    assert_eq!(space_of("mem_0").await.as_deref(), Some("home"));
+    assert_eq!(space_of("mem_1").await.as_deref(), Some("team"));
+}
+
+/// Writes nothing the first time it is asked, then keeps points as `Keep`.
+struct FailFirst<'a>(Keep<'a>, std::sync::atomic::AtomicBool);
+
+impl PointWriter for FailFirst<'_> {
+    fn write(&self, request: StoreMemoryRequest) -> Written<'_> {
+        if !self.1.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(async { Err("the store refused it".to_string()) });
+        }
+        self.0.write(request)
+    }
+}
+
+/// A point the night could not keep does not mark its conversation read: the
+/// next night reads it again instead of losing what it settled.
+#[tokio::test]
+async fn a_point_not_kept_leaves_its_conversation_for_the_next_night() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (found, due) = one_thing_two_conversations(&db, "team", "team").await;
+    let night = Scripted::new(&[
+        r#"{"points": [
+            {"text": "The release ships on Tuesday.", "settled": true, "from": "C0"},
+            {"text": "The dentist visit is on Friday.", "settled": true, "from": "C1"}
+        ]}"#,
+        r#"{"conclusion": []}"#,
+    ]);
+    let keep = FailFirst(Keep(&db, Default::default()), Default::default());
+    dream_with(&db, &due, &found, night.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now().timestamp();
+    let again = db
+        .things_to_dream(dream_quiet_since(now, 3), 10)
+        .await
+        .unwrap();
+    assert_eq!(again.len(), 1, "the thing is due again");
+    assert_eq!(again[0].conversations.len(), 1, "{again:?}");
+    assert_eq!(
+        again[0].conversations[0].session_id, due[0].conversations[0].session_id,
+        "only the conversation (C0) whose point was not kept"
+    );
+}
