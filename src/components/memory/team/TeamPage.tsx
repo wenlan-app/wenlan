@@ -15,6 +15,9 @@ import {
   teamForgetMembership,
   teamInvite,
   teamMemberCompromised,
+  teamMemberTools,
+  teamRemoveMemberTool,
+  type TeamToolKey,
   teamNewInviteLink,
   teamNewMemberKey,
   teamRemoveMember,
@@ -29,6 +32,7 @@ import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
 import { SHARES_KEY, sharedWriter, teamKeyOf, teamLabel, useShares } from "../sharing/sharing";
 import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
 import { IssuedCode, MemberMenu, codeOf, errorText, memberTag, usesSignIn } from "../sharing/TeamMembers";
+import { shortDate } from "../../../web/TeamOwnDialogs";
 import "../sharing/sharing.css";
 import "../space-detail/space-brief.css";
 import "../space-detail/space-recent-changes.css";
@@ -327,6 +331,7 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, signIn, url,
   const [inviting, setInviting] = useState(inviteFirst);
   const [issued, setIssued] = useState<{ name: string; code: string; kind: "key" | "invite" } | null>(null);
   const [query, setQuery] = useState("");
+  const [toolsOf, setToolsOf] = useState<TeamMember | null>(null);
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
@@ -395,6 +400,7 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, signIn, url,
             />
           )}
           {issued && <IssuedCode name={issued.name} code={issued.code} kind={issued.kind} onDone={() => setIssued(null)} />}
+          {toolsOf && <MemberTools member={toolsOf} run={run} onDone={() => setToolsOf(null)} />}
           {people.length > SEARCH_FROM && (
             <input className="share-input team-people-search" type="search" aria-label={t("team.page.peopleSearch")} placeholder={t("team.page.peopleSearch")} value={query} onChange={(event) => setQuery(event.target.value)} />
           )}
@@ -411,7 +417,7 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, signIn, url,
                       {member.sign_in?.waiting_email && (
                         <button type="button" className="share-primary team-people-letin" aria-label={t("team.signIn.letInName", { name: member.name })} onClick={() => void letIn(member)}>{t("team.signIn.letIn")}</button>
                       )}
-                      <MemberMenu member={member} onNewCode={() => void newLink(member)} onCompromised={() => void compromised(member)} onRemoveFromTeam={() => void remove(member)} />
+                      <MemberMenu member={member} onNewCode={() => void newLink(member)} onTools={() => setToolsOf(member)} onCompromised={() => void compromised(member)} onRemoveFromTeam={() => void remove(member)} />
                     </>
                   );
                 })()}
@@ -429,6 +435,37 @@ function PeopleBox({ teamName, people, members, owner, inviteFirst, signIn, url,
         </div>
       )}
     </dialog>
+  );
+}
+
+/** A member's AI tools, in place above the list: each with when it was
+ *  added, and Remove (it stops at its next request). */
+function MemberTools({ member, run, onDone }: { readonly member: TeamMember; readonly run: Run; readonly onDone: () => void }) {
+  const { t, i18n } = useTranslation();
+  const [tools, setTools] = useState<TeamToolKey[] | null>(null);
+  const runRef = useRef(run);
+  runRef.current = run;
+  useEffect(() => {
+    void runRef.current(async () => { setTools(await teamMemberTools(member.id)); });
+  }, [member.id]);
+  const remove = (tool: TeamToolKey) => run(async () => { setTools(await teamRemoveMemberTool(member.id, tool.id)); });
+  return (
+    <div className="team-member-tools" data-testid="team-member-tools">
+      <h3>{t("team.signIn.toolsTitle", { name: member.name })}</h3>
+      {tools && tools.length === 0 && <p className="team-page-quiet">{t("team.signIn.toolsNone", { name: member.name })}</p>}
+      {tools && tools.length > 0 && (
+        <ul className="team-own-list">
+          {tools.map((tool) => (
+            <li key={tool.id}>
+              <span>{tool.name}</span>
+              <span className="team-own-when">{t("team.signIn.toolsAdded", { date: shortDate(tool.created_at, i18n.language) })}</span>
+              <button type="button" aria-label={t("team.signIn.toolsRemoveName", { name: tool.name })} onClick={() => void remove(tool)}>{t("team.signIn.toolsRemove")}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button type="button" className="share-secondary" onClick={onDone}>{t("team.codeDone")}</button>
+    </div>
   );
 }
 

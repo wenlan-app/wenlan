@@ -732,6 +732,19 @@ pub(super) async fn headers(req: Request, next: Next) -> Response {
     response
 }
 
+/// The per-address rate limit on its own, for `/auth` calls that work with
+/// sign-in off too (connecting an AI tool). `Some` is the refusal.
+pub(super) fn limited(state: &TeamState, req: &Request) -> Option<Response> {
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+    if state.auth.allow(peer) {
+        return None;
+    }
+    Some(crate::member_view::team::rate_limited().into_response())
+}
+
 /// First the rate limit (before anything costly), then whether sign-in is
 /// on at all: the address people reach this server at is `https://` and a
 /// provider is configured. Off is 404, whoever asks.

@@ -262,6 +262,7 @@ async fn env_with(ttl: Duration, burst: f64, refill: f64, url: Option<&str>) -> 
             mcp: Arc::default(),
             sessions: Arc::default(),
             auth: Arc::new(auth),
+            device: Arc::default(),
         },
         _dir: dir,
         fake,

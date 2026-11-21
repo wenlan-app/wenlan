@@ -632,6 +632,10 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // masked emails only. No page text.
     "/api/team/invites", "/api/team/members/{id}/invite",
     "/api/team/members/{id}/approve", "/api/team/members/{id}/compromised",
+    // A member's AI tools, by name and date, for the owner and for this
+    // person on the teams they joined; removing one. Never a key.
+    "/api/team/members/{id}/keys", "/api/team/members/{id}/keys/{key}",
+    "/api/team/my-tools", "/api/team/my-tools/{id}",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

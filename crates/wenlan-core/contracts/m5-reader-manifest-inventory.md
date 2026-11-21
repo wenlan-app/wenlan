@@ -724,6 +724,10 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/team/members/{id}/invite` | main | no | not_applicable | `none` | — | receipt only: the member and their new one-time sign-in link, shown once; no page text |
 | `POST` | `/api/team/members/{id}/approve` | main | no | not_applicable | `none` | — | receipt only: the member as the owner's list shows them; no page text |
 | `POST` | `/api/team/members/{id}/compromised` | main | no | not_applicable | `none` | — | receipt only: the member and their new key, shown once; no page text |
+| `GET` | `/api/team/members/{id}/keys` | main | no | not_applicable | `none` | — | status only: the names and dates of a member's AI tools, for the owner; never a key, no page text |
+| `DELETE` | `/api/team/members/{id}/keys/{key}` | main | no | not_applicable | `none` | — | receipt only: the member's AI tools left, names and dates; never a key, no page text |
+| `GET` | `/api/team/my-tools` | main | no | not_applicable | `none` | — | status only: this person's AI tools on each team they joined, names and dates; never a key, no page text |
+| `DELETE` | `/api/team/my-tools/{id}` | main | no | not_applicable | `none` | — | receipt only: the AI tools left on that team, names and dates; never a key, no page text |
 | `POST` | `/api/team/spaces` | main | no | not_applicable | `none` | — | receipt only: counts of the first sync pass of the Space hosted for the team; page files go to the folder, not the response |
 | `POST` | `/api/team/join` | main | no | not_applicable | `none` | — | status only: the team server's address, this member's id and name and the Space names they may use; no page text |
 | `POST` | `/api/team/start` | main | no | not_applicable | `none` | — | status only: the team now started on this computer, its member names and Spaces, the team listener address and the address in invite links; no key, no page text |
@@ -1075,6 +1079,7 @@ the projection-directory reader.
 | `wenlan export` | yes | automatic | `none` | subcommand renderer |
 | `wenlan repo` | yes | automatic | `none` | subcommand renderer |
 | `wenlan team` | yes | automatic | `none` | subcommand renderer |
+| `wenlan login` | yes | automatic | `none` | subcommand renderer |
 | `wenlan sweep` | yes | automatic | `none` | subcommand renderer |
 | `wenlan follow` | yes | automatic | `none` | subcommand renderer |
 | `wenlan unfollow` | yes | automatic | `none` | subcommand renderer |

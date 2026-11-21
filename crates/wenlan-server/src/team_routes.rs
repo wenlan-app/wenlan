@@ -108,6 +108,16 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/team/members/{id}/compromised",
             post(handle_compromised),
         )
+        .route("/api/team/members/{id}/keys", get(handle_member_keys))
+        .route("/api/team/my-tools", get(handle_my_tools))
+        .route(
+            "/api/team/my-tools/{id}",
+            crate::route_registry::delete(handle_remove_my_tool),
+        )
+        .route(
+            "/api/team/members/{id}/keys/{key}",
+            crate::route_registry::delete(handle_revoke_member_key),
+        )
         .route("/api/team/spaces", post(handle_host_space))
         .route("/api/team/join", post(handle_join))
         .route("/api/team/start", post(handle_start_team))
@@ -434,6 +444,7 @@ pub async fn handle_remove_member(Path(id): Path<String>) -> Result<Json<TeamMem
     }
     let member = blocking(move || team::remove_member(&team::team_path(), &id)).await?;
     LIVE_SESSIONS.delete_member(&member.id);
+    drop_member_mcp(&LIVE_MCP, &member.id);
     Ok(Json(member.to_wire()))
 }
 
@@ -558,7 +569,46 @@ pub async fn handle_compromised(
     };
     let (member, key) = blocking(move || team::reset_compromised(&team::team_path(), &id)).await?;
     LIVE_SESSIONS.delete_member(&member.id);
+    drop_member_mcp(&LIVE_MCP, &member.id);
     Ok(Json(member_key(member, key, url.as_deref())?))
+}
+
+/// GET /api/team/members/{id}/keys: a member's AI tools, for the owner.
+pub async fn handle_member_keys(Path(id): Path<String>) -> Response {
+    match managed_elsewhere().await {
+        Ok(Some(owned)) => {
+            let path = format!("/members/{}/keys", encoded(&id));
+            match on_server::<Vec<wenlan_types::team::TeamToolKey>>(
+                &owned,
+                reqwest::Method::GET,
+                &path,
+                None,
+            )
+            .await
+            {
+                Ok(keys) => Json(keys).into_response(),
+                Err(error) => error.into_response(),
+            }
+        }
+        Ok(None) => member_tool_keys(&team::team_path(), &id).await,
+        Err(error) => error.into_response(),
+    }
+}
+
+/// DELETE /api/team/members/{id}/keys/{key}: the owner removes one of a
+/// member's AI tools; it is refused at its next request.
+pub async fn handle_revoke_member_key(Path((id, key)): Path<(String, String)>) -> Response {
+    match managed_elsewhere().await {
+        Ok(Some((url, owner_key))) => {
+            let path = format!("/members/{}/keys/{}", encoded(&id), encoded(&key));
+            match remote::admin(&url, &owner_key, reqwest::Method::DELETE, &path, None).await {
+                Ok(left) => Json(left).into_response(),
+                Err(error) => ServerError::ValidationError(error).into_response(),
+            }
+        }
+        Ok(None) => revoke_member_tool_key(&team::team_path(), &LIVE_MCP, &id, &key).await,
+        Err(error) => error.into_response(),
+    }
 }
 
 /// The address put in invite links when the caller gives none: the one
@@ -795,6 +845,103 @@ pub struct MembershipQuery {
     pub url: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct MyToolsQuery {
+    /// One team's server; left out, every team joined here.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// The teams joined here that `url` picks (all, without one), with the
+/// member key this computer keeps for each.
+async fn joined(
+    url: Option<&str>,
+) -> Result<Vec<(String, String, Option<wenlan_types::team::TeamInfo>)>, ServerError> {
+    let wanted = match url.map(str::trim).filter(|url| !url.is_empty()) {
+        Some(url) => Some(remote::check_url(url).map_err(ServerError::ValidationError)?),
+        None => None,
+    };
+    let (memberships, infos) = blocking(|| {
+        let settings = shared_space::settings_path();
+        Ok((
+            shared_space::memberships_at(&settings)?,
+            shared_space::membership_infos_at(&settings)?,
+        ))
+    })
+    .await?;
+    let picked: Vec<_> = memberships
+        .into_iter()
+        .filter(|(url, _)| wanted.as_deref().is_none_or(|wanted| wanted == url))
+        .map(|(url, membership)| {
+            let team = infos
+                .iter()
+                .find(|info| info.url == url)
+                .and_then(|info| info.team.clone());
+            (url, membership.key, team)
+        })
+        .collect();
+    if picked.is_empty() {
+        return Err(ServerError::ValidationError(match wanted {
+            Some(url) => format!("this computer has not joined the team at {url}"),
+            None => "this computer has joined no team".into(),
+        }));
+    }
+    Ok(picked)
+}
+
+/// GET /api/team/my-tools?url= — this person's AI tools on each team they
+/// joined here, asked of each server with the member key kept here.
+pub async fn handle_my_tools(
+    Query(query): Query<MyToolsQuery>,
+) -> Result<Json<Vec<wenlan_types::team::TeamToolsOnServer>>, ServerError> {
+    let mut found = Vec::new();
+    for (url, key, team) in joined(query.url.as_deref()).await? {
+        let answer = remote::account(&url, &key, reqwest::Method::GET, "/keys").await;
+        let (tools, error) = match answer.map(serde_json::from_value) {
+            Ok(Ok(tools)) => (tools, None),
+            Ok(Err(_)) => (
+                Vec::new(),
+                Some(format!("{url} answered something unexpected")),
+            ),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        found.push(wenlan_types::team::TeamToolsOnServer {
+            url,
+            team,
+            tools,
+            error,
+        });
+    }
+    Ok(Json(found))
+}
+
+/// DELETE /api/team/my-tools/{id}?url= — removes one of this person's AI
+/// tools on that team; it is refused at its next request.
+pub async fn handle_remove_my_tool(
+    Path(id): Path<String>,
+    Query(query): Query<MyToolsQuery>,
+) -> Result<Json<wenlan_types::team::TeamToolsOnServer>, ServerError> {
+    let mut teams = joined(query.url.as_deref()).await?;
+    if teams.len() != 1 {
+        return Err(ServerError::ValidationError(
+            "this computer has joined more than one team: say which with --server".into(),
+        ));
+    }
+    let (url, key, team) = teams.remove(0);
+    let path = format!("/keys/{}", encoded(&id));
+    let left = remote::account(&url, &key, reqwest::Method::DELETE, &path)
+        .await
+        .map_err(ServerError::ValidationError)?;
+    let tools = serde_json::from_value(left)
+        .map_err(|_| ServerError::Internal(format!("{url} answered something unexpected")))?;
+    Ok(Json(wenlan_types::team::TeamToolsOnServer {
+        url,
+        team,
+        tools,
+        error: None,
+    }))
+}
+
 /// DELETE /api/team/membership?url= — this person left the team at `url`.
 pub async fn handle_forget_membership(
     Query(query): Query<MembershipQuery>,
@@ -899,10 +1046,26 @@ struct TeamState {
     sessions: Arc<crate::team_session::SessionStore>,
     /// Sign-in with an identity provider.
     auth: Arc<auth::AuthState>,
+    /// AI tools waiting for a member to type their short code.
+    device: Arc<device::DeviceStore>,
 }
 
 /// MCP services by (member, Space, access).
 type McpCache = Arc<std::sync::Mutex<HashMap<(String, String, TeamAccess), McpService>>>;
+
+/// The team listener's MCP services. One for the whole process, so the
+/// daemon's own `/api/team` calls drop a member's as the listener's do.
+static LIVE_MCP: LazyLock<McpCache> = LazyLock::new(Arc::default);
+
+/// Drops every MCP service of a member, after a member is removed, an
+/// account taken over or an AI tool removed: the next request starts a new
+/// session, and authenticates again on the way.
+fn drop_member_mcp(cache: &McpCache, member_id: &str) {
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .retain(|(member, _, _), _| member != member_id);
+}
 
 /// Runs the team listener while it is on: `WENLAN_TEAM_ADDR`, or the
 /// address the owner turned it on at from the app (kept in `team.json`, so
@@ -928,9 +1091,10 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
             // The live listener always uses its HTTP transport.
             None
         },
-        mcp: Arc::default(),
+        mcp: LIVE_MCP.clone(),
         sessions: LIVE_SESSIONS.clone(),
         auth: Arc::new(auth::AuthState::from_config(&team::team_path())),
+        device: Arc::default(),
     };
     let kept = {
         let path = state.team_path.clone();
@@ -1180,7 +1344,7 @@ fn auth_route_bindings() -> [AuthRouteBinding; 8] {
 }
 
 fn team_router(state: TeamState) -> axum::Router {
-    use axum::routing::{any, get};
+    use axum::routing::{any, get, post};
     let data = member_data_routes()
         .into_iter()
         .fold(axum::Router::new(), |router, binding| {
@@ -1192,6 +1356,12 @@ fn team_router(state: TeamState) -> axum::Router {
     let checked = data
         .route("/team/v1/admin", any(team_admin))
         .route("/team/v1/admin/{*rest}", any(team_admin))
+        .route("/team/v1/account/keys", get(device::keys))
+        .route(
+            "/team/v1/account/keys/{id}",
+            axum::routing::delete(device::revoke),
+        )
+        .route("/team/v1/account/desktop-link", post(device::desktop_link))
         .layer(middleware::from_fn(wenlan_mcp::serve::guard_initialization))
         .layer(middleware::from_fn(capped_body))
         .layer(middleware::from_fn_with_state(
@@ -1233,10 +1403,28 @@ fn team_router(state: TeamState) -> axum::Router {
     // Which providers sign-in offers, asked before anyone has signed in:
     // `[]` when it is off, never a 404, so a page can tell "off" from "gone".
     let providers = auth_providers.layer(middleware::from_fn(auth::headers));
+    // Connecting an AI tool with a short code works with sign-in off too:
+    // a member with a key allows it. Asking and polling need nobody; typing
+    // the code needs the member. Small bodies only.
+    let device_member = axum::Router::new()
+        .route("/auth/device/lookup", post(device::lookup))
+        .route("/auth/device/approve", post(device::approve))
+        .route("/auth/device/deny", post(device::deny))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_member,
+        ));
+    let device = axum::Router::new()
+        .route("/auth/device", post(device::start))
+        .route("/auth/device/token", post(device::token))
+        .merge(device_member)
+        .layer(DefaultBodyLimit::max(1024))
+        .layer(middleware::from_fn(auth::headers));
     axum::Router::new()
         .route("/health", get(team_health))
         .merge(sign_in)
         .merge(providers)
+        .merge(device)
         .route(wenlan_types::team::JOIN_PATH, get(team_join_page))
         .route("/app", get(crate::web_static::team_app))
         .route("/app/", get(crate::web_static::team_app))
@@ -1295,6 +1483,7 @@ struct JoinPageStrings {
     expired: &'static str,
     sign_in_google: &'static str,
     sign_in_github: &'static str,
+    sign_in_off: &'static str,
 }
 
 const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
@@ -1321,6 +1510,7 @@ const JOIN_PAGE_EN: JoinPageStrings = JoinPageStrings {
     expired: "This link no longer works. Ask whoever invited you for a new one.",
     sign_in_google: "Sign in with Google",
     sign_in_github: "Sign in with GitHub",
+    sign_in_off: "Sign-in isn't on for this team yet. Ask for a desktop invite link.",
 };
 
 const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
@@ -1348,6 +1538,7 @@ const JOIN_PAGE_ZH_HANS: JoinPageStrings = JoinPageStrings {
     expired: "这个链接已经失效。请让邀请你的人重新发一个。",
     sign_in_google: "用 Google 登录",
     sign_in_github: "用 GitHub 登录",
+    sign_in_off: "这个团队还没开放登录，请向邀请你的人要桌面版邀请链接。",
 };
 
 const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
@@ -1374,6 +1565,7 @@ const JOIN_PAGE_ZH_HANT: JoinPageStrings = JoinPageStrings {
     expired: "這個連結已經失效。請讓邀請你的人重新傳一個。",
     sign_in_google: "用 Google 登入",
     sign_in_github: "用 GitHub 登入",
+    sign_in_off: "這個團隊還沒開放登入，請向邀請你的人要桌面版邀請連結。",
 };
 
 fn join_page_strings(headers: &HeaderMap) -> &'static JoinPageStrings {
@@ -1557,14 +1749,18 @@ pre { max-width:100%; margin:0; padding:12px; overflow:auto; border-radius:8px; 
     invite = window.location.hash.slice(1);
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
     accept.textContent = text.sign_in_google;
-    // With no provider list (sign-in off) the Google button stays and the
-    // server answers it; otherwise only the configured providers show.
-    if (providers.length && !providers.includes('google')) accept.hidden = true;
+    // Only the configured providers show. With none (sign-in off) the
+    // invite cannot be used here, and the page says so instead.
+    if (!providers.includes('google')) accept.hidden = true;
     if (providers.includes('github')) {
       acceptGithub.textContent = text.sign_in_github;
       acceptGithub.hidden = false;
     }
     connect.parentElement.hidden = true;
+    if (!providers.length) {
+      error.textContent = text.sign_in_off;
+      error.hidden = false;
+    }
   }
 
   const fail = () => {
@@ -1826,6 +2022,9 @@ pub(crate) fn member_app_calls() -> impl Iterator<Item = (&'static str, &'static
 #[path = "team_auth.rs"]
 mod auth;
 
+#[path = "team_device.rs"]
+mod device;
+
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
 const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
 
@@ -1891,7 +2090,10 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
                 .starts_with(&format!("{}/", app_gate::PREFIX))
             || matches!(
                 route_class(req.uri().path()),
-                RouteClass::AuthLink | RouteClass::AuthReauth
+                RouteClass::AuthLink
+                    | RouteClass::AuthReauth
+                    | RouteClass::AuthDevice
+                    | RouteClass::Account
             );
         let allowed = if on_gate {
             own_origin(&state).await.as_deref() == Some(origin)
@@ -2047,6 +2249,12 @@ enum RouteClass {
     AuthLink,
     /// `/auth/reauth/*`: a browser session signs in again.
     AuthReauth,
+    /// `/auth/device/lookup|approve|deny`: a member types an AI tool's short
+    /// code. (`/auth/device` and `/auth/device/token`, which need nobody,
+    /// are [`RouteClass::AuthPublic`].)
+    AuthDevice,
+    /// `/team/v1/account/*`: the caller's own AI tools and desktop link.
+    Account,
     /// Everything else: sync, owner admin.
     Other,
 }
@@ -2071,8 +2279,14 @@ fn route_class(path: &str) -> RouteClass {
         || under("/auth/callback")
         || under("/auth/invite")
         || path == "/auth/providers"
+        || path == "/auth/device"
+        || path == "/auth/device/token"
     {
         RouteClass::AuthPublic
+    } else if under("/auth/device") {
+        RouteClass::AuthDevice
+    } else if under("/team/v1/account") {
+        RouteClass::Account
     } else if under("/auth/link") {
         RouteClass::AuthLink
     } else if under("/auth/reauth") {
@@ -2096,6 +2310,8 @@ const ROUTE_TABLE: &[(RouteClass, [bool; 3])] = &[
     (RouteClass::AuthPublic, [true, true, true]),
     (RouteClass::AuthLink, [true, false, true]),
     (RouteClass::AuthReauth, [false, false, true]),
+    (RouteClass::AuthDevice, [true, false, true]),
+    (RouteClass::Account, [true, false, true]),
     (RouteClass::Other, [true, false, false]),
 ];
 
@@ -2219,6 +2435,21 @@ async fn team_admin(
             _ => {}
         }
     }
+    // A member's AI tools, from this server's own file too.
+    if plain {
+        match (
+            method.as_str(),
+            rest.split('/').collect::<Vec<_>>().as_slice(),
+        ) {
+            ("GET", ["", "members", id, "keys"]) => {
+                return member_tool_keys(&state.team_path, id).await
+            }
+            ("DELETE", ["", "members", id, "keys", key]) => {
+                return revoke_member_tool_key(&state.team_path, &state.mcp, id, key).await
+            }
+            _ => {}
+        }
+    }
     let removed_member = match rest.split('/').collect::<Vec<_>>().as_slice() {
         ["", "members", id] if plain && method.as_str() == "DELETE" => Some((*id).to_string()),
         _ => None,
@@ -2319,6 +2550,7 @@ async fn reset_compromised(state: &TeamState, id: &str) -> Response {
     match tokio::task::spawn_blocking(move || team::reset_compromised(&path, &id)).await {
         Ok(Ok((member, key))) => {
             state.sessions.delete_member(&member.id);
+            drop_member_mcp(&state.mcp, &member.id);
             match member_key(member, key, url.as_deref()) {
                 Ok(answer) => Json(answer).into_response(),
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -2329,6 +2561,42 @@ async fn reset_compromised(state: &TeamState, id: &str) -> Response {
         }
         Ok(Err(wenlan_core::error::WenlanError::Validation(what))) => {
             (StatusCode::BAD_REQUEST, what).into_response()
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// A member's AI tools (their live tool keys), for the owner.
+async fn member_tool_keys(team_path: &std::path::Path, id: &str) -> Response {
+    let path = team_path.to_path_buf();
+    let id = id.to_string();
+    match tokio::task::spawn_blocking(move || team::member_by_id(&path, &id)).await {
+        Ok(Ok(Some(member))) => Json(member.tool_keys()).into_response(),
+        Ok(Ok(None)) => (StatusCode::NOT_FOUND, "no such member").into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// The owner removes one of a member's AI tools. It is refused at its
+/// next request.
+async fn revoke_member_tool_key(
+    team_path: &std::path::Path,
+    mcp: &McpCache,
+    id: &str,
+    key: &str,
+) -> Response {
+    let path = team_path.to_path_buf();
+    let (member_id, key_id) = (id.to_string(), key.to_string());
+    match tokio::task::spawn_blocking(move || team::revoke_tool_key(&path, &member_id, &key_id))
+        .await
+    {
+        Ok(Ok(())) => {
+            drop_member_mcp(mcp, id);
+            // The tools left, as JSON: what the owner's list shows next.
+            member_tool_keys(team_path, id).await
+        }
+        Ok(Err(wenlan_core::error::WenlanError::NotFound(what))) => {
+            (StatusCode::NOT_FOUND, what).into_response()
         }
         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }

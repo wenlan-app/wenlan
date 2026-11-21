@@ -1292,6 +1292,28 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// `GET /api/team/my-tools?url=`: this person's AI tools on the teams
+    /// they joined (one team with `server`).
+    pub async fn team_my_tools(
+        &self,
+        server: Option<&str>,
+    ) -> Result<Vec<wenlan_types::team::TeamToolsOnServer>> {
+        let query: Vec<(&str, &str)> = server.map(|url| ("url", url)).into_iter().collect();
+        let url = self.team_url(&["api", "team", "my-tools"], &query)?;
+        self.team_call(reqwest::Method::GET, url, None).await
+    }
+
+    /// `DELETE /api/team/my-tools/{id}?url=`: remove one of them.
+    pub async fn team_remove_my_tool(
+        &self,
+        id: &str,
+        server: Option<&str>,
+    ) -> Result<wenlan_types::team::TeamToolsOnServer> {
+        let query: Vec<(&str, &str)> = server.map(|url| ("url", url)).into_iter().collect();
+        let url = self.team_url(&["api", "team", "my-tools", id], &query)?;
+        self.team_call(reqwest::Method::DELETE, url, None).await
+    }
+
     /// `GET /api/shared`: everything this Wenlan shares or syncs.
     pub async fn shared_list(&self) -> Result<Vec<wenlan_types::shared_space::SharedSyncStatus>> {
         let url = self.team_url(&["api", "shared"], &[])?;

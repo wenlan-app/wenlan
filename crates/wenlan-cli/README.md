@@ -891,6 +891,50 @@ Arguments:
 
 - `[TEAM]`: The team's name or its server's address. Not needed when this computer is on one team.
 
+#### `wenlan team keys`
+
+List the AI tools you connected to a team with `wenlan login`.
+
+```text
+wenlan team keys [OPTIONS]
+```
+
+Options:
+
+- `--team <TEAM>`: The team's name or its server's address. Left out, every team this computer joined.
+
+#### `wenlan team revoke-key`
+
+Remove an AI tool you connected: it stops working at its next request.
+
+```text
+wenlan team revoke-key [OPTIONS] <ID>
+```
+
+Arguments:
+
+- `<ID>`: The tool's id, from `wenlan team keys`.
+
+Options:
+
+- `--team <TEAM>`: The team's name or its server's address. Not needed when this computer is on one team.
+
+### `wenlan login`
+
+Connect an AI tool on this computer to a team with a short code you allow in a browser.
+
+```text
+wenlan login [OPTIONS] --tool <TOOL> <SERVER>
+```
+
+Arguments:
+
+- `<SERVER>`: The team's address, such as `https://team.example.com`.
+
+Options:
+
+- `--tool <TOOL>`: The AI tool to connect: `claude-code`, `codex` or `cursor`.
+
 **Running**
 
 ### `wenlan connect`

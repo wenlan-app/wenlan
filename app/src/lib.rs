@@ -1770,6 +1770,8 @@ pub fn run() {
             search::team_new_invite_link,
             search::team_approve_member,
             search::team_member_compromised,
+            search::team_member_tools,
+            search::team_remove_member_tool,
             search::team_host_space,
             search::team_join,
             search::team_start,
