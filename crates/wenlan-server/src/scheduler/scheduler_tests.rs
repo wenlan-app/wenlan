@@ -4507,6 +4507,26 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
         "research",
     )
     .await;
+    // The person writes the page's sentence themself, so it is theirs: a
+    // refresh changes the AI's sentences and keeps the person's (UX-WHO-2).
+    db.update_page_content(
+        &page_human_stale,
+        "Human-written prose must remain untouched.",
+        &["mem_human"],
+        "fs_edit",
+    )
+    .await
+    .unwrap();
+    // The person writes the page's sentence themself, so it is theirs: a
+    // refresh changes the AI's sentences and keeps the person's (UX-WHO-2).
+    db.update_page_content(
+        &page_human_stale,
+        "Human-written prose must remain untouched.",
+        &["mem_human"],
+        "fs_edit",
+    )
+    .await
+    .unwrap();
     db.set_page_stale(&page_machine_stale, "source_updated")
         .await
         .unwrap();
@@ -4573,11 +4593,12 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
 
     let first_stale = run_stage(wenlan_core::maintenance::MaintenanceStage::StalePage).await;
     let second_stale = run_stage(wenlan_core::maintenance::MaintenanceStage::StalePage).await;
-    // Both pages are refreshed: the person's page goes sentence by sentence
-    // (UX-WHO-2), so their sentence stays and no whole-page card is staged.
+    // The machine page is rewritten. The person's page goes sentence by
+    // sentence (UX-WHO-2): its only sentence is theirs, so nothing is
+    // written, no whole-page card is staged, and the change is settled.
     assert_eq!(
         first_stale.stale_machine_refreshed + second_stale.stale_machine_refreshed,
-        2
+        1
     );
     assert_eq!(
         first_stale.stale_human_cards + second_stale.stale_human_cards,

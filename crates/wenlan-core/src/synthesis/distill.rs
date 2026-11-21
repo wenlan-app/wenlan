@@ -2229,10 +2229,24 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         db.update_page_summary(page_id, summary.as_deref()).await?;
     }
 
+    // The write kept every sentence of the person's and the AI's own had
+    // nothing to change (a rewording of the person's sentence is dropped,
+    // a facts change is filed as a sentence proposal): this source change is
+    // settled. Without this the page stays stale and every pass pays the
+    // model again for the same answer (UX-WHO-2).
+    let settled = !result.acknowledged
+        && !user_forced_write
+        && !result.wrote
+        && !result.gated
+        && result.outcome == crate::post_write::WriteOutcome::Unchanged
+        && db
+            .clear_page_staleness_at_fence(page_id, page.version, &page_fence)
+            .await?;
+
     Ok(RefreshOutcome {
         wrote: result.wrote,
         gated: result.gated,
-        acknowledged: result.acknowledged,
+        acknowledged: result.acknowledged || settled,
         revision_card_id: result.revision_card_id,
         discard_reason: None,
     })
