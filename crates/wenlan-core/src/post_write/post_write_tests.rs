@@ -6348,7 +6348,7 @@ async fn a_memory_revision_card_still_previews_its_stored_content() {
 }
 
 /// Proves the source_revision fence is actually wired end-to-end through
-/// the daemon-internal path a machine refresh uses to reach a human-owned
+/// the daemon-internal path an explicit rebuild uses to reach a human-owned
 /// page's gate: `update_page_at_source_revision` (the same wrapper
 /// `synthesis::distill`'s refresh calls) threads `expected_source_revision`
 /// into `stage_page_revision_card`, which must record it on the staged
@@ -6393,7 +6393,7 @@ async fn stage_page_revision_card_via_fenced_update_records_source_revision() {
             caller_id: None,
             operation_id: None,
         },
-        "re_distill",
+        "distill",
         false,
         source_revision,
         None,
@@ -7687,7 +7687,8 @@ async fn machine_write_requires_review_matrix() {
         Some(wenlan_types::zotero::ZOTERO_SELECTION_REVIEW_REQUIRED.into());
 
     let agent = Writer::classify("agent_refresh");
-    let pipeline = Writer::classify("re_distill");
+    let pipeline = Writer::classify("distill");
+    let refresh = Writer::classify("re_distill");
     let human = Writer::classify("manual_edit");
 
     // Human writers are never gated, not even by the lock.
@@ -7738,6 +7739,28 @@ async fn machine_write_requires_review_matrix() {
     ));
     assert!(machine_write_requires_review(
         pipeline, &locked, false, true
+    ));
+    // The automatic refresh after a source changed is not held back by the
+    // person's ownership: the sentence gate keeps their sentences instead
+    // (design v5 D5). A forced rebuild over their text, the lock and a
+    // changed selection still gate it.
+    assert!(!machine_write_requires_review(
+        refresh, &edited, false, false
+    ));
+    assert!(!machine_write_requires_review(
+        refresh, &authored, true, false
+    ));
+    assert!(machine_write_requires_review(
+        refresh, &machine, false, true
+    ));
+    assert!(machine_write_requires_review(
+        refresh, &locked, false, false
+    ));
+    assert!(machine_write_requires_review(
+        refresh,
+        &changed_selection,
+        true,
+        false
     ));
     // A changed research selection is a decision, not a text refresh. Even
     // a version-checked agent must use existing Review; the person's lock
