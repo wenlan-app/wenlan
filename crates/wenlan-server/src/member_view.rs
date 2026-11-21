@@ -339,6 +339,7 @@ member_bodies!(
     wenlan_types::team_library::TeamGroup,
     wenlan_types::team_library::TeamPublicationPreview,
     wenlan_types::team_library::TeamPublicationReceipt,
+    wenlan_types::team_library::TeamToolKeyReceipt,
 );
 
 trait ForwardedReply: IntoResponse {

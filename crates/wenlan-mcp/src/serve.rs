@@ -298,6 +298,48 @@ pub fn team_member_service(
     )
 }
 
+/// Existing Rules channels for a connection pinned to a migrated Space.
+pub struct MigratedSpaceRules {
+    pub daemon_client: WenlanClient,
+    pub space: String,
+    pub profile: ToolProfile,
+}
+
+/// The hosted library's MCP service. Library reads are supplied by the
+/// authenticated host. A migrated Space can also keep its pinned Rules tools.
+pub fn team_library_service(
+    member_id: String,
+    pinned: bool,
+    lookup: crate::tools::team_library::Lookup,
+    rules: Option<MigratedSpaceRules>,
+) -> StreamableHttpService<WenlanMcpServer, LocalSessionManager> {
+    let mut config = StreamableHttpServerConfig::default()
+        .disable_allowed_hosts()
+        .with_sse_keep_alive(Some(Duration::from_secs(15)));
+    config.session_store = Some(Arc::new(IdleSessionResume::default()));
+    StreamableHttpService::new(
+        move || {
+            let identity =
+                AgentIdentity::new("remote-mcp".into(), false).for_team_member(member_id.clone());
+            let client = rules.as_ref().map_or_else(
+                || WenlanClient::new("http://127.0.0.1:9".into()),
+                |rules| rules.daemon_client.clone(),
+            );
+            let mut server =
+                WenlanMcpServer::new_with_identity(client, TransportMode::Http, identity, None)
+                    .with_team_library(pinned, lookup.clone());
+            if let Some(rules) = &rules {
+                server = server
+                    .with_tool_profile(rules.profile)
+                    .with_space_pin(rules.space.clone());
+            }
+            Ok(server)
+        },
+        Arc::new(session_manager()),
+        config,
+    )
+}
+
 /// How long a connection may go without a message before the SDK drops it.
 /// The SDK's own five minutes also ends a connection while one slow call is
 /// still running (the timer only restarts on a new message), so a save that

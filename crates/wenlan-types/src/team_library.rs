@@ -167,6 +167,20 @@ pub struct TeamToolScope {
     pub space_id: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamToolKeyCreate {
+    pub name: String,
+    pub space_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TeamToolKeyReceipt {
+    pub id: String,
+    pub key: String,
+    pub scope: TeamToolScope,
+}
+
 /// Checked against the person's library again at confirmation. These IDs
 /// are local to the terminal review and never enter team records.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

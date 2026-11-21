@@ -18,6 +18,7 @@ use wenlan_types::rulesync_skill::{
 };
 
 mod hosted_team;
+pub mod team_library;
 
 /// Deserialize an `Option<usize>` that also accepts stringified numbers (e.g. `"10"`).
 /// MCP clients like Claude Desktop sometimes send numeric params as strings.
@@ -535,6 +536,7 @@ pub struct WenlanMcpServer {
     space_pin: Option<String>,
     /// Stdio only: keeps the working folder's Space current before each call.
     folder_space: Option<std::sync::Arc<crate::folder_space::FolderSpaceWatch>>,
+    team_library: Option<(bool, team_library::Lookup)>,
 }
 
 // ===== Parameter Structs =====
@@ -7114,6 +7116,7 @@ impl WenlanMcpServer {
             user_id,
             space_pin: None,
             folder_space: None,
+            team_library: None,
         }
     }
 
@@ -7137,6 +7140,11 @@ impl WenlanMcpServer {
     /// pins a whole process: the Space the caller names is ignored.
     pub fn with_space_pin(mut self, space: String) -> Self {
         self.space_pin = Some(space);
+        self
+    }
+
+    pub(crate) fn with_team_library(mut self, pinned: bool, lookup: team_library::Lookup) -> Self {
+        self.team_library = Some((pinned, lookup));
         self
     }
 
@@ -8368,6 +8376,24 @@ impl WenlanMcpServer {
     }
 
     fn visible_tools(&self) -> Vec<Tool> {
+        if let Some((pinned, _)) = &self.team_library {
+            let mut tools = team_library::definitions(*pinned);
+            if self.space_pin.is_some() {
+                tools.extend(
+                    Self::tool_router()
+                        .list_all()
+                        .into_iter()
+                        .filter_map(|mut tool| {
+                            if !hosted_team::rules_allowed(tool.name.as_ref(), self.tool_profile) {
+                                return None;
+                            }
+                            hosted_team::apply_output_schema(&mut tool);
+                            Some(tool)
+                        }),
+                );
+            }
+            return tools;
+        }
         let mut tools = Self::tool_router().list_all();
         if self.agent_identity.team_member().is_some() {
             tools.retain(|tool| hosted_team::allowed(tool.name.as_ref(), self.tool_profile));
@@ -8484,6 +8510,18 @@ impl ServerHandler for WenlanMcpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some((_, lookup)) = &self.team_library {
+            if let Some(pin) = &self.space_pin {
+                if hosted_team::rules_allowed(request.name.as_ref(), self.tool_profile) {
+                    return crate::lock_state::with_session_pin(
+                        Some(pin.clone()),
+                        hosted_team::dispatch(self, request.name.as_ref(), request.arguments),
+                    )
+                    .await;
+                }
+            }
+            return team_library::dispatch(lookup, request.name.as_ref(), request.arguments).await;
+        }
         if self.agent_identity.team_member().is_some() {
             if let Some(folder_space) = &self.folder_space {
                 folder_space.refresh(&self.client).await;
@@ -8554,6 +8592,11 @@ impl ServerHandler for WenlanMcpServer {
     }
 
     fn get_info(&self) -> InitializeResult {
+        if self.team_library.is_some() {
+            return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION")))
+                .with_instructions("This connection reads an authenticated team library. Use brief for its overview, recall to find approved team items, and list_pages, read_page and get_page_sources to browse.");
+        }
         if self.agent_identity.team_member().is_some() {
             let instructions = if self.tool_profile == ToolProfile::WebWrite {
                 "You can read this shared Space and edit its pages. Use brief for its overview, recall to search its pages, read_space_rules for approved rules, and list_pages and read_page to browse it. Use write_page, rename_page, or delete_page only when the person asks. Read a page before changing it and pass its current version."

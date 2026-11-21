@@ -3013,13 +3013,11 @@ async fn team_put_version(
 async fn team_mcp(
     State(state): State<TeamState>,
     Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
     req: Request,
 ) -> crate::member_view::MemberResponse {
     if state.library.is_some() {
-        return crate::member_view::MemberResponse::problem(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Use the team library to read migrated Spaces.",
-        );
+        return library::serve_mcp(&state, &member, &credential, None, req).await;
     }
     // The same list `/team/v1/me` gives, so the address the invite page
     // shows for "one Space" always opens: a Space open to everyone counts
@@ -3060,14 +3058,12 @@ async fn team_mcp(
 async fn team_mcp_in(
     State(state): State<TeamState>,
     Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
     Path(space): Path<String>,
     req: Request,
 ) -> crate::member_view::MemberResponse {
     if state.library.is_some() {
-        return crate::member_view::MemberResponse::problem(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Use the team library to read migrated Spaces.",
-        );
+        return library::serve_mcp(&state, &member, &credential, Some(&space), req).await;
     }
     serve_mcp(state, member, space, req).await
 }
