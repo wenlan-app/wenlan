@@ -1084,7 +1084,7 @@ and wait for evidence that people need them.
   `personal_rules_setup_requires_interactive_confirmation`,
   `rulesync_personal_settings_use_home_paths_on_macos_linux_windows`,
   `rulesync_personal_settings_keep_jsonc_and_toml_siblings_byte_stable`,
-  `rulesync_personal_settings_patch_supported_codex_and_gemini_permissions`,
+  `rulesync_personal_settings_read_codex_and_gemini_permissions_without_writing`,
   `rulesync_personal_settings_accept_only_native_credential_references`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,

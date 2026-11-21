@@ -4780,6 +4780,9 @@ mod tests {
             "auth-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SYNTHETIC_TOKEN}"}},
             "userinfo":{"url":"https://u:q4@example.invalid/mcp"},
             "key-field":{"command":"example","key":"synthetic-sentinel-key"},
+            "direct-auth":{"command":"example","bearer":"u:q4"},
+            "unverified-field":{"command":"example","opaque":"synthetic-sentinel-opaque"},
+            "env-auth":{"command":"example","env":{"API_KEY":"${SYNTHETIC_TOKEN}"}},
             "good":{"command":"before"}
         }, "sessionToken":"synthetic-sentinel-unrelated" }"#;
         let claude = home.join(".claude.json");
@@ -4787,7 +4790,8 @@ mod tests {
         fs::write(&hooks, r#"{"hooks":{"SessionStart":[
             {"matcher":"one","hooks":[{"type":"command","command":"curl --user u:q4"}]},
             {"matcher":"two","hooks":[{"type":"command","command":"curl -uu:q4"}]},
-            {"matcher":"three","hooks":[{"type":"command","command":"curl --password=synthetic-sentinel-hook"}]}
+            {"matcher":"three","hooks":[{"type":"command","command":"curl --password=synthetic-sentinel-hook"}]},
+            {"matcher":"four","hooks":[{"type":"command","command":"curl --oauth2-bearer ${SYNTHETIC_TOKEN}"}]}
         ]}}"#).unwrap();
         fs::write(&claude, original).unwrap();
         fs::write(&codex, b"# safe fixture\n").unwrap();
@@ -4806,7 +4810,7 @@ mod tests {
                 .iter()
                 .filter(|note| note.contains("skipped MCP server"))
                 .count(),
-            8
+            11
         );
         assert_eq!(
             preview
@@ -4814,7 +4818,7 @@ mod tests {
                 .iter()
                 .filter(|note| note.contains("skipped hook"))
                 .count(),
-            3
+            4
         );
         assert!(shown.contains("cannot write or back up"));
         assert!(!shown.contains("synthetic-sentinel"));
@@ -5031,8 +5035,58 @@ mod tests {
 
     #[test]
     fn rulesync_personal_settings_review_preserves_native_approval_and_mode() {
+        use wenlan_core::rulesync_settings::personal::{project, Catalog, Feature};
+
         let f = Fixture::new();
         let home = &f.setup.home;
+        let catalog = Catalog::read(home).unwrap();
+        for (path, policy) in [
+            (
+                ".claude/settings.json",
+                r#"{"permissions":{"defaultMode":"plan"}}"#,
+            ),
+            (".codex/config.toml", "approval_policy = 'on-request'\n"),
+            (
+                ".gemini/settings.json",
+                r#"{"tools":{"allowed":["read_file"]}}"#,
+            ),
+            (
+                ".gemini/antigravity-cli/settings.json",
+                r#"{"permissions":{"deny":["run_command"]}}"#,
+            ),
+            (
+                ".copilot/settings.json",
+                r#"{"defaultPermissionMode":"prompt"}"#,
+            ),
+            (
+                ".cursor/cli-config.json",
+                r#"{"permissions":{"deny":["Shell(private)"]}}"#,
+            ),
+            (
+                ".config/opencode/opencode.json",
+                r#"{"permission":{"bash":"ask"}}"#,
+            ),
+        ] {
+            let from = catalog
+                .locations
+                .iter()
+                .find(|loc| loc.path == Path::new(path))
+                .unwrap();
+            let doc = from.document(Some(policy.as_bytes())).unwrap();
+            let entry = doc.reviewable_entries(from.tool).next().unwrap();
+            assert_eq!(entry.key.feature, Feature::Permission);
+            for to in &catalog.locations {
+                let schema = (to.tool == "opencode").then_some(br#"{"permissions":[]}"#.as_slice());
+                let current = to.document(schema).unwrap();
+                assert!(
+                    project(from, to, entry, &current).is_none(),
+                    "{} -> {}",
+                    from.tool,
+                    to.tool
+                );
+            }
+        }
+
         let opencode = home.join(".config/opencode/opencode.jsonc");
         let legacy = home.join(".config/opencode/opencode.json");
         let claude = home.join(".claude/settings.json");
@@ -5122,7 +5176,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&claude, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::set_permissions(&claude, fs::Permissions::from_mode(0o640)).unwrap();
         }
         let sync = f.sync_with("");
         let proposal = sync
@@ -5148,7 +5202,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
             assert_eq!(
                 fs::metadata(&claude).unwrap().permissions().mode() & 0o777,
-                0o600
+                0o640
             );
         }
     }

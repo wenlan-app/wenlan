@@ -122,6 +122,13 @@ fn opencode_sections(raw: &Value) -> Result<&'static [Section]> {
             .is_none_or(|schema| schema == "https://opencode.ai/config.json"),
         "unknown OpenCode schema"
     );
+    ensure!(
+        raw.get("permission")
+            .is_none_or(|policy| policy.is_string() || policy.is_object())
+            && raw.get("permissions").is_none_or(Value::is_array)
+            && raw.get("mcp").is_none_or(Value::is_object),
+        "invalid OpenCode settings shape"
+    );
     let legacy_server = |value: &Value| {
         matches!(
             value.get("type").and_then(Value::as_str),
@@ -433,10 +440,10 @@ impl Entry {
         match self.key.feature {
             Mcp => true,
             Permission => false,
-            Hook => self
-                .container
-                .last()
-                .is_some_and(|event| matches!(event.as_str(), "SessionStart" | "sessionStart")),
+            Hook => matches!(
+                self.container.as_slice(),
+                [hooks, event] if hooks == "hooks" && matches!(event.as_str(), "SessionStart" | "sessionStart")
+            ),
         }
     }
 }
@@ -523,6 +530,10 @@ impl Location {
     }
 
     pub fn edit(&self, bytes: Option<&[u8]>, entry: &Entry) -> Result<Vec<u8>> {
+        ensure!(
+            entry.can_reapply(),
+            "the native permission or approval hook can only be reviewed locally"
+        );
         ensure!(
             reviewable(self.tool, entry),
             "the settings entry contains possible credentials"
@@ -667,6 +678,25 @@ impl Location {
                     .all(|comment| !text_risky(self.tool, comment))
             }
         }) && material_safe(self.tool, &doc.raw)
+            && doc.sections.iter().all(|&Section(feature, path, shape)| {
+                let Some(value) = lookup(&doc.raw, path.iter().copied()) else {
+                    return true;
+                };
+                match (feature, shape) {
+                    (Mcp, Named) => value.as_object().is_some_and(|servers| {
+                        servers
+                            .values()
+                            .all(|server| mcp_payload_safe(self.tool, server))
+                    }),
+                    (Hook, Hooks) => hook_groups_safe(self.tool, value),
+                    (Hook, Named) => value.as_object().is_some_and(|groups| {
+                        groups
+                            .values()
+                            .all(|group| hook_groups_safe(self.tool, group))
+                    }),
+                    _ => true,
+                }
+            })
     }
 
     fn entry(&self, feature: Feature, path: &[&str], value: Value) -> Entry {
@@ -955,24 +985,35 @@ fn safe_identifier(value: &str) -> bool {
 
 fn credential_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase().replace(['-', '_', '.', ' '], "");
-    matches!(key.as_str(), "key" | "auth" | "signature" | "session")
-        || [
-            "apikey",
-            "password",
-            "passwd",
-            "passphrase",
-            "secret",
-            "privatekey",
-            "accesskey",
-            "token",
-            "authorization",
-            "cookie",
-            "credential",
-            "clientsecret",
-            "sessionid",
-        ]
-        .iter()
-        .any(|word| key.contains(word))
+    matches!(
+        key.as_str(),
+        "key"
+            | "auth"
+            | "authentication"
+            | "bearer"
+            | "oauth"
+            | "oauth2"
+            | "signature"
+            | "session"
+            | "userinfo"
+            | "username"
+    ) || [
+        "apikey",
+        "password",
+        "passwd",
+        "passphrase",
+        "secret",
+        "privatekey",
+        "accesskey",
+        "token",
+        "authorization",
+        "cookie",
+        "credential",
+        "clientsecret",
+        "sessionid",
+    ]
+    .iter()
+    .any(|word| key.contains(word))
 }
 
 fn exact_reference(tool: &str, value: &str) -> bool {
@@ -1036,39 +1077,20 @@ fn executable(tool: &str, value: &str) -> bool {
 }
 
 fn safe_argument(tool: &str, arg: &str) -> bool {
-    if exact_reference(tool, arg) {
-        return true;
-    }
-    let Some(option) = arg.strip_prefix("--") else {
-        return matches!(arg, "-q" | "-v" | "-y");
-    };
-    !option.is_empty()
-        && option
-            .bytes()
-            .all(|byte| byte.is_ascii_alphabetic() || byte == b'-')
-        && !credential_key(option)
-        && !option.to_ascii_lowercase().split('-').any(|word| {
-            matches!(
-                word,
-                "auth"
-                    | "authorization"
-                    | "user"
-                    | "username"
-                    | "login"
-                    | "pass"
-                    | "key"
-                    | "token"
-                    | "secret"
-                    | "header"
-                    | "headers"
-                    | "env"
-                    | "cookie"
-                    | "netrc"
-                    | "credential"
-                    | "credentials"
-                    | "data"
-            )
-        })
+    exact_reference(tool, arg)
+        || matches!(
+            arg,
+            "-q" | "-v"
+                | "-y"
+                | "--check"
+                | "--help"
+                | "--no-color"
+                | "--quiet"
+                | "--stdio"
+                | "--verbose"
+                | "--version"
+                | "--yes"
+        )
 }
 
 fn command_safe(tool: &str, command: &Value) -> bool {
@@ -1115,18 +1137,31 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
             args.iter()
                 .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
         }),
-        "bearertokenenvvar" if tool == "codexcli" => value.as_str().is_some_and(is_env_name),
-        "envvars" if tool == "codexcli" => value.as_array().is_some_and(|names| {
-            names
-                .iter()
-                .all(|name| name.as_str().is_some_and(is_env_name))
+        "bearertokenenvvar" => tool == "codexcli" && value.as_str().is_some_and(is_env_name),
+        "envvars" => {
+            tool == "codexcli"
+                && value.as_array().is_some_and(|names| {
+                    names
+                        .iter()
+                        .all(|name| name.as_str().is_some_and(is_env_name))
+                })
+        }
+        "url" | "serverurl" | "httpurl" => value.as_str().is_some_and(|url| {
+            exact_reference(tool, url)
+                || (!text_risky(tool, url)
+                    && reqwest::Url::parse(url).is_ok_and(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.username().is_empty()
+                            && url.password().is_none()
+                            && url.query().is_none()
+                            && url.fragment().is_none()
+                    }))
         }),
         "env" | "environment" | "headers" | "httpheaders" | "envhttpheaders" => {
-            let env = matches!(normalized.as_str(), "env" | "environment");
             value.as_object().is_some_and(|map| {
                 map.iter().all(|(key, value)| {
                     !text_risky(tool, key)
-                        && (env || !credential_key(key))
+                        && !credential_key(key)
                         && value.as_str().is_some_and(|value| {
                             if normalized == "envhttpheaders" && tool == "codexcli" {
                                 is_env_name(value)
@@ -1141,6 +1176,102 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
     }
 }
 
+fn mcp_payload_safe(tool: &str, value: &Value) -> bool {
+    value.as_object().is_some_and(|fields| {
+        !fields.is_empty()
+            && fields.iter().all(|(name, value)| {
+                let normalized = name.to_ascii_lowercase().replace(['-', '_'], "");
+                match normalized.as_str() {
+                    "command" => command_safe(tool, value),
+                    "args" | "env" | "environment" | "envvars" | "headers" | "httpheaders"
+                    | "envhttpheaders" | "bearertokenenvvar" | "url" | "serverurl" | "httpurl" => {
+                        safe_field(tool, name, value)
+                    }
+                    "type" | "transport" => matches!(
+                        value.as_str(),
+                        Some(
+                            "stdio"
+                                | "local"
+                                | "remote"
+                                | "http"
+                                | "sse"
+                                | "streamable-http"
+                                | "streamable_http"
+                        )
+                    ),
+                    "enabled" | "disabled" | "required" | "trust" => value.is_boolean(),
+                    "timeout" => {
+                        value.is_number()
+                            || value.as_object().is_some_and(|limits| {
+                                limits.iter().all(|(name, value)| {
+                                    matches!(name.as_str(), "catalog" | "execution")
+                                        && value.is_number()
+                                })
+                            })
+                    }
+                    "timeoutms" | "startuptimeoutsec" | "tooltimeoutsec" => value.is_number(),
+                    "cwd" => value.as_str().is_some_and(|path| executable(tool, path)),
+                    "tools" | "includetools" | "excludetools" | "enabledtools"
+                    | "disabledtools" => value.as_array().is_some_and(|tools| {
+                        tools.iter().all(|value| {
+                            value
+                                .as_str()
+                                .is_some_and(|name| name == "*" || safe_identifier(name))
+                        })
+                    }),
+                    _ => false,
+                }
+            })
+    })
+}
+
+fn hook_groups_safe(tool: &str, value: &Value) -> bool {
+    value.as_object().is_some_and(|events| {
+        events.iter().all(|(event, groups)| {
+            safe_identifier(event)
+                && groups
+                    .as_array()
+                    .is_some_and(|groups| groups.iter().all(|group| hook_payload_safe(tool, group)))
+        })
+    })
+}
+
+fn hook_payload_safe(tool: &str, value: &Value) -> bool {
+    value.as_object().is_some_and(|fields| {
+        !fields.is_empty()
+            && fields.iter().all(|(name, value)| {
+                let normalized = name.to_ascii_lowercase().replace(['-', '_'], "");
+                match normalized.as_str() {
+                    "hooks" => value.as_array().is_some_and(|hooks| {
+                        hooks.iter().all(|hook| hook_payload_safe(tool, hook))
+                    }),
+                    "command" | "commandwindows" | "commandlinux" | "commandmacos" | "bash"
+                    | "powershell" => value.is_string() && command_safe(tool, value),
+                    "type" => matches!(value.as_str(), Some("command" | "http")),
+                    "url" | "headers" | "httpheaders" => safe_field(tool, name, value),
+                    "allowedenvvars" => value.as_array().is_some_and(|names| {
+                        names
+                            .iter()
+                            .all(|name| name.as_str().is_some_and(is_env_name))
+                    }),
+                    "matcher" => value
+                        .as_str()
+                        .is_some_and(|matcher| !text_risky(tool, matcher)),
+                    "name" | "id" => value.as_str().is_some_and(safe_identifier),
+                    "async" | "once" | "failclosed" => value.is_boolean(),
+                    "timeout" | "timeoutsec" | "additionalcontextlimit" | "looplimit" => {
+                        value.is_number()
+                    }
+                    "statusmessage" | "description" => {
+                        value.as_str().is_some_and(|text| !text_risky(tool, text))
+                    }
+                    "cwd" => value.as_str().is_some_and(|path| executable(tool, path)),
+                    _ => false,
+                }
+            })
+    })
+}
+
 pub fn reviewable(tool: &str, entry: &Entry) -> bool {
     entry
         .container
@@ -1151,10 +1282,15 @@ pub fn reviewable(tool: &str, entry: &Entry) -> bool {
             .member
             .as_deref()
             .is_none_or(|name| !text_risky(tool, name))
-        && entry.container.last().map_or_else(
-            || material_safe(tool, &entry.value),
-            |name| safe_field(tool, name, &entry.value),
-        )
+        && match entry.key.feature {
+            Mcp => mcp_payload_safe(tool, &entry.value),
+            Hook if tool == "antigravity-ide" => hook_groups_safe(tool, &entry.value),
+            Hook => hook_payload_safe(tool, &entry.value),
+            Permission => entry.container.last().map_or_else(
+                || material_safe(tool, &entry.value),
+                |name| safe_field(tool, name, &entry.value),
+            ),
+        }
 }
 
 fn reference_free(text: &str) -> bool {
@@ -1379,6 +1515,7 @@ mod tests {
             br#"{"$schema":"https://example.invalid/opencode-v3.json","permissions":[]}"#
                 .as_slice(),
             br#"{"permission":"ask","permissions":[]}"#.as_slice(),
+            br#"{"permissions":false}"#.as_slice(),
         ] {
             assert!(opencode.document(Some(unknown)).is_err());
         }
@@ -1531,7 +1668,7 @@ mod tests {
             "wrong-syntax": {"command":"server","env":{"CUSTOM":"${EXAMPLE_TOKEN}"}}
         }})).unwrap()).unwrap();
         fs::write(root.join(".config/opencode/opencode.jsonc"), br#"{
-            "mcp":{"servers":{"kept":{"type":"local","command":["fixture"],"environment":{"API_KEY":"{env:EXAMPLE_TOKEN}"}},
+            "mcp":{"servers":{"kept":{"type":"local","command":["fixture"],"environment":{"CONFIG_PATH":"{env:EXAMPLE_TOKEN}"}},
             "held":{"type":"local","command":["fixture"],"environment":{"GENERIC":"fixture-opencode-marker"}}}}}
         "#).unwrap();
         let adoption = Adoption::discover(root).unwrap();
@@ -1562,7 +1699,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_personal_settings_patch_supported_codex_and_gemini_permissions() {
+    fn rulesync_personal_settings_read_codex_and_gemini_permissions_without_writing() {
         let fixture = tempfile::tempdir().unwrap();
         for path in [".codex/rules", ".gemini/policies"] {
             fs::create_dir_all(fixture.path().join(path)).unwrap();
@@ -1590,14 +1727,8 @@ mod tests {
                 .unwrap()
                 .clone();
             permission.value["decision"] = json!("allow");
-            let updated = location.edit(Some(bytes), &permission).unwrap();
-            let updated = std::str::from_utf8(&updated).unwrap();
-            assert!(updated.starts_with("# fixture comment\n"));
-            assert!(updated.contains("# keep"));
-            if location.tool == "geminicli" {
-                assert!(updated
-                    .contains("[[rule]]\ntoolName = 'read_file'\ndecision = 'deny' # keep\n"));
-            }
+            assert!(location.edit(Some(bytes), &permission).is_err());
+            assert_eq!(fs::read(fixture.path().join(path)).unwrap(), bytes);
         }
     }
 }
