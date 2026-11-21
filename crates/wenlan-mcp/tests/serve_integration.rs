@@ -373,8 +373,8 @@ fn web_write_shares_the_connector_scope_rules_with_query_only() {
 }
 
 /// The web-write profile over a real HTTP listener: bearer-gated, pinned to a
-/// Space, exposing exactly the ten tools, with deletes reaching the daemon for
-/// an item in the pinned Space and refused for one outside it.
+/// Space, exposing exactly the thirteen tools, with deletes reaching the daemon
+/// for an item in the pinned Space and refused for one outside it.
 #[tokio::test]
 async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
     struct ChildGuard(std::process::Child);
@@ -386,7 +386,7 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
     }
 
     use wiremock::{
-        matchers::{method, path},
+        matchers::{body_partial_json, header, method, path},
         Mock, MockServer, ResponseTemplate,
     };
 
@@ -413,6 +413,18 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!({"deleted": true})),
         )
+        .mount(&daemon)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/brief"))
+        .and(header("x-wenlan-space", "synthetic-review"))
+        .and(body_partial_json(
+            serde_json::json!({"space": "synthetic-review"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "space": "synthetic-review", "brief_version": 1,
+            "applied": [], "conflicts": [], "projection_path": null, "warnings": []
+        })))
         .mount(&daemon)
         .await;
 
@@ -552,6 +564,7 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
             "recall",
             "rename_page",
             "report_space_rule_use",
+            "update_brief",
             "write_page"
         ]
     );
@@ -575,8 +588,42 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
     assert_eq!(hint("delete_page", "destructiveHint"), true);
     assert_eq!(hint("write_page", "readOnlyHint"), false);
 
-    let refused = rpc(
+    let brief_update = rpc(
         3,
+        "tools/call",
+        serde_json::json!({"name": "update_brief", "arguments": {
+            "operation_id": "op-http-brief",
+            "summary": {"text": "Current status", "expected_version": 0}
+        }}),
+    )
+    .await;
+    assert_ne!(brief_update["result"]["isError"], true, "{brief_update}");
+
+    let other_space = rpc(
+        4,
+        "tools/call",
+        serde_json::json!({"name": "update_brief", "arguments": {
+            "space": "personal", "operation_id": "op-other-space",
+            "summary": {"text": "Wrong Space", "expected_version": 0}
+        }}),
+    )
+    .await;
+    assert_eq!(other_space["result"]["isError"], true, "{other_space}");
+    assert!(other_space["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("not found in the Space this connection is limited to"));
+    let patches: Vec<_> = daemon
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.method == "PATCH")
+        .collect();
+    assert_eq!(patches.len(), 1, "another Space must not reach the daemon");
+
+    let refused = rpc(
+        5,
         "tools/call",
         serde_json::json!({"name": "lint", "arguments": {}}),
     )
@@ -588,7 +635,7 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
         .contains("not available in the web-write profile"));
 
     let outside = rpc(
-        4,
+        6,
         "tools/call",
         serde_json::json!({"name": "forget", "arguments": {"memory_id": "mem_out"}}),
     )
@@ -609,7 +656,7 @@ async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
     );
 
     let inside = rpc(
-        5,
+        7,
         "tools/call",
         serde_json::json!({"name": "forget", "arguments": {"memory_id": "mem_in"}}),
     )

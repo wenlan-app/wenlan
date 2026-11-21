@@ -279,7 +279,7 @@ test('authorization-store latency cannot dispatch a credential that expired whil
 });
 
 const writeGrant: QueryGrant = { ...grant, scopes: ['wenlan:query', 'wenlan:write'] };
-const WRITE_TOOLS = ['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page'];
+const WRITE_TOOLS = ['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief'];
 
 test('a write grant is one that also carries wenlan:write, and still needs wenlan:query', async () => {
   assert.deepEqual([...WEB_WRITE_TOOLS].sort(), [...WRITE_TOOLS].sort());
