@@ -201,6 +201,9 @@ pub enum TeamTerminalAction {
     Publish {
         preview_id: String,
     },
+    Withdraw {
+        item_id: String,
+    },
     CreateSpace {
         name: String,
         restricted: bool,

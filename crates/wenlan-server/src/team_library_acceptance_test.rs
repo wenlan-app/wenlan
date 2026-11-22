@@ -467,6 +467,177 @@ async fn step4_review_publishes_only_approved_snapshot_and_retries_once() {
 }
 
 #[tokio::test]
+async fn step4_human_write_recheck_forget_and_withdraw() {
+    let (mut f, _) = profiles().await;
+    let cookie = f.state.sessions.create_fresh(&f.writer.0.id).unwrap();
+    let read_cookie = f.state.sessions.create_fresh(&f.reader.0.id).unwrap();
+    let mut draft = page(PUBLIC, Some("design"));
+    draft["memories"] = json!([{"title":"No partial write","body":"partially committed source"}]);
+    let p = preview(&f, &cookie, draft.clone()).await;
+    let uri = format!("{LIBRARY}/publish");
+    let (status, _) = call(
+        &f.state,
+        Method::POST,
+        &uri,
+        Some(&f.writer.1),
+        json!({"preview_id":p["id"]}).to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        browser(
+            &f,
+            &read_cookie,
+            Method::POST,
+            &format!("{LIBRARY}/preview"),
+            page(PUBLIC, None)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    team::update_member(&f.state.team_path, &f.writer.0.id, None, Some(&[])).unwrap();
+    assert_eq!(confirm(&f, &cookie, &p).await.0, StatusCode::FORBIDDEN);
+    let (status, pages) = read(&f, &f.writer.1, &format!("{LIBRARY}/pages")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_str::<Value>(&pages).unwrap()["pages"],
+        json!([])
+    );
+    assert!(!read(
+        &f,
+        &f.writer.1,
+        &format!("{LIBRARY}/recall?topic=partially")
+    )
+    .await
+    .1
+    .contains("partially committed source"));
+
+    let local = wenlan_core::db::MemoryDB::new(
+        &f._dir.path().join("writer"),
+        Arc::new(wenlan_core::events::NoopEmitter),
+    )
+    .await
+    .unwrap();
+    seed(
+        &local,
+        "private-original",
+        "private original remains personal",
+    )
+    .await;
+    seed(&local, "another-original", "another private original").await;
+    let mut draft = page(PUBLIC, None);
+    draft["memories"] = json!([{"title":"Reviewed snapshot","body":"reviewed orchid"},
+                               {"title":"Other snapshot","body":"other review"}]);
+    let receipt = publish(&f, &cookie, draft).await;
+    let id = receipt["item_id"].as_str().unwrap();
+    let memory = receipt["memory_ids"][0].as_str().unwrap();
+    local
+        .forget_memory("private-original", "person", "acceptance")
+        .await
+        .unwrap();
+    let sources = format!("{LIBRARY}/pages/{id}/sources");
+    assert!(read(&f, &f.reader.1, &sources)
+        .await
+        .1
+        .contains("reviewed orchid"));
+    f.state.library = Some(library::Host::new(&f.state.team_path, false));
+    assert_eq!(
+        read(&f, &f.reader.1, &format!("{LIBRARY}/memories/{memory}"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!read(&f, &f.reader.1, &sources)
+        .await
+        .1
+        .contains("reviewed orchid"));
+    assert_eq!(
+        browser(
+            &f,
+            &cookie,
+            Method::POST,
+            &format!("{LIBRARY}/withdraw/{memory}"),
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    f.state.library = Some(library::Host::new(&f.state.team_path, true));
+    let blob = read(&f, &f.reader.1, &sources).await.1;
+    assert!(blob.contains("private source") && !blob.contains("reviewed orchid"));
+    assert!(local
+        .get_memory_detail("another-original")
+        .await
+        .unwrap()
+        .is_some());
+
+    let edit = preview(
+        &f,
+        &cookie,
+        json!({
+            "kind":"page","title":"Release decision","body":"offline edit",
+            "item_id":id,"expected_revision":1
+        }),
+    )
+    .await;
+    assert_eq!(
+        browser(
+            &f,
+            &cookie,
+            Method::POST,
+            &format!("{LIBRARY}/withdraw/{id}"),
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(confirm(&f, &cookie, &edit).await.0, StatusCode::CONFLICT);
+    f.state.library = Some(library::Host::new(&f.state.team_path, true));
+    let replay = browser(
+        &f,
+        &cookie,
+        Method::POST,
+        &format!("{LIBRARY}/preview"),
+        edit["draft"].clone(),
+    )
+    .await;
+    assert_eq!(replay.0, StatusCode::CONFLICT);
+    assert!(
+        replay.1.to_string().contains("The item is unavailable"),
+        "{replay:?}"
+    );
+    for suffix in ["", "/file", "/history", "/sources"] {
+        assert_eq!(
+            read(&f, &f.reader.1, &format!("{LIBRARY}/pages/{id}{suffix}"))
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    let session = initialize(&f, &f.reader.1, "/mcp").await;
+    team::remove_member(&f.state.team_path, &f.reader.0.id).unwrap();
+    assert_eq!(
+        browser(&f, &read_cookie, Method::GET, &sources, Value::Null)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let reply = rpc(
+        &f,
+        &f.reader.1,
+        "/mcp",
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/list"}),
+    )
+    .await;
+    assert_eq!(reply.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn step4_legacy_migration_keeps_only_member_heads_and_refuses_uploads() {
     let (mut f, db) = profiles().await;
     f.state.library = Some(library::Host::new(&f.state.team_path, false));
@@ -572,4 +743,26 @@ async fn step4_legacy_migration_keeps_only_member_heads_and_refuses_uploads() {
     )
     .await;
     assert_eq!(refused["result"]["isError"], true);
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let cookie = f.state.sessions.create_fresh(&owner.id).unwrap();
+    let withdrawal = browser(
+        &f,
+        &cookie,
+        Method::POST,
+        &format!("{LIBRARY}/withdraw/{}", public.id),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(withdrawal.0, StatusCode::NO_CONTENT);
+    assert_eq!(read(&f, &future, &url).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        read(
+            &f,
+            &future,
+            &format!("/team/v1/app/api/pages/{}", public.id)
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
 }

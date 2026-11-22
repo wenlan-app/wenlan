@@ -309,5 +309,11 @@ pub(super) async fn publish(client: &WenlanClient, args: PublishArgs) -> Result<
 
 pub(super) async fn change(client: &WenlanClient, action: TeamTerminalAction) -> Result<()> {
     reviewable(client)?;
+    if matches!(&action, TeamTerminalAction::Withdraw { .. })
+        && answer("Withdraw this team item and its revisions? Type yes to confirm.")? != "yes"
+    {
+        println!("Cancelled.");
+        return Ok(());
+    }
     print_json(&client.team_library_terminal(&action).await?)
 }

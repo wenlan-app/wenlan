@@ -652,6 +652,38 @@ impl Library {
         Ok(receipt)
     }
 
+    pub fn withdraw(&self, actor: &str, id: &str) -> Result<()> {
+        let _lock = team::lock_team(&self.team_path)?;
+        let mut data = self.open(team::read_team(&self.team_path)?)?;
+        let member = data.member(actor)?;
+        let may_withdraw = |space, publisher| {
+            member.role == TeamRole::Owner
+                || (publisher == Some(actor)
+                    && data.access(member, space) == Some(TeamAccess::Write))
+        };
+        if let Some(retired) = data.manifest.retired.get(id) {
+            return if may_withdraw(retired.space_id.as_deref(), retired.publisher_id.as_deref()) {
+                Ok(())
+            } else {
+                Err(LibraryError::Absent)
+            };
+        }
+        let record = data
+            .revisions(id)
+            .and_then(|revisions| revisions.last())
+            .ok_or(LibraryError::Absent)?;
+        let publisher_id = record
+            .item
+            .publisher
+            .as_ref()
+            .map(|person| person.id.as_str());
+        if !may_withdraw(record.item.space_id.as_deref(), publisher_id) {
+            return Err(LibraryError::Absent);
+        }
+        data.retire(id);
+        data.save()
+    }
+
     pub fn create_group(&self, actor: &str, name: &str, restricted: bool) -> Result<TeamGroup> {
         let name = name.trim();
         if name.is_empty() || name.len() > 128 || name.contains(['\r', '\n', '\0', '/']) {

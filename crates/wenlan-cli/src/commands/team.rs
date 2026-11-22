@@ -28,6 +28,8 @@ pub enum TeamCmd {
     },
     /// Review and publish a personal item from the team host's terminal.
     Publish(library::PublishArgs),
+    /// Withdraw a team item and its revisions from this host.
+    Withdraw { item_id: String },
     /// Create a group for team pages and memories without sharing a personal Space.
     CreateSpace {
         name: String,
@@ -212,6 +214,9 @@ pub async fn run(
     match cmd {
         TeamCmd::Draft { kind, id } => library::draft(client, kind, &id).await,
         TeamCmd::Publish(args) => library::publish(client, args).await,
+        TeamCmd::Withdraw { item_id } => {
+            library::change(client, TeamTerminalAction::Withdraw { item_id }).await
+        }
         TeamCmd::CreateSpace { name, restricted } => {
             library::change(client, TeamTerminalAction::CreateSpace { name, restricted }).await
         }
