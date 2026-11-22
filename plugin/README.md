@@ -77,7 +77,7 @@ The daemon stays the single writer and storage owner. The connected AI handles o
 - `/brief [topic]` - load the Brief for the current Space (optional; not a boot step)
 - `/capture <x>` - save one durable memory in flow, or this conversation as one note on request
 - `/recall <q>` - search local memory
-- `/handoff` - end of session: update the Brief and the pages this session used
+- `/handoff` - end of session: update the Brief
 - `/how-i-work` - read this Space's approved rules before choosing an approach
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely

@@ -246,7 +246,8 @@ pub(super) fn scan_tree(
                 return Err(invalid_path());
             };
             let metadata = directory.symlink_metadata(name)?;
-            if metadata.is_dir() && reserved_directory(name) {
+            if metadata.is_dir() && (reserved_directory(name) || name == super::MEMBER_ARCHIVE_DIR)
+            {
                 continue;
             }
             if !metadata.is_dir() && !name.ends_with(".md") {
@@ -377,6 +378,18 @@ pub fn list_knowledge_folders(path: &Path) -> Result<Vec<KnowledgeFolderEntry>, 
         Err(error) => return Err(error),
     };
     Ok(scan_tree(&root)?.0)
+}
+
+/// Top-level folder names from an already-open projection root. Member sync
+/// uses this while it owns the projection lock, without opening a second
+/// writer session (which would recover unrelated move journals).
+pub(super) fn top_folder_names(root: &Dir) -> Result<Vec<String>, WenlanError> {
+    Ok(scan_tree(root)?
+        .0
+        .into_iter()
+        .filter(|folder| folder.parent_path.is_empty())
+        .map(|folder| folder.name)
+        .collect())
 }
 
 /// Bounded, nofollow discovery shared by daemon watcher and offline CLI reader.

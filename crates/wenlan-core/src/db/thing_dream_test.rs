@@ -707,7 +707,12 @@ async fn ux_chat_5_a_conversation_that_could_not_be_read_is_not_marked_read() {
             .all(|d| d.thing_id != site),
         "nothing of the thing is due: c1 was read, c0 waits"
     );
-    assert_eq!(db.thing_unread_conversations(&site).await.unwrap(), 1);
+    assert_eq!(
+        db.thing_unread_tools(&site, &ReadScope::Global)
+            .await
+            .unwrap(),
+        ["claude-code"]
+    );
     let detail = db
         .get_thing_detail(&site, &ReadScope::Global)
         .await
@@ -722,7 +727,11 @@ async fn ux_chat_5_a_conversation_that_could_not_be_read_is_not_marked_read() {
     let due = db.things_to_dream(now, 10).await.unwrap();
     let site_due = due.iter().find(|d| d.thing_id == site).expect("c0 went on");
     assert_eq!(site_due.conversations.len(), 1);
-    assert_eq!(db.thing_unread_conversations(&site).await.unwrap(), 0);
+    assert!(db
+        .thing_unread_tools(&site, &ReadScope::Global)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// Trust audit F4, F5, F7: a night's point whose label named no Space goes
@@ -976,6 +985,27 @@ async fn ux_graph_7_a_night_tidies_only_what_an_ai_wrote_and_undo_puts_it_back()
         .await
         .unwrap();
     }
+    // A preference Wenlan's own night kept is never tidied: a merge would
+    // write it again as a decision or a fact.
+    said_by(
+        &db,
+        "mem_preference",
+        "The site has a pricing page, always say so.",
+        Some("wenlan"),
+        "wenlan",
+        s,
+        60,
+    )
+    .await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET memory_type = 'preference' WHERE source_id = 'mem_preference'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
 
     let offer = db.tidy_offer(&site, now).await.unwrap();
     let mut offered: Vec<&str> = offer.items.iter().map(|i| i.id.as_str()).collect();
@@ -1133,4 +1163,514 @@ async fn ux_graph_7_a_tidy_keeps_what_it_hid_hidden_and_checks_again_when_it_rec
     assert_eq!(db.undo_tidy(&site, "mem_k").await.unwrap(), Some(vec![]));
     assert_eq!(mode(&db, "mem_n").await, "hide");
     assert_eq!(mode(&db, "mem_p").await, p_before);
+}
+
+/// A conversation known only from its tool's own MCP calls (no transcript
+/// was scanned, so it has no label), put in a thing as the sorting does.
+async fn put_in_thing(db: &MemoryDB, thing: &str, session: &str, space: &str, last_write_at: i64) {
+    let row = db
+        .upsert_session_metadata(&wenlan_types::UpsertSessionRequest {
+            session: session.into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE agent_sessions SET space = ?1, last_write_at = ?2 WHERE id = ?3",
+        libsql::params![space, last_write_at, row.id.as_str()],
+    )
+    .await
+    .unwrap();
+    conn.execute(
+        "INSERT INTO thing_sessions (thing_id, session_id, assigned_by, at)
+         VALUES (?1, ?2, 'ai', ?3)",
+        libsql::params![thing, row.id.as_str(), last_write_at],
+    )
+    .await
+    .unwrap();
+}
+
+async fn unread_tools(db: &MemoryDB, thing: &str, scope: &ReadScope) -> Vec<String> {
+    let mut tools = db.thing_unread_tools(thing, scope).await.unwrap();
+    tools.sort();
+    tools
+}
+
+/// Design v5 F7: a conversation from an AI tool Wenlan has no transcript
+/// reader for never gets a label, so no night reads it. The thing's page says
+/// it didn't get it, and names the tool; a gone transcript counts the same.
+/// Only ones active since the thing was last read count, and only ones in the
+/// caller's Space scope.
+#[tokio::test]
+async fn ux_chat_5_a_conversation_from_a_tool_with_no_transcript_reader_is_not_got() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _) = two_things(&db, now).await;
+    put_in_thing(&db, &site, "cursor:s1", "wenlan", now - 100).await;
+    put_in_thing(&db, &site, "codex:s2", "wenlan", now - 100).await;
+    put_in_thing(&db, &site, "cursor:other", "private", now - 100).await;
+    let global = ReadScope::Global;
+    let detail = db.get_thing_detail(&site, &global).await.unwrap().unwrap();
+    assert_eq!(detail.sessions.len(), 5, "c0, c1 and the three unlabelled");
+    assert_eq!(
+        (detail.unread, detail.unread_tools.as_slice()),
+        (2, ["cursor".to_string()].as_slice()),
+        "only the tool with no reader; codex has one and is not yet read"
+    );
+    assert_eq!(detail.waiting, 0);
+    let wenlan = ReadScope::Space("wenlan".into());
+    assert_eq!(unread_tools(&db, &site, &wenlan).await, ["cursor"]);
+    let elsewhere = ReadScope::Space("other".into());
+    assert!(unread_tools(&db, &site, &elsewhere).await.is_empty());
+
+    // A gone transcript counts too, under its own tool, in its own Space.
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let c0 = due
+        .iter()
+        .find(|d| d.thing_id == site)
+        .unwrap()
+        .conversations
+        .iter()
+        .find(|c| c.external_id == "c0")
+        .unwrap()
+        .clone();
+    db.mark_dream_unread(std::slice::from_ref(&c0))
+        .await
+        .unwrap();
+    assert_eq!(
+        unread_tools(&db, &site, &global).await,
+        ["claude-code", "cursor", "cursor"]
+    );
+    assert_eq!(
+        unread_tools(&db, &site, &wenlan).await,
+        ["claude-code", "cursor"]
+    );
+
+    // A night reads the thing: the older cursor conversations are not said
+    // again; one that went on after it still is.
+    let c1 = due
+        .iter()
+        .find(|d| d.thing_id == site)
+        .unwrap()
+        .conversations
+        .iter()
+        .find(|c| c.external_id == "c1")
+        .unwrap()
+        .clone();
+    remember(&db, "mem_f7", "The tagline is settled.", "decision", None).await;
+    db.record_dream(
+        &site,
+        &["mem_f7".into()],
+        &[],
+        &Default::default(),
+        &[],
+        std::slice::from_ref(&c1),
+    )
+    .await
+    .unwrap();
+    put_in_thing(&db, &site, "cursor:later", "wenlan", now + 60).await;
+    assert_eq!(
+        unread_tools(&db, &site, &global).await,
+        ["claude-code", "cursor"]
+    );
+}
+
+/// Design v5 F7: what is due and not yet read, with the cutoff of a night
+/// that had no AI, is counted for the page; read, gone and still going-on
+/// conversations are not, nor are another Space's.
+#[tokio::test]
+async fn ux_chat_5_a_due_conversation_is_waiting_until_a_night_reads_it() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, notes) = two_things(&db, now).await;
+    let global = ReadScope::Global;
+    let waiting = |thing: String, since: i64, scope: ReadScope| {
+        let db = &db;
+        async move {
+            db.thing_waiting_conversations(&thing, since, &scope)
+                .await
+                .unwrap()
+        }
+    };
+    // c2 (Release notes) ended five minutes ago and was not due by then.
+    assert_eq!(waiting(site.clone(), now - 1_800, global.clone()).await, 2);
+    assert_eq!(waiting(notes.clone(), now - 1_800, global.clone()).await, 0);
+    assert_eq!(waiting(notes, now, global.clone()).await, 1);
+    let other = ReadScope::Space("other".into());
+    assert_eq!(waiting(site.clone(), now - 1_800, other).await, 0);
+
+    let due = db.things_to_dream(now - 1_800, 10).await.unwrap();
+    let conv = |id: &str| {
+        due[0]
+            .conversations
+            .iter()
+            .find(|c| c.external_id == id)
+            .unwrap()
+            .clone()
+    };
+    db.record_dream(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        std::slice::from_ref(&conv("c1")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(waiting(site.clone(), now - 1_800, global.clone()).await, 1);
+    db.mark_dream_unread(std::slice::from_ref(&conv("c0")))
+        .await
+        .unwrap();
+    assert_eq!(waiting(site.clone(), now - 1_800, global.clone()).await, 0);
+    let unread = unread_tools(&db, &site, &global).await;
+    assert_eq!(unread, ["claude-code"], "gone is not waiting");
+}
+
+// ---------------------------------------------------------------------------
+// Which Space a derived write goes to (UX-CHAT-5), and nights that only keep
+// preferences, tool problems or lessons.
+// ---------------------------------------------------------------------------
+
+use crate::db::derived_space::{rewrite_space, SpaceFacts};
+use crate::shared_space::{self, HostLink, Scope};
+use wenlan_types::WriteSpaceTarget;
+
+fn share_with_team(dir: &std::path::Path, space: &str) -> PathBuf {
+    let path = dir.join("shared-spaces.json");
+    let scope = Scope::Space(space.into());
+    shared_space::join_at(&path, &scope, &dir.join(space), "me").unwrap();
+    shared_space::update_share(&path, &scope, |settings| {
+        settings.host = Some(HostLink {
+            url: "https://team.example".into(),
+            key: "k".into(),
+            space: space.into(),
+            space_id: None,
+        });
+    })
+    .unwrap();
+    path
+}
+
+/// A rewrite stays exactly where its source is, never in the default Space.
+#[test]
+fn a_rewrite_keeps_exactly_the_space_of_its_source() {
+    assert_eq!(rewrite_space(None), WriteSpaceTarget::Uncategorized);
+    assert_eq!(
+        rewrite_space(Some("wenlan")),
+        WriteSpaceTarget::Named("wenlan".into())
+    );
+}
+
+/// The old points the one-time pass files are put in their thing's Space,
+/// unless that Space is shared with other people and nothing the person set
+/// up ties the conversation to it.
+#[tokio::test]
+async fn the_old_memory_pass_files_a_point_into_a_shared_space_only_with_a_fact() {
+    let now = chrono::Utc::now().timestamp();
+    for (shared, mapped, filed) in [
+        (false, false, true),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        let (db, dir) = test_db().await;
+        db.create_space("wenlan", None, false).await.unwrap();
+        let (site, _) = two_things(&db, now).await;
+        let due = db.things_to_dream(now, 10).await.unwrap();
+        let session = due
+            .iter()
+            .find(|d| d.thing_id == site)
+            .unwrap()
+            .conversations
+            .iter()
+            .find(|c| c.external_id == "c0")
+            .unwrap()
+            .session_id
+            .clone();
+        // One of the thing's points, written before nights filed them.
+        remember(&db, "old_point", "The site stays free.", "decision", None).await;
+        db.attach_dream_point("old_point", &session, None)
+            .await
+            .unwrap();
+        db.dream_into_map(
+            &site,
+            "Site redesign",
+            &[crate::db::thing_map::DreamMapWrite {
+                memory_id: "old_point".into(),
+                session_id: session.clone(),
+                text: "The site stays free.".into(),
+                decided: true,
+                node: None,
+                replaces: false,
+            }],
+        )
+        .await
+        .unwrap();
+        // The thing's other conversation is in "wenlan", so that is where the
+        // point would go; c0 ran in /w/wenlan.
+        let settings = if shared {
+            share_with_team(dir.path(), "wenlan")
+        } else {
+            dir.path().join("none.json")
+        };
+        let spaces_file = dir.path().join("spaces.toml");
+        if mapped {
+            std::fs::write(
+                &spaces_file,
+                "[[mapping]]\nprefix = \"/w/wenlan\"\nspace = \"wenlan\"\n",
+            )
+            .unwrap();
+        }
+        let facts = SpaceFacts::read(
+            &settings,
+            &dir.path().join("repos.json"),
+            Some(&spaces_file),
+            None,
+        );
+        db.apply_backlog(&crate::db::night_backlog::BacklogPlan::default(), &facts)
+            .await
+            .unwrap();
+        let space = db
+            .get_memory_detail("old_point")
+            .await
+            .unwrap()
+            .unwrap()
+            .space
+            .filter(|s| !s.is_empty());
+        assert_eq!(
+            space.is_some(),
+            filed,
+            "shared {shared}, mapped {mapped}: {space:?}"
+        );
+    }
+}
+
+/// A night that kept only a preference, a tool problem or a lesson is not
+/// "the night" of the thing: it has no morning line, no conclusion and no
+/// Undo of its own. What it kept is not confirmed and still stands.
+#[tokio::test]
+async fn a_night_that_kept_only_working_memories_is_not_the_night() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let site_due = due.iter().find(|d| d.thing_id == site).unwrap();
+    let session = site_due.conversations[0].session_id.clone();
+    remember(
+        &db,
+        "pref",
+        "Answer in short sentences.",
+        "preference",
+        None,
+    )
+    .await;
+    db.attach_dream_working("pref", &session, Some("keep it short"))
+        .await
+        .unwrap();
+    let seq = db
+        .record_dream_full(
+            &site,
+            &[],
+            &[],
+            &["pref".to_string()],
+            &Default::default(),
+            &[],
+            &site_due.conversations,
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(seq, None, "no night with a conclusion to write");
+    assert!(db.thing_dream(&site).await.unwrap().is_none());
+    let thing = db
+        .list_things(&ReadScope::Global, Some(&site))
+        .await
+        .unwrap();
+    assert_eq!(thing[0].dreamed_at, None);
+    assert!(db.undo_thing_dream(&site).await.unwrap().is_empty());
+    // Not confirmed, still standing for later nights.
+    let kept = db.get_memory_detail("pref").await.unwrap().unwrap();
+    assert!(!kept.confirmed, "it waits for the person");
+    assert_eq!(kept.session_id.as_deref(), Some(session.as_str()));
+    let standing = db.dream_working_in(&site, "").await.unwrap();
+    assert_eq!(standing.len(), 1);
+    // The conversations count as read.
+    assert!(db
+        .things_to_dream(now, 10)
+        .await
+        .unwrap()
+        .iter()
+        .all(|d| d.thing_id != site));
+}
+
+/// The standing preferences are the person's from every thing, newest kept
+/// when there are more than the cap; a night taken back drops its own.
+#[tokio::test]
+async fn the_standing_preferences_come_from_every_thing() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, notes) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    for (thing, id, text) in [
+        (&site, "pref_a", "Answer in short sentences."),
+        (&notes, "pref_b", "Show the diff before committing."),
+    ] {
+        let dueing = due.iter().find(|d| &d.thing_id == thing);
+        let session = match dueing {
+            Some(d) => d.conversations[0].session_id.clone(),
+            None => "none".into(),
+        };
+        remember(&db, id, text, "preference", None).await;
+        db.attach_dream_working(id, &session, None).await.unwrap();
+        db.record_dream_full(
+            thing,
+            &[],
+            &[],
+            &[id.to_string()],
+            &Default::default(),
+            &[],
+            &[],
+            &[],
+        )
+        .await
+        .unwrap();
+    }
+    let all = db.dream_preferences(10).await.unwrap();
+    assert_eq!(
+        all.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+        ["pref_a", "pref_b"]
+    );
+    let newest = db.dream_preferences(1).await.unwrap();
+    assert_eq!(newest.len(), 1);
+    assert_eq!(newest[0].id, "pref_b");
+}
+
+/// UX-GRAPH-7: a preference, tool problem or lesson the person has confirmed
+/// is never offered to a tidy (so never hidden or replaced); the same two
+/// unconfirmed are offered.
+#[tokio::test]
+async fn ux_graph_7_a_working_memory_the_person_confirmed_is_never_tidied() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _notes) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let session = due
+        .iter()
+        .find(|d| d.thing_id == site)
+        .unwrap()
+        .conversations[0]
+        .session_id
+        .clone();
+    for (id, text, ago) in [
+        ("w_old", "Answer me in short sentences when we talk.", 7_200),
+        (
+            "w_new",
+            "Answer me in short sentences when we talk now.",
+            60,
+        ),
+    ] {
+        said_by(&db, id, text, Some("wenlan"), "wenlan", &session, ago).await;
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET memory_type = 'preference', confirmed = 0 WHERE source_id = ?1",
+            libsql::params![id],
+        )
+        .await
+        .unwrap();
+    }
+    let ids = |offer: &crate::db::night_tidy::TidyOffer| {
+        let mut ids: Vec<String> = offer.items.iter().map(|i| i.id.clone()).collect();
+        ids.sort();
+        ids
+    };
+    let offer = db.tidy_offer(&site, now).await.unwrap();
+    assert_eq!(ids(&offer), ["w_new", "w_old"], "{offer:?}");
+
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET confirmed = 1 WHERE source_id = 'w_old'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let offer = db.tidy_offer(&site, now).await.unwrap();
+    assert!(
+        offer.items.iter().all(|i| i.id != "w_old"),
+        "a confirmed one is not offered: {offer:?}"
+    );
+    assert!(offer.groups.is_empty(), "nothing left to merge: {offer:?}");
+
+    // And one confirmed since the offer is not hidden when the night records.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET confirmed = 0 WHERE source_id = 'w_old'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let offer = db.tidy_offer(&site, now).await.unwrap();
+    assert_eq!(ids(&offer), ["w_new", "w_old"]);
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET confirmed = 1 WHERE source_id = 'w_old'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[replace("w_old", "w_new")],
+    )
+    .await
+    .unwrap();
+    assert_ne!(mode(&db, "w_old").await, "evicted");
+}
+
+/// UX-CHAT-5: the preferences a night is shown include the confirmed ones in
+/// no Space that the person or their tools saved, not only the ones nights
+/// kept, so a newer one can replace them; an unconfirmed one saved by a tool
+/// is not one of them.
+#[tokio::test]
+async fn the_standing_preferences_include_confirmed_ones_the_person_saved() {
+    let (db, _dir) = test_db().await;
+    remember(
+        &db,
+        "saved",
+        "Answer me in short sentences.",
+        "preference",
+        None,
+    )
+    .await;
+    remember(
+        &db,
+        "waiting",
+        "Lead reviews with the risks.",
+        "preference",
+        None,
+    )
+    .await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET confirmed = 1 WHERE source_id = 'saved'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let standing = db.dream_preferences(40).await.unwrap();
+    let ids: Vec<&str> = standing.iter().map(|w| w.id.as_str()).collect();
+    assert_eq!(ids, ["saved"], "{standing:?}");
 }

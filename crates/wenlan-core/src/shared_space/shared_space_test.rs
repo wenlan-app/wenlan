@@ -747,3 +747,68 @@ fn google_drive_for_desktop_on_windows_is_its_own_drive() {
         ))
     );
 }
+
+/// A Space is shared with other people when a team server carries it, this
+/// computer hosts it for a team, or its folder lists a member other than this
+/// person; a folder only this person is in, and a library shared between
+/// their own computers, are not.
+#[test]
+fn spaces_shared_with_other_people_are_told_from_the_ones_only_this_person_is_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("shared-spaces.json");
+    let me = |share: &ShareSettings| SpaceMember {
+        id: share.member_id.clone(),
+        name: "me".into(),
+    };
+    // Through a team server.
+    let team = Scope::Space("team".into());
+    join_at(&settings, &team, &dir.path().join("team"), "me").unwrap();
+    update_share(&settings, &team, |s| {
+        s.host = Some(HostLink {
+            url: "https://team.example".into(),
+            key: "k".into(),
+            space: "team".into(),
+            space_id: None,
+        });
+    })
+    .unwrap();
+    // Hosted here for a team.
+    let hosted = Scope::Space("hosted".into());
+    join_at(&settings, &hosted, &dir.path().join("hosted"), "me").unwrap();
+    update_share(&settings, &hosted, |s| s.hosted = true).unwrap();
+    // A folder with another member, and one with only this person (twice:
+    // their other computer shares their id).
+    for (name, others) in [("club", true), ("mine", false)] {
+        let scope = Scope::Space(name.into());
+        let folder = dir.path().join(name);
+        let share = join_at(&settings, &scope, &folder, "me").unwrap();
+        ensure_space_file(&folder, &scope, name, &me(&share)).unwrap();
+        ensure_space_file(&folder, &scope, name, &me(&share)).unwrap();
+        if others {
+            let other = SpaceMember {
+                id: "someone-else".into(),
+                name: "Someone".into(),
+            };
+            ensure_space_file(&folder, &scope, name, &other).unwrap();
+        }
+    }
+    // A folder whose space.json cannot be read counts as shared.
+    let broken = Scope::Space("broken".into());
+    let folder = dir.path().join("broken");
+    join_at(&settings, &broken, &folder, "me").unwrap();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("space.json"), "{ not json").unwrap();
+    // So does one whose folder is not there at all (an unplugged drive).
+    let unplugged = Scope::Space("unplugged".into());
+    join_at(&settings, &unplugged, &dir.path().join("unplugged"), "me").unwrap();
+
+    let shared: Vec<String> = spaces_shared_with_others(&settings)
+        .unwrap()
+        .into_keys()
+        .collect();
+    assert_eq!(shared, ["broken", "club", "hosted", "team", "unplugged"]);
+    // No settings file: nothing is shared.
+    assert!(spaces_shared_with_others(&dir.path().join("none.json"))
+        .unwrap()
+        .is_empty());
+}

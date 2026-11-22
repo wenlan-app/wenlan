@@ -2,24 +2,24 @@
 name: handoff
 description: >
   End a work session. Automatically applies typed item-level deltas to the
-  current Space Brief and brings the wiki pages the session used up to date.
-  It stores no memories and writes no session log. Invoked as `/handoff`.
-allowed-tools: ["Bash", "mcp__wenlan__handoff", "mcp__wenlan__list_pages", "mcp__wenlan__read_page", "mcp__wenlan__write_page", "mcp__wenlan__page_basis", "mcp__wenlan__page_code_basis"]
+  current Space Brief. It stores no memories, writes no session log and edits
+  no pages. Invoked as `/handoff`.
+allowed-tools: ["Bash", "mcp__wenlan__handoff"]
 user-invocable: true
 ---
 
 # /handoff
 
-Close the session with one typed update to the daemon-owned Space Brief. It
-also brings the wiki pages this session used up to date (step 5).
+Close the session with one typed update to the daemon-owned Space Brief.
 
-A handoff changes the Brief only. It stores no memories: durable decisions,
-lessons and preferences are captured with `/capture` while the work happens,
-not at handoff. It writes no session log either; older logs in the data
-folder's `sessions/` stay readable.
+A handoff changes the Brief only. It writes no wiki pages: pages follow a
+memory change by themselves, and Wenlan checks the pages a session read at
+night. It stores no memories: durable decisions, lessons and preferences are
+captured with `/capture` while the work happens, not at handoff. It writes no
+session log either; older logs in the data folder's `sessions/` stay readable.
 
 Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass
-`session: "codex:<that id>"` on `write_page` and `handoff`.
+`session: "codex:<that id>"` on `handoff`.
 
 The daemon Brief is current-work authority. Its `sessions/_status/<space>.md`
 projection in the Wenlan data folder is a one-way human receipt.
@@ -46,8 +46,8 @@ repository basename, which the user can override through normal Space config.
 Do not invent any other Space name.
 
 Outside a Git repository, do not derive a new Space from the directory
-basename. If resolution still leaves `space` empty, skip the Brief read, the
-typed update and the page updates, and report that no Space resolved. Outside
+basename. If resolution still leaves `space` empty, skip the Brief read and the
+typed update, and report that no Space resolved. Outside
 a Git repository, a pin, explicit argument, default, or mapping still resolves
 a Space, and the Brief update still runs.
 
@@ -108,8 +108,7 @@ typed update may then create the Space and Brief.
 
 For a repository, inspect a bounded recent log, short status, diff stat, and
 worktree list. Combine that evidence with the conversation. Use it only to
-compose the Brief update in step 4 and the page updates in step 5; a handoff
-drafts no captures.
+compose the Brief update in step 4; a handoff drafts no captures.
 
 ## 4. Build and apply one typed Brief update
 
@@ -162,74 +161,8 @@ and report it as saved for later import. Non-overlapping changes may commit whil
 same-item delta conflicts. Re-read before any safe mechanical reconciliation;
 never guess.
 
-Apply the Brief update before any Space-scoped page update when this fallback is new.
-That creates the basename Space through the typed handoff path without making a
-read or a page write create state. If this first update fails, skip the page
-updates and report the exact failure. A handoff file saved in the project is
-not a failure, but it has not reached the Brief yet.
+## 5. Report
 
-## 5. Update the pages this session used
-
-Skip this step when `daemon_down=1` or `space` is empty.
-
-List the wiki pages this session read, quoted, or changed. Recall them from the
-conversation: pages opened with `read_page`, `$wenlan pages`, or `recall` results the
-work relied on. Confirm each title against
-`mcp__wenlan__list_pages` for the Space; drop any title that does
-not match a listed page exactly. Never fuzzy-match.
-
-For each confirmed page, decide whether this session changed what the page
-should say: a decision that replaces one it records, a fact it lacks, or a
-statement the session proved wrong. Leave the page alone when nothing it says
-changed. Restyling is not a reason to write.
-
-To update a page:
-
-1. Call `mcp__wenlan__read_page` and keep `page.version`,
-   `page.source_memory_ids` (it may be empty) and `basis` (absent when the page
-   relies on no other note).
-2. Look at `basis` before editing. For each entry whose `state` is `pending`,
-   call `mcp__wenlan__page_basis` with `action: "diff"` to see the
-   text this page relied on next to the basis note's text now. If the change
-   does not touch what this page says, call it with `action: "confirm"` and
-   `version` set to the entry's `to_version`; no rewrite is needed. If it does,
-   rewrite the page in steps 4 and 5. A basis that is `archived`, `deleted` or
-   `unavailable` cannot be confirmed: leave it and note it in the final report.
-3. Look at `code_basis` the same way. For each entry whose `state` is `pending`,
-   read those lines of the file now. If what this page says about them still
-   holds, call `mcp__wenlan__page_code_basis` with
-   `action: "confirm"` for that entry; if it does not, rewrite the sentence in
-   steps 4 and 5 and name the entry again in `write_page`'s `code_basis` at its
-   current lines, which replaces the stale entry it overlaps. When a sentence
-   this session proved from code is new, add a `code_basis` entry for those
-   lines in the same write. An `unavailable` entry cannot be confirmed: leave
-   it and note it in the final report.
-4. Edit the current body: keep everything still true, change only what this
-   session changed. Do not rewrite from memory of an older read.
-5. Call `mcp__wenlan__write_page` with `page_id`, the edited
-   `content`, `expected_version` set to that `page.version`, and
-   `source_memory_ids` set to the page's existing source ids plus the ids of
-   any memories captured during the work that the new text relies on. Also
-   pass `basis` as `[{page_id, version}]` for every note this edit relied on,
-   using the `page.version` of each note's own `read_page` (read it first if
-   you have not).
-   Memory ids go in `source_memory_ids`; a note's page id goes only in `basis`.
-   `code_basis` is `[{repo_root, path, line_start, line_end}]`.
-
-A `basis:` line in the reply that shows an entry still `pending` means that
-note changed after you read it: go back to step 2 for it.
-
-A refusal saying the page moved means someone edited it after your read:
-read it again and redo the edit once. A `gated` result means the page is
-locked for review; report it as staged for review, not as updated. Do not ask
-approval for ordinary page updates.
-
-Afterwards, record each outcome (updated, staged for review, unchanged, or
-skipped because the daemon was down) for the final report.
-
-## 6. Report
-
-Report each page this session used with its outcome from step 5, any basis
-or code basis entry left unconfirmed and why, applied/conflicted/queued Brief
-deltas, Brief version or outbox path, and projection path or warning. When anything queued, add: `N handoff note(s)
+Report applied/conflicted/queued Brief deltas, Brief version or outbox path,
+and projection path or warning. When anything queued, add: `N handoff note(s)
 saved locally — they sync when Wenlan starts (`wenlan outbox status`).`

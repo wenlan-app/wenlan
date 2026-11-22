@@ -100,6 +100,7 @@ pub mod telemetry;
 pub mod telemetry_routes;
 pub mod theme_routes;
 pub mod things_intake;
+mod things_read_pages;
 pub mod things_routes;
 pub mod trust_scan_routes;
 pub mod truth_guard;

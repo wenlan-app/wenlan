@@ -44,7 +44,13 @@ const SESSION_DETAIL_CAP: i64 = 200;
 /// Longest accepted metadata value, in bytes. Paths and remotes are short.
 const MAX_METADATA_LEN: usize = 4096;
 /// Newest reads kept per session; older ones are dropped as new ones arrive.
-const SESSION_READS_KEPT: i64 = 50;
+pub(super) const SESSION_READS_KEPT: i64 = 50;
+/// Notes a session's recalls returned that are kept for the night to find
+/// (`SessionReadKind::RecallPage`). They are counted apart from
+/// `SESSION_READS_KEPT`: one recall returns several notes, so inside the one
+/// cap they would push the real reads off the card's list. A cost guard on
+/// storage, not a measured number.
+pub(super) const SESSION_RECALL_PAGES_KEPT: i64 = 200;
 /// Most reads `GET /api/sessions/{id}` lists. The total is reported beside.
 pub const SESSION_READS_LISTED: usize = 10;
 /// Most notes listed under `cited_by`.
@@ -52,11 +58,13 @@ const SESSION_CITED_BY_CAP: i64 = 10;
 /// Longest stored read label, in characters.
 const MAX_READ_LABEL_CHARS: usize = 80;
 
+/// The table as a database created today has it. Migration 141 made it with
+/// three kinds; migration 170 widens the list by one (`recall_page`).
 const SESSION_READS_DDL: &str = "
 CREATE TABLE IF NOT EXISTS session_reads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('recall', 'brief', 'read_page')),
+    kind TEXT NOT NULL CHECK (kind IN ('recall', 'brief', 'read_page', 'recall_page')),
     label TEXT NOT NULL,
     space TEXT,
     created_at INTEGER NOT NULL
@@ -421,6 +429,63 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Migration 170: `session_reads.kind` may be `recall_page`. SQLite cannot
+    /// change a CHECK in place, so a table made by migration 141 is rebuilt
+    /// with its rows and ids kept. A table that already allows the kind (made
+    /// by `SESSION_READS_DDL` today) is left alone, which also makes a replay
+    /// after a lost version bump harmless.
+    pub(super) async fn migrate_170_recall_page_reads(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(170, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_reads'",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m170 read table: {e}")))?;
+        let current = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m170 read table row: {e}")))?
+            .and_then(|row| row.get::<String>(0).ok());
+        drop(rows);
+        if current.is_some_and(|sql| !sql.contains("recall_page")) {
+            let wide = SESSION_READS_DDL.replace(
+                "CREATE TABLE IF NOT EXISTS session_reads (",
+                "CREATE TABLE session_reads_wide (",
+            );
+            let rebuild = format!(
+                "BEGIN;
+                 DROP TABLE IF EXISTS session_reads_wide;
+                 {wide}
+                 INSERT INTO session_reads_wide (id, session_id, kind, label, space, created_at)
+                      SELECT id, session_id, kind, label, space, created_at FROM session_reads;
+                 DROP TABLE session_reads;
+                 ALTER TABLE session_reads_wide RENAME TO session_reads;
+                 CREATE INDEX IF NOT EXISTS idx_session_reads_session
+                     ON session_reads(session_id, id);
+                 COMMIT;"
+            );
+            // A failed batch leaves its BEGIN open; roll it back (as
+            // migration 148 does) so the connection is not stuck in it.
+            if let Err(error) = conn.execute_batch(&rebuild).await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!(
+                    "m170 rebuild session_reads: {error}"
+                )));
+            }
+        }
+        conn.execute("PRAGMA user_version = 170", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m170 bump: {e}")))?;
+        log::info!("[migration] Migration 170 applied: session_reads allows recall_page");
+        Ok(())
+    }
+
     /// One session per chat-export conversation, stamped onto its memory rows.
     /// Every chunk of a conversation shares its `source_id`, so grouping by it
     /// yields one session each. Conversation ids that are not valid session
@@ -598,7 +663,11 @@ impl MemoryDB {
     ///   recorded when it is empty.
     /// - An identical consecutive read (same kind, label and Space) moves the
     ///   newest entry's time instead of adding a row.
-    /// - Only the newest `SESSION_READS_KEPT` rows of a session are kept.
+    /// - Only the newest `SESSION_READS_KEPT` rows of a session are kept. The
+    ///   notes a recall returned (`RecallPage`) are a separate list: one row
+    ///   per note and Space (a repeat moves it to the newest place), the newest
+    ///   `SESSION_RECALL_PAGES_KEPT` kept, and they never count toward or
+    ///   interrupt the list above.
     ///
     /// `space` is the Space the read was scoped to, `None` for the whole
     /// library. It decides who may see the entry later.
@@ -637,14 +706,29 @@ impl MemoryDB {
             return Ok(false);
         }
 
-        let mut rows = tx
-            .query(
+        let recall_page = kind == SessionReadKind::RecallPage;
+        // The newest row to compare with: for a recall's note, the same note
+        // anywhere in the list; for anything else, the newest row that is not
+        // a recall's note, so those never break "identical consecutive".
+        let mut rows = if recall_page {
+            tx.query(
                 "SELECT id, kind, label, space FROM session_reads
-                  WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                  WHERE session_id = ?1 AND kind = 'recall_page' AND label = ?2
+                    AND COALESCE(space, '') = COALESCE(?3, '')
+                  ORDER BY id DESC LIMIT 1",
+                libsql::params![id.as_str(), label.as_str(), space],
+            )
+            .await
+        } else {
+            tx.query(
+                "SELECT id, kind, label, space FROM session_reads
+                  WHERE session_id = ?1 AND kind <> 'recall_page'
+                  ORDER BY id DESC LIMIT 1",
                 libsql::params![id.as_str()],
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("record session read newest: {e}")))?;
+        }
+        .map_err(|e| WenlanError::VectorDb(format!("record session read newest: {e}")))?;
         let newest = rows
             .next()
             .await
@@ -659,12 +743,18 @@ impl MemoryDB {
             });
         drop(rows);
 
+        // One ordering key, the row id, for the trim and for
+        // `session_pages_seen`: a repeated note is moved to the newest place
+        // by replacing its row, so a note recalled again counts as recent.
+        let same = newest
+            .as_ref()
+            .is_some_and(|(_, newest_kind, newest_label, newest_space)| {
+                newest_kind == kind.as_str()
+                    && *newest_label == label
+                    && newest_space.as_deref() == space
+            });
         match newest {
-            Some((row_id, newest_kind, newest_label, newest_space))
-                if newest_kind == kind.as_str()
-                    && newest_label == label
-                    && newest_space.as_deref() == space =>
-            {
+            Some((row_id, ..)) if same && !recall_page => {
                 tx.execute(
                     "UPDATE session_reads SET created_at = ?1 WHERE id = ?2",
                     libsql::params![now, row_id],
@@ -672,7 +762,15 @@ impl MemoryDB {
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("record session read touch: {e}")))?;
             }
-            _ => {
+            other => {
+                if let (true, Some((row_id, ..))) = (same, other) {
+                    tx.execute(
+                        "DELETE FROM session_reads WHERE id = ?1",
+                        libsql::params![row_id],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("record session read move: {e}")))?;
+                }
                 tx.execute(
                     "INSERT INTO session_reads (session_id, kind, label, space, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -680,12 +778,19 @@ impl MemoryDB {
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("record session read insert: {e}")))?;
+                let (is_recall_page, cap) = if recall_page {
+                    (true, SESSION_RECALL_PAGES_KEPT)
+                } else {
+                    (false, SESSION_READS_KEPT)
+                };
                 tx.execute(
                     "DELETE FROM session_reads
                       WHERE session_id = ?1
-                        AND id NOT IN (SELECT id FROM session_reads WHERE session_id = ?1
+                        AND (kind = 'recall_page') = ?3
+                        AND id NOT IN (SELECT id FROM session_reads
+                                        WHERE session_id = ?1 AND (kind = 'recall_page') = ?3
                                         ORDER BY id DESC LIMIT ?2)",
-                    libsql::params![id.as_str(), SESSION_READS_KEPT],
+                    libsql::params![id.as_str(), cap, is_recall_page],
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("record session read trim: {e}")))?;
@@ -695,6 +800,31 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("record session read commit: {e}")))?;
         Ok(true)
+    }
+
+    /// The notes `session_id` read or was shown by a recall, once each,
+    /// newest first: what the night treats as candidates (`ReadPage` and
+    /// `RecallPage` reads). A deleted note is still named; the caller loads it.
+    pub async fn session_pages_seen(&self, session_id: &str) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT label FROM session_reads
+                  WHERE session_id = ?1 AND kind IN ('read_page', 'recall_page')
+                  GROUP BY label ORDER BY MAX(id) DESC",
+                libsql::params![session_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("session pages seen: {e}")))?;
+        let mut pages = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("session pages seen row: {e}")))?
+        {
+            pages.push(row.get::<String>(0).unwrap_or_default());
+        }
+        Ok(pages)
     }
 
     /// `POST /api/sessions`: create the session if needed, then overwrite the

@@ -1628,7 +1628,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_decision_domains_cmd: () => get("/api/decisions/domains").then((r) => r.domains ?? r),
   pin_memory: (a) => post(`/api/memory/${enc(a.sourceId)}/pin`),
   unpin_memory: (a) => post(`/api/memory/${enc(a.sourceId)}/unpin`),
-  confirm_memory: (a) => post(`/api/memory/confirm/${enc(a.sourceId)}`, { confirmed: true }),
+  // The person's own click: a preference is confirmed by them, not a tool.
+  confirm_memory: (a) => post(`/api/memory/confirm/${enc(a.sourceId)}`, { confirmed: true }, AS_PERSON),
   // The wizard's runtime row stores a probe memory, reads it straight back,
   // then deletes it — proving the write path exists for the row to render at
   // all. This USED to proxy to the real daemon on the theory that "the

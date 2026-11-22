@@ -50,12 +50,17 @@ pub struct TidyOffer {
     pub groups: Vec<Vec<usize>>,
 }
 
-/// A row is live, a whole memory, not waiting for review, not pinned and
-/// not a recap.
+/// A row is live, a whole memory, not waiting for review, not pinned and not
+/// a recap. A preference, tool problem or lesson is offered too, but only
+/// with its own kind (see [`TidyItem::working_kind`]) and only while the
+/// person has not confirmed it: a tidy never takes the place of what they
+/// said yes to.
 fn tidy_live(alias: &str) -> String {
     format!(
         "{alias}.source = 'memory' AND {alias}.chunk_index = 0 AND {alias}.pending_revision = 0 \
          AND COALESCE({alias}.pinned, 0) = 0 AND COALESCE({alias}.is_recap, 0) = 0 \
+         AND (COALESCE({alias}.memory_type, '') NOT IN ('preference', 'gotcha', 'lesson') \
+              OR COALESCE({alias}.confirmed, 0) = 0) \
          AND {} AND {}",
         not_self_archived(alias),
         not_hidden_by_superseder(&ReadScope::Global, alias)
@@ -99,6 +104,10 @@ fn row_item(row: &libsql::Row) -> Option<TidyItem> {
         created_at: row.get::<i64>(3).unwrap_or(0),
         event_date: row.get::<Option<i64>>(4).unwrap_or(None),
         decided: row.get::<Option<String>>(8).unwrap_or(None).as_deref() == Some("decision"),
+        memory_type: row
+            .get::<Option<String>>(8)
+            .unwrap_or(None)
+            .unwrap_or_default(),
         session_id: row.get::<Option<String>>(9).unwrap_or(None),
         line: row.get::<Option<String>>(10).unwrap_or(None),
     })
@@ -107,20 +116,24 @@ fn row_item(row: &libsql::Row) -> Option<TidyItem> {
 impl MemoryDB {
     /// What a merge or update wrote keeps the source of what it stands for:
     /// its conversation and line. It is Wenlan's own writing and stays off
-    /// the review list, like a night's point.
+    /// the review list, like a night's point, unless it is a preference,
+    /// tool problem or lesson (`confirm` false), which waits for the
+    /// person's OK as the ones it stands for did.
     pub async fn adopt_tidy_memory(
         &self,
         source_id: &str,
         session_id: Option<&str>,
         line: Option<&str>,
+        confirm: bool,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "UPDATE memories SET session_id = COALESCE(session_id, ?2), confirmed = 1,
+            "UPDATE memories SET session_id = COALESCE(session_id, ?2),
+                    confirmed = CASE WHEN ?4 THEN 1 ELSE confirmed END,
                     source_agent = COALESCE(source_agent, 'wenlan'),
                     said_line = COALESCE(said_line, ?3)
               WHERE source = 'memory' AND source_id = ?1",
-            libsql::params![source_id, session_id, line],
+            libsql::params![source_id, session_id, line, confirm],
         )
         .await
         .map_err(db_err("tidy adopt"))?;
@@ -145,7 +158,8 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT MAX(ts) FROM thing_history WHERE thing_id = ?1 AND op = 'thing.dream'",
+                "SELECT MAX(ts) FROM thing_history WHERE thing_id = ?1 AND op = 'thing.dream'
+                    AND json_extract(data, '$.working_only') IS NULL",
                 libsql::params![thing_id],
             )
             .await
@@ -233,7 +247,9 @@ impl MemoryDB {
                     if similarity < MIN_SIMILARITY {
                         continue;
                     }
-                    if let Some(next) = row_item(&row).filter(|n| n.space == item.space) {
+                    if let Some(next) = row_item(&row).filter(|n| {
+                        n.space == item.space && n.working_kind() == item.working_kind()
+                    }) {
                         if !neighbours.iter().any(|n: &TidyItem| n.id == next.id) {
                             neighbours.push(next);
                         }
@@ -286,7 +302,9 @@ async fn hideable_mode(
             "SELECT supersede_mode FROM memories
               WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
                 AND COALESCE(supersede_mode, '') <> 'evicted'
-                AND COALESCE(pinned, 0) = 0 AND authored_content IS NULL",
+                AND COALESCE(pinned, 0) = 0 AND authored_content IS NULL
+                AND (COALESCE(memory_type, '') NOT IN ('preference', 'gotcha', 'lesson')
+                     OR COALESCE(confirmed, 0) = 0)",
             libsql::params![id],
         )
         .await

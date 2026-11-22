@@ -40,6 +40,7 @@ const PROJECTION_UNLINK_STAGE_FILE: &str = "source";
 const PROJECTION_ROLLBACK_QUARANTINE_STAGE_FILE: &str = "rollback-quarantine";
 const PROJECTION_STATE_STAGE_FILE: &str = "state";
 const PROJECTION_STAGE_OWNER_FILE: &str = "owner.json";
+pub(super) const MEMBER_ARCHIVE_DIR: &str = "__wenlan_member_archive_v1__";
 #[cfg(unix)]
 type ProjectionStateMode = u32;
 #[cfg(not(unix))]
@@ -53,7 +54,7 @@ static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
 #[path = "projection_invariant_test.rs"]
 mod projection_invariant_test;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct KnowledgeState {
     #[serde(default = "default_schema_v2")]
     schema_version: u32,
@@ -94,6 +95,10 @@ struct KnowledgeState {
     /// theirs and not as a page Wenlan wrote. Dropped with `archived_from`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     archived_person_frontmatter: BTreeMap<String, String>,
+    /// A member-sync archive made inside the page's Space. Its Markdown stays
+    /// under that Space in [`MEMBER_ARCHIVE_DIR`]; legacy archives have no entry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    member_archived_files: BTreeMap<String, String>,
     /// When the page watcher first found a page's file gone (page id -> unix
     /// seconds) with no other file carrying its id. The page is archived only
     /// once the file has stayed gone for a while, so a save that replaces the
@@ -119,6 +124,7 @@ impl Default for KnowledgeState {
             archived_from: BTreeMap::new(),
             archived_versions: BTreeMap::new(),
             archived_person_frontmatter: BTreeMap::new(),
+            member_archived_files: BTreeMap::new(),
             missing_since: BTreeMap::new(),
             pending_adoptions: BTreeMap::new(),
         }
@@ -129,7 +135,7 @@ fn default_schema_v2() -> u32 {
     KNOWLEDGE_STATE_SCHEMA_V2
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PageFileState {
     file: String,
     /// SHA-256 of the exact bytes installed, not of canonicalized prose.
@@ -388,6 +394,7 @@ pub struct KnowledgeWriter {
     reap_orphan_stubs: bool,
     write_provenance: bool,
     protect_external_edits: bool,
+    member_sync: bool,
 }
 
 impl KnowledgeWriter {
@@ -398,6 +405,7 @@ impl KnowledgeWriter {
             reap_orphan_stubs: true,
             write_provenance: true,
             protect_external_edits: true,
+            member_sync: false,
         }
     }
 
@@ -408,6 +416,7 @@ impl KnowledgeWriter {
             reap_orphan_stubs: false,
             write_provenance: false,
             protect_external_edits: false,
+            member_sync: false,
         }
     }
 
@@ -426,6 +435,7 @@ impl KnowledgeWriter {
             reap_orphan_stubs: true,
             write_provenance: true,
             protect_external_edits: true,
+            member_sync: false,
         }
     }
 
@@ -439,6 +449,7 @@ impl KnowledgeWriter {
             reap_orphan_stubs: false,
             write_provenance: false,
             protect_external_edits: false,
+            member_sync: false,
         }
     }
 
@@ -791,10 +802,11 @@ impl KnowledgeWriter {
         state.archived_from.remove(&page.id);
         state.archived_versions.remove(&page.id);
         state.archived_person_frontmatter.remove(&page.id);
+        state.member_archived_files.remove(&page.id);
         self.save_state_cap(&capabilities.wenlan, &state)?;
         // Also retries a copy an earlier write could not archive, whichever
         // page that write was for.
-        if Self::settle_pending_archives(&capabilities.root, &mut state) {
+        if !self.member_sync && Self::settle_pending_archives(&capabilities.root, &mut state) {
             if let Err(e) = self.save_state_cap(&capabilities.wenlan, &state) {
                 log::warn!("[knowledge] could not record the archived reserved-name copy: {e}");
             }
@@ -803,7 +815,9 @@ impl KnowledgeWriter {
         // A relocation forces the index even for a writer that normally skips
         // it: the entry that just moved is the one link in `index.md` that is
         // now wrong, and the repair path has no later pass that would fix it.
-        if state.index_regeneration_pending || (self.write_provenance && regenerate_index) {
+        if !self.member_sync
+            && (state.index_regeneration_pending || (self.write_provenance && regenerate_index))
+        {
             match Self::regenerate_index_cap(capabilities, &state) {
                 // A copy still waiting to be archived may be what blocks
                 // `index.md`, so the index is not settled until it is gone.
@@ -4327,7 +4341,7 @@ impl OwnedProjectionStage {
             Ok(_) => {
                 return Err(WenlanError::Conflict(
                     "repair_apply_recovery_required".to_string(),
-                ))
+                ));
             }
             Err(error) => return Err(WenlanError::Io(error)),
         }
@@ -4706,7 +4720,7 @@ impl PinnedStalePageProjection<'_> {
             Some(_) => {
                 return Err(WenlanError::Conflict(
                     "repair_apply_recovery_required".to_string(),
-                ))
+                ));
             }
         }
         let stage_metadata = self
@@ -6299,6 +6313,696 @@ impl ProjectionCapabilities {
     }
 }
 
+/// One member-sync projection transaction. It deliberately opens the ordinary
+/// projection capabilities without running move-journal recovery: that recovery
+/// can touch files unrelated to the member write.
+pub struct MemberSyncProjection {
+    writer: KnowledgeWriter,
+    guard: crate::page_projection_tracker::PageProjectionWriteGuard,
+    capabilities: ProjectionCapabilities,
+    folders: HashMap<String, String>,
+    checked: HashMap<String, (String, String)>,
+    staged: Vec<MemberProjectionUndo>,
+    kept: bool,
+}
+
+struct MemberProjectionUndo {
+    before: KnowledgeState,
+    after: KnowledgeState,
+    files: Vec<MemberProjectionFileUndo>,
+    page_id: String,
+}
+
+struct MemberProjectionFileUndo {
+    file: String,
+    before: Option<Vec<u8>>,
+    after: Option<Vec<u8>>,
+}
+
+enum ExpectedMemberFile<'a> {
+    Missing,
+    Bytes(&'a [u8]),
+}
+
+impl MemberSyncProjection {
+    pub fn begin(root: &Path, db: &crate::db::MemoryDB) -> Result<Self, WenlanError> {
+        let _write_lock = PROJECTION_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        create_projection_root_nofollow(root)?;
+        let capabilities = ProjectionCapabilities::open(root)?;
+        // The advisory lock now excludes all cooperating writers. Release the
+        // process mutex before returning so the session remains Send across the
+        // caller's async database transaction; intervening writers fail their
+        // advisory try-lock rather than entering the projection tree.
+        drop(_write_lock);
+        let writer = KnowledgeWriter {
+            path: root.to_path_buf(),
+            tracker: db.page_projection_tracker(),
+            reap_orphan_stubs: false,
+            write_provenance: false,
+            protect_external_edits: true,
+            member_sync: true,
+        };
+        let guard = writer.tracker.begin_write();
+        Ok(Self {
+            writer,
+            guard,
+            capabilities,
+            folders: HashMap::new(),
+            checked: HashMap::new(),
+            staged: Vec::new(),
+            kept: false,
+        })
+    }
+
+    /// Resolve and remember the current computed folder while holding the
+    /// tracker and both projection locks. The top-folder scan is capability
+    /// based and does not recover or repair unrelated projection state.
+    pub fn space_folder(
+        &mut self,
+        space: &str,
+        spaces: Vec<String>,
+        settings_path: &Path,
+    ) -> Result<String, WenlanError> {
+        let top_folders = folders::top_folder_names(&self.capabilities.root)?;
+        let folder = crate::space_folders::member_sync_space_folder(
+            spaces,
+            settings_path,
+            top_folders,
+            space,
+        )?;
+        crate::export::knowledge::validate_knowledge_folder_path(&folder)?;
+        if folder.is_empty() {
+            return Err(WenlanError::Validation(
+                "member_sync_space_folder_invalid".into(),
+            ));
+        }
+        self.folders.insert(space.to_string(), folder.clone());
+        Ok(folder)
+    }
+
+    /// Check the database identity, the recorded/archived projection identity,
+    /// and the first-placement fallback. A successful check is bound to this
+    /// session and must match the subsequent `project` call.
+    pub fn check(
+        &mut self,
+        page_id: &str,
+        current: Option<&Page>,
+        initial_folder: &str,
+        space_folder: &str,
+    ) -> Result<(), WenlanError> {
+        crate::export::knowledge::validate_knowledge_folder_path(space_folder)?;
+        crate::export::knowledge::validate_knowledge_folder_path(initial_folder)?;
+        if space_folder.is_empty() {
+            return Err(WenlanError::Validation(
+                "member_sync_space_folder_invalid".into(),
+            ));
+        }
+        if current.is_some_and(|page| page.id != page_id) {
+            return Err(WenlanError::Conflict(
+                "member_sync_page_identity_changed".into(),
+            ));
+        }
+        let state = folders::read_state_strict(&self.capabilities.wenlan)?;
+        let archived = state.archived_versions.contains_key(page_id)
+            || state.archived_from.contains_key(page_id);
+        if state.member_archived_files.contains_key(page_id) && !archived {
+            return Err(WenlanError::Conflict(
+                "member_sync_archive_identity_missing".into(),
+            ));
+        }
+        if archived {
+            if current.is_some_and(|page| page.status != "archived") {
+                return Err(WenlanError::Conflict("member_sync_page_archived".into()));
+            }
+            let source = state.archived_from.get(page_id).ok_or_else(|| {
+                WenlanError::Conflict("member_sync_archive_identity_missing".into())
+            })?;
+            let source_parent = source.rsplit_once('/').map_or("", |(parent, _)| parent);
+            if crate::space_folders::inside_space(space_folder, source_parent).is_none() {
+                return Err(WenlanError::Validation(
+                    "member_sync_projection_outside_space".into(),
+                ));
+            }
+            let identified = if let Some(backup) = state.member_archived_files.get(page_id) {
+                let backup_parent = backup.rsplit_once('/').map_or("", |(parent, _)| parent);
+                if !backup.starts_with(&format!("{space_folder}/{MEMBER_ARCHIVE_DIR}/"))
+                    || crate::space_folders::inside_space(space_folder, backup_parent).is_none()
+                {
+                    return Err(WenlanError::Validation(
+                        "member_sync_projection_outside_space".into(),
+                    ));
+                }
+                let (directory, name) = folders::page_parent(&self.capabilities.root, backup)?;
+                KnowledgeWriter::read_origin_id(&directory, &OsString::from(name)).as_deref()
+                    == Some(page_id)
+            } else {
+                // Compatibility for archives created before member sync kept
+                // their Markdown inside the Space.
+                let archive = self
+                    .capabilities
+                    .root
+                    .open_dir_nofollow("archive")
+                    .map_err(|_| {
+                        WenlanError::Conflict("member_sync_archive_identity_missing".into())
+                    })?;
+                let archived_name = source.rsplit('/').next().unwrap_or(source);
+                KnowledgeWriter::read_origin_id(&archive, &OsString::from(archived_name)).as_deref()
+                    == Some(page_id)
+            };
+            if !identified {
+                return Err(WenlanError::Conflict(
+                    "member_sync_archive_identity_missing".into(),
+                ));
+            }
+        }
+        let mapped = state.pages.get(page_id).map(|entry| entry.file.as_str());
+        let claimants = folders::origin_paths(&self.capabilities.root, page_id)?;
+        if claimants.len() > 1
+            || claimants
+                .first()
+                .is_some_and(|path| mapped.is_some_and(|mapped| mapped != path))
+        {
+            return Err(WenlanError::Conflict(
+                "member_sync_projection_identity_ambiguous".into(),
+            ));
+        }
+        let place = if archived {
+            state
+                .archived_from
+                .get(page_id)
+                .and_then(|file| file.rsplit_once('/').map(|(parent, _)| parent))
+                .unwrap_or("")
+        } else if let Some(file) = mapped {
+            file.rsplit_once('/').map_or("", |(parent, _)| parent)
+        } else if initial_folder.is_empty() {
+            space_folder
+        } else {
+            initial_folder
+        };
+        if crate::space_folders::inside_space(space_folder, place).is_none() {
+            return Err(WenlanError::Validation(
+                "member_sync_projection_outside_space".into(),
+            ));
+        }
+        if let Some(claimant) = claimants.first() {
+            let parent = claimant.rsplit_once('/').map_or("", |(parent, _)| parent);
+            if crate::space_folders::inside_space(space_folder, parent).is_none() {
+                return Err(WenlanError::Validation(
+                    "member_sync_projection_outside_space".into(),
+                ));
+            }
+        }
+        if let Some(page) = current {
+            let space = page
+                .space
+                .as_deref()
+                .ok_or_else(|| WenlanError::Conflict("member_sync_page_space_missing".into()))?;
+            if self.folders.get(space).map(String::as_str) != Some(space_folder) {
+                return Err(WenlanError::Conflict(
+                    "member_sync_space_folder_changed".into(),
+                ));
+            }
+        }
+        self.checked.insert(
+            page_id.to_string(),
+            (space_folder.to_string(), initial_folder.to_string()),
+        );
+        Ok(())
+    }
+
+    /// Stage a checked Markdown projection. Call only inside the DB transaction;
+    /// dropping the session before `keep` conditionally restores its staged
+    /// file and state snapshots.
+    pub fn project(
+        &mut self,
+        page: &Page,
+        space_folder: &str,
+        initial_folder: &str,
+    ) -> Result<(), WenlanError> {
+        if self.checked.get(&page.id)
+            != Some(&(space_folder.to_string(), initial_folder.to_string()))
+        {
+            return Err(WenlanError::Conflict(
+                "member_sync_projection_not_checked".into(),
+            ));
+        }
+        let Some(space) = page.space.as_deref() else {
+            return Err(WenlanError::Conflict(
+                "member_sync_page_space_missing".into(),
+            ));
+        };
+        if self.folders.get(space).map(String::as_str) != Some(space_folder) {
+            return Err(WenlanError::Conflict(
+                "member_sync_space_folder_changed".into(),
+            ));
+        }
+        if page.status == "archived" {
+            return self.project_archive(page, space_folder);
+        }
+        let before = folders::read_state_strict(&self.capabilities.wenlan)?;
+        let old_file = before.pages.get(&page.id).map(|entry| entry.file.clone());
+        let before_file = match old_file.as_deref() {
+            Some(file) => Some(read_projected_file(&self.capabilities.root, file)?),
+            None => None,
+        };
+        let effective_initial_folder = if initial_folder.is_empty() {
+            space_folder
+        } else {
+            initial_folder
+        };
+        let absolute = match self.writer.write_page_with_lock_held_and_hook_in_folder(
+            &self.capabilities,
+            &self.guard,
+            page,
+            || Ok(()),
+            false,
+            Some(effective_initial_folder),
+            Some(space_folder),
+        ) {
+            Ok(absolute) => absolute,
+            Err(error) => {
+                self.rollback_partial_projection(
+                    page,
+                    &before,
+                    old_file.as_deref(),
+                    before_file.as_deref(),
+                    space_folder,
+                );
+                return Err(error);
+            }
+        };
+        let relative_path = match Path::new(&absolute).strip_prefix(&self.writer.path) {
+            Ok(relative) => relative,
+            Err(_) => {
+                self.rollback_partial_projection(
+                    page,
+                    &before,
+                    old_file.as_deref(),
+                    before_file.as_deref(),
+                    space_folder,
+                );
+                return Err(WenlanError::Validation(
+                    "member_sync_projection_path_invalid".into(),
+                ));
+            }
+        };
+        let relative = relative_path
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        if crate::space_folders::inside_space(space_folder, &relative).is_none() {
+            self.rollback_partial_projection(
+                page,
+                &before,
+                old_file.as_deref(),
+                before_file.as_deref(),
+                space_folder,
+            );
+            return Err(WenlanError::Validation(
+                "member_sync_projection_outside_space".into(),
+            ));
+        }
+        let after = match folders::read_state_strict(&self.capabilities.wenlan) {
+            Ok(state) => state,
+            Err(error) => {
+                self.rollback_partial_projection(
+                    page,
+                    &before,
+                    old_file.as_deref(),
+                    before_file.as_deref(),
+                    space_folder,
+                );
+                return Err(error);
+            }
+        };
+        let after_file = match read_projected_file(&self.capabilities.root, &relative) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.rollback_partial_projection(
+                    page,
+                    &before,
+                    old_file.as_deref(),
+                    before_file.as_deref(),
+                    space_folder,
+                );
+                return Err(error);
+            }
+        };
+        self.staged.push(MemberProjectionUndo {
+            before,
+            after,
+            files: vec![MemberProjectionFileUndo {
+                before: if old_file.as_deref() == Some(relative.as_str()) {
+                    before_file
+                } else {
+                    None
+                },
+                file: relative,
+                after: Some(after_file),
+            }],
+            page_id: page.id.clone(),
+        });
+        Ok(())
+    }
+
+    fn project_archive(&mut self, page: &Page, space_folder: &str) -> Result<(), WenlanError> {
+        let mut before = folders::read_state_strict(&self.capabilities.wenlan)?;
+        let before_snapshot = before.clone();
+        let entry = before.pages.get(&page.id).cloned().ok_or_else(|| {
+            WenlanError::Conflict("member_sync_archive_projection_missing".into())
+        })?;
+        let source = entry.file.clone();
+        let source_parent_path = source.rsplit_once('/').map_or("", |(parent, _)| parent);
+        if crate::space_folders::inside_space(space_folder, source_parent_path).is_none() {
+            return Err(WenlanError::Validation(
+                "member_sync_projection_outside_space".into(),
+            ));
+        }
+        let claimants = folders::origin_paths(&self.capabilities.root, &page.id)?;
+        if claimants.len() != 1 || claimants[0] != source {
+            return Err(WenlanError::Conflict(
+                "member_sync_projection_identity_ambiguous".into(),
+            ));
+        }
+        let original = read_projected_file(&self.capabilities.root, &source)?;
+        let (source_dir, source_name) = folders::page_parent(&self.capabilities.root, &source)?;
+        if KnowledgeWriter::read_origin_id(&source_dir, &OsString::from(&source_name)).as_deref()
+            != Some(page.id.as_str())
+        {
+            return Err(WenlanError::Conflict(
+                "member_sync_projection_identity_ambiguous".into(),
+            ));
+        }
+
+        let archive_dir_path = format!("{space_folder}/{MEMBER_ARCHIVE_DIR}");
+        let archive_dir =
+            match folders::open_existing_folder(&self.capabilities.root, &archive_dir_path) {
+                Ok(directory) => directory,
+                Err(WenlanError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let space_dir =
+                        folders::open_existing_folder(&self.capabilities.root, space_folder)?;
+                    match space_dir.create_dir(MEMBER_ARCHIVE_DIR) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                        Err(error) => return Err(WenlanError::Io(error)),
+                    }
+                    folders::open_existing_folder(&self.capabilities.root, &archive_dir_path)?
+                }
+                Err(error) => return Err(error),
+            };
+        let backup_name = format!("{}.v{}.md", page.id, page.version);
+        let backup_path = format!("{archive_dir_path}/{backup_name}");
+        let mut create = OpenOptions::new();
+        create
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let mut backup = archive_dir
+            .open_with(&backup_name, &create)
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    WenlanError::Conflict("member_sync_archive_backup_taken".into())
+                } else {
+                    WenlanError::Io(error)
+                }
+            })?;
+        if let Err(error) = backup.write_all(&original).and_then(|_| backup.sync_all()) {
+            let _ = archive_dir.remove_file(&backup_name);
+            return Err(WenlanError::Io(error));
+        }
+        if let Err(error) = source_dir.remove_file(&source_name) {
+            let _ = archive_dir.remove_file(&backup_name);
+            return Err(WenlanError::Io(error));
+        }
+
+        before.pages.remove(&page.id);
+        before.archived_from.insert(page.id.clone(), source.clone());
+        before
+            .archived_versions
+            .insert(page.id.clone(), page.version);
+        match entry.person_frontmatter {
+            Some(frontmatter) => {
+                before
+                    .archived_person_frontmatter
+                    .insert(page.id.clone(), frontmatter);
+            }
+            None => {
+                before.archived_person_frontmatter.remove(&page.id);
+            }
+        }
+        before
+            .member_archived_files
+            .insert(page.id.clone(), backup_path.clone());
+        if let Err(error) = self
+            .writer
+            .save_state_cap(&self.capabilities.wenlan, &before)
+        {
+            let restore = restore_member_projection_file_if(
+                &self.capabilities.root,
+                &source,
+                ExpectedMemberFile::Missing,
+                &original,
+            );
+            let remove =
+                remove_member_projection_file_if(&self.capabilities.root, &backup_path, &original);
+            if let Err(rollback_error) = restore.and(remove) {
+                log::warn!(
+                    "[member-sync] archive rollback failed for {}: {rollback_error}",
+                    page.id
+                );
+            }
+            return Err(error);
+        }
+        let after = before;
+        self.staged.push(MemberProjectionUndo {
+            before: before_snapshot,
+            after,
+            files: vec![
+                MemberProjectionFileUndo {
+                    file: source,
+                    before: Some(original.clone()),
+                    after: None,
+                },
+                MemberProjectionFileUndo {
+                    file: backup_path,
+                    before: None,
+                    after: Some(original),
+                },
+            ],
+            page_id: page.id.clone(),
+        });
+        Ok(())
+    }
+
+    fn rollback_partial_projection(
+        &self,
+        page: &Page,
+        before: &KnowledgeState,
+        old_file: Option<&str>,
+        before_file: Option<&[u8]>,
+        space_folder: &str,
+    ) {
+        let current_state = match folders::read_state_strict(&self.capabilities.wenlan) {
+            Ok(state) => state,
+            Err(error) => {
+                log::warn!("[member-sync] could not inspect partial projection state: {error}");
+                return;
+            }
+        };
+        if current_state.pages.get(&page.id) != before.pages.get(&page.id) {
+            // A failed state save should be atomic. If it was not, avoid
+            // replacing a state file that may include another writer's work.
+            log::warn!(
+                "[member-sync] partial state changed for {}; left it untouched",
+                page.id
+            );
+            return;
+        }
+        let expected = before
+            .pages
+            .get(&page.id)
+            .and_then(|entry| entry.person_frontmatter.as_deref())
+            .map(|frontmatter| {
+                render_person_markdown(page, &person_frontmatter_titled(frontmatter, &page.title))
+            })
+            .unwrap_or_else(|| render_markdown(page));
+        let claims = match folders::origin_paths(&self.capabilities.root, &page.id) {
+            Ok(claims) => claims,
+            Err(error) => {
+                log::warn!("[member-sync] could not inspect partial projection files: {error}");
+                return;
+            }
+        };
+        if claims.len() > 1 {
+            return;
+        }
+        let Some(file) = claims.first() else {
+            return;
+        };
+        if crate::space_folders::inside_space(
+            space_folder,
+            file.rsplit_once('/').map_or("", |(p, _)| p),
+        )
+        .is_none()
+        {
+            return;
+        }
+        let current_bytes = match read_projected_file(&self.capabilities.root, file) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+        if current_bytes != expected.as_bytes() {
+            return;
+        }
+        let result = if old_file == Some(file.as_str()) {
+            before_file.map_or(Ok(()), |bytes| {
+                restore_member_projection_file_if(
+                    &self.capabilities.root,
+                    file,
+                    ExpectedMemberFile::Bytes(expected.as_bytes()),
+                    bytes,
+                )
+            })
+        } else {
+            remove_member_projection_file_if(&self.capabilities.root, file, expected.as_bytes())
+        };
+        if let Err(error) = result {
+            log::warn!(
+                "[member-sync] could not undo partial projection {}: {error}",
+                file
+            );
+        }
+    }
+
+    /// The database transaction committed; staged files become authoritative.
+    pub fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for MemberSyncProjection {
+    fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
+        for undo in self.staged.iter().rev() {
+            let current = match folders::read_state_strict(&self.capabilities.wenlan) {
+                Ok(state) => state,
+                Err(error) => {
+                    log::warn!("[member-sync] projection rollback could not read state: {error}");
+                    continue;
+                }
+            };
+            let same_state = current == undo.after;
+            let same_files = undo.files.iter().all(|file| {
+                read_member_projection_file(&self.capabilities.root, &file.file).ok()
+                    == Some(file.after.clone())
+            });
+            if !same_state || !same_files {
+                log::warn!(
+                    "[member-sync] projection changed after staging {}; leaving it untouched",
+                    undo.page_id
+                );
+                continue;
+            }
+            let mut files_restored = true;
+            for file in undo.files.iter().rev() {
+                let result = match &file.before {
+                    Some(bytes) => match &file.after {
+                        Some(expected) => restore_member_projection_file_if(
+                            &self.capabilities.root,
+                            &file.file,
+                            ExpectedMemberFile::Bytes(expected),
+                            bytes,
+                        ),
+                        None => restore_member_projection_file_if(
+                            &self.capabilities.root,
+                            &file.file,
+                            ExpectedMemberFile::Missing,
+                            bytes,
+                        ),
+                    },
+                    None => match &file.after {
+                        Some(expected) => remove_member_projection_file_if(
+                            &self.capabilities.root,
+                            &file.file,
+                            expected,
+                        ),
+                        None => Ok(()),
+                    },
+                };
+                if let Err(error) = result {
+                    log::warn!(
+                        "[member-sync] could not restore staged projection {}: {error}",
+                        file.file
+                    );
+                    files_restored = false;
+                    break;
+                }
+            }
+            if !files_restored {
+                continue;
+            }
+            if let Err(error) = self
+                .writer
+                .save_state_cap(&self.capabilities.wenlan, &undo.before)
+            {
+                log::warn!(
+                    "[member-sync] could not restore projection state for {}: {error}",
+                    undo.page_id
+                );
+            }
+        }
+    }
+}
+
+fn restore_member_projection_file_if(
+    root: &Dir,
+    file: &str,
+    expected: ExpectedMemberFile<'_>,
+    bytes: &[u8],
+) -> Result<(), WenlanError> {
+    let current = read_member_projection_file(root, file)?;
+    let unchanged = match expected {
+        ExpectedMemberFile::Missing => current.is_none(),
+        ExpectedMemberFile::Bytes(expected) => current.as_deref() == Some(expected),
+    };
+    if !unchanged {
+        return Err(WenlanError::Conflict("member_sync_rollback_changed".into()));
+    }
+    let (parent, name) = folders::page_parent(root, file)?;
+    let temp = format!(
+        ".member-rollback-{}.tmp",
+        TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    write_page_atomically_nofollow(&parent, &name, &temp, bytes)
+}
+
+fn read_member_projection_file(root: &Dir, file: &str) -> Result<Option<Vec<u8>>, WenlanError> {
+    match read_projected_file(root, file) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(WenlanError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn remove_member_projection_file_if(
+    root: &Dir,
+    file: &str,
+    expected: &[u8],
+) -> Result<(), WenlanError> {
+    if read_member_projection_file(root, file)?.as_deref() != Some(expected) {
+        return Err(WenlanError::Conflict("member_sync_rollback_changed".into()));
+    }
+    let (parent, name) = folders::page_parent(root, file)?;
+    match parent.remove_file(&name) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(WenlanError::Io(error)),
+    }
+}
+
 /// Public projection of a page's markdown (frontmatter + body + the delimiter
 /// Sources block), so callers outside this module (the watcher's
 /// protected-block re-projection check) can compute the canonical projection
@@ -6560,6 +7264,152 @@ fn related_page_titles(content: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::pages::Page;
+
+    #[tokio::test]
+    async fn member_sync_projection_refuses_an_out_of_space_first_placement() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = tempfile::tempdir().unwrap();
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let page = test_concept();
+        let writer = KnowledgeWriter::new_for_test(root.path().to_path_buf());
+        std::fs::create_dir(root.path().join("Elsewhere")).unwrap();
+        let guard = writer.begin_test_write();
+        writer
+            .write_page_in_folder(&guard, &page, Some("Elsewhere"))
+            .unwrap();
+        drop(guard);
+        let path = root.path().join("Elsewhere/rust-ownership.md");
+        let before = std::fs::read(&path).unwrap();
+        let mut projection = MemberSyncProjection::begin(root.path(), &db).unwrap();
+        let folder = projection
+            .space_folder(
+                "rust",
+                vec!["rust".into()],
+                &settings.path().join("settings.json"),
+            )
+            .unwrap();
+        assert_eq!(folder, "rust");
+        let result = projection.check("page-new", None, "Elsewhere", &folder);
+        assert!(
+            matches!(result, Err(WenlanError::Validation(reason)) if reason == "member_sync_projection_outside_space")
+        );
+        let result = projection.check(&page.id, Some(&page), "", &folder);
+        assert!(
+            matches!(result, Err(WenlanError::Validation(reason)) if reason == "member_sync_projection_outside_space")
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn dropping_member_sync_projection_restores_staged_markdown_and_state() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("rust")).unwrap();
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let page = test_concept();
+        let target = root.path().join("rust/rust-ownership.md");
+        {
+            let mut projection = MemberSyncProjection::begin(root.path(), &db).unwrap();
+            let folder = projection
+                .space_folder(
+                    "rust",
+                    vec!["rust".into()],
+                    &settings.path().join("settings.json"),
+                )
+                .unwrap();
+            projection
+                .check(&page.id, Some(&page), "", &folder)
+                .unwrap();
+            projection.project(&page, &folder, "").unwrap();
+            assert!(target.exists());
+        }
+        assert!(!target.exists());
+        let writer = KnowledgeWriter::new_for_test(root.path().to_path_buf());
+        assert!(!writer.load_state().pages.contains_key(&page.id));
+    }
+
+    #[tokio::test]
+    async fn member_sync_archive_stays_in_space_and_rolls_back_with_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("rust")).unwrap();
+        let writer = KnowledgeWriter::new_for_test(root.path().to_path_buf());
+        let page = test_concept();
+        let original_file = "rust/rust-ownership.md";
+        let guard = writer.begin_test_write();
+        writer
+            .write_page_in_folder(&guard, &page, Some("rust"))
+            .unwrap();
+        drop(guard);
+        let original_markdown = std::fs::read(root.path().join(original_file)).unwrap();
+        let mut archived = page.clone();
+        archived.status = "archived".into();
+        let backup_file = format!("rust/{MEMBER_ARCHIVE_DIR}/{}.v{}.md", page.id, page.version);
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        {
+            let mut projection = MemberSyncProjection::begin(root.path(), &db).unwrap();
+            let folder = projection
+                .space_folder(
+                    "rust",
+                    vec!["rust".into()],
+                    &settings.path().join("settings.json"),
+                )
+                .unwrap();
+            projection
+                .check(&page.id, Some(&page), "", &folder)
+                .unwrap();
+            projection.project(&archived, &folder, "").unwrap();
+            assert!(!root.path().join(original_file).exists());
+            assert!(root.path().join(&backup_file).exists());
+            assert_eq!(
+                std::fs::read(root.path().join(&backup_file)).unwrap(),
+                original_markdown
+            );
+            assert!(!root.path().join("archive").exists());
+        }
+        assert!(root.path().join(original_file).exists());
+        assert!(!root.path().join(&backup_file).exists());
+        assert!(writer.load_state().pages.contains_key(&page.id));
+
+        {
+            let mut projection = MemberSyncProjection::begin(root.path(), &db).unwrap();
+            let folder = projection
+                .space_folder(
+                    "rust",
+                    vec!["rust".into()],
+                    &settings.path().join("settings.json"),
+                )
+                .unwrap();
+            projection
+                .check(&page.id, Some(&page), "", &folder)
+                .unwrap();
+            projection.project(&archived, &folder, "").unwrap();
+            projection.keep();
+        }
+        assert!(!root.path().join(original_file).exists());
+        assert!(root.path().join(&backup_file).exists());
+
+        let mut restored = page.clone();
+        restored.version += 1;
+        {
+            let mut projection = MemberSyncProjection::begin(root.path(), &db).unwrap();
+            let folder = projection
+                .space_folder(
+                    "rust",
+                    vec!["rust".into()],
+                    &settings.path().join("settings.json"),
+                )
+                .unwrap();
+            projection
+                .check(&page.id, Some(&archived), "", &folder)
+                .unwrap();
+            projection.project(&restored, &folder, "").unwrap();
+            projection.keep();
+        }
+        assert!(root.path().join(original_file).exists());
+        assert!(root.path().join(&backup_file).exists());
+        assert!(!root.path().join("archive").exists());
+    }
 
     #[test]
     fn live_page_filenames_verifies_only_allowed_existing_matching_files() {

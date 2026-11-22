@@ -1311,6 +1311,9 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
 
 /// Most points one night writes for one thing.
 pub const MAX_DREAM_POINTS: usize = 8;
+/// Most preferences, tool problems and lessons one night writes for one
+/// thing: the same cap as its points, since they are read in the same call.
+pub const MAX_DREAM_WORKING: usize = MAX_DREAM_POINTS;
 /// Longest point kept, in characters.
 pub const MAX_POINT_CHARS: usize = 200;
 /// Most conversations of one thing read in one night, newest first.
@@ -1329,6 +1332,71 @@ pub struct PriorPoint {
     pub id: String,
     pub text: String,
     pub decided: bool,
+    /// The Space its memory is in, `None` when it has none.
+    pub space: Option<String>,
+}
+
+/// What a night keeps besides the work's own points: how the person wants AI
+/// tools to work for them, a problem with a tool and what got around it, and
+/// why something was changed or what failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkingKind {
+    Preference,
+    Gotcha,
+    Lesson,
+}
+
+impl WorkingKind {
+    /// The memory type it is stored as.
+    pub fn memory_type(self) -> &'static str {
+        match self {
+            Self::Preference => "preference",
+            Self::Gotcha => "gotcha",
+            Self::Lesson => "lesson",
+        }
+    }
+
+    pub fn from_memory_type(memory_type: &str) -> Option<Self> {
+        match memory_type {
+            "preference" => Some(Self::Preference),
+            "gotcha" => Some(Self::Gotcha),
+            "lesson" => Some(Self::Lesson),
+            _ => None,
+        }
+    }
+}
+
+/// A preference, tool problem or lesson an earlier night kept from this
+/// thing's conversations, still standing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PriorWorking {
+    /// The memory it is.
+    pub id: String,
+    pub text: String,
+    pub kind: WorkingKind,
+    /// The Space its memory is in, `None` when it has none.
+    pub space: Option<String>,
+}
+
+/// A preference, tool problem or lesson the model wrote.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkingPoint {
+    pub text: String,
+    pub kind: WorkingKind,
+    /// Index of the conversation it came from.
+    pub from: usize,
+    /// Index into [`dream_lines`] of the line the person typed that it comes
+    /// from, always one of its own conversation. A preference has one.
+    pub line: Option<usize>,
+    /// Index of the earlier one it replaces, when that one no longer holds.
+    pub replaces: Option<usize>,
+}
+
+/// What a night's reading found: the work's points, and the rest.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Dream {
+    pub points: Vec<DreamPoint>,
+    pub working: Vec<WorkingPoint>,
 }
 
 /// A point the model wrote.
@@ -1382,6 +1450,7 @@ pub fn dream_prompt(
     title: &str,
     conversations: &[FoundConversation],
     prior: &[PriorPoint],
+    working: &[PriorWorking],
     map: &[MapPoint],
     topics: &[String],
     language: &str,
@@ -1401,8 +1470,13 @@ pub fn dream_prompt(
         } else {
             cut_end(&conv.last_reply, MAX_REPLY_CHARS)
         };
+        let who = if conv.on_behalf {
+            "what an assistant typed for the person (not the person's own words), oldest first"
+        } else {
+            "what the person typed, oldest first"
+        };
         chats.push_str(&format!(
-            "C{i}: what the person typed, oldest first:\n{said}\nAssistant's last reply (end): {reply}\n\n"
+            "C{i}: {who}:\n{said}\nAssistant's last reply (end): {reply}\n\n"
         ));
     }
     let prior_text = if prior.is_empty() {
@@ -1418,6 +1492,21 @@ pub fn dream_prompt(
             .collect::<Vec<_>>()
             .join("\n")
     };
+    // The indexes run through both lists, so "replaces" names either.
+    let working_list = |preferences: bool| {
+        let lines = working
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| (w.kind == WorkingKind::Preference) == preferences)
+            .map(|(i, w)| format!("W{i} ({}): {}", w.kind.memory_type(), w.text))
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            "(none)".to_string()
+        } else {
+            lines.join("\n")
+        }
+    };
+    let (working_text, preferences_text) = (working_list(false), working_list(true));
     let map_text = if map.is_empty() {
         "(none)".to_string()
     } else {
@@ -1453,8 +1542,8 @@ itself, so they can be remembered after it goes quiet. Only what the person them
 or chose about the work (settled), and questions about the work they left unanswered (open). \
 What was built, what a review found and where a pull request stands are not decisions. Leave \
 out: steps the assistant took, chores, greetings; approving a merge, a review, a handoff or a run; \
-how the person wants the assistant to work; where files are or problems with tools; and \
-details nobody could follow without the conversation. Agreeing to go on is not an open \
+where files are; how the person wants AI tools to work and problems with tools (those go in \
+\"working\", below); and details nobody could follow without the conversation. Agreeing to go on is not an open \
 question. A question answered or done later in the same conversations is settled, not open. \
 One short sentence each, at most 15 words, that someone who did not read the conversation \
 understands (name what it is about), in {language}. {KEEP_NAMES} Leave out anything already \
@@ -1464,8 +1553,23 @@ one of the map points above (the same point, perhaps now settled), name it in \"
 {MAX_DREAM_POINTS} points; none is a fine answer. For each point give in \"line\" the one line \
 the person typed, in its conversation, that it comes from (\"L3\").\n\
 {topics_text}\
+Separately, in \"working\", write down what is worth remembering the next time the person \
+works with AI tools, of three kinds. \"preference\": how the person wants AI tools to work for \
+them; only from a line the person typed (never from what an assistant typed for them), so \"line\" is \
+required. Write it as a preference, not an always or never command, and keep its condition \
+(\"when I ask for a review, lead with the risks\"); not an instruction for this task alone. \"gotcha\": a problem with a tool or setup and what got around it; only when the \
+conversation shows the way around worked. \"lesson\": why something was changed, or what was \
+tried and failed, with the condition it happened under (\"failed on a customer's old machine\" \
+is not \"never do it\"). A point about the work itself goes in \"points\", not here. Same \
+rules for the sentence: one short sentence, at most 15 words, that someone who did not read the \
+conversation understands, in {language}. Already kept from it:\n{working_text}\n\n\
+Preferences already kept from all of the person's work:\n{preferences_text}\n\n\
+Leave out anything already kept; when one no longer holds, give the new one and name the old \
+one in \"replaces\" (\"W0\"). At most {MAX_DREAM_WORKING}; none is a fine answer.\n\
 Answer with JSON only: {{\"points\": [{{\"text\": string, \"settled\": true|false, \
-\"from\": \"C0\", \"line\": \"L0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null{topic_field}}}]}}"
+\"from\": \"C0\", \"line\": \"L0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null{topic_field}}}], \
+\"working\": [{{\"text\": string, \"kind\": \"preference\"|\"gotcha\"|\"lesson\", \
+\"from\": \"C0\", \"line\": \"L0\" or null, \"replaces\": \"W0\" or null}}]}}"
     )
 }
 
@@ -1623,13 +1727,29 @@ fn answer_index(id: &str, prefix: char, len: usize) -> Option<usize> {
 /// kept point, or one already replaced, is ignored, and so is a `map` that
 /// names no map point or one another point already is. A `topic` that names
 /// no topic offered is ignored: the point is kept, without a topic.
+///
+/// `on_behalf` says, for each conversation, whether an assistant typed its
+/// lines for the person: none of its lines counts as the person's own, so a
+/// point or lesson from it keeps no line and a preference from it is dropped.
+/// `working` is the kind of each already kept preference, tool problem and
+/// lesson that was offered; a `replaces` naming one of another kind is
+/// ignored. `line_owners` is the conversation of each line of
+/// [`dream_lines`]. A preference whose line is missing or not in its own
+/// conversation is dropped (it is only what the person typed); another
+/// kind's line that is not in its own conversation is ignored. A tool
+/// problem or lesson longer than [`MAX_POINT_CHARS`] is dropped, not cut: a
+/// cut condition says something else. An answer without a `working` list is
+/// an answer with none.
 pub fn parse_dream(
     text: &str,
-    conversations: usize,
+    on_behalf: &[bool],
     prior: usize,
+    working: &[WorkingKind],
+    line_owners: &[usize],
     map: usize,
     topics: usize,
-) -> Option<Vec<DreamPoint>> {
+) -> Option<Dream> {
+    let conversations = on_behalf.len();
     #[derive(Deserialize)]
     struct Point {
         #[serde(default)]
@@ -1648,9 +1768,24 @@ pub fn parse_dream(
         line: Option<String>,
     }
     #[derive(Deserialize)]
+    struct Working {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        from: String,
+        #[serde(default)]
+        line: Option<String>,
+        #[serde(default)]
+        replaces: Option<String>,
+    }
+    #[derive(Deserialize)]
     struct Answer {
         #[serde(default)]
         points: Vec<Point>,
+        #[serde(default)]
+        working: Vec<Working>,
     }
     let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
     let index = answer_index;
@@ -1685,17 +1820,72 @@ pub fn parse_dream(
             replaces,
             map: on_map,
             topic: point.topic.as_deref().and_then(|id| index(id, 'T', topics)),
+            // Only the person's own lines count as what they typed.
             line: point
                 .line
                 .as_deref()
-                .and_then(|id| index(id, 'L', usize::MAX)),
+                .and_then(|id| index(id, 'L', line_owners.len()))
+                .filter(|n| line_owners[*n] == from && !on_behalf[from]),
         });
         if points.len() == MAX_DREAM_POINTS {
             break;
         }
     }
-    Some(points)
+    let mut replaced = HashSet::new();
+    let mut seen = HashSet::new();
+    let mut kept = Vec::new();
+    for item in answer.working {
+        let text = item.text.trim().to_string();
+        let Some(from) = index(&item.from, 'C', conversations) else {
+            continue;
+        };
+        let Some(kind) = WorkingKind::from_memory_type(item.kind.trim()) else {
+            continue;
+        };
+        if text.is_empty()
+            || text.chars().count() > MAX_POINT_CHARS
+            || !plain_words(&text)
+            || !seen.insert(text.clone())
+        {
+            continue;
+        }
+        let line = item
+            .line
+            .as_deref()
+            .and_then(|id| index(id, 'L', line_owners.len()))
+            .filter(|n| line_owners[*n] == from && !on_behalf[from]);
+        if kind == WorkingKind::Preference && line.is_none() {
+            continue;
+        }
+        let replaces = item
+            .replaces
+            .as_deref()
+            .and_then(|id| index(id, 'W', working.len()))
+            .filter(|w| working[*w] == kind)
+            .filter(|w| replaced.insert(*w));
+        kept.push(WorkingPoint {
+            text,
+            kind,
+            from,
+            line,
+            replaces,
+        });
+        if kept.len() == MAX_DREAM_WORKING {
+            break;
+        }
+    }
+    Some(Dream {
+        points,
+        working: kept,
+    })
 }
+
+/// How many of the person's standing preferences a night is shown, newest
+/// first. They are all kept in no Space, so the list grows with everything the
+/// person ever said, while a prompt cannot: the oldest fall off the list (they
+/// still stand and are still given to AI tools), and a night that re-says one
+/// of those is stopped by the store's own copy check.
+pub const MAX_PRIOR_PREFERENCES: usize = 60;
 
 /// Most sentences in a thing's conclusion.
 pub const MAX_CONCLUSION_SENTENCES: usize = 2;

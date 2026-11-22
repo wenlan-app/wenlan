@@ -63,6 +63,102 @@ fn page(id: &str, workspace: Option<&str>) -> Page {
 }
 
 #[tokio::test]
+async fn delete_records_never_shared_page_durably() {
+    let (db, _tmp) = test_db().await;
+    let id = "never-shared-delete";
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        id,
+        "Private page",
+        None,
+        "Private content",
+        None,
+        None,
+        &["private-memory"],
+        &now,
+    )
+    .await
+    .unwrap();
+
+    let conn = db.conn.lock().await;
+    super::MemoryDB::record_shared_page_deletion_on(&conn, id)
+        .await
+        .unwrap();
+    let key = format!("shared_space.deleted:{id}");
+    let mut rows = conn
+        .query(
+            "SELECT value FROM app_metadata WHERE key = ?1",
+            [key.as_str()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        rows.next().await.unwrap().is_some(),
+        "every deletion needs a private durable tombstone even when the page was never shared"
+    );
+}
+
+#[tokio::test]
+async fn shared_deletion_archive_binding_is_single_assignment_per_event() {
+    let (db, _tmp) = test_db().await;
+    let id = "page-delete-cas";
+    let key = format!("shared_space.deleted:{id}");
+    let value = serde_json::json!({
+        "event_id": "deletion-event-a",
+        "space": "project",
+        "stay": "stay-a",
+        "parent_hash": "a".repeat(64),
+    })
+    .to_string();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO app_metadata(key, value) VALUES (?1, ?2)",
+            libsql::params![key.as_str(), value],
+        )
+        .await
+        .unwrap();
+        assert!(super::MemoryDB::shared_page_was_deleted_on(&conn, id)
+            .await
+            .unwrap());
+    }
+
+    let archive = "b".repeat(64);
+    assert!(db
+        .bind_shared_deletion_archive(id, "deletion-event-a", &archive)
+        .await
+        .unwrap());
+    assert!(!db
+        .bind_shared_deletion_archive(id, "deletion-event-a", &"c".repeat(64))
+        .await
+        .unwrap());
+    assert!(!db
+        .bind_shared_deletion_archive(id, "stale-event", &"d".repeat(64))
+        .await
+        .unwrap());
+
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT value FROM app_metadata WHERE key = ?1",
+            [key.as_str()],
+        )
+        .await
+        .unwrap();
+    let record: serde_json::Value = serde_json::from_str(
+        &rows
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<String>(0)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["archive_hash"], archive);
+}
+
+#[tokio::test]
 async fn search_memory_scopes_before_vector_limit() {
     let (db, _tmp) = test_db().await;
     db.upsert_documents(vec![memory_doc("work-memory", "work")])
@@ -1373,4 +1469,71 @@ async fn ux_find_1_pages_containing_text_finds_a_word_inside_chinese_text() {
         .await
         .unwrap()
         .is_empty());
+}
+
+/// A natural question almost never has every one of its words on a page.
+/// Page search must still let a rare word late on a page count, through the
+/// any-word fallback, on both the global and the Space-scoped path.
+#[tokio::test]
+async fn search_pages_any_word_fallback_lifts_late_rare_word() {
+    let (db, _tmp) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    let opening = "Release notes and the routine checklist for each week. ".repeat(40);
+    for (id, tail) in [
+        (
+            "with-word",
+            "The zirconium ledger lives in the shared drive.",
+        ),
+        ("without-word", "The archive lives in the shared drive."),
+    ] {
+        db.insert_page_with_kind(
+            id,
+            "Weekly release routine",
+            None,
+            &format!("{opening}\n\n{tail}"),
+            None,
+            None,
+            &[],
+            &now,
+            "distilled",
+            "confirmed",
+            Some("work"),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    // Same vector for both, so only the keyword channel can tell them apart.
+    let same = super::MemoryDB::vec_to_sql(&db.get_or_compute_embedding("weekly release").unwrap());
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE pages SET embedding = vector32(?1)",
+        libsql::params![same],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    // Not every word of the question is on either page.
+    let question = "where do we keep the zirconium ledger";
+    for scope in [ReadScope::Global, ReadScope::Space("work".to_string())] {
+        let results = db
+            .search_pages_scoped(question, 10, None, &scope)
+            .await
+            .unwrap();
+        let score = |id: &str| {
+            results
+                .iter()
+                .find(|page| page.id == id)
+                .map(|page| page.relevance_score)
+                .unwrap_or_else(|| panic!("{id} missing for {scope:?}: {results:?}"))
+        };
+        assert_eq!(results[0].id, "with-word", "{scope:?}");
+        assert!(
+            score("with-word") > score("without-word") + 0.1,
+            "{scope:?}: {} vs {}",
+            score("with-word"),
+            score("without-word")
+        );
+    }
 }
