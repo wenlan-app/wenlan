@@ -1078,9 +1078,11 @@ and wait for evidence that people need them.
   Windows, or on a drive that keeps no Unix permissions, may let other
   accounts read the key; Wenlan says so in its log.
   Pending owner confirmation (2026-11-17): Wenlan also refuses to install or take in a skill with a text file that holds tag characters (U+E0000 to U+E007F) or direction override or isolate controls (U+202A to U+202E, U+2066 to U+2069); the app's preview writes out every other character that would not show as the same visible mark the terminal prints and says how many there are, a byte-order mark at the very start of a file is not shown, in the app or in the terminal, and does not keep the skill's name and description from being read, and the installed file is always the author's own, that mark included.
-  原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；終端機裡要由人明確確認，不能有 `--yes`。本機金鑰的補充（2026-11-18）：說明「現在任何本機程式只要帶上 `x-wenlan-caller: person` 就被當成你」並提議由 Wenlan 第一次啟動時產生只有你的帳號讀得到的金鑰、app 和 `wenlan` 自動帶上、沒帶對的不算你之後，Qi-Xuan 回「要」，再回「那可以」；英文字句待 Qi-Xuan 確認。看不見字元的補充（2026-11-17 交辦，實測發現 6b）：標籤字元和改變文字方向的控制字元直接拒絕，其他看不見的字元在 app 預覽裡標出來；英文字句待 Qi-Xuan 確認。
-  The opt-in writer also requires the terminal confirmation for adopting the
-  existing skill locations and restoring their local backup (UX-SKILL-15).
+  原文：待 Qi-Xuan 確認。交辦內容（2026-11-17）：AI 工具不能把檔案放進每個工具的資料夾，也不能替人點頭（UX-WHO-2）；當時要求終端機裡由人明確確認，不能有 `--yes`；採用流程後由 2026-11-22 決定取代。本機金鑰的補充（2026-11-18）：說明「現在任何本機程式只要帶上 `x-wenlan-caller: person` 就被當成你」並提議由 Wenlan 第一次啟動時產生只有你的帳號讀得到的金鑰、app 和 `wenlan` 自動帶上、沒帶對的不算你之後，Qi-Xuan 回「要」，再回「那可以」；英文字句待 Qi-Xuan 確認。看不見字元的補充（2026-11-17 交辦，實測發現 6b）：標籤字元和改變文字方向的控制字元直接拒絕，其他看不見的字元在 app 預覽裡標出來；英文字句待 Qi-Xuan 確認。
+  The opt-in writer requires the person’s confirmation for adopting existing
+  skill locations, including a yes in chat bound to the previewed plan when an
+  AI tool runs adoption; restoring the backup requires terminal confirmation
+  by the person (UX-SKILL-15).
 - **UX-SKILL-14** `shipped` When the person explicitly asks for a rule to be
   saved, it counts at once, with no model and no accept. They ask in an AI
   tool on this computer ("save this as a rule: ...", which the tool does with
@@ -1130,7 +1132,10 @@ and wait for evidence that people need them.
   files offline. Interactive adoption shows the same delivered diff and
   asks the person to type `yes` at
   their terminal. A changed plan names the part that changed and needs a
-  fresh review. Wenlan backs up every destination before writing
+  fresh review. An AI tool may show the preview in chat, wait for an explicit
+  yes, and run `wenlan rules adopt --confirm <plan id>` for that exact plan.
+  If it changes, the person reviews and approves a fresh preview. No `--yes`
+  is offered. Wenlan backs up every destination before writing
   and replaces the adopted links with managed files or folders.
   The skill diff uses pinned rulesync's staged output for each tool.
   If rulesync rejects a skill's frontmatter, or drops or changes a field,
@@ -1169,10 +1174,15 @@ and wait for evidence that people need them.
   where it is, unmanaged. The preview states the limit it exceeded.
   An AI session or named agent may run `wenlan rules status`, `wenlan rules
   status --sync`, and the `wenlan rules review` list. Only the person may
-  adopt, restore, or answer a review card. Tests `rules_status_allowed_in_session`,
+  restore or answer a review card; adoption in a session needs a confirmed
+  preview. Tests `rules_status_allowed_in_session`,
   `rules_status_sync_allowed_in_session`, `rules_review_list_allowed_in_session`,
-  `rules_adopt_refused_in_session`, `rules_restore_refused_in_session`, and
-  `rules_review_answer_refused_in_session`.
+  `rules_adopt_in_session_needs_confirmed_plan`,
+  `rules_confirmed_adoption_sends_previewed_plan_in_session`,
+  `rules_confirmed_adoption_refuses_changed_plan_in_session`,
+  `rulesync_ai_adoption_requires_the_current_confirmed_plan`,
+  `rulesync_confirmed_adoption_writes_previewed_files_and_links`,
+  `rules_restore_refused_in_session`, and `rules_review_answer_refused_in_session`.
   `wenlan rules restore` asks the person again and uses that backup to
   restore the original bytes and link targets. It keeps any destination
   that has changed since delivery available for review.
@@ -1180,6 +1190,7 @@ and wait for evidence that people need them.
   in the path or when a needed parent disappeared outside an approved change.
   On Windows, restore keeps the backup when it cannot verify its recorded owner
   or preserve the permissions of the destination it would have to replace.
+  原文（2026-11-22）：「有 CLI，那你就能幫我執行，只在 AI 也要能支援」
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
   Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
 

@@ -959,11 +959,11 @@ mod catalog_tests {
         };
         assert!(matches!(
             parse(BRING_IN_COMMAND),
-            RulesSetupCmd::Adopt { dry_run: false }
+            RulesSetupCmd::Adopt { dry_run: false, .. }
         ));
         assert!(matches!(
             parse("wenlan rules adopt --dry-run"),
-            RulesSetupCmd::Adopt { dry_run: true }
+            RulesSetupCmd::Adopt { dry_run: true, .. }
         ));
         assert!(matches!(
             parse(STATUS_COMMAND),

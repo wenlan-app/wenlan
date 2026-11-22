@@ -67,7 +67,11 @@ For the three rules workflows, run the matching CLI command directly and return:
 - Rules status: run `wenlan rules status` and explain the result.
 - Rules review: run `wenlan rules review` and show each item. Tell the person
   to answer in the app's To review or run `wenlan rules review <id> <answer>`
-  in their own terminal. The AI never answers a card, adopts, or restores.
+  in their own terminal. The AI never answers a card or restores.
+- Bring a person’s setup under Wenlan: run `wenlan rules adopt --dry-run`,
+  show the person the list in chat in plain words, wait for their explicit yes
+  in chat, then run `wenlan rules adopt --confirm <plan id>`. If the setup
+  changed, preview and ask again. Never adopt without a fresh preview and a yes.
 
 Team has no skill of its own: read [references/team.md](references/team.md)
 and follow it instead of the rest of this step.

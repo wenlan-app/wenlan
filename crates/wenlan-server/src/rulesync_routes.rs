@@ -159,12 +159,27 @@ async fn adopt_preview(
     headers: HeaderMap,
     Json(request): Json<AdoptPreviewRequest>,
 ) -> Result<Json<AdoptionPlan>, ServerError> {
-    require_personal_rules_writer(&headers)?;
+    require_local_rules_access(&headers)?;
+    if !wenlan_core::rulesync_personal::enabled() {
+        return Err(ServerError::ValidationError(
+            "WENLAN_RULESYNC is off".into(),
+        ));
+    }
     tokio::task::spawn_blocking(move || Setup::system()?.preview_adoption(&request.home))
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))?
         .map(Json)
         .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+}
+
+fn validate_confirmed_adoption(request: &AdoptRequest, plan: &AdoptionPlan) -> Result<()> {
+    ensure!(
+        !plan.plan_id.is_empty()
+            && request.confirmed_plan_id.as_deref() == Some(plan.plan_id.as_str())
+            && request.token == plan.token,
+        "The setup changed since that preview. Run `wenlan rules adopt --dry-run` again and show the person the new list."
+    );
+    Ok(())
 }
 
 async fn adopt(
@@ -233,7 +248,7 @@ async fn execute(
     headers: HeaderMap,
     operation: Operation,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    if matches!(operation, Operation::Sync) {
+    if matches!(operation, Operation::Sync | Operation::Adopt(_)) {
         require_local_rules_access(&headers)?;
         if !wenlan_core::rulesync_personal::enabled() {
             return Err(ServerError::ValidationError(
@@ -253,7 +268,17 @@ async fn execute(
     let result = tokio::task::spawn_blocking(move || {
         let setup = Setup::system()?;
         match operation {
-            Operation::Adopt(request) => setup.adopt(&request),
+            Operation::Adopt(request) => {
+                if ai_caller || request.confirmed_plan_id.is_some() {
+                    let home = request
+                        .home
+                        .as_deref()
+                        .context("A confirmed adoption needs the tool home")?;
+                    let plan = setup.preview_adoption(home)?;
+                    validate_confirmed_adoption(&request, &plan)?;
+                }
+                setup.adopt(&request)
+            }
             Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
             Operation::Review(request) => setup.review(&request, &generated),
@@ -1157,6 +1182,7 @@ impl Setup {
             plan.token = adoption_with_settings_token(&plan.token, &settings.response.token)?;
             plan.settings = Some(settings.response);
         }
+        plan.plan_id = wenlan_core::rulesync_personal::adoption_plan_id(&plan.token);
         Ok(plan)
     }
 
@@ -10888,6 +10914,7 @@ mod tests {
         let error = fixture
             .setup
             .adopt(&AdoptRequest {
+                confirmed_plan_id: None,
                 token: String::new(),
                 home: Some(other),
             })
@@ -12502,6 +12529,93 @@ mod tests {
         );
         assert_eq!(f.text(".agents/skills/shared/SKILL.md"), original);
         assert_eq!(f.text(".codex/skills/handmade/SKILL.md"), handmade);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_confirmed_adoption_writes_previewed_files_and_links() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let source = home.join(".agents/skills/example");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(home.join(".codex/skills")).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: example\ndescription: Fixture\n---\nInstructions.\n",
+        )
+        .unwrap();
+        let link = home.join(".codex/skills/example");
+        symlink("../../.agents/skills/example", &link).unwrap();
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let request = AdoptRequest {
+            token: plan.token.clone(),
+            home: Some(home.clone()),
+            confirmed_plan_id: Some(plan.plan_id.clone()),
+        };
+        validate_confirmed_adoption(&request, &plan).unwrap();
+        let report = f
+            .setup
+            .adopt_using(
+                &request.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(!fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert!(fs::read_to_string(link.join("SKILL.md"))
+            .unwrap()
+            .contains("Instructions."));
+        assert!(f.setup.data.join("personal.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_ai_adoption_requires_the_current_confirmed_plan() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        let home = &f.setup.home;
+        let source = home.join(".agents/skills/example");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(home.join(".codex/skills")).unwrap();
+        let skill = source.join("SKILL.md");
+        fs::write(
+            &skill,
+            "---\nname: example\ndescription: Fixture\n---\nOld.\n",
+        )
+        .unwrap();
+        let link = home.join(".codex/skills/example");
+        let link_target = "../../.agents/skills/example";
+        symlink(link_target, &link).unwrap();
+        let preview = || {
+            f.setup
+                .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+                .unwrap()
+        };
+        let plan = preview();
+        let mut request = AdoptRequest {
+            token: plan.token.clone(),
+            home: Some(home.clone()),
+            confirmed_plan_id: None,
+        };
+        assert!(validate_confirmed_adoption(&request, &plan).is_err());
+        request.confirmed_plan_id = Some("wrong".into());
+        assert!(validate_confirmed_adoption(&request, &plan).is_err());
+        request.confirmed_plan_id = Some(plan.plan_id.clone());
+        assert!(validate_confirmed_adoption(&request, &plan).is_ok());
+        let changed = "---\nname: example\ndescription: Fixture\n---\nChanged.\n";
+        let before_rules = fs::read(home.join(CODEX)).unwrap();
+        fs::write(&skill, changed).unwrap();
+        let fresh = preview();
+        assert!(validate_confirmed_adoption(&request, &fresh).is_err());
+        assert_eq!(fs::read(&skill).unwrap(), changed.as_bytes());
+        assert_eq!(fs::read(home.join(CODEX)).unwrap(), before_rules);
+        assert_eq!(fs::read_link(&link).unwrap(), PathBuf::from(link_target));
+        assert!(!f.setup.data.join("personal.json").exists());
     }
 
     #[test]

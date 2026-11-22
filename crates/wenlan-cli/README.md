@@ -538,6 +538,7 @@ wenlan rules adopt [OPTIONS]
 Options:
 
 - `--dry-run`: Preview the changes, or list the installed files while offline.
+- `--confirm <CONFIRM>`: Confirm the plan shown to the person.
 
 #### `wenlan rules status`
 

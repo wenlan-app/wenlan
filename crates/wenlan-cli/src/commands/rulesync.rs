@@ -30,6 +30,9 @@ pub enum RulesSetupCmd {
         /// Preview the changes, or list the installed files while offline.
         #[arg(long)]
         dry_run: bool,
+        /// Confirm the plan shown to the person.
+        #[arg(long, conflicts_with = "dry_run")]
+        confirm: Option<String>,
     },
     /// Status of the personal setup in each tool.
     #[command(hide = !rulesync_personal::enabled())]
@@ -114,9 +117,11 @@ async fn run_inner(
     explicit_session: Option<&str>,
 ) -> Result<()> {
     let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
-    if matches!(command, RulesSetupCmd::Adopt { dry_run: true }) {
-        if rulesync_personal::enabled() && agent_name.is_none() && session.session.is_none() {
-            if let Ok(client) = WenlanClient::for_local_rules() {
+    if matches!(command, RulesSetupCmd::Adopt { dry_run: true, .. }) {
+        if rulesync_personal::enabled() {
+            if let Ok(client) =
+                WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())
+            {
                 let request = AdoptPreviewRequest {
                     home: rulesync_personal::system_home()?.canonicalize()?,
                 };
@@ -133,43 +138,64 @@ async fn run_inner(
         }
         return show(format, quiet, &adoption_plan()?, plan_for_a_person);
     }
+    let confirmed_adopt = matches!(
+        command,
+        RulesSetupCmd::Adopt {
+            confirm: Some(_),
+            ..
+        }
+    );
+    if matches!(command, RulesSetupCmd::Adopt { confirm: None, .. })
+        && (agent_name.is_some() || session.session.is_some())
+    {
+        bail!("Only you can change your personal tool setup. Run this from your own terminal outside an AI session. From an AI tool: show the person `wenlan rules adopt --dry-run`, and after they say yes run `wenlan rules adopt --confirm <plan id>`.");
+    }
     ensure!(
-        matches!(command, RulesSetupCmd::Status { .. } | RulesSetupCmd::Review { id: None, .. })
+        confirmed_adopt || matches!(command, RulesSetupCmd::Status { .. } | RulesSetupCmd::Review { id: None, .. })
             || (agent_name.is_none() && session.session.is_none()),
         "Only you can change your personal tool setup. Run this from your own terminal outside an AI session."
     );
     ensure!(
-        matches!(
-            command,
-            RulesSetupCmd::Sync
-                | RulesSetupCmd::Status { .. }
-                | RulesSetupCmd::Review { id: None, .. }
-                | RulesSetupCmd::SkillUpdates
-                | RulesSetupCmd::Settings { dry_run: true, .. }
-        ) || (io::stdin().is_terminal() && io::stdout().is_terminal()),
+        confirmed_adopt
+            || matches!(
+                command,
+                RulesSetupCmd::Sync
+                    | RulesSetupCmd::Status { .. }
+                    | RulesSetupCmd::Review { id: None, .. }
+                    | RulesSetupCmd::SkillUpdates
+                    | RulesSetupCmd::Settings { dry_run: true, .. }
+            )
+            || (io::stdin().is_terminal() && io::stdout().is_terminal()),
         "Run this command from your own terminal and type yes when asked."
     );
 
     let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
     let report = match command {
-        RulesSetupCmd::Adopt { .. } => {
+        RulesSetupCmd::Adopt {
+            confirm: confirmed, ..
+        } => {
             let expected = AdoptPreviewRequest {
                 home: rulesync_personal::system_home()?.canonicalize()?,
             };
             let plan = client.preview_adoption_as_person(&expected).await?;
-            // The person must see the same plan even with --quiet or --format json.
-            println!("{}", plan_for_a_person(&plan));
-            let question = if plan.settings.is_some() {
-                "Back up this setup, let Wenlan manage it and apply the shown settings?"
+            if let Some(id) = confirmed {
+                ensure!(plan.plan_id == *id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules adopt --dry-run` again and show the person the new list.");
             } else {
-                "Back up these files and links and let Wenlan manage them?"
-            };
-            if (plan.files.is_empty() && plan.settings.is_none()) || !confirm(question)? {
-                return Ok(());
+                // The person must see the same plan even with --quiet or --format json.
+                println!("{}", plan_for_a_person(&plan));
+                let question = if plan.settings.is_some() {
+                    "Back up this setup, let Wenlan manage it and apply the shown settings?"
+                } else {
+                    "Back up these files and links and let Wenlan manage them?"
+                };
+                if (plan.files.is_empty() && plan.settings.is_none()) || !confirm(question)? {
+                    return Ok(());
+                }
             }
             client
                 .adopt_rules_as_person(&AdoptRequest {
                     token: plan.token,
+                    confirmed_plan_id: confirmed.clone(),
                     home: Some(expected.home),
                 })
                 .await?
@@ -458,6 +484,14 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
         out.push('\n');
         out.push_str(&settings_plan_for_a_person(settings));
     }
+    if !plan.plan_id.is_empty() {
+        writeln!(
+            &mut out,
+            "Plan id: {} — to go ahead from an AI tool: wenlan rules adopt --confirm {}",
+            plan.plan_id, plan.plan_id
+        )
+        .unwrap();
+    }
     out
 }
 
@@ -705,6 +739,7 @@ mod tests {
     #[test]
     fn personal_preview_neutralizes_terminal_controls() {
         let plan = AdoptionPlan {
+            plan_id: "test".into(),
             token: "test".into(),
             settings: None,
             files: vec![AdoptionChange {

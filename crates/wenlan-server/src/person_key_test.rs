@@ -480,8 +480,9 @@ async fn rules_delivery_needs_the_person_key() {
 #[tokio::test]
 async fn rulesync_router_rejects_session_on_person_only_routes() {
     let app = crate::router::build_router(state());
+    // Adopt is not person-only: an AI session may adopt a confirmed preview
+    // (rulesync_ai_adoption_requires_the_current_confirmed_plan).
     for (path, body) in [
-        ("/api/rules/setup/adopt", r#"{"token":"test"}"#),
         ("/api/rules/setup/restore", "{}"),
         (
             "/api/rules/setup/review",
