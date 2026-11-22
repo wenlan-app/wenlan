@@ -840,7 +840,26 @@ pub fn check_delivery_paths<'a>(
 
 /// One switch for every writer to the person's tool folders.
 pub fn enabled() -> bool {
-    std::env::var_os("WENLAN_RULESYNC").is_some_and(|value| value == "1")
+    match std::env::var_os("WENLAN_RULESYNC") {
+        Some(value) => value == "1",
+        None => crate::config::data_root().join("rulesync.on").is_file(),
+    }
+}
+
+/// Persist the switch in the data root shared by the CLI and daemon.
+pub fn set_enabled(on: bool) -> Result<()> {
+    let path = crate::config::data_root().join("rulesync.on");
+    if on {
+        std::fs::create_dir_all(path.parent().context("missing data root")?)?;
+        if !path.is_file() {
+            std::fs::write(path, b"on\n")?;
+        }
+    } else if let Err(error) = std::fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return Err(error.into());
+        }
+    }
+    Ok(())
 }
 
 /// The CLI and daemon resolve the same root, including the existing dev isolation.

@@ -21,6 +21,7 @@ pub struct SetupArgs {
     pub config_only: bool,
     /// Skip the settings and do only what follows them (see [`finish`]).
     pub finish: bool,
+    pub format: crate::output::ResolvedFormat,
 }
 
 #[derive(Subcommand)]
@@ -140,7 +141,7 @@ impl RerankerModeArg {
 
 pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result<()> {
     if args.finish {
-        return finish(client, args.yes).await;
+        return finish(client, args.yes, args.format).await;
     }
     if let Some(note) = super::home_bin::refresh_for_setup() {
         println!("{note}");
@@ -165,7 +166,7 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
     }
     print_browser_address();
     if !args.config_only {
-        finish(client, args.yes).await?;
+        finish(client, args.yes, args.format).await?;
     }
     Ok(())
 }
@@ -175,7 +176,11 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
 /// computer, offer Codex's user hooks and one folder, and say what to try. The
 /// installer (`npx wenlan setup`) runs this as its own step, after Wenlan has started,
 /// because bringing a folder in needs it running.
-async fn finish(client: &WenlanClient, yes: bool) -> anyhow::Result<()> {
+async fn finish(
+    client: &WenlanClient,
+    yes: bool,
+    format: crate::output::ResolvedFormat,
+) -> anyhow::Result<()> {
     println!();
     let tools = super::init::connect_tools(client, super::init::Connect::All).await?;
     tools.print();
@@ -187,6 +192,9 @@ async fn finish(client: &WenlanClient, yes: bool) -> anyhow::Result<()> {
     }
 
     let running = client.health().await.is_ok();
+    if running {
+        super::rulesync::adopt_during_setup(format).await;
+    }
     let asked = running && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     if asked {
         if let Some(folder) = ask_folder()? {

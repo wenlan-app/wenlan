@@ -772,6 +772,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
                     yes,
                     config_only,
                     finish,
+                    format,
                 },
             )
             .await?

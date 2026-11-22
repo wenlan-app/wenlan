@@ -93,6 +93,11 @@ wenlan background on
 `wenlan setup --basic` is idempotent. `wenlan background on` starts the
 managed background process.
 
+Once the daemon answers, run `wenlan setup --finish`: it also turns tool
+sync on and brings the person's AI-tool setup in, then prints a short report.
+Show the person that report, including its `To undo` line. There is no
+separate adopt step.
+
 ### 4. Re-probe health and version
 
 If `wenlan background on` exited non-zero, print its output and stop: it

@@ -1982,6 +1982,27 @@ fn background_off_keeps_inactive_job_without_force_stop() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn rules_switch_survives_a_service_reinstall() {
+    let runtime = IsolatedRuntime::new();
+    let rules = |args: &[&str]| {
+        cli_with_isolated_runtime(&runtime)
+            .env_remove("WENLAN_RULESYNC")
+            .env_remove("WENLAN_SESSION")
+            .env_remove("CODEX_THREAD_ID")
+            .args(args)
+            .assert()
+            .success();
+    };
+    rules(&["rules", "on"]);
+    rules(&["background", "on"]);
+    rules(&["background", "on"]);
+    let plist = fs::read_to_string(runtime.service_unit_path()).expect("plist written");
+    assert!(!plist.contains("RULESYNC"), "{plist}");
+    assert!(runtime.data.path().join("rulesync.on").is_file());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn setup_background_status_roundtrip_isolated() {
     let runtime = IsolatedRuntime::new();
 
