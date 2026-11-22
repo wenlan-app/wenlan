@@ -9,6 +9,7 @@ use super::*;
 const EMBEDDING_MODEL_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
 /// Longest wait between retries.
 const EMBEDDING_MODEL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const RULES_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 /// Publish the bound port for whoever is polling `WENLAN_PORT_FILE`.
 ///
@@ -206,6 +207,26 @@ pub(super) async fn register_optional_runtime_workers(
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         let shared_for_outbox = shared.clone();
         let mut outbox_shutdown = { shared.read().await.shutdown.subscribe() };
+        if wenlan_core::rulesync_personal::enabled() {
+            let shutdown = outbox_shutdown.clone();
+            // Both directories are siblings under the selected Wenlan data root.
+            let rules_data = data_dir.with_file_name("rulesync");
+            tokio::spawn(async move {
+                let mut watch = wenlan_server::RulesWatch::default();
+                let first = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut interval = tokio::time::interval_at(first, RULES_WATCH_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+                        _ = interval.tick() => {
+                            watch = watch.check(rules_data.clone()).await;
+                        }
+                    }
+                }
+            });
+        }
         // Things (一件事): sort new conversations into things every minute,
         // so one written through any route lands in a thing without anyone
         // asking.
