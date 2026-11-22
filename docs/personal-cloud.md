@@ -62,5 +62,18 @@ Put HTTPS in front of `--listen`. `--root` holds `accounts.json`, the
 entrance's key `gateway.key` (readable by its user only) and everyone's
 folders; keep it on an encrypted disk.
 
-Not in the trial yet: the desktop app's side of connecting and syncing, AI
-connectors, backups and deleting an account.
+## The desktop side
+
+Settings › Sync › Wenlan cloud signs in through the browser with the short
+code and keeps the computer's key in `cloud-library.json` beside the share
+settings (readable by its user only). From then on every library pass makes
+the library's engine folder and the cloud hold the same files; `space.json`
+follows the side that changed since the last round, and both changed means
+their computers together. A computer whose library is synced nowhere else
+gets a folder of its own (`cloud-library/` in the data folder), filled from
+the cloud first so it joins the library its other computers keep there.
+`WENLAN_CLOUD_URL` points it at another cloud. A file removed on one side is
+not removed on the other.
+
+Not in the trial yet: AI connectors, documents' original files, backups and
+deleting an account.
