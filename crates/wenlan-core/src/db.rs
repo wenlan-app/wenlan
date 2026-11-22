@@ -104,6 +104,7 @@ pub use activity_counts::{
     StepCount,
 };
 mod citation_sources;
+mod citing_pages;
 pub mod conversations;
 pub mod intake;
 mod linked_pages;
@@ -27841,6 +27842,7 @@ impl MemoryDB {
             None
         };
         Ok(SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: row
@@ -32941,6 +32943,7 @@ impl MemoryDB {
             let source_id = format!("obs_{}", id);
 
             results.push(SearchResult {
+                matched_section: None,
                 basis: Vec::new(),
                 code_basis: Vec::new(),
                 id,
@@ -33052,6 +33055,7 @@ impl MemoryDB {
             pending_revision: false,
             merged_from: None,
             last_delta_summary: None,
+            matched_section: page.matched_section,
         }
     }
 
@@ -33494,6 +33498,7 @@ impl MemoryDB {
     /// score; they ride the prelude, never the rerank pool).
     fn search_result_from_summary(node: SummaryNode) -> SearchResult {
         SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: node.id.clone(),
@@ -60091,6 +60096,7 @@ impl MemoryDB {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         Ok(Page {
+            matched_section: None,
             id: row
                 .get::<String>(0)
                 .map_err(|e| WenlanError::VectorDb(format!("page id: {e}")))?,

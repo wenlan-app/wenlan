@@ -519,6 +519,8 @@ jobs:
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'
               # The tool tests drive a shell-script stand-in `wenlan-mcp`, so they are `cfg(unix)`.
               - 'crates/wenlan-cli/tests/tool_cli.rs'
+              # The small-stack checks run the debug binaries under `ulimit -s`, so they are `cfg(unix)`.
+              - 'crates/wenlan-cli/tests/stack_limit.rs'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'
               # The person key file is `0600` on Unix (`cfg(unix)`).
@@ -622,6 +624,7 @@ jobs:
               - 'crates/wenlan-server/src/telemetry.rs'
               - 'crates/wenlan-server/tests/ambient_live_daemon.rs'
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
+              - 'crates/wenlan-server/tests/stack_limit.rs'
               - 'scripts/install-macos-app.sh'
               - 'scripts/test-install-macos-app.sh'
               - 'scripts/test-install-macos-app-stub.test.ts'
@@ -675,6 +678,8 @@ jobs:
               - 'crates/wenlan-cli/src/commands/handoff.rs'
               - 'crates/wenlan-cli/src/commands/windows_task.rs'
               - 'scripts/resolve-backend-dir.test.ps1'
+              # The CLI runs on an 8 MiB thread because the Windows main thread is 1 MiB.
+              - 'crates/wenlan-cli/src/main.rs'
               - 'crates/wenlan-cli/src/commands/service.rs'
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/tests/cli_integration.rs'
@@ -682,6 +687,8 @@ jobs:
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'
               # The tool tests drive a shell-script stand-in `wenlan-mcp`, so they are `cfg(unix)`.
               - 'crates/wenlan-cli/tests/tool_cli.rs'
+              # The small-stack checks run the debug binaries under `ulimit -s`, so they are `cfg(unix)`.
+              - 'crates/wenlan-cli/tests/stack_limit.rs'
               - 'crates/wenlan-server/src/bind_addr_tests.rs'
               - 'crates/wenlan-server/src/cmd_backfill.rs'
               - 'crates/wenlan-server/src/main.rs'
@@ -701,6 +708,7 @@ jobs:
               # The team's Windows Firewall probe runs PowerShell only on Windows.
               - 'crates/wenlan-server/src/team_firewall.rs'
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
+              - 'crates/wenlan-server/tests/stack_limit.rs'
               - 'crates/wenlan-mcp/npm/install.js'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/home_bin.rs'

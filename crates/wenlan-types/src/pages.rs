@@ -11,6 +11,22 @@ pub const PAGE_PENDING_REBUILD_MESSAGE: &str = "evidence updated, prose rebuild 
 /// `page_revision_replaced: <plain-language reason>`.
 pub const PAGE_REVISION_REPLACED: &str = "page_revision_replaced";
 
+/// The section of a page a search matched best (a `page_chunks` row).
+///
+/// `byte_start..byte_end` index the page's `content` at `page_version`; a
+/// reader compares `page_version` with the page's own `version` to tell the
+/// pointer is stale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageSectionHit {
+    /// `page_chunks.chunk_index`.
+    pub index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<String>,
+    pub byte_start: u64,
+    pub byte_end: u64,
+    pub page_version: i64,
+}
+
 /// A compiled knowledge page — structured, cross-referenced, backed by source memories.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Page {
@@ -58,6 +74,10 @@ pub struct Page {
     /// zero for persisted/non-search contexts.
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub relevance_score: f32,
+    /// The section of this page a search matched best. Only set by page
+    /// search, and only when a section matched closer than the page as a whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_section: Option<PageSectionHit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_edited_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

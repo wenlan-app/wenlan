@@ -123,6 +123,7 @@ mod tests {
 
     fn mk_result(id: &str, source_id: &str, score: f32) -> SearchResult {
         SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: id.to_string(),

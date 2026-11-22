@@ -1715,6 +1715,7 @@ mod tests {
 
     fn test_page(id: &str, title: &str, content: &str) -> Page {
         Page {
+            matched_section: None,
             id: id.to_string(),
             title: title.to_string(),
             summary: Some(format!("{title} summary")),

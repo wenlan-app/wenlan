@@ -20,6 +20,7 @@
 use super::{commit_or_rollback, MemoryDB};
 use crate::error::WenlanError;
 use crate::pages::Page;
+use wenlan_types::PageSectionHit;
 
 /// Pages chunked per background batch.
 pub const PAGE_CHUNK_BATCH: usize = 16;
@@ -111,10 +112,17 @@ pub(crate) fn page_chunk_embedding_text(title: &str, chunk: &str) -> String {
 
 /// The page search vector arm of the chunk table: for each page that passes
 /// `where_clause` (on alias `c`), the selected columns and the distance of its
-/// closest chunk at column 23. `?1` is the query vector and `?2` the limit.
+/// closest chunk at column 23, then that chunk's `chunk_index`, `heading`,
+/// `byte_start`, `byte_end` and `page_version` at columns 24-28. `?1` is the
+/// query vector and `?2` the limit.
+///
+/// With a bare `MIN()` aggregate SQLite takes every other non-aggregated
+/// column (here the `pc.*` ones) from the row that holds the minimum, which is
+/// what makes columns 24-28 describe the winning chunk.
 pub(crate) fn page_chunk_vector_sql(select: &str, where_clause: &str) -> String {
     format!(
-        "SELECT {select}, MIN(vector_distance_cos(pc.embedding, vector32(?1))) AS dist \
+        "SELECT {select}, MIN(vector_distance_cos(pc.embedding, vector32(?1))) AS dist, \
+                pc.chunk_index, pc.heading, pc.byte_start, pc.byte_end, pc.page_version \
          FROM page_chunks pc \
          JOIN pages c ON c.id = pc.page_id AND pc.page_version = c.version \
          WHERE pc.embedding IS NOT NULL AND {where_clause} \
@@ -123,15 +131,24 @@ pub(crate) fn page_chunk_vector_sql(select: &str, where_clause: &str) -> String 
 }
 
 /// Each page keeps its closer distance, page vector or best chunk; pages only
-/// a chunk found are added. Re-ranked by distance and cut to `limit`.
-pub(crate) fn merge_page_chunk_hits<T>(
-    vector: &mut Vec<(String, f64, T)>,
-    chunks: Vec<(String, f64, T)>,
+/// a chunk found are added. A page whose chunk is as close or closer keeps that
+/// chunk's `matched_section`; one the page vector beat has none. Re-ranked by
+/// distance and cut to `limit`.
+pub(crate) fn merge_page_chunk_hits(
+    vector: &mut Vec<(String, f64, Page)>,
+    chunks: Vec<(String, f64, Page)>,
     limit: usize,
 ) {
     for (id, distance, page) in chunks {
         match vector.iter_mut().find(|(existing, _, _)| *existing == id) {
-            Some(entry) => entry.1 = entry.1.min(distance),
+            Some(entry) => {
+                if distance <= entry.1 {
+                    entry.1 = distance;
+                    entry.2.matched_section = page.matched_section;
+                } else {
+                    entry.2.matched_section = None;
+                }
+            }
             None => vector.push((id, distance, page)),
         }
     }
@@ -142,6 +159,18 @@ pub(crate) fn merge_page_chunk_hits<T>(
             .then_with(|| left.0.cmp(&right.0))
     });
     vector.truncate(limit);
+}
+
+/// The winning chunk's pointer from columns 24-28 of a chunk-arm row. `None`
+/// when a column is missing (a chunk row without byte offsets), never a guess.
+fn decode_matched_section(row: &libsql::Row) -> Option<PageSectionHit> {
+    Some(PageSectionHit {
+        index: u32::try_from(row.get::<i64>(24).ok()?).ok()?,
+        heading: row.get::<Option<String>>(25).ok().flatten(),
+        byte_start: u64::try_from(row.get::<i64>(26).ok()?).ok()?,
+        byte_end: u64::try_from(row.get::<i64>(27).ok()?).ok()?,
+        page_version: row.get::<i64>(28).ok()?,
+    })
 }
 
 /// The chunk arm of page search: run [`page_chunk_vector_sql`] and decode
@@ -163,7 +192,10 @@ pub(super) async fn page_chunk_vector_hits(
     loop {
         match rows.next().await {
             Ok(Some(row)) => match (MemoryDB::row_to_page(&row), row.get::<f64>(23)) {
-                (Ok(page), Ok(distance)) => hits.push((page.id.clone(), distance, page)),
+                (Ok(mut page), Ok(distance)) => {
+                    page.matched_section = decode_matched_section(&row);
+                    hits.push((page.id.clone(), distance, page));
+                }
                 (Err(error), _) => log::warn!("[search_pages] page chunk decode: {error}"),
                 (_, Err(error)) => log::warn!("[search_pages] page chunk distance: {error}"),
             },

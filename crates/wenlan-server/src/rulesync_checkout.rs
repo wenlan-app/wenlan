@@ -290,20 +290,22 @@ pub(crate) fn refresh(
     settings: &Path,
     master: Option<&PersonalMaster>,
     generated: &[String],
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
     let result = (|| {
         let entries = match std::fs::read_dir(setup.data.join("checkouts")) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), Vec::new()))
+            }
             Err(error) => return Err(error.into()),
         };
         refresh_entries(setup, session, settings, master, generated, entries)
     })();
     match result {
-        Ok(blocked) => blocked,
+        Ok(receipt) => receipt,
         Err(error) => {
             tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
     }
 }
@@ -315,8 +317,9 @@ fn refresh_entries(
     master: Option<&PersonalMaster>,
     generated: &[String],
     entries: impl IntoIterator<Item = std::io::Result<std::fs::DirEntry>>,
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, Vec<String>)> {
     let root = setup.data_files()?;
+    let mut written = Vec::new();
     let mut blocked = Vec::new();
     for entry in entries {
         let refresh_entry =
@@ -349,11 +352,19 @@ fn refresh_entries(
                     root: &root,
                     directory: &directory,
                 };
+                let checkout_dir = setup.data.join(&directory);
                 let problems = match job.run(&state_path, state, checkout, master, generated) {
-                    Ok(report) => report.blocked,
+                    Ok(report) => {
+                        written.extend(
+                            report
+                                .written
+                                .into_iter()
+                                .map(|path| checkout_dir.join(path).display().to_string()),
+                        );
+                        report.blocked
+                    }
                     Err(error) => vec![format!("{error:#}")],
                 };
-                let checkout_dir = setup.data.join(directory);
                 for problem in problems {
                     let problem = format!("Checkout {} — {problem}", checkout_dir.display());
                     tracing::warn!(%problem, "[rules setup] checkout delivery needs attention");
@@ -365,7 +376,7 @@ fn refresh_entries(
             tracing::warn!(error = %format_args!("{error:#}"), "[rules setup] checkout rules refresh failed");
         }
     }
-    Ok(blocked)
+    Ok((written, blocked))
 }
 
 struct Job<'a> {
@@ -506,6 +517,8 @@ impl Job<'_> {
                 outcome.conflict("The file changed during withdrawal. Sync again.")
             {
                 blocked.insert(path, format!("Could not remove revoked rules. {reason}"));
+            } else {
+                result.written.push(path.display().to_string());
             }
         }
         let Some(master) = master else {
@@ -1033,7 +1046,7 @@ mod tests {
         entries.sort_by_key(|entry| entry.file_name());
         assert_eq!(entries[0].path(), legacy, "the bad receipt must be first");
         assert_eq!(entries[1].path(), valid);
-        refresh_entries(
+        let receipt = refresh_entries(
             &setup,
             &session,
             &settings,
@@ -1042,6 +1055,10 @@ mod tests {
             entries.into_iter().map(Ok),
         )
         .unwrap();
+        assert!(
+            receipt.0.iter().any(|path| path.ends_with("AGENTS.md")),
+            "checkout write missing: {receipt:?}"
+        );
 
         assert_eq!(fs::read(legacy).unwrap(), b"{}");
         let actual = fs::read_to_string(setup.data.join(directory).join(rule)).unwrap();

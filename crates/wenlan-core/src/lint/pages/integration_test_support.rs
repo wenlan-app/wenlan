@@ -78,6 +78,7 @@ pub(super) async fn semantic_fingerprint(db: &crate::db::MemoryDB) -> DbSemantic
 
 pub(super) fn page(id: &str) -> Page {
     Page {
+        matched_section: None,
         id: id.to_string(),
         title: id.to_string(),
         summary: None,

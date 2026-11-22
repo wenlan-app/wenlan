@@ -3,7 +3,9 @@
 use super::{heading_before, merge_page_chunk_hits};
 use crate::db::tests::test_db;
 use crate::db::MemoryDB;
+use crate::pages::Page;
 use crate::read_scope::ReadScope;
+use wenlan_types::PageSectionHit;
 
 async fn insert(db: &MemoryDB, id: &str, content: &str) {
     db.insert_page_with_kind(
@@ -40,17 +42,55 @@ async fn chunk_versions(db: &MemoryDB, id: &str) -> Vec<i64> {
     versions
 }
 
+fn hit_page(id: &str, section: Option<PageSectionHit>) -> Page {
+    let mut page: Page = serde_json::from_value(serde_json::json!({
+        "id": id, "title": id, "summary": null, "content": "", "entity_id": null,
+        "source_memory_ids": [], "version": 1, "status": "active", "created_at": "",
+        "last_compiled": "", "last_modified": "", "sources_updated_count": 0,
+        "stale_reason": null, "user_edited": false
+    }))
+    .unwrap();
+    page.matched_section = section;
+    page
+}
+
+fn section(index: u32) -> PageSectionHit {
+    PageSectionHit {
+        index,
+        heading: Some(format!("Section {index}")),
+        byte_start: 0,
+        byte_end: 10,
+        page_version: 1,
+    }
+}
+
 #[test]
 fn merge_keeps_the_closer_distance_and_adds_chunk_only_pages() {
-    let mut vector = vec![("a".to_string(), 0.30, ()), ("b".to_string(), 0.40, ())];
-    let chunks = vec![
-        ("b".to_string(), 0.10, ()),
-        ("a".to_string(), 0.50, ()),
-        ("c".to_string(), 0.20, ()),
+    let mut vector = vec![
+        ("a".to_string(), 0.30, hit_page("a", None)),
+        ("b".to_string(), 0.40, hit_page("b", None)),
+        ("d".to_string(), 0.45, hit_page("d", None)),
     ];
-    merge_page_chunk_hits(&mut vector, chunks, 2);
-    let ranked: Vec<(&str, f64)> = vector.iter().map(|(id, d, _)| (id.as_str(), *d)).collect();
-    assert_eq!(ranked, vec![("b", 0.10), ("c", 0.20)]);
+    let chunks = vec![
+        ("b".to_string(), 0.10, hit_page("b", Some(section(1)))),
+        ("a".to_string(), 0.50, hit_page("a", Some(section(2)))),
+        ("c".to_string(), 0.20, hit_page("c", Some(section(3)))),
+    ];
+    merge_page_chunk_hits(&mut vector, chunks, 3);
+    let ranked: Vec<(&str, f64, Option<u32>)> = vector
+        .iter()
+        .map(|(id, d, p)| (id.as_str(), *d, p.matched_section.as_ref().map(|s| s.index)))
+        .collect();
+    // b: chunk closer, keeps its section. c: found only by a chunk, keeps it.
+    // a: the page vector is closer, so no section.
+    assert_eq!(
+        ranked,
+        vec![
+            ("b", 0.10, Some(1)),
+            ("c", 0.20, Some(3)),
+            ("a", 0.30, None)
+        ]
+    );
 }
 
 #[test]
@@ -125,6 +165,14 @@ async fn page_search_finds_a_page_by_a_late_section() {
             .await
             .unwrap();
         assert_eq!(results[0].id, "b-chiller", "{scope:?}: {results:?}");
+        let matched = results[0]
+            .matched_section
+            .as_ref()
+            .expect("section pointer");
+        assert_eq!(matched.heading.as_deref(), Some("Plant room"), "{scope:?}");
+        assert_eq!(matched.page_version, 1);
+        let body = &results[0].content[matched.byte_start as usize..matched.byte_end as usize];
+        assert!(body.contains("chiller"), "{body}");
     }
 
     // A new version hides the old chunks until they are rebuilt.
@@ -143,6 +191,13 @@ async fn page_search_finds_a_page_by_a_late_section() {
         .await
         .unwrap();
     assert_eq!(results[0].id, "a-unrelated", "stale chunks must not count");
+    assert!(
+        results
+            .iter()
+            .filter(|p| p.id == "b-chiller")
+            .all(|p| p.matched_section.is_none()),
+        "a stale chunk must not point into the new version"
+    );
     db.refresh_page_chunks_batch(16).await.unwrap();
     assert!(chunk_versions(&db, "b-chiller")
         .await
@@ -153,6 +208,7 @@ async fn page_search_finds_a_page_by_a_late_section() {
         .await
         .unwrap();
     assert_eq!(results[0].id, "b-chiller");
+    assert_eq!(results[0].matched_section.as_ref().unwrap().page_version, 2);
 }
 
 /// A page with no text gets one marker row, so it is not picked every

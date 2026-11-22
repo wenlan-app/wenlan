@@ -103,7 +103,7 @@ pub use page_basis::{
     BasisPendingEntry, BasisRef, BasisRemoveResponse, BasisVersionRequest, ConfirmBasisInput,
     LinkedChanged, PAGE_REVISION_BASIS_REFUSED,
 };
-pub use pages::{Page, PageEvidence, PAGE_REVISION_REPLACED};
+pub use pages::{Page, PageEvidence, PageSectionHit, PAGE_REVISION_REPLACED};
 pub use repair::*;
 pub use repair_current::*;
 pub use repair_plan::*;
@@ -249,6 +249,7 @@ mod tests {
     #[test]
     fn search_result_serializes() {
         let sr = SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: "1".into(),

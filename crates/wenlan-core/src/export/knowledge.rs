@@ -7500,7 +7500,7 @@ mod tests {
     }
 
     pub(super) fn test_concept() -> Page {
-        Page {
+        Page { matched_section: None,
             id: "concept_test123".to_string(),
             title: "Rust Ownership".to_string(),
             summary: Some("Memory safety without GC".to_string()),
