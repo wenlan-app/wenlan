@@ -137,6 +137,8 @@ impl RulesSetupNotice {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdoptionPlan {
+    #[serde(default)]
+    pub plan_id: String,
     /// Binds approval to the exact files seen by the preview.
     pub token: String,
     pub files: Vec<AdoptionChange>,
@@ -255,6 +257,8 @@ pub struct AdoptPreviewRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdoptRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_plan_id: Option<String>,
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<std::path::PathBuf>,

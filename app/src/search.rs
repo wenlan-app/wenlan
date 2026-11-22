@@ -4460,6 +4460,7 @@ pub async fn rules_setup_adopt(
     token: String,
 ) -> Result<RulesSyncReport, String> {
     let request = AdoptRequest {
+        confirmed_plan_id: None,
         token,
         home: Some(rules_setup_home()?),
     };

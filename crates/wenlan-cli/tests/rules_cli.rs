@@ -22,9 +22,10 @@ fn cli(base: &str) -> Command {
 
 fn personal_rules_cli(state: &Path) -> Command {
     let home = state.join("ai-tools/home");
-    let mut cmd = cli("unreachable://no-daemon");
+    let mut cmd = cli("http://127.0.0.1:1");
     cmd.env("HOME", &home)
         .env("CODEX_HOME", home.join(".codex"))
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("WENLAN_DEV_STATE_DIR", state)
         .env("WENLAN_DATA_DIR", state.join("unused-data-root"))
         .env_remove("WENLAN_RULESYNC")
@@ -424,9 +425,109 @@ fn session_rules_refused(args: &[&str]) {
     for_agent_session(personal_rules_cli(state.path()).args(args)).assert().failure().stderr(predicate::str::contains("Only you can change your personal tool setup. Run this from your own terminal outside an AI session."));
 }
 #[test]
-fn rules_adopt_refused_in_session() {
-    session_rules_refused(&["rules", "adopt"]);
+fn rules_adopt_in_session_needs_confirmed_plan() {
+    let state = tempfile::tempdir().unwrap();
+    for_agent_session(personal_rules_cli(state.path()).args(["rules", "adopt"]))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "after they say yes run `wenlan rules adopt --confirm <plan id>`",
+        ));
 }
+#[test]
+fn rules_confirmed_adoption_sends_previewed_plan_in_session() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    fs::create_dir_all(state.path().join("unused-data-root")).unwrap();
+    fs::write(
+        state.path().join("unused-data-root/person.key"),
+        "a".repeat(64),
+    )
+    .unwrap();
+    fs::write(home.join(".codex/AGENTS.md"), "Fixture rules.\n").unwrap();
+    let plan = wenlan_core::rulesync_personal::plan_adoption(&home).unwrap();
+    let (base, requests) = spawn_stub(vec![
+        ("GET /api/health", "{}".into()),
+        (
+            "POST /api/rules/setup/adopt/preview",
+            serde_json::to_string(&plan).unwrap(),
+        ),
+        ("GET /api/health", "{}".into()),
+        (
+            "POST /api/rules/setup/adopt",
+            json!({"written":[],"blocked":[],"proposals":[],"message":"done"}).to_string(),
+        ),
+    ]);
+    for_agent_session(
+        personal_rules_cli(state.path())
+            .env("WENLAN_HOST", base)
+            .env("WENLAN_RULESYNC", "1")
+            .args(["rules", "adopt", "--confirm", &plan.plan_id]),
+    )
+    .assert()
+    .success();
+    let bodies: Vec<_> = requests.try_iter().collect();
+    let body = &bodies
+        .iter()
+        .find(|(path, _)| path == "POST /api/rules/setup/adopt")
+        .unwrap()
+        .1;
+    let request: wenlan_types::rulesync::AdoptRequest = serde_json::from_str(body).unwrap();
+    assert_eq!(
+        request.confirmed_plan_id.as_deref(),
+        Some(plan.plan_id.as_str())
+    );
+    assert_eq!(request.token, plan.token);
+}
+
+#[test]
+fn rules_confirmed_adoption_refuses_changed_plan_in_session() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    let skill = home.join(".codex/skills/example/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::create_dir_all(state.path().join("unused-data-root")).unwrap();
+    fs::write(
+        state.path().join("unused-data-root/person.key"),
+        "a".repeat(64),
+    )
+    .unwrap();
+    fs::write(
+        &skill,
+        "---\nname: example\ndescription: Fixture\n---\nOld.\n",
+    )
+    .unwrap();
+    let old = wenlan_core::rulesync_personal::plan_adoption(&home).unwrap();
+    let changed = "---\nname: example\ndescription: Fixture\n---\nChanged.\n";
+    fs::write(&skill, changed).unwrap();
+    let fresh = wenlan_core::rulesync_personal::plan_adoption(&home).unwrap();
+    assert_ne!(old.plan_id, fresh.plan_id);
+    let (base, requests) = spawn_stub(vec![
+        ("GET /api/health", "{}".into()),
+        (
+            "POST /api/rules/setup/adopt/preview",
+            serde_json::to_string(&fresh).unwrap(),
+        ),
+    ]);
+    for_agent_session(
+        personal_rules_cli(state.path())
+            .env("WENLAN_HOST", base)
+            .env("WENLAN_RULESYNC", "1")
+            .args(["rules", "adopt", "--confirm", &old.plan_id]),
+    )
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains(
+        "The setup changed since that preview",
+    ));
+    assert!(requests
+        .try_iter()
+        .all(|(path, _)| path != "POST /api/rules/setup/adopt"));
+    assert_eq!(fs::read_to_string(skill).unwrap(), changed);
+    assert!(!state.path().join("unused-data-root/personal.json").exists());
+}
+
 #[test]
 fn rules_restore_refused_in_session() {
     session_rules_refused(&["rules", "restore"]);

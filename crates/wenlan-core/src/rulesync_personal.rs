@@ -1233,6 +1233,10 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
     ])
 }
 
+pub fn adoption_plan_id(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))[..12].to_owned()
+}
+
 pub fn adoption_token(adoption: &Adoption) -> Result<String> {
     Ok(format!(
         "{ADOPTION_TOKEN_VERSION}:{}",
@@ -1270,6 +1274,7 @@ pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
     if enabled() {
         let mut plan = plan_adoption(home)?;
         plan.token.clear();
+        plan.plan_id.clear();
         plan.note_codes.insert(0, Code::OfflineInventory.into());
         plan.notes.insert(0, "Offline inventory from the installed files. Run `wenlan rules adopt` with the local daemon to see the exact deliveries and additions to your setup.".into());
         Ok(plan)
@@ -1279,7 +1284,9 @@ pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
         let mut adoption = discover_targets(home, &installed, None, None)?;
         record_skipped_tools(&mut adoption, skipped);
         legacy_skill_previews(&mut adoption);
-        adoption_plan(&adoption)
+        let mut plan = adoption_plan(&adoption)?;
+        plan.plan_id.clear();
+        Ok(plan)
     }
 }
 
@@ -1470,9 +1477,11 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     // Settings notes carry no notice code; keep them after the coded notes so
     // `note_codes` stays aligned with `notes` by index.
     notes.extend(adoption.settings.notes.iter().cloned());
+    let token = adoption_token(adoption)?;
     Ok(AdoptionPlan {
         settings: None,
-        token: adoption_token(adoption)?,
+        plan_id: adoption_plan_id(&token),
+        token,
         files,
         skills,
         notes,

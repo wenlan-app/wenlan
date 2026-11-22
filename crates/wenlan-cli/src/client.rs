@@ -879,7 +879,7 @@ impl WenlanClient {
         &self,
         request: &AdoptPreviewRequest,
     ) -> Result<AdoptionPlan> {
-        self.post_json_as_person("/api/rules/setup/adopt/preview", request, None, true)
+        self.post_rules_adoption("/api/rules/setup/adopt/preview", request)
             .await
     }
 
@@ -887,7 +887,7 @@ impl WenlanClient {
         &self,
         request: &AdoptRequest,
     ) -> Result<RulesSyncReport> {
-        self.post_json_as_person("/api/rules/setup/adopt", request, None, true)
+        self.post_rules_adoption("/api/rules/setup/adopt", request)
             .await
     }
 
@@ -1162,6 +1162,30 @@ impl WenlanClient {
         let url = format!("{}{}", self.base_url, path);
         self.post_url_as_person(&url, body, timeout, require_key)
             .await
+    }
+
+    async fn post_rules_adoption<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R> {
+        let key = self.person_key().await.context("Wenlan could not read the person key. Run this from your own account with the local daemon running.")?;
+        let url = format!("{}{path}", self.base_url);
+        let request = self
+            .http
+            .post(&url)
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .header(wenlan_types::requests::PERSON_KEY_HEADER, key)
+            .json(body);
+        let response = self.send(request, &format!("POST {url} failed")).await?;
+        ensure_ok(response, &url)
+            .await?
+            .json()
+            .await
+            .with_context(|| format!("parsing {url} response"))
     }
 
     async fn post_url_as_person<B: Serialize, R: DeserializeOwned>(
