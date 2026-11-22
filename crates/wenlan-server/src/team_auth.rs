@@ -426,7 +426,12 @@ impl AuthState {
         Self::new(load_providers(&file, super::env_value))
     }
 
-    fn provider(&self, name: &str) -> Option<&Provider> {
+    /// The names of the configured providers.
+    pub(crate) fn names(&self) -> Vec<String> {
+        self.providers.iter().map(|p| p.name.clone()).collect()
+    }
+
+    pub(crate) fn provider(&self, name: &str) -> Option<&Provider> {
         self.providers.iter().find(|p| p.name == name)
     }
 
@@ -490,7 +495,7 @@ impl AuthState {
 
     /// Whether this peer may make a request now. A peer without an address
     /// (never on a real connection) shares one bucket.
-    fn allow(&self, peer: Option<IpAddr>) -> bool {
+    pub(crate) fn allow(&self, peer: Option<IpAddr>) -> bool {
         let key = limiter_key(peer.unwrap_or(IpAddr::from([0, 0, 0, 0])));
         let now = Instant::now();
         let mut buckets = self
@@ -600,25 +605,25 @@ fn client_for(
 }
 
 /// The account an id token proved.
-struct Account {
-    issuer: String,
-    subject: String,
+pub(crate) struct Account {
+    pub(crate) issuer: String,
+    pub(crate) subject: String,
     /// The address shown with the account (Google's, or GitHub's primary
     /// verified one).
-    email: Option<String>,
+    pub(crate) email: Option<String>,
     /// Every address the provider vouches for as this account's: Google's
     /// one, GitHub's every verified one.
-    verified_emails: Vec<String>,
+    pub(crate) verified_emails: Vec<String>,
     /// Only Google says when the person authenticated.
-    auth_time: Option<DateTime<Utc>>,
+    pub(crate) auth_time: Option<DateTime<Utc>>,
     /// The id token carries a `hd` (hosted domain) claim: a company account.
-    hosted_domain: bool,
+    pub(crate) hosted_domain: bool,
 }
 
 /// How far to believe a Google account owns its email now: a Gmail address
 /// or an account of a company domain (`hd`) does; Google's "verified" on
 /// any other address does not show the person still owns the mailbox.
-fn google_email_trust(email: &str, hosted_domain: bool) -> team::EmailTrust {
+pub(crate) fn google_email_trust(email: &str, hosted_domain: bool) -> team::EmailTrust {
     let lower = email.trim().to_ascii_lowercase();
     let gmail = lower.ends_with("@gmail.com") || lower.ends_with("@googlemail.com");
     if hosted_domain || gmail {
@@ -652,7 +657,7 @@ fn has_hosted_domain(id_token: &str) -> bool {
 
 /// Why a sign-in did not complete. A label is logged, never a value.
 #[derive(Debug)]
-enum Failure {
+pub(crate) enum Failure {
     /// Sign-in is off or the provider is unknown.
     Off,
     /// The request, or the provider's answer, was not acceptable.
@@ -679,7 +684,7 @@ fn login_cookie(id: &str) -> String {
     )
 }
 
-fn clear_login_cookie() -> String {
+pub(crate) fn clear_login_cookie() -> String {
     format!("{LOGIN_COOKIE}=; {}; Max-Age=0", cookie_attributes())
 }
 
@@ -864,10 +869,23 @@ async fn begin(
     headers: &HeaderMap,
 ) -> Result<(String, String), Failure> {
     let origin = site(state).await.ok_or(Failure::Off)?;
-    let provider = state.auth.provider(provider).ok_or(Failure::Off)?;
+    authorize(&state.auth, &origin, provider, purpose, headers).await
+}
+
+/// [`begin`] for any listener that signs people in at `origin` (the team
+/// listener, or the personal cloud's entrance).
+pub(crate) async fn authorize(
+    auth: &AuthState,
+    origin: &str,
+    provider: &str,
+    purpose: Purpose,
+    headers: &HeaderMap,
+) -> Result<(String, String), Failure> {
+    let origin = origin.to_string();
+    let provider = auth.provider(provider).ok_or(Failure::Off)?;
     let (url, csrf_state, nonce, verifier) = match &provider.kind {
         Kind::Oidc => {
-            let meta = state.auth.metadata(provider, false).await?;
+            let meta = auth.metadata(provider, false).await?;
             let client = client_for(&meta, provider, &origin)?;
             let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
             let mut request = client
@@ -914,7 +932,7 @@ async fn begin(
         }
     };
     let replacing = team_session::cookie_value(headers, LOGIN_COOKIE);
-    let id = state.auth.put(
+    let id = auth.put(
         Transaction {
             state: csrf_state,
             nonce,
@@ -1092,43 +1110,23 @@ async fn finish(
     headers: &HeaderMap,
 ) -> Result<crate::member_view::MemberResponse, Failure> {
     let origin = site(state).await.ok_or(Failure::Off)?;
-    let provider = state.auth.provider(provider_name).ok_or(Failure::Off)?;
-
-    // The browser's login cookie names the transaction; it is used up here
-    // whatever follows.
-    let login = team_session::cookie_value(headers, LOGIN_COOKIE)
-        .ok_or(Failure::Refused("no login cookie"))?;
-    let tx = state
-        .auth
-        .take(&login)
-        .ok_or(Failure::Refused("unknown, used or expired login"))?;
-    if tx.provider != provider.name {
-        return Err(Failure::Refused("login is for another provider"));
-    }
-    let returned_state = query
-        .get("state")
-        .ok_or(Failure::Refused("no state returned"))?;
-    if !same(returned_state, &tx.state) {
-        return Err(Failure::Refused("state does not match"));
-    }
-    if query.contains_key("error") {
-        return Err(Failure::Refused("the provider refused"));
-    }
-    let code = query
-        .get("code")
-        .filter(|code| !code.is_empty())
-        .ok_or(Failure::Refused("no code returned"))?;
-
-    let Account {
-        issuer,
-        subject,
-        email,
-        verified_emails,
-        auth_time,
-        hosted_domain,
-    } = verified_account(state, provider, &origin, &tx, code).await?;
-
-    let member_id = match &tx.purpose {
+    let Proven {
+        purpose,
+        created_wall,
+        provider,
+        account:
+            Account {
+                issuer,
+                subject,
+                email,
+                verified_emails,
+                auth_time,
+                hosted_domain,
+            },
+    } = prove(&state.auth, &origin, provider_name, query, headers).await?;
+    let provider = &provider;
+    let tx = (purpose, created_wall);
+    let member_id = match &tx.0 {
         Purpose::SignIn => {
             let (i, s) = (issuer.clone(), subject.clone());
             let path = state.team_path.clone();
@@ -1222,7 +1220,7 @@ async fn finish(
                 let at = auth_time.ok_or(Failure::Refused("no auth_time"))?;
                 let now = Utc::now();
                 let window = chrono::Duration::from_std(REAUTH_WINDOW).unwrap_or_default();
-                if at > now + CLOCK_SKEW || now - at > window || at < tx.created_wall - CLOCK_SKEW {
+                if at > now + CLOCK_SKEW || now - at > window || at < tx.1 - CLOCK_SKEW {
                     return Err(Failure::Refused("not a fresh authentication"));
                 }
             }
@@ -1244,27 +1242,78 @@ async fn finish(
     ))
 }
 
+/// What a finished login proved: what it was for, when it started, and the
+/// account the provider vouched for.
+pub(crate) struct Proven {
+    pub(crate) purpose: Purpose,
+    pub(crate) created_wall: DateTime<Utc>,
+    pub(crate) provider: Provider,
+    pub(crate) account: Account,
+}
+
+/// The checks every callback makes, on any listener that signs people in at
+/// `origin`: the browser's login cookie names a live transaction (used up
+/// here whatever follows), for this provider, with the `state` it was given;
+/// then the code is traded for a verified account.
+pub(crate) async fn prove(
+    auth: &AuthState,
+    origin: &str,
+    provider_name: &str,
+    query: &HashMap<String, String>,
+    headers: &HeaderMap,
+) -> Result<Proven, Failure> {
+    let provider = auth.provider(provider_name).ok_or(Failure::Off)?;
+    let login = team_session::cookie_value(headers, LOGIN_COOKIE)
+        .ok_or(Failure::Refused("no login cookie"))?;
+    let tx = auth
+        .take(&login)
+        .ok_or(Failure::Refused("unknown, used or expired login"))?;
+    if tx.provider != provider.name {
+        return Err(Failure::Refused("login is for another provider"));
+    }
+    let returned_state = query
+        .get("state")
+        .ok_or(Failure::Refused("no state returned"))?;
+    if !same(returned_state, &tx.state) {
+        return Err(Failure::Refused("state does not match"));
+    }
+    if query.contains_key("error") {
+        return Err(Failure::Refused("the provider refused"));
+    }
+    let code = query
+        .get("code")
+        .filter(|code| !code.is_empty())
+        .ok_or(Failure::Refused("no code returned"))?;
+    let account = verified_account(auth, provider, origin, &tx, code).await?;
+    Ok(Proven {
+        purpose: tx.purpose,
+        created_wall: tx.created_wall,
+        provider: provider.clone(),
+        account,
+    })
+}
+
 /// Exchanges the code and checks the id token: signature, issuer, audience,
 /// expiry and nonce, then a verified email. Returns the account
 /// `(issuer, subject)`, its email and `auth_time`.
 async fn verified_account(
-    state: &TeamState,
+    auth: &AuthState,
     provider: &Provider,
     origin: &str,
     tx: &Transaction,
     code: &str,
 ) -> Result<Account, Failure> {
-    let http = state.auth.http()?;
+    let http = auth.http()?;
     if let Kind::GitHub(urls) = &provider.kind {
         return github_account(http, urls, provider, origin, tx, code).await;
     }
-    let meta = state.auth.metadata(provider, false).await?;
+    let meta = auth.metadata(provider, false).await?;
     match exchange(http, &meta, provider, origin, tx, code).await {
         Err(Failure::Refused(reason)) if reason == "id token not accepted" => {
             // The provider may have rotated its keys: read them again
             // (at most every few minutes) and try this once more is not
             // possible, the code is spent; the next sign-in uses them.
-            let _ = state.auth.metadata(provider, true).await;
+            let _ = auth.metadata(provider, true).await;
             Err(Failure::Refused(reason))
         }
         other => other,
