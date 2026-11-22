@@ -320,6 +320,45 @@ fn startup_repair_claim_disables_optional_runtime_workers() {
 }
 
 #[test]
+fn a_personal_cloud_wenlan_runs_no_background_work() {
+    let account = |value: &'static str| {
+        move |name: &str| (name == wenlan_server::cloud_pass::ACCOUNT_ENV).then(|| value.into())
+    };
+    assert!(cloud_tenant(account("0123456789abcdef0123456789abcdef")));
+    assert!(!cloud_tenant(account("")));
+    assert!(!cloud_tenant(|_: &str| None));
+}
+
+#[test]
+fn the_personal_cloud_commands_parse() {
+    let cli = Cli::try_parse_from([
+        "wenlan-server",
+        "gateway",
+        "https://cloud.example.com",
+        "--root",
+        "/srv/wenlan",
+    ])
+    .unwrap();
+    assert!(matches!(
+        cli.command,
+        Some(Command::Gateway {
+            max_running: 20,
+            idle_minutes: 15,
+            ..
+        })
+    ));
+    let cli = Cli::try_parse_from([
+        "wenlan-server",
+        "cloud-add-account",
+        "--root",
+        "/srv/wenlan",
+        "a@example.com",
+    ])
+    .unwrap();
+    assert!(matches!(cli.command, Some(Command::CloudAddAccount { .. })));
+}
+
+#[test]
 fn startup_model_working_set_uses_the_registry_ram_requirement() {
     let model = wenlan_core::on_device_models::get_model("qwen3-4b").unwrap();
     assert_eq!(

@@ -29,7 +29,7 @@ tracing-subscriber = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 service-manager = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
@@ -47,6 +47,8 @@ tempfile = { workspace = true }
 sha2 = "0.10"
 hex = { workspace = true }
 getrandom = "0.3"
+# Signs the personal cloud entrance's pass (`cloud_pass`).
+hmac = { workspace = true }
 # Reads the `hd` claim of an id token whose signature was already checked.
 base64 = "0.22"
 file-rotate = "0.8"
