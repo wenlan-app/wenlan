@@ -104,6 +104,7 @@ pub use activity_counts::{
     StepCount,
 };
 mod citation_sources;
+mod citing_pages;
 pub mod conversations;
 pub mod intake;
 mod linked_pages;

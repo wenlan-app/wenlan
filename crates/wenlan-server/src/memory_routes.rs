@@ -1516,6 +1516,10 @@ async fn handle_search_memory_inner(
                     )
                     .await
                     .unwrap_or_default();
+                // UX-FIND-7: the pages built from the top memory hits come
+                // along, ranked after real page hits and through the same
+                // gate below. Any error means no extra pages.
+                let raw = add_pages_citing_top_memories(&db, &results, raw).await;
                 let ids: std::collections::HashSet<String> =
                     results.iter().map(|r| r.source_id.clone()).collect();
                 let visible = db
@@ -1633,6 +1637,40 @@ async fn handle_search_memory_inner(
         took_ms,
         supplemental_pages,
     }))
+}
+
+/// How many of the best memory hits bring the pages that cite them (UX-FIND-7).
+const CITING_PAGE_MEMORY_HITS: usize = 3;
+
+/// `raw` plus the pages citing the top memory rows of `results`, each at
+/// [`PAGE_RELEVANCE_FLOOR`](wenlan_core::pages::PAGE_RELEVANCE_FLOOR) so it is
+/// eligible but ranks after a real search hit. A page already in `raw` is not
+/// added again. The caller still runs the result through the Space, tier and
+/// grant gates; a lookup error adds nothing.
+async fn add_pages_citing_top_memories(
+    db: &wenlan_core::db::MemoryDB,
+    results: &[wenlan_types::SearchResult],
+    mut raw: Vec<wenlan_types::Page>,
+) -> Vec<wenlan_types::Page> {
+    let memory_ids: Vec<String> = results
+        .iter()
+        .filter(|row| row.source == "memory")
+        .take(CITING_PAGE_MEMORY_HITS)
+        .map(|row| row.source_id.clone())
+        .collect();
+    let Ok(citing) = db
+        .pages_citing_memories(&memory_ids, wenlan_core::pages::PAGE_CANDIDATE_POOL)
+        .await
+    else {
+        return raw;
+    };
+    for mut page in citing {
+        if raw.iter().all(|existing| existing.id != page.id) {
+            page.relevance_score = wenlan_core::pages::PAGE_RELEVANCE_FLOOR;
+            raw.push(page);
+        }
+    }
+    raw
 }
 
 /// The caller's trust level from its `x-agent-name` header, "unknown" when it
@@ -5380,6 +5418,60 @@ mod search_quick_path_page_tests {
                 .map(|p| p.source_id.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn ux_find_7_a_memory_hit_brings_the_page_built_from_it() {
+        let (state, _tmp, _page_work_id, page_cross_id) = build_state_with_pages().await;
+        let db = state.read().await.db.clone().unwrap();
+        // A page that says nothing of the query, built from a memory that does.
+        let citing_id = seed_confirmed_distilled_page(
+            &db,
+            "Garden rota",
+            "Water the beds on Tuesdays and Fridays.",
+            "m_citer",
+            "decision",
+            "work",
+        )
+        .await;
+        db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+            source: "memory".to_string(),
+            source_id: "m_citer".to_string(),
+            title: "memory-m_citer".to_string(),
+            content: "zorblax is the nickname of the hose".to_string(),
+            memory_type: Some("decision".to_string()),
+            space: Some("work".to_string()),
+            source_agent: Some("trusted-agent".to_string()),
+            confidence: Some(0.9),
+            confirmed: Some(true),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        let app = crate::router::build_router(state.clone());
+
+        let resp = search(app, Some("trusted-agent")).await;
+        assert!(
+            resp.results.iter().any(|r| r.source_id == "m_citer"),
+            "the memory is a hit"
+        );
+        let pages = resp.supplemental_pages.expect("pages surface");
+        assert!(
+            pages.iter().any(|p| p.source_id == citing_id),
+            "the page built from the hit comes along: {:?}",
+            pages
+                .iter()
+                .map(|p| p.source_id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(!pages.iter().any(|p| p.source_id == page_cross_id));
+
+        // The same gate applies: a caller that may not read pages gets none.
+        let app = crate::router::build_router(state);
+        let resp = search(app, None).await;
+        assert!(resp
+            .supplemental_pages
+            .is_none_or(|pages| pages.iter().all(|p| p.source_id != citing_id)));
     }
 
     #[tokio::test]

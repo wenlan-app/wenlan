@@ -1262,6 +1262,7 @@ carrying the authority of agreement.
 | `core/db/chat_turns.rs::chat_turn_report` | `pub` | no | no | — | — |
 | `core/db/citation_provenance.rs::page_on` | `private` | no | no | — | — |
 | `core/db/citation_sources.rs::read_page_on` | `private` | no | no | — | — |
+| `core/db/citing_pages.rs::pages_citing_memories` | `pub` | no | **yes** | `server/memory_routes.rs::add_pages_citing_top_memories` | — |
 | `core/db/claim_derivation.rs::derive_leased_page_claims` | `pub(super)` | no | no | — | — |
 | `core/db/claim_derivation.rs::evaluate_support_on` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::load_linked_memory_chunks` | `private` | no | no | — | — |
@@ -1516,6 +1517,7 @@ carrying the authority of agreement.
 | `server/main/runtime.rs::refresh_page_chunks_in_background` | `private` | no | no | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/page_chunks.rs::refresh_page_chunks_batch` |
 | `server/main/startup.rs::prepare_startup_state` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/page_summary_backfill.rs::backfill_page_summaries` |
 | `server/memory_revision_routes.rs::handle_list_pending_revisions` | `pub` | no | no | — | `core/db.rs::list_pending_revisions_scoped` |
+| `server/memory_routes.rs::add_pages_citing_top_memories` | `private` | no | no | `server/memory_routes.rs::handle_search_memory_inner` | `core/db/citing_pages.rs::pages_citing_memories` |
 | `server/memory_routes.rs::plan_capture_entity` | `private` | no | no | `server/memory_routes.rs::handle_store_memory_inner` | `core/db.rs::entity_name_candidates` |
 | `server/page_look_routes.rs::handle_get_page_look_data` | `pub` | no | no | — | `core/db.rs::list_pages_by_space`, `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `server/page_map_routes.rs::compute_ref_state` | `private` | no | no | `server/page_map_routes.rs::wire_node` | `core/db.rs::get_entity_name_type` |
@@ -1718,7 +1720,7 @@ carrying the authority of agreement.
 | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_knowledge_graph_scoped`, `core/db/scoped_entities.rs::get_page_graph_scoped` |
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |
 | `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages`, `server/main/runtime.rs::load_embedding_model_in_background`, `server/main/runtime.rs::refresh_page_chunks_in_background` |
-| `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory`, `core/db/linked_pages.rs::linked_pages_for_hits` |
+| `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory`, `core/db/linked_pages.rs::linked_pages_for_hits`, `server/memory_routes.rs::add_pages_citing_top_memories` |
 | `server/memory_routes.rs::handle_store_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_store_memory` | `server/memory_routes.rs::plan_capture_entity` |
 | `server/original_routes.rs::handle_get_page_original` | `pub` | no | no | — | `core/chat_import/originals.rs::page_original` |
 | `server/page_basis_routes.rs::handle_basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |
