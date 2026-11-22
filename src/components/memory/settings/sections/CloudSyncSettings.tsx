@@ -11,6 +11,8 @@ import { relativeMs } from "../../page/format";
 import { SHARES_KEY } from "../../sharing/sharing";
 import { SettingsGroup } from "../SettingsView";
 import { Button, SettingRow } from "../primitives";
+import "../../sharing/sharing.css";
+import "./librarySync.css";
 
 export const CLOUD_KEY = ["cloud-status"] as const;
 
