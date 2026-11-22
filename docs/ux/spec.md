@@ -1431,7 +1431,7 @@ and wait for evidence that people need them.
   shows the preview and runs `wenlan rules adopt --confirm <plan id>` only
   after a yes.
   原文（2026-11-22）：「第一次用戶體驗就是，只要設置跑一次，就全部都弄好，看到一個同步好的簡短報告。」
-  Tests `setup_turns_sync_on_adopts_and_reports_the_counts`, `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`, `setup_leaves_a_blocked_plan_alone_and_still_succeeds`, `rules_switch_persists_and_environment_overrides_it` and `rules_switch_survives_a_service_reinstall`.
+  Tests `ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts`, `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`, `setup_leaves_a_blocked_plan_alone_and_still_succeeds`, `rules_switch_persists_and_environment_overrides_it` and `rules_switch_survives_a_service_reinstall`.
 
 ## Adding to Wenlan
 

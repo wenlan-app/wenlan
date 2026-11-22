@@ -135,7 +135,7 @@ fn requested(requests: &std::sync::mpsc::Receiver<(String, String)>) -> Vec<Stri
 
 #[cfg(unix)]
 #[test]
-fn setup_turns_sync_on_adopts_and_reports_the_counts() {
+fn ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts() {
     let state = tempfile::tempdir().unwrap();
     let plan = setup_home(state.path());
     let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
