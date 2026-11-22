@@ -3924,6 +3924,34 @@ pub async fn stop_sharing_library(
     client.delete_path("/api/library/shared").await
 }
 
+/// Whether this computer is connected to the person's Wenlan cloud.
+#[tauri::command]
+pub async fn cloud_status(
+    state: tauri::State<'_, State>,
+) -> Result<shared_space::CloudStatus, String> {
+    let client = daemon_client(&state).await;
+    client.get_json("/api/cloud").await
+}
+
+/// Starts connecting this computer: the short code to allow in the browser.
+#[tauri::command]
+pub async fn connect_cloud(
+    state: tauri::State<'_, State>,
+) -> Result<shared_space::CloudConnectStart, String> {
+    let client = daemon_client(&state).await;
+    client.post_empty("/api/cloud/connect").await
+}
+
+/// Disconnects this computer (or stops connecting); pages stay here and the
+/// cloud keeps its copy.
+#[tauri::command]
+pub async fn disconnect_cloud(
+    state: tauri::State<'_, State>,
+) -> Result<shared_space::CloudStatus, String> {
+    let client = daemon_client(&state).await;
+    client.delete_path("/api/cloud").await
+}
+
 /// Makes one of the library's computers the main one.
 #[tauri::command]
 pub async fn set_library_main_device(

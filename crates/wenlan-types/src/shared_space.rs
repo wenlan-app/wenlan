@@ -231,3 +231,42 @@ pub struct SharedSyncRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_back: Option<String>,
 }
+
+/// `POST /api/cloud/connect`: the short code the person types in the
+/// browser to let this computer into their Wenlan cloud.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudConnectStart {
+    /// `ABCD-EFGH`.
+    pub user_code: String,
+    /// The page to open, where the code is typed.
+    pub verification_uri: String,
+    /// Seconds until the code stops working.
+    pub expires_in: u64,
+}
+
+/// Where this computer is with its Wenlan cloud.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudConnection {
+    Off,
+    /// Waiting for the person to allow it in the browser.
+    Waiting,
+    Connected,
+}
+
+/// `GET /api/cloud`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudStatus {
+    pub state: CloudConnection,
+    /// The cloud's address.
+    pub url: String,
+    /// While waiting: the code and the page it is typed at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<CloudConnectStart>,
+    /// When the library and the cloud were last the same (RFC 3339).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_ok_at: Option<String>,
+    /// Why the last try did not finish, or why connecting stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}

@@ -640,6 +640,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.
     "/api/spaces/{name}/wiki/github",
+    // Connecting this computer to the person's Wenlan cloud: a short code
+    // shown once, whether it is connected, when it last synced. Never a key.
+    "/api/cloud", "/api/cloud/connect",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

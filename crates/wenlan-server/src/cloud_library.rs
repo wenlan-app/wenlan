@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wenlan_core::shared_space::version;
+use wenlan_core::shared_space::{cloud, version};
 
 /// The folder, beside `team.json`, that holds the library copy.
 pub const LIBRARY_DIR: &str = "cloud-library";
@@ -20,87 +20,16 @@ pub const SPACE_FILE: &str = "space.json";
 /// The largest file taken: the largest page version a team server takes.
 pub const MAX_FILE_BYTES: usize = wenlan_core::shared_space::remote::MAX_VERSION_BYTES;
 
-/// The kinds of version files a library holds.
-fn kind_allowed(kind: &str) -> bool {
-    version::KIND_DIRS.contains(&kind) || kind == version::MEMORIES_DIR
-}
-
 /// Where `path` (as listed) lives under `root`, when it is a path a library
 /// holds: `space.json`, or `members/<member>/<kind>/<id>/<sha>.wlv`. None for
 /// anything else, so no path can name a file outside the copy.
 pub fn local_path(root: &Path, path: &str) -> Option<PathBuf> {
-    if path == SPACE_FILE {
-        return Some(root.join(SPACE_FILE));
-    }
-    match path.split('/').collect::<Vec<_>>().as_slice() {
-        [members, member, kind, id, name]
-            if *members == version::MEMBERS_DIR
-                && kind_allowed(kind)
-                && version::is_safe_id(member)
-                && version::is_safe_id(id)
-                && version::version_sha(name).is_some() =>
-        {
-            Some(
-                root.join(members)
-                    .join(member)
-                    .join(kind)
-                    .join(id)
-                    .join(name),
-            )
-        }
-        _ => None,
-    }
+    cloud::local_path(root, path)
 }
 
 /// Every file of the copy, as paths [`local_path`] takes, sorted.
 pub fn list(root: &Path) -> std::io::Result<Vec<String>> {
-    let mut out = Vec::new();
-    if root.join(SPACE_FILE).is_file() {
-        out.push(SPACE_FILE.to_string());
-    }
-    let members = root.join(version::MEMBERS_DIR);
-    let entries = match std::fs::read_dir(&members) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-        Err(error) => return Err(error),
-    };
-    for member in entries.flatten() {
-        let Ok(member_name) = member.file_name().into_string() else {
-            continue;
-        };
-        for kind in std::fs::read_dir(member.path())
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let Ok(kind_name) = kind.file_name().into_string() else {
-                continue;
-            };
-            for id in std::fs::read_dir(kind.path())
-                .into_iter()
-                .flatten()
-                .flatten()
-            {
-                let Ok(id_name) = id.file_name().into_string() else {
-                    continue;
-                };
-                for file in std::fs::read_dir(id.path()).into_iter().flatten().flatten() {
-                    let Ok(file_name) = file.file_name().into_string() else {
-                        continue;
-                    };
-                    let path = format!(
-                        "{}/{member_name}/{kind_name}/{id_name}/{file_name}",
-                        version::MEMBERS_DIR
-                    );
-                    if local_path(root, &path).is_some() {
-                        out.push(path);
-                    }
-                }
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
+    cloud::list_files(root)
 }
 
 /// Why a file was not kept.

@@ -110,6 +110,10 @@ struct Env {
 }
 
 async fn env_with(busy: bool, emails: Value) -> Env {
+    env_at(busy, emails, serve_wenlan().await).await
+}
+
+async fn env_at(busy: bool, emails: Value, endpoint: Endpoint) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let urls = serve_github(emails).await;
     let http = openidconnect::reqwest::ClientBuilder::new()
@@ -122,7 +126,7 @@ async fn env_with(busy: bool, emails: Value) -> Env {
     let key = PassKey::random().unwrap();
     let gateway = Arc::new(Gateway::new(
         Arc::new(FakeLocator {
-            endpoint: serve_wenlan().await,
+            endpoint,
             busy,
             asked: Default::default(),
         }),
@@ -625,4 +629,206 @@ async fn signing_in_again_needs_this_persons_own_session_and_account() {
         .gateway
         .sessions
         .fresh(&fresh, team_session::REAUTH_WINDOW));
+}
+
+/// A person's Wenlan that keeps only the library copy, as the real one
+/// does (`cloud_library`), for a computer's pass alone.
+async fn serve_library(root: std::path::PathBuf, key: PassKey) -> Endpoint {
+    use axum::routing::get;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let computer = move |headers: &HeaderMap| {
+        headers
+            .get(PASS_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|pass| key.verify(pass))
+            .is_some_and(|(_, via)| via == crate::cloud_pass::Via::Computer)
+    };
+    let (list_root, file_root, put_root) = (root.clone(), root.clone(), root);
+    let (c1, c2, c3) = (computer.clone(), computer.clone(), computer);
+    let app = axum::Router::new()
+        .route(
+            "/team/v1/library/files",
+            get(move |headers: HeaderMap| async move {
+                if !c1(&headers) {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
+                axum::Json(json!({"files": crate::cloud_library::list(&list_root).unwrap()}))
+                    .into_response()
+            }),
+        )
+        .route(
+            "/team/v1/library/file",
+            get(
+                move |headers: HeaderMap, Query(q): Query<HashMap<String, String>>| async move {
+                    if !c2(&headers) {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    match crate::cloud_library::local_path(&file_root, &q["path"])
+                        .and_then(|p| std::fs::read(p).ok())
+                    {
+                        Some(bytes) => bytes.into_response(),
+                        None => StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            )
+            .put(
+                move |headers: HeaderMap,
+                      Query(q): Query<HashMap<String, String>>,
+                      body: axum::body::Bytes| async move {
+                    if !c3(&headers) {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    match crate::cloud_library::put(&put_root, &q["path"], &body).unwrap() {
+                        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                        Err(_) => StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+                    }
+                },
+            ),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    Endpoint { addr }
+}
+
+#[tokio::test]
+async fn two_computers_keep_one_library_through_the_cloud() {
+    use wenlan_core::shared_space::{cloud, version};
+    let store = tempfile::tempdir().unwrap();
+    let emails = json!([{"email": "alice@example.com", "verified": true, "primary": true}]);
+    // Alice's Wenlan needs her account's key, so it starts once she has one.
+    let mut env = env_at(
+        false,
+        emails,
+        Endpoint {
+            addr: "127.0.0.1:9".parse().unwrap(),
+        },
+    )
+    .await;
+    let alice = add_account(env.dir.path(), "alice@example.com").unwrap();
+    let endpoint = serve_library(store.path().to_path_buf(), env.key.for_account(&alice)).await;
+    // The same entrance, now finding Alice's Wenlan.
+    env.gateway = Arc::new(Gateway::new(
+        Arc::new(FakeLocator {
+            endpoint,
+            busy: false,
+            asked: Default::default(),
+        }),
+        AuthState::new(vec![Provider::github_with_urls(
+            "id",
+            "secret",
+            serve_github(
+                json!([{"email": "alice@example.com", "verified": true, "primary": true}]),
+            )
+            .await,
+        )])
+        .with_http(
+            openidconnect::reqwest::ClientBuilder::new()
+                .no_proxy()
+                .redirect(openidconnect::reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        ),
+        GatewaySettings {
+            origin: ORIGIN.into(),
+            root: env.dir.path().to_path_buf(),
+        },
+        env.key.clone(),
+    ));
+    let session = sign_in(&env).await.unwrap();
+    let cookie = format!("__Host-wenlan-session={session}");
+    let (key_a, id_a) = connect_computer(&env, &cookie).await;
+    let (key_b, id_b) = connect_computer(&env, &cookie).await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = router(env.gateway.clone());
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let link = |key: &str, id: &str| cloud::CloudLink {
+        url: url.clone(),
+        key: key.to_string(),
+        key_id: id.to_string(),
+    };
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let space = |devices: &[&str]| {
+        serde_json::to_vec(&json!({
+            "format": 1, "space": "Library", "library": true,
+            "members": [{"id": "m1", "name": "Alice"}],
+            "devices": devices.iter().map(|d| json!({"id": d, "name": d})).collect::<Vec<_>>(),
+            "main_device": devices[0],
+        }))
+        .unwrap()
+    };
+    let page = b"page from A".to_vec();
+    let memory = b"memory from B".to_vec();
+    let page_path = format!("members/m1/pages/p1/{}.wlv", version::sha256_hex(&page));
+    let memory_path = format!(
+        "members/m1/memories/x1/{}.wlv",
+        version::sha256_hex(&memory)
+    );
+    let write = |root: &std::path::Path, path: &str, bytes: &[u8]| {
+        let local = cloud::local_path(root, path).unwrap();
+        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+        std::fs::write(local, bytes).unwrap();
+    };
+    write(a.path(), &page_path, &page);
+    write(a.path(), "space.json", &space(&["A"]));
+    write(b.path(), &memory_path, &memory);
+
+    // A first: the cloud takes A's page and space.json.
+    let (counts, sha_a) = cloud::mirror(&link(&key_a, &id_a), a.path(), "")
+        .await
+        .unwrap();
+    assert_eq!(counts.sent, 2);
+    // B: takes A's page and space.json, sends its memory.
+    let (counts, _) = cloud::mirror(&link(&key_b, &id_b), b.path(), "")
+        .await
+        .unwrap();
+    assert_eq!((counts.got, counts.sent), (2, 1));
+    assert_eq!(
+        std::fs::read(cloud::local_path(b.path(), &page_path).unwrap()).unwrap(),
+        page
+    );
+    // B adds itself; A, unchanged since, takes that and B's memory.
+    write(b.path(), "space.json", &space(&["A", "B"]));
+    let last_b = version::sha256_hex(&space(&["A"]));
+    cloud::mirror(&link(&key_b, &id_b), b.path(), &last_b)
+        .await
+        .unwrap();
+    let (counts, _) = cloud::mirror(&link(&key_a, &id_a), a.path(), &sha_a.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(counts.got, 2);
+    assert_eq!(
+        std::fs::read(a.path().join("space.json")).unwrap(),
+        space(&["A", "B"])
+    );
+    assert_eq!(
+        std::fs::read(cloud::local_path(a.path(), &memory_path).unwrap()).unwrap(),
+        memory
+    );
+    // The cloud holds the library, nothing else.
+    assert_eq!(crate::cloud_library::list(store.path()).unwrap().len(), 3);
+
+    // Removed, B is refused from its next round.
+    let remove = axum::http::Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/auth/devices/{id_b}"))
+        .header("cookie", &cookie)
+        .header("origin", ORIGIN)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&env, remove).await.status(), StatusCode::OK);
+    let refused = cloud::mirror(&link(&key_b, &id_b), b.path(), "")
+        .await
+        .unwrap_err();
+    assert!(refused.contains("connect it again"), "{refused}");
 }

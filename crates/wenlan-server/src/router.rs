@@ -91,6 +91,7 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = indexed_files_routes::register(router);
     let router = entity_graph_routes::register_crud(router);
     let router = spaces_routes::register_extended(router);
+    let router = crate::cloud_connect::register(router);
     let router = activity_tag_routes::register(router);
     let router = memory_detail_routes::register(router);
     let router = decisions_routes::register(router);
