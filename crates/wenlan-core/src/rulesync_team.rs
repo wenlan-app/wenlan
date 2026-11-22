@@ -391,7 +391,7 @@ fn open_lock(path: &Path) -> Result<File, WenlanError> {
         .open(path)?)
 }
 
-fn authority_lock(team_path: &Path) -> Result<File, WenlanError> {
+pub(crate) fn authority_lock(team_path: &Path) -> Result<File, WenlanError> {
     let file = open_lock(&team_path.with_extension("lock"))?;
     fs2::FileExt::lock_shared(&file)?;
     Ok(file)
@@ -499,9 +499,30 @@ pub fn hosted_file_list(
     if let Some(rules) = rules.as_ref().filter(|rules| !files.contains(&rules.file)) {
         files.push(rules.file.clone());
     }
-    let archived: HashSet<&str> = files
+    // Suppress a deletion ID only when its exact event-bound archive is in the
+    // scoped file list. `list_folder_files` has already verified its bytes,
+    // lineage, stay and authorization receipt.
+    let archived: HashSet<&str> = pages
+        .deletions
         .iter()
-        .filter_map(|file| file.split('/').nth(3))
+        .filter_map(|(id, deletion)| {
+            let archive = deletion.archive_hash.as_deref()?;
+            files
+                .iter()
+                .any(|file| {
+                    let mut parts = file.split('/');
+                    parts.next() == Some(crate::shared_space::version::MEMBERS_DIR)
+                        && parts.next().is_some()
+                        && parts.next() == Some(crate::shared_space::version::PAGES_DIR)
+                        && parts.next() == Some(id.as_str())
+                        && parts
+                            .next()
+                            .and_then(crate::shared_space::version::version_sha)
+                            == Some(archive)
+                        && parts.next().is_none()
+                })
+                .then_some(id.as_str())
+        })
         .collect();
     let mut deleted_pages: Vec<_> = pages
         .deleted
@@ -514,6 +535,7 @@ pub fn hosted_file_list(
         access,
         files,
         deleted_pages,
+        refused_changes: Vec::new(),
         rules,
     })
 }

@@ -141,7 +141,10 @@ and wait for evidence that people need them.
   `import_pending_claims_before_posting_and_leaves_a_replacement_pending`, and
   `import_pending_refuses_symlink_files_and_archive_directories`.
 - **UX-HAND-7** `shipped` A handoff changes the Brief only. It does not write
-  a memory, any AI tool's memory files, or `AGENTS.md`.
+  a memory, a page, any AI tool's memory files, or `AGENTS.md`. Pages stay
+  current another way: a memory change makes the pages that cite it follow,
+  and at night Wenlan checks the pages a session read through recall and
+  changes only a sentence that a new decision contradicts.
   Test `ux_hand_7_handoff_writes_no_memory_rows`; the project-file test bounds
   the offline write to the one handoff file.
 - **UX-HAND-8** `planned` In a team Space, only a writer may hand off. Private
@@ -325,7 +328,21 @@ and wait for evidence that people need them.
   saved line out, and never changes or removes a sentence that was already
   there. It is not the AI nodding for you either: it lands only where you
   asked in so many words, and the Lock still holds.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。「如果這體驗比較好，那就這樣改」（2026-11-21，回覆：來源變了時，你改過的頁不再整頁等你收，改成一句一句：AI 寫的句子直接改，你寫的只建議；鎖住的才整頁出草稿。同日：依賴其他頁的頁，沒鎖就讓 AI 判斷直接改）。存成規則的補充（2026-11-17）：選擇卡 08:29Z，見 UX-SKILL-14；這段補充的英文字句待 Qi-Xuan 確認。
+  A page an AI tool only read in a conversation, without citing anything that
+  conversation wrote, is a candidate and nothing more (the tool reads a page
+  with `read_page`, and a recall returns pages too): the night changes one of
+  its sentences only when a new point from that conversation, in the same
+  Space, clearly contradicts that sentence, and changes nothing else on the
+  page. An AI-written sentence on an unlocked page changes in place, as in the
+  automatic update; a sentence you wrote, and any sentence on a locked page,
+  only gets a proposal that names the point it came from. Tests:
+  `a_night_changes_the_ai_sentence_a_new_point_contradicts_on_a_note_a_recall_returned`,
+  `a_night_only_proposes_when_the_contradicted_sentence_is_the_persons`,
+  `a_night_only_proposes_on_a_locked_note_even_for_the_ais_sentence`,
+  `a_read_note_with_no_contradicted_sentence_is_not_written`,
+  `a_note_read_in_another_space_is_never_a_candidate`,
+  `a_recall_records_the_notes_it_returned_but_the_card_does_not_list_them`.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。「寧願這樣，畢竟都已經特別問我且授權了」（2026-11-09，回覆：你授權時 AI 直接改、可還原，還是變成卡片讓你按一下）。「把 wenlan 本身修復掉」（2026-11-10，回覆：你要求改一句話，卻因為那頁有 16 筆來源讀不到而整頁不讓改）。「想要自動改，現在不是可以讓人鎖住嗎？」（2026-11-17，回覆：跟著另一頁的頁，那頁改了是 AI 直接改、留舊版可還原，還是等你收；鎖住的頁照樣先問你）。「如果這體驗比較好，那就這樣改」（2026-11-21，回覆：來源變了時，你改過的頁不再整頁等你收，改成一句一句：AI 寫的句子直接改，你寫的只建議；鎖住的才整頁出草稿。同日：依賴其他頁的頁，沒鎖就讓 AI 判斷直接改）。「這次讀過但沒引用的頁只當候選；夜裡對到句子確實衝突才改那一句」（F6／D15：只讀過的頁，夜裡只在新的一點確實和某一句衝突時改那一句；AI 寫的句子直接改，人寫的只給建議，鎖住的頁只給建議）。存成規則的補充（2026-11-17）：選擇卡 08:29Z，見 UX-SKILL-14；這段補充的英文字句待 Qi-Xuan 確認。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -408,7 +425,118 @@ and wait for evidence that people need them.
   back to the map, both seen moving. With reduced motion everything jumps
   instead. Each night keeps one record of what it changed, and Undo takes its
   connections back too.
-  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）選擇卡「可以，讀一次再收」（2026-11-03 17:24）。「在睡觉的时候…会把东西给存进到长期记忆里面去…你视觉上它可以留在那里待一周，但是实际上呢，它背后的东西在晚上就已经处理好了」（2026-11-03 17:25）「能在界面上什么地方可以显示说，哦，他晚上的时候经过整理的，所以让用户感觉到价值，而不是哦默默做完就默默做完」（2026-11-03 17:48）「应该要更优雅的说法…我们之前一直在强调那个 steeping」（2026-11-03 17:59）「一个线板在那里长长的，要是离得很远，那不就拉了超长的一个线？」選「點去各自主題旁」並要動畫（2026-11-05 11:57 PT）「還是有線喔？」「你能不能找 Fable 設計一切好」，看了 Fable 的整套設計（不畫線、遠的主題在畫面邊上）說「可以」（2026-11-05 14:50 PT）
+  A conversation a night did not read is told apart on the thing's page, one
+  quiet line each and only when there is one: "Didn't get one conversation"
+  for one with no transcript to read (its tool keeps none Wenlan can read, or
+  it was deleted; counted only since the thing was last read, in the Space you
+  can see), naming the tool when it is one; "will be read once AI is
+  available" for one due on a night when this computer had no AI model for
+  the night (or background AI is off), until a later night reads it. That wait
+  is kept in memory, per computer, and cleared whenever the model is there.
+  Read ones stay in the steeped line. Tests:
+  `ux_chat_5_a_conversation_from_a_tool_with_no_transcript_reader_is_not_got`,
+  `ux_chat_5_a_due_conversation_is_waiting_until_a_night_reads_it`,
+  `ux_chat_5_conversations_wait_only_while_the_night_has_no_model`, and in
+  `ThingDetail.test.tsx` the "didn't get", "once AI is available" and
+  "Traditional Chinese" lines.
+  The same reading also keeps what you would want the next time you work with
+  AI tools, apart from the points: how you want AI tools to work for you (a
+  preference, not an always or never command, with its condition, and only
+  from a line you typed yourself, never from what an assistant typed for
+  you), a problem with a tool or setup and what got around it (only when it
+  worked), and why something was changed or what failed, with the condition
+  it happened under, so "failed on an old laptop" never becomes "never do
+  it". These are not on the thing's map and are not settled or open; each
+  keeps its conversation and the line it came from. They wait for your OK
+  like anything else an AI worked out on its own, and a night that only kept
+  these is not "the night" of that thing (no morning line, no Undo of its
+  own); Undo of a night that also wrote points takes them back with it. One
+  that no longer holds is replaced by a newer one of the same kind in the
+  same Space, never deleted for its age. A preference is the person's across
+  everything, so each night is shown the ones already kept from every thing.
+  Where it goes. What the night keeps goes in the Space of its conversation,
+  except a Space shared with other people (a team's, or one shared by folder
+  with someone else): it goes there only when something you set up ties the
+  conversation to it (a repository tied to the Space, a folder mapped to it,
+  a repository named like it, or a folder inside the Space's shared folder).
+  The AI's own label for the conversation is a guess and is not enough.
+  Otherwise it stays personal, in no Space. A preference is different
+  (2026-11-21, decided): what you said once about how you work applies in all
+  your own projects, so it is always kept in no Space, never in one, and is
+  given to your own AI tools in every Space once you have OK'd it (the rules
+  AI tools read, UX-SKILL-5); a preference still waiting for your OK is not
+  given. It is never given to a team: not written into a shared Space's
+  page or rules, not sent to a team server, and not in anything a team
+  member's read returns, and a night's reading of a shared Space is not shown
+  your preferences. A preference an AI tool saved itself, in a Space, stays
+  where it is. A preference replaces any earlier preference, whatever Space an
+  earlier night put it in. A night reads together only the conversations it
+  will write to the same place: a conversation nothing you set up ties to a
+  shared Space is read with the personal ones, never with that Space's, and
+  what it kept is shown back to the next reading by the Space the memory is in,
+  not by the AI's label. When Wenlan cannot
+  tell which Spaces are shared, the night keeps everything personal. Whatever
+  the night rewrites (a tidy, the old-memory pass) stays exactly in the Space
+  of what it replaces, and the old-memory pass files an old point into a
+  shared Space only under the same rule. A note in a shared Space is never
+  checked or changed from a conversation nothing ties to that Space. A
+  memory the store already has counts as kept: the store refuses a memory
+  that stands and starts the way the new one does, and the conversation then
+  counts as read (a shorter restatement of a longer memory is therefore not
+  stored, a known limit). One with the same words up to case and spacing, the
+  same kind and the same Space is also linked to the conversation when
+  nobody owns it. A memory another has replaced may be stated again (Friday,
+  Monday, Friday); a forgotten one still blocks, as before. A point the
+  store refuses for good (it counts characters, at least 10, so a short
+  Chinese point is refused) is dropped and does not keep its conversation
+  unread; a point whose Space is gone is kept personal instead. A memory the
+  person confirmed or pinned is never linked to a conversation by a night. A
+  tidy never hides or replaces a preference, tool problem or lesson you have
+  confirmed, and a newer version of one that a night or an AI tool writes
+  waits for your OK as a proposed revision while the confirmed one stands.
+  Only you confirm a preference, tool problem or lesson: an AI tool's
+  confirm is refused. The rules files of your tools follow a preference
+  being confirmed, unconfirmed, edited, forgotten, restored or replaced. A
+  reading of a Space shared with other people is shown none of your
+  preferences, so a preference it restates cannot replace one (it stays as
+  it is), and none of the thing's map points no night kept yet; its topics
+  are those of the Space it writes to. Tests:
+  `a_team_label_the_model_chose_does_not_write_into_the_team`,
+  `a_conversation_the_person_tied_to_the_team_writes_to_the_team`,
+  `a_space_shared_by_folder_with_others_counts_as_shared`,
+  `a_team_default_space_is_not_where_an_unlabelled_night_writes`,
+  `unreadable_sharing_settings_keep_the_night_personal_and_later_nights_still_see_it`,
+  `a_team_note_is_not_touched_from_a_conversation_nothing_ties_to_the_team`,
+  `a_tidy_keeps_the_space_of_what_it_takes_the_place_of`,
+  `the_old_memory_pass_keeps_an_unfiled_memory_out_of_the_default_space`,
+  `the_old_memory_pass_files_a_point_into_a_shared_space_only_with_a_fact`,
+  `a_memory_the_store_already_has_marks_the_conversation_read`,
+  `a_night_is_shown_the_preferences_of_every_thing_and_one_replaces_any_standing_one`,
+  `a_conversation_nothing_backs_is_never_read_with_one_the_team_is_backed_for`,
+  `only_a_live_copy_in_the_same_kind_and_space_counts_as_already_kept`,
+  `a_point_the_store_refuses_for_good_does_not_keep_its_conversation_unread`,
+  `a_folder_mapped_to_another_space_is_not_backed_by_a_repository_named_like_the_team`,
+  `ux_graph_7_a_working_memory_the_person_confirmed_is_never_tidied`,
+  `a_copy_check_does_not_count_a_replaced_memory`,
+  `the_daemons_store_decides_what_a_night_has_already_kept`,
+  `a_refusal_that_will_not_change_is_dropped_and_a_missing_space_writes_personal`,
+  `a_shared_space_reading_is_offered_no_unkept_map_points`,
+  `a_confirmed_preference_is_replaced_only_when_the_person_says_so`,
+  `only_the_person_confirms_a_preference`,
+  `ux_chat_5_the_rules_files_follow_a_preference_being_confirmed_and_forgotten`,
+  `what_the_person_told_their_tools_has_its_own_section_and_cap`,
+  `ux_chat_5_a_preference_in_no_space_reaches_the_persons_tools_in_every_space`,
+  `ux_chat_5_a_preference_is_not_written_into_the_rules_of_a_space_shared_with_others`,
+  `hosted_reads_never_return_the_persons_preference_kept_outside_any_space`,
+  `a_working_only_night_is_not_the_night_and_a_night_with_points_undoes_its_working`,
+  `nothing_an_assistant_typed_counts_as_the_persons_own_words`,
+  `a_tidy_merges_preferences_as_preferences_and_they_wait_for_the_person`,
+  `preferences_tool_problems_and_lessons_are_kept_with_their_source_and_not_as_points`,
+  `a_later_night_can_replace_a_kept_lesson_and_is_told_what_was_kept`,
+  `a_lesson_not_kept_leaves_its_conversation_for_the_next_night`,
+  `a_preference_needs_a_line_the_person_typed_in_its_own_conversation`,
+  `spaces_shared_with_other_people_are_told_from_the_ones_only_this_person_is_in`.
+  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）選擇卡「可以，讀一次再收」（2026-11-03 17:24）。「在睡觉的时候…会把东西给存进到长期记忆里面去…你视觉上它可以留在那里待一周，但是实际上呢，它背后的东西在晚上就已经处理好了」（2026-11-03 17:25）「能在界面上什么地方可以显示说，哦，他晚上的时候经过整理的，所以让用户感觉到价值，而不是哦默默做完就默默做完」（2026-11-03 17:48）「应该要更优雅的说法…我们之前一直在强调那个 steeping」（2026-11-03 17:59）「一个线板在那里长长的，要是离得很远，那不就拉了超长的一个线？」選「點去各自主題旁」並要動畫（2026-11-05 11:57 PT）「還是有線喔？」「你能不能找 Fable 設計一切好」，看了 Fable 的整套設計（不畫線、遠的主題在畫面邊上）說「可以」（2026-11-05 14:50 PT）「讀不到對話的工具顯示「沒拿到這段對話」；分清「無逐字稿／模型沒跑／已存好」」（design v5 F7，2026-11-21）
 - **UX-CHAT-6** `shipped` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
@@ -666,7 +794,16 @@ and wait for evidence that people need them.
   changes the answer later. Suggested edits to the person's own skills are still
   asked one by one. The ask, a No and the switch are about what Wenlan takes
   from pages; a rule the person wrote themselves needs none of them
-  (UX-SKILL-10).
+  (UX-SKILL-10). A line nobody sees before every AI tool reads it (a later
+  Space covered by that one yes, or a line new on a night in a Space that
+  already said yes) goes only when what it quotes traces to the person: a
+  sentence they wrote, edited or accepted, one citing a memory that keeps
+  their own words, or one on a page that follows only their pages. A line
+  quoting only what an AI wrote from its own reading is left out; one the
+  person saw on the ask counts by their yes.
+  Tests `after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unseen`
+  and `a_rule_from_a_following_page_changes_the_night_after_that_page_catches_up`.
+  原文（後一段）：「上述提到的問題都要修好」（2026-11-21，設計 v5 F4「推斷的點升規則前對到你的原句」）。
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)與「put the first ask at the top of the Space page, asked only once?」）；「而且儘量不用一直問用戶，或著第一次問，後面就不問了」（2026-11-15 20:21Z）；「第一次在空間那的改動，要有選項以後都自動，勾掉就是不要」（2026-11-15 21:24Z）。
 - **UX-SKILL-2** `shipped` The accepted "How I work" page is an ordinary
   Wenlan page with Update now, Undo last night and Stop. They sit in a "…"
@@ -704,7 +841,13 @@ and wait for evidence that people need them.
   tools read it in every Space, and with no Space at all, where they read only
   these lines; where it and a Space's own line disagree, the Space's line wins.
   It stays on, and is checked against, its own Space's page, and
-  a report that it changed the plan is recorded there.
+  a report that it changed the plan is recorded there. The preferences you
+  said once and OK'd, kept in no Space (UX-CHAT-5), are given the same way: as
+  lines used in every Space, to your own AI tools, in every Space and in the
+  tool files of UX-SKILL-8, newest first and at most 30, in their own section
+  "What you told your tools" with a cap apart from the page rules. They have no page, so nothing is counted as borrowed from one;
+  the Rules list in the app does not mix them in, and a Space's own rules, a
+  repository copy of them and a team member's read never include them.
   原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
 - **UX-SKILL-6** `shipped` The rules AI tools may read are also kept as files
   in Wenlan's own folder, in the `AGENTS.md` shape other tools already read:

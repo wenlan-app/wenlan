@@ -205,11 +205,11 @@
         {
           "from": [
             "When the session start printed a `Wenlan session:` line, pass its value as",
-            "`session` on `write_page` and `handoff`."
+            "`session` on `handoff`."
           ],
           "to": [
             "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
-            "`session: \"codex:<that id>\"` on `write_page` and `handoff`."
+            "`session: \"codex:<that id>\"` on `handoff`."
           ]
         }
       ]

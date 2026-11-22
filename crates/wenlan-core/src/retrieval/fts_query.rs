@@ -171,6 +171,25 @@ pub fn build_relaxed_or(raw: &str, stopwords: &HashSet<&str>) -> Option<String> 
     Some(parts.join(" OR "))
 }
 
+/// The page-search FTS queries tried in order when hardening is on.
+///
+/// First every word (sanitized AND). When that finds nothing, any one of the
+/// non-stopword words ([`build_relaxed_or`], each survivor sanitized, so no
+/// operator can reach `MATCH`). A natural question almost never has every one
+/// of its words on a page, so without the second query page search fell back
+/// to the page vector alone, which only sees a page's first 1,500 characters.
+/// Overlong queries (>128 tokens) skip FTS entirely.
+pub fn hardened_page_fts_queries(query: &str) -> Vec<String> {
+    if fts_length_exceeded(query, 128) {
+        return Vec::new();
+    }
+    let mut queries = vec![sanitize_fts_query(query)];
+    if let Some(or) = build_relaxed_or(query, stopwords()) {
+        queries.push(or);
+    }
+    queries
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -323,6 +342,41 @@ mod tests {
             .join(" ");
         // Exactly 128 tokens: NOT exceeded (strictly greater than)
         assert!(!fts_length_exceeded(&q, 128));
+    }
+
+    // ── hardened_page_fts_queries ──────────────────────────────────────────
+
+    #[test]
+    fn page_fts_queries_try_all_words_then_any_word() {
+        let qs = hardened_page_fts_queries("how do we gate the merge queue");
+        assert_eq!(qs.len(), 2, "{qs:?}");
+        assert_eq!(qs[0], "how do we gate the merge queue");
+        assert!(qs[1].contains(" OR "), "{qs:?}");
+        assert!(qs[1].contains("merge") && qs[1].contains("queue"), "{qs:?}");
+    }
+
+    #[test]
+    fn page_fts_or_fallback_keeps_operators_quoted() {
+        let qs = hardened_page_fts_queries("C++ NOT 2026-12-15 release");
+        assert_eq!(qs.len(), 2, "{qs:?}");
+        for q in &qs {
+            for bare in ["NOT", "C++", "2026-12-15"] {
+                assert!(
+                    !q.split_whitespace().any(|t| t == bare),
+                    "bare {bare} reached MATCH: {q}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn page_fts_single_word_or_overlong_query() {
+        assert_eq!(
+            hardened_page_fts_queries("roadmap"),
+            vec!["roadmap".to_string()]
+        );
+        let long = "word ".repeat(129);
+        assert!(hardened_page_fts_queries(&long).is_empty());
     }
 
     // ── build_relaxed_or ──────────────────────────────────────────────────

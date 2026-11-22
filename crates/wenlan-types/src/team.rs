@@ -362,9 +362,31 @@ pub struct TeamFileList {
     /// may withhold an archived snapshot or retire a page from this feed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deleted_pages: Vec<String>,
+    /// Terminal refusals for this authenticated member's submitted versions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused_changes: Vec<MemberSyncRefusal>,
     /// The approved Rules page version in the team-wide Space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules: Option<TeamRulesManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberSyncRefusal {
+    pub page_id: String,
+    pub change: String,
+    pub reason: MemberSyncRefusalReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemberSyncRefusalReason {
+    PageUnavailable,
+    InvalidAncestry,
+    PageChanged,
+    OutsideSpaceFolder,
+    CitationsWouldChange,
+    ReviewUnavailable,
+    Unverifiable,
 }
 
 /// An approved Rules page version listed with its shared Space files.
@@ -574,23 +596,40 @@ mod tests {
         let old: TeamFileList =
             serde_json::from_str(r#"{"access":"write","files":["space.json"]}"#).unwrap();
         assert!(old.deleted_pages.is_empty());
+        assert!(old.refused_changes.is_empty());
 
         let current = TeamFileList {
             access: TeamAccess::Write,
             files: vec!["space.json".into()],
             deleted_pages: vec!["page-gone".into()],
+            refused_changes: vec![MemberSyncRefusal {
+                page_id: "page-plan".into(),
+                change: "a".repeat(64),
+                reason: MemberSyncRefusalReason::CitationsWouldChange,
+            }],
             rules: None,
         };
         let value: serde_json::Value = serde_json::to_value(current).unwrap();
         assert_eq!(value["deleted_pages"], serde_json::json!(["page-gone"]));
+        assert_eq!(
+            value["refused_changes"][0]["reason"],
+            "citations_would_change"
+        );
+        let decoded: TeamFileList = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            decoded.refused_changes[0].reason,
+            MemberSyncRefusalReason::CitationsWouldChange
+        );
         let empty = serde_json::to_value(TeamFileList {
             access: TeamAccess::Write,
             files: vec!["space.json".into()],
             deleted_pages: Vec::new(),
+            refused_changes: Vec::new(),
             rules: None,
         })
         .unwrap();
         assert!(empty.get("deleted_pages").is_none());
+        assert!(empty.get("refused_changes").is_none());
     }
 }
 
