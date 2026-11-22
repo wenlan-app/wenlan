@@ -29,7 +29,7 @@ Match the request to one row. Old command words count as their row.
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `/wenlan lint`, `/wenlan lint repair`, `/wenlan 檢查重複` |
 | Sync my rules: 同步我的規則, 同步規則, 同步我的规则, 同步规则, sync my rules | rules sync below | `/wenlan sync my rules` |
 | Check personal rules status: 規則狀態, 规则状态, rules status | rules status below | `/wenlan rules status` |
-| List what needs review: 有什麼要確認, 有什么要确认, 待確認, 待确认, what needs review | rules review below | `/wenlan what needs review` |
+| List what needs review: 有什麼要確認, 有什么要确认, what needs review (in the context of rules) | rules review below | `/wenlan what needs review` |
 | Walk pending captures, revisions or refinements | curate | `/wenlan curate revisions`, `/wenlan 看待確認的` |
 | Delete one memory by id | forget | `/wenlan forget mem_123` |
 | Change how the Wenlan app looks: colors, fonts, images, or back to normal | theme | `/wenlan theme 紫色夜晚風格`, `/wenlan theme reset` |
@@ -41,6 +41,8 @@ Match the request to one row. Old command words count as their row.
 | What Wenlan can do, where data lives, how to read notes without the app | answer from "Reference" below | `/wenlan help`, `/wenlan 資料存在哪` |
 
 Rules:
+
+- When a phrase could mean pending captures or revisions or personal rules, prefer `curate` unless the person says "rules" or 「規則」.
 
 - **Legacy `distill`**: route `/wenlan distill ...` to steep with the full
   original request. It is an internal capability, not a separate workflow.
