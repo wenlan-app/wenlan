@@ -1058,13 +1058,17 @@ impl MemoryDB {
             "SELECT p.id, p.title, 0, p.incarnation, s.id,
                     COALESCE((SELECT MAX(h.version) FROM page_history h
                                WHERE h.page_id=p.id AND h.edited_by='space_move'), 0),
+                    p.version,
+                    CASE WHEN p.status = 'active'
+                          AND COALESCE(p.stale_reason, '') NOT IN ('source_updated', 'source_removed')
+                    THEN COALESCE(p.source_revision, 0) END,
                     NULL, NULL, NULL
                FROM pages p JOIN spaces s ON s.name=p.workspace
               WHERE p.workspace = ?1 AND {shared}
              UNION ALL
              SELECT substr(m.key, {id_start}), '', 1,
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.stay') END,
-                    NULL, NULL,
+                    NULL, NULL, NULL, NULL,
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.event_id') END,
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.parent_hash') END,
                     CASE WHEN json_valid(m.value) THEN json_extract(m.value, '$.archive_hash') END
@@ -1104,9 +1108,9 @@ impl MemoryDB {
             let id = row.get::<String>(0).map_err(error)?;
             if row.get::<i64>(2).map_err(error)? == 1 {
                 pages.deleted.insert(id.clone());
-                let event_id = row.get::<Option<String>>(6).map_err(error)?;
-                let parent_hash = row.get::<Option<String>>(7).map_err(error)?;
-                let archive_hash = row.get::<Option<String>>(8).map_err(error)?;
+                let event_id = row.get::<Option<String>>(8).map_err(error)?;
+                let parent_hash = row.get::<Option<String>>(9).map_err(error)?;
+                let archive_hash = row.get::<Option<String>>(10).map_err(error)?;
                 if let Some(event_id) = event_id.filter(|event_id| !event_id.is_empty()) {
                     pages.deletions.insert(
                         id.clone(),
@@ -1141,6 +1145,18 @@ impl MemoryDB {
                 pages.stays.insert(id.clone(), stay.clone());
                 if let Some(receipt) = receipts.get(&id).filter(|receipt| receipt.stay == stay) {
                     pages.authorized.insert(id.clone(), receipt.hashes.clone());
+                }
+                // Forget and permanent source deletion invalidate dependent
+                // prose in the source transaction. It cannot back a migrated head.
+                if let Some(source_revision) = row.get::<Option<i64>>(7).map_err(error)? {
+                    pages.legacy_active_heads.insert(
+                        id.clone(),
+                        crate::team::LegacyHeadProof {
+                            stay,
+                            revision: row.get(6).map_err(error)?,
+                            source_revision,
+                        },
+                    );
                 }
                 pages.shared.insert(id, row.get(1).map_err(error)?);
             }

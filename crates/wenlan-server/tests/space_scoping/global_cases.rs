@@ -329,6 +329,7 @@ pub async fn global_routes_enforce_scope_contracts() {
         (Method::Post, "/api/rules/setup/review/dismiss-update"),
         (Method::Post, "/api/rules/setup/review/preview"),
         (Method::Post, "/api/rules/setup/settings/preview"),
+        (Method::Post, "/api/team/library/terminal"),
         (Method::Post, "/api/rules/setup/settings/apply"),
         (Method::Post, "/api/rules/setup/checkout"),
         (Method::Post, "/api/skills/registry/save"),
@@ -340,8 +341,14 @@ pub async fn global_routes_enforce_scope_contracts() {
         } else {
             HttpMethod::POST
         };
-        let baseline =
-            response_parts(fixture.send(http_method.clone(), uri, None, None).await).await;
+        let body = (uri == "/api/team/library/terminal")
+            .then(|| serde_json::json!({"action":"withdraw","item_id":"fixture"}));
+        let baseline = response_parts(
+            fixture
+                .send(http_method.clone(), uri, body.clone(), None)
+                .await,
+        )
+        .await;
         assert!(
             baseline.0.is_client_error(),
             "personal setup route ran without the person's key: {uri} -> {}",
@@ -349,7 +356,7 @@ pub async fn global_routes_enforce_scope_contracts() {
         );
         let selected = response_parts(
             fixture
-                .send(http_method, uri, None, Some("missing-space"))
+                .send(http_method, uri, body, Some("missing-space"))
                 .await,
         )
         .await;

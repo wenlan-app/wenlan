@@ -211,23 +211,18 @@ fn archive_paths(f: &Fixture, id: &str) -> Vec<String> {
 }
 
 async fn deleted_pages(f: &Fixture) -> Vec<String> {
-    let (status, body) = call(
-        &f.state,
-        Method::GET,
-        "/team/v1/spaces/Design/files",
-        Some(&f.reader.1),
-        vec![],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    serde_json::from_slice::<TeamFileList>(&body)
-        .unwrap()
-        .deleted_pages
+    legacy_file_list(f).await.deleted_pages
 }
 
 #[tokio::test]
 async fn round6_deleting_a_reentered_page_withholds_its_first_stay_archive() {
-    let (f, db) = fixture_with_daemon().await;
+    for mode in [HostedMode::Legacy, HostedMode::Migrated] {
+        deleting_a_reentered_page_withholds_its_first_stay_archive(mode).await;
+    }
+}
+
+async fn deleting_a_reentered_page_withholds_its_first_stay_archive(mode: HostedMode) {
+    let (f, db) = fixture_with_hosted_mode(mode).await;
     let id = create_folder_test_page(&db, "Round6 reentered", "authored")
         .await
         .id;
@@ -248,12 +243,21 @@ async fn round6_deleting_a_reentered_page_withholds_its_first_stay_archive() {
         download(&f, &first_stay_archive).await.0,
         StatusCode::NOT_FOUND
     );
-    assert!(deleted_pages(&f).await.contains(&id));
+    assert!(
+        deleted_pages(&f).await.contains(&id),
+        "{mode:?}: missing deletion"
+    );
 }
 
 #[tokio::test]
 async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
-    let (f, db) = fixture_with_daemon().await;
+    for mode in [HostedMode::Legacy, HostedMode::Migrated] {
+        only_the_verified_final_archive_suppresses_a_deletion(mode).await;
+    }
+}
+
+async fn only_the_verified_final_archive_suppresses_a_deletion(mode: HostedMode) {
+    let (f, db) = fixture_with_hosted_mode(mode).await;
     let id = create_folder_test_page(&db, "Round6 archived twice", "authored")
         .await
         .id;
@@ -271,12 +275,23 @@ async fn round6_only_the_verified_final_archive_suppresses_a_deletion() {
         .find(|path| path != &older_archive)
         .expect("the deletion wrote a final archive");
     let files = listed_files(&f).await;
-    assert!(files.contains(&final_archive), "{files:?}");
+    assert_eq!(
+        files.contains(&final_archive),
+        mode == HostedMode::Legacy,
+        "{mode:?}: {files:?}"
+    );
     assert!(
         !files.contains(&older_archive),
         "an older archive is served"
     );
-    assert!(!deleted_pages(&f).await.contains(&id));
+    assert_eq!(
+        deleted_pages(&f).await.contains(&id),
+        mode == HostedMode::Migrated,
+        "{mode:?}: deletion must replace the withheld archive"
+    );
+    if mode == HostedMode::Migrated {
+        assert_eq!(download(&f, &final_archive).await.0, StatusCode::NOT_FOUND);
+    }
 
     // When both newer files are lost, the original archive is still present.
     // The host must report the deletion using its durable event.
@@ -418,7 +433,7 @@ async fn round6_member_cannot_write_a_page_whose_file_is_outside_the_space_folde
 }
 
 /// Uploads a member's later edit of `page` over its current head.
-async fn writer_edits_head(f: &Fixture, page: &str, body: &str) {
+async fn writer_edits_head(f: &Fixture, page: &str, body: &str) -> StatusCode {
     let versions = version::read_folder(&f.folder).pages.remove(page).unwrap();
     let head = version::head(&versions).unwrap().winner.clone();
     let mut file = wenlan_core::store::format::page::PageFile::new(&head.page.title, body);
@@ -452,12 +467,18 @@ async fn writer_edits_head(f: &Fixture, page: &str, body: &str) {
         bytes.into(),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    status
 }
 
 #[tokio::test]
 async fn round6_sync_never_restores_a_deleted_page_from_a_member_edit() {
-    let (f, db) = fixture_with_daemon().await;
+    for mode in [HostedMode::Legacy, HostedMode::Migrated] {
+        sync_never_restores_a_deleted_page_from_a_member_edit(mode).await;
+    }
+}
+
+async fn sync_never_restores_a_deleted_page_from_a_member_edit(mode: HostedMode) {
+    let (f, db) = fixture_with_hosted_mode(mode).await;
     // Deleted here and synced; a member then edits over the deletion.
     let after = create_folder_test_page(&db, "Round6 deleted then edited", "authored")
         .await
@@ -467,10 +488,27 @@ async fn round6_sync_never_restores_a_deleted_page_from_a_member_edit() {
         .await
         .id;
     sync_hosted_test_folder(&f, &db).await;
+    if mode == HostedMode::Migrated {
+        let files = listed_files(&f).await;
+        for id in [&after, &before] {
+            assert!(files.iter().any(|path| path.split('/').nth(3) == Some(id)));
+        }
+    }
     db.delete_page(&after).await.unwrap();
     sync_hosted_test_folder(&f, &db).await;
-    writer_edits_head(&f, &after, "A member brings it back.").await;
-    writer_edits_head(&f, &before, "A member edit the host never saw.").await;
+    let expected = match mode {
+        HostedMode::Legacy => StatusCode::CREATED,
+        HostedMode::Migrated => StatusCode::FORBIDDEN,
+    };
+    assert_eq!(
+        writer_edits_head(&f, &after, "A member brings it back.").await,
+        expected
+    );
+    // The legacy listener accepts the edit before the deletion is synced.
+    assert_eq!(
+        writer_edits_head(&f, &before, "A member edit the host never saw.").await,
+        expected
+    );
     db.delete_page(&before).await.unwrap();
     let counts = sync_hosted_test_folder(&f, &db).await;
     let mut restored = Vec::new();
@@ -486,11 +524,19 @@ async fn round6_sync_never_restores_a_deleted_page_from_a_member_edit() {
         restored.is_empty(),
         "restored from a member edit: {restored:?}"
     );
-    assert!(counts.skipped >= 2, "{counts:?}");
+    if mode == HostedMode::Legacy {
+        assert!(counts.skipped >= 2, "{counts:?}");
+    }
     // A later pass leaves them deleted too.
     sync_hosted_test_folder(&f, &db).await;
     for id in [&after, &before] {
         assert!(db.get_page(id).await.unwrap().is_none(), "{id}");
+        if mode == HostedMode::Migrated {
+            assert!(
+                deleted_pages(&f).await.contains(id),
+                "missing deletion for {id}"
+            );
+        }
     }
 }
 

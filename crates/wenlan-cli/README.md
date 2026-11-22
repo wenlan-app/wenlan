@@ -740,6 +740,68 @@ Work with a team: start one here, invite people, or join with an invite link (st
 wenlan team [OPTIONS] <COMMAND>
 ```
 
+#### `wenlan team draft`
+
+Prepare a private team publication draft from your personal library.
+
+```text
+wenlan team draft [OPTIONS] <KIND> <ID>
+```
+
+Arguments:
+
+- `<KIND>` Possible values: `page`, `memory`.
+- `<ID>`
+
+#### `wenlan team publish`
+
+Review and publish a personal item from the team host's terminal.
+
+```text
+wenlan team publish [OPTIONS] <KIND> <ID>
+```
+
+Arguments:
+
+- `<KIND>` Possible values: `page`, `memory`.
+- `<ID>`: ID in this computer's personal library.
+
+Options:
+
+- `--space-id <SPACE_ID>`: Destination Space ID. Omit to publish directly to the team.
+- `--brief`: Publish the page as the Brief for this destination.
+- `--text <TEXT>`: A local JSON file containing edited title and body.
+- `--redactions <REDACTIONS>`: A local JSON object mapping personal source IDs to edited title and body. Sources still require selection during review.
+
+#### `wenlan team create-space`
+
+Create a group for team pages and memories without sharing a personal Space.
+
+```text
+wenlan team create-space [OPTIONS] <NAME>
+```
+
+Arguments:
+
+- `<NAME>`
+
+Options:
+
+- `--restricted`: Require a grant for this Space.
+
+#### `wenlan team grant`
+
+Set a member's team-wide library grant. Their Space grants are separate.
+
+```text
+wenlan team grant [OPTIONS] <MEMBER> <ACCESS>
+```
+
+Arguments:
+
+- `<MEMBER>`
+- `<ACCESS>` Possible values: `read`, `write`, `none`.
+
 #### `wenlan team start`
 
 Start a team on this computer: others reach it with an invite link.
@@ -850,7 +912,7 @@ Options:
 
 #### `wenlan team share`
 
-Share a Space of this computer with the team.
+Change access to an existing hosted Space.
 
 ```text
 wenlan team share [OPTIONS] <SPACE>
@@ -858,7 +920,7 @@ wenlan team share [OPTIONS] <SPACE>
 
 Arguments:
 
-- `<SPACE>`: Space name.
+- `<SPACE>`: Existing hosted Space name.
 
 Options:
 

@@ -425,7 +425,13 @@ async fn round5_member_cannot_publish_a_legacy_draft_outside_its_space_folder() 
 
 #[tokio::test]
 async fn round5_snapshot_download_requires_the_current_space_stay() {
-    let (f, db) = fixture_with_daemon().await;
+    for mode in [HostedMode::Legacy, HostedMode::Migrated] {
+        snapshot_download_requires_the_current_space_stay(mode).await;
+    }
+}
+
+async fn snapshot_download_requires_the_current_space_stay(mode: HostedMode) {
+    let (f, db) = fixture_with_hosted_mode(mode).await;
     let id = create_folder_test_page(&db, "Team itinerary", "authored")
         .await
         .id;
@@ -452,20 +458,38 @@ async fn round5_snapshot_download_requires_the_current_space_stay() {
         .unwrap();
     }
     sync_hosted_test_folder(&f, &db).await;
-    assert_eq!(download(&f, &previous).await.0, StatusCode::NOT_FOUND);
-    let files = listed_files(&f).await;
-    assert!(!files.contains(&previous));
-    let current = files.iter().find(|path| path.contains(&id)).unwrap();
-    let (status, body) = download(&f, current).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(String::from_utf8(body)
-        .unwrap()
-        .contains("Latest Design itinerary."));
+    assert_eq!(
+        download(&f, &previous).await.0,
+        StatusCode::NOT_FOUND,
+        "{mode:?}"
+    );
+    let inventory = legacy_file_list(&f).await;
+    assert!(!inventory.files.contains(&previous), "{mode:?}");
+    let current = inventory.files.iter().find(|path| path.contains(&id));
+    match mode {
+        HostedMode::Legacy => {
+            let (status, body) = download(&f, current.unwrap()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(String::from_utf8(body)
+                .unwrap()
+                .contains("Latest Design itinerary."));
+        }
+        HostedMode::Migrated => {
+            assert!(current.is_none(), "a different Space stay was delivered");
+            assert!(inventory.deleted_pages.contains(&id), "{inventory:?}");
+        }
+    }
 }
 
 #[tokio::test]
 async fn round5_snapshot_basis_omits_a_pre_space_version() {
-    let (f, db) = fixture_with_daemon().await;
+    for mode in [HostedMode::Legacy, HostedMode::Migrated] {
+        snapshot_basis_omits_a_pre_space_version(mode).await;
+    }
+}
+
+async fn snapshot_basis_omits_a_pre_space_version(mode: HostedMode) {
+    let (f, db) = fixture_with_hosted_mode(mode).await;
     let target = seed_moved_page(&db).await;
     let citer = create_folder_test_page(&db, "Citing team note", "authored")
         .await
@@ -474,21 +498,32 @@ async fn round5_snapshot_basis_omits_a_pre_space_version() {
         .await
         .unwrap();
     sync_hosted_test_folder(&f, &db).await;
-    let path = listed_files(&f)
-        .await
-        .into_iter()
-        .find(|path| path.contains(&citer))
-        .unwrap();
-    let (status, bytes) = download(&f, &path).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(!String::from_utf8(bytes)
-        .unwrap()
-        .contains(&format!("wenlan:{target}@1")));
+    let inventory = legacy_file_list(&f).await;
+    let path = inventory.files.iter().find(|path| path.contains(&citer));
+    match mode {
+        HostedMode::Legacy => {
+            let (status, bytes) = download(&f, path.unwrap()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(!String::from_utf8(bytes)
+                .unwrap()
+                .contains(&format!("wenlan:{target}@1")));
+        }
+        HostedMode::Migrated => {
+            assert!(path.is_none(), "a basis-bearing legacy file was served");
+            assert!(inventory.deleted_pages.contains(&citer), "{inventory:?}");
+        }
+    }
 }
 
 #[tokio::test]
 async fn round5_unsafe_legacy_deletion_still_reaches_offline_members() {
-    let (f, db) = fixture_with_daemon().await;
+    for mode in [HostedMode::Legacy, HostedMode::Migrated] {
+        unsafe_legacy_deletion_still_reaches_offline_members(mode).await;
+    }
+}
+
+async fn unsafe_legacy_deletion_still_reaches_offline_members(mode: HostedMode) {
+    let (f, db) = fixture_with_hosted_mode(mode).await;
     let id = create_folder_test_page(&db, "Old team note", "authored")
         .await
         .id;
@@ -514,19 +549,12 @@ async fn round5_unsafe_legacy_deletion_still_reaches_offline_members() {
     std::fs::remove_file(f.folder.join(&active)).unwrap();
     sync_hosted_test_folder(&f, &db).await;
     assert_eq!(download(&f, &unsafe_path).await.0, StatusCode::NOT_FOUND);
-    let (_, manifest) = call(
-        &f.state,
-        Method::GET,
-        "/team/v1/spaces/Design/files",
-        Some(&f.reader.1),
-        vec![],
-    )
-    .await;
-    let manifest: Value = serde_json::from_slice(&manifest).unwrap();
+    let manifest = legacy_file_list(&f).await;
     assert!(
-        manifest["deleted_pages"]
-            .as_array()
-            .is_some_and(|ids| ids.contains(&json!(id))),
-        "{manifest}"
+        manifest.deleted_pages.contains(&id),
+        "{mode:?}: {manifest:?}"
     );
+    if mode == HostedMode::Migrated {
+        assert_eq!(download(&f, &active).await.0, StatusCode::NOT_FOUND);
+    }
 }

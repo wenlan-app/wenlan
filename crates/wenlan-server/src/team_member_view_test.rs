@@ -271,16 +271,7 @@ async fn round4_hidden_saved_rules_cannot_be_renamed() {
 }
 
 async fn listed_files(f: &Fixture) -> Vec<String> {
-    let (status, body) = call(
-        &f.state,
-        Method::GET,
-        "/team/v1/spaces/Design/files",
-        Some(&f.reader.1),
-        vec![],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    serde_json::from_slice::<TeamFileList>(&body).unwrap().files
+    legacy_file_list(f).await.files
 }
 
 async fn download(f: &Fixture, path: &str) -> (StatusCode, Vec<u8>) {

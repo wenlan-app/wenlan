@@ -361,10 +361,12 @@ fn manifest_counts_match_the_spec() {
     // Then 416 after POST `/api/handoff` (the canonical Brief write contract).
     // Then 417 after POST `/api/rules/setup/review/preview` (personal command
     // and subagent review preview; no page text). GET setup status adds one.
-    // The personal review queue and release-notice dismissal bring this to 420.
+    // Then 419 after POST `/api/team/library/terminal` (the person-key-gated
+    // team publication review, which echoes the supplied draft).
+    // The personal review queue and release-notice dismissal bring this to 421.
     assert_eq!(
         HTTP_READERS.len(),
-        420,
+        421,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -378,7 +380,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        432,
+        433,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -386,7 +388,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        415,
+        416,
         "main builder entries"
     );
     assert_eq!(
@@ -409,7 +411,8 @@ fn manifest_counts_match_the_spec() {
     // rules, Space suggestions, suggestion list and its three actions, plus
     // GET `/api/skills/record`).
     // +1: POST `/api/pages/{id}/restore-version`. +1: GET `/api/pages/{id}/look/data`.
-    assert_eq!(bearing, 109, "page-bearing HTTP routes");
+    // +1: POST `/api/team/library/terminal`.
+    assert_eq!(bearing, 110, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -593,7 +596,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        410 // 23 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes and POST /api/handoff, all with no page markers.
+        411 // 21 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes, POST /api/handoff and the team publication review, all with no page markers.
     );
 }
 

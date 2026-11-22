@@ -10,6 +10,10 @@ use wenlan_types::team::{TeamFileList, TeamSpaceAccess};
 
 #[path = "team_member_view_test.rs"]
 mod member_view;
+#[path = "team_legacy_deletion_test.rs"]
+mod team_legacy_deletion;
+#[path = "team_library_acceptance_test.rs"]
+mod team_library_acceptance;
 
 #[path = "team_device_test.rs"]
 mod device_flow;
@@ -23,11 +27,34 @@ struct Fixture {
     outsider: (Member, String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostedMode {
+    Legacy,
+    Migrated,
+}
+
+impl Fixture {
+    fn set_hosted_mode(&mut self, mode: HostedMode) {
+        self.state.library = match mode {
+            HostedMode::Legacy => None,
+            HostedMode::Migrated => Some(library::Host::new(&self.state.team_path, false)),
+        };
+    }
+}
+
 fn fixture() -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
-    let team_path = dir.path().join(team::TEAM_FILE);
-    let settings_path = dir.path().join(shared_space::SETTINGS_FILE);
-    let folder = dir.path().join("team-spaces").join("design");
+    fixture_in(tempfile::tempdir().unwrap())
+}
+
+fn fixture_in(dir: tempfile::TempDir) -> Fixture {
+    fixture_in_profile(dir, "")
+}
+
+fn fixture_in_profile(dir: tempfile::TempDir, profile: &str) -> Fixture {
+    let root = dir.path().join(profile);
+    let team_path = root.join(team::TEAM_FILE);
+    let settings_path = root.join(shared_space::SETTINGS_FILE);
+    let folder = root.join("team-spaces").join("design");
     let scope = Scope::Space("Design".into());
     shared_space::ensure_space_file(
         &folder,
@@ -65,6 +92,7 @@ fn fixture() -> Fixture {
             team_path,
             settings_path,
             db: None,
+            library: None,
             daemon_url: "http://127.0.0.1:9".into(),
             in_process_daemon: None,
             mcp: Arc::default(),
@@ -103,6 +131,19 @@ async fn call(
     (status, bytes.to_vec())
 }
 
+async fn legacy_file_list(f: &Fixture) -> TeamFileList {
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/spaces/Design/files",
+        Some(&f.reader.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    serde_json::from_slice(&body).unwrap()
+}
+
 async fn join_page_response(state: &TeamState, language: Option<&str>) -> Response {
     let mut request = Request::builder().method(Method::GET).uri("/join");
     if let Some(language) = language {
@@ -122,10 +163,19 @@ async fn response_text(response: Response) -> String {
 }
 
 async fn fixture_with_daemon() -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
-    let mut fixture = fixture();
+    with_daemon(fixture()).await
+}
+
+async fn fixture_with_hosted_mode(mode: HostedMode) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+    let (mut fixture, db) = fixture_with_daemon().await;
+    fixture.set_hosted_mode(mode);
+    (fixture, db)
+}
+
+async fn with_daemon(mut fixture: Fixture) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
     let db = Arc::new(
         wenlan_core::db::MemoryDB::new(
-            &fixture._dir.path().join("daemon"),
+            &fixture.state.team_path.parent().unwrap().join("daemon"),
             Arc::new(wenlan_core::events::NoopEmitter),
         )
         .await

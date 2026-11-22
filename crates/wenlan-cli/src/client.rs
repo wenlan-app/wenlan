@@ -833,6 +833,19 @@ impl WenlanClient {
         self.get_json(&format!("/api/pages/{}", id), true).await
     }
 
+    pub async fn team_library_terminal(
+        &self,
+        action: &wenlan_types::team_library::TeamTerminalAction,
+    ) -> Result<wenlan_types::team_library::TeamTerminalReply> {
+        anyhow::ensure!(
+            self.is_local() && !self.names_an_agent() && self.session().is_none(),
+            "The host's person must approve this from their own terminal."
+        );
+        Self::for_local_rules()?
+            .post_json_as_person("/api/team/library/terminal", action, None, true)
+            .await
+    }
+
     /// GET /api/skills/rules — read approved rules for the resolved Space.
     pub async fn read_space_rules(&self) -> Result<wenlan_types::SpaceRulesResponse> {
         self.get_json("/api/skills/rules", true).await

@@ -8,9 +8,11 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use wenlan_types::team::{TeamAccess, TeamInfo, TeamRole};
+use wenlan_types::team::{TeamAccess, TeamInfo, TeamPerson, TeamRole};
 use wenlan_types::team_library::{
-    TeamGroup, TeamItem, TeamItemKind, TeamLibraryInfo, TeamPages, TeamPublicationReceipt,
+    TeamAudience, TeamAuthorship, TeamBrief, TeamCitation, TeamGroup, TeamItem, TeamItemKind,
+    TeamLibraryInfo, TeamPageHistory, TeamPageSources, TeamPages, TeamPublication,
+    TeamPublicationPreview, TeamPublicationReceipt, TeamRecall, TeamText,
 };
 
 use crate::error::WenlanError;
@@ -58,6 +60,8 @@ struct Manifest {
     format: u32,
     groups: BTreeMap<String, TeamGroup>,
     migrated: BTreeSet<String>,
+    #[serde(default)]
+    legacy_pages: BTreeMap<String, BTreeSet<String>>,
     records: BTreeMap<String, Vec<Record>>,
     retired: BTreeMap<String, Tombstone>,
     receipts: BTreeMap<String, Receipt>,
@@ -69,6 +73,7 @@ impl Default for Manifest {
             format: 1,
             groups: BTreeMap::new(),
             migrated: BTreeSet::new(),
+            legacy_pages: BTreeMap::new(),
             records: BTreeMap::new(),
             retired: BTreeMap::new(),
             receipts: BTreeMap::new(),
@@ -84,6 +89,8 @@ struct Record {
     citations: Vec<CitationRef>,
     #[serde(default)]
     migrated_page: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy_origin: Option<team::LegacyHeadProof>,
     legacy_file: Option<LegacyFile>,
 }
 
@@ -103,6 +110,28 @@ pub struct LegacyHead {
     pub item: TeamItem,
     pub private_source: bool,
     pub file: Option<LegacyFile>,
+}
+
+pub struct LegacySpace {
+    pub group: TeamGroup,
+    pub folder: PathBuf,
+    pub authorized: team::SharedFolderPages,
+    pub heads: Vec<LegacyHead>,
+    pub possible_copies: BTreeSet<String>,
+}
+
+impl LegacySpace {
+    fn can_serve(&self, id: &str, file: &LegacyFile) -> bool {
+        let Some(name) = file.path.rsplit('/').next() else {
+            return false;
+        };
+        team::served_path(&self.folder, &file.path)
+            .and_then(|path| std::fs::read(path).ok())
+            .is_some_and(|bytes| {
+                bytes == file.bytes.as_bytes()
+                    && team::can_serve_version(id, name, &bytes, &self.authorized)
+            })
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -150,6 +179,98 @@ impl Data {
         self.manifest.records.get(id).map(Vec::as_slice)
     }
 
+    fn retire(&mut self, id: &str) {
+        let Some(record) = self
+            .manifest
+            .records
+            .remove(id)
+            .and_then(|mut revisions| revisions.pop())
+        else {
+            return;
+        };
+        self.manifest.retired.insert(
+            id.to_owned(),
+            Tombstone {
+                space_id: record.item.space_id,
+                last_revision: record.item.revision,
+                was_legacy_page: record.migrated_page,
+                publisher_id: record.item.publisher.map(|person| person.id),
+            },
+        );
+        // The retired item cannot survive in history or as a source.
+        for record in self.manifest.records.values_mut().flatten() {
+            let before = record.citations.len();
+            record.citations.retain(|citation| citation.id != id);
+            record.private_source |= before != record.citations.len();
+        }
+    }
+
+    fn import_legacy_space(&mut self, space: &mut LegacySpace) -> Result<bool> {
+        let group = &space.group;
+        let imported = self.manifest.migrated.contains(&group.id);
+        if !imported && self.manifest.groups.contains_key(&group.id) {
+            return Err(LibraryError::Conflict(
+                "The hosted Space's ID is already in use.",
+            ));
+        }
+        let changed = self.manifest.groups.get(&group.id) != Some(group);
+        if changed {
+            if self
+                .manifest
+                .groups
+                .values()
+                .any(|other| other.id != group.id && other.name == group.name)
+            {
+                return Err(LibraryError::Conflict(
+                    "A team Space already uses the hosted Space's name.",
+                ));
+            }
+            self.manifest.groups.insert(group.id.clone(), group.clone());
+        }
+        let need_inventory = !self.manifest.legacy_pages.contains_key(&group.id);
+        if need_inventory {
+            self.manifest
+                .legacy_pages
+                .insert(group.id.clone(), std::mem::take(&mut space.possible_copies));
+        }
+        if imported {
+            return Ok(changed || need_inventory);
+        }
+        for head in std::mem::take(&mut space.heads) {
+            let id = head.item.item_id.clone();
+            if self.manifest.retired.contains_key(&id) {
+                continue;
+            }
+            let Some(proof) = space.authorized.legacy_head(&id) else {
+                continue;
+            };
+            if head.item.team_id != self.info.id
+                || head.item.space_id.as_deref() != Some(&group.id)
+                || head.item.kind != TeamItemKind::Page
+                || head.item.revision != proof.revision
+                || self.manifest.records.contains_key(&id)
+            {
+                return Err(LibraryError::Conflict(
+                    "An imported page conflicts with an existing team item.",
+                ));
+            }
+            self.manifest.records.insert(
+                id,
+                vec![Record {
+                    item: head.item,
+                    brief: false,
+                    private_source: head.private_source,
+                    citations: Vec::new(),
+                    migrated_page: true,
+                    legacy_origin: Some(proof.clone()),
+                    legacy_file: head.file,
+                }],
+            );
+        }
+        self.manifest.migrated.insert(group.id.clone());
+        Ok(true)
+    }
+
     fn group(&self, space_id: Option<&str>) -> Result<Option<&TeamGroup>> {
         space_id
             .map(|id| self.manifest.groups.get(id).ok_or(LibraryError::Absent))
@@ -177,6 +298,128 @@ impl Data {
         file.persist(&self.path).map_err(|error| error.error)?;
         crate::store::export::history::sync_parent(&self.path)?;
         Ok(())
+    }
+
+    fn preview(
+        &self,
+        actor: &str,
+        id: String,
+        draft: TeamPublication,
+        memories: bool,
+    ) -> Result<TeamPublicationPreview> {
+        let member = self.member(actor)?;
+        let space = self.group(draft.space_id.as_deref())?;
+        if self.access(member, draft.space_id.as_deref()) != Some(TeamAccess::Write) {
+            return Err(LibraryError::Denied);
+        }
+        if !memories && (draft.kind == TeamItemKind::Memory || !draft.memories.is_empty()) {
+            return Err(LibraryError::MemoriesDisabled);
+        }
+        draft.validate()?;
+        if let Some(id) = &draft.item_id {
+            let prior = self
+                .revisions(id)
+                .and_then(|revisions| revisions.last())
+                .ok_or(LibraryError::Conflict(
+                    "The item is unavailable. Start a new publication.",
+                ))?;
+            if prior.item.space_id != draft.space_id
+                || self.access(member, prior.item.space_id.as_deref()) != Some(TeamAccess::Write)
+            {
+                return Err(LibraryError::Denied);
+            }
+            if Some(prior.item.revision) != draft.expected_revision || prior.item.kind != draft.kind
+            {
+                return Err(LibraryError::Conflict(
+                    "The item changed. Review its current revision.",
+                ));
+            }
+            if !draft.memories.is_empty() {
+                return Err(LibraryError::Invalid(
+                    "Publish a new page to approve new sources.",
+                ));
+            }
+        }
+        let now = self
+            .file
+            .members
+            .iter()
+            .filter(|member| member.is_active() && member.invite.is_none())
+            .filter(|member| self.access(member, draft.space_id.as_deref()).is_some())
+            .map(person)
+            .collect();
+        let later = match space {
+            Some(group) if group.restricted => {
+                if self.file.everyone.contains_key(&group.name) {
+                    "Current and future team members with the Space grant, including members who inherit it. Space-only guests need an invitation for this Space."
+                } else {
+                    "Current and future team members given access to this restricted Space."
+                }
+            }
+            Some(_) => {
+                "Current and future members with team access. Space-only guests need an explicit grant to this Space."
+            }
+            _ => "Current and future members with team access. Space-only guests have no access.",
+        };
+        Ok(TeamPublicationPreview {
+            id,
+            team: self.info.clone(),
+            space: space.cloned(),
+            audience: TeamAudience {
+                now,
+                later: later.into(),
+            },
+            draft,
+        })
+    }
+}
+
+trait ValidatePublication {
+    fn validate(&self) -> Result<()>;
+}
+
+impl ValidatePublication for TeamPublication {
+    fn validate(&self) -> Result<()> {
+        fn valid(title: &str, body: &str) -> bool {
+            !title.trim().is_empty()
+                && title.len() <= 512
+                && !title.contains(['\r', '\n', '\0'])
+                && !body.trim().is_empty()
+                && body.len() <= 500_000
+                && !body.contains('\0')
+        }
+        if !valid(&self.title, &self.body)
+            || self.memories.len() > 32
+            || self
+                .memories
+                .iter()
+                .any(|source| !valid(&source.title, &source.body))
+        {
+            return Err(LibraryError::Invalid(
+                "A title or body is empty, too long, or contains an invalid character.",
+            ));
+        }
+        if self.kind == TeamItemKind::Memory
+            && (!self.memories.is_empty() || self.private_source || self.brief)
+        {
+            return Err(LibraryError::Invalid(
+                "Only a team page can be a Brief or carry sources.",
+            ));
+        }
+        if self.item_id.is_some() != self.expected_revision.is_some() {
+            return Err(LibraryError::Invalid(
+                "An edit needs an item ID and expected revision.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn person(member: &Member) -> TeamPerson {
+    TeamPerson {
+        id: member.id.clone(),
+        name: member.name.clone(),
+        owner: member.role == TeamRole::Owner,
     }
 }
 
@@ -248,6 +491,167 @@ impl Library {
         Ok(reader)
     }
 
+    pub fn preview(&self, actor: &str, draft: TeamPublication) -> Result<TeamPublicationPreview> {
+        self.read()?
+            .preview(actor, fresh_id(), draft, self.memories)
+    }
+
+    pub fn retry(&self, actor: &str, id: &str) -> Result<Option<TeamPublicationReceipt>> {
+        let data = self.read()?;
+        data.member(actor)?;
+        Ok(data
+            .manifest
+            .receipts
+            .get(id)
+            .filter(|receipt| receipt.actor == actor)
+            .map(|receipt| receipt.receipt.clone()))
+    }
+
+    pub fn publish(
+        &self,
+        actor: &str,
+        approved: TeamPublicationPreview,
+    ) -> Result<TeamPublicationReceipt> {
+        let _lock = team::lock_team(&self.team_path)?;
+        let mut data = self.open(team::read_team(&self.team_path)?)?;
+        let member = data.member(actor)?;
+        if let Some(earlier) = data.manifest.receipts.get(&approved.id) {
+            return if earlier.actor == actor {
+                Ok(earlier.receipt.clone())
+            } else {
+                Err(LibraryError::Absent)
+            };
+        }
+        let review = data.preview(
+            actor,
+            approved.id.clone(),
+            approved.draft.clone(),
+            self.memories,
+        )?;
+        if review != approved {
+            return Err(LibraryError::Conflict(
+                "The destination or audience changed. Review a new preview.",
+            ));
+        }
+        let actor_name = person(member);
+        let draft = approved.draft;
+        let space_id = draft.space_id;
+        let item_id = draft.item_id.unwrap_or_else(fresh_id);
+        let previous = data
+            .revisions(&item_id)
+            .and_then(|revisions| revisions.last());
+        let revision = match previous {
+            Some(record) => record
+                .item
+                .revision
+                .checked_add(1)
+                .ok_or(LibraryError::Conflict(
+                    "The item has reached its revision limit.",
+                ))?,
+            None => 1,
+        };
+        let mut citations = Vec::new();
+        let mut reviewed = Vec::new();
+        for memory in draft.memories {
+            let id = fresh_id();
+            citations.push(CitationRef {
+                id: id.clone(),
+                revision: 1,
+            });
+            reviewed.push(Record {
+                item: new_item(
+                    &data.info,
+                    &actor_name,
+                    id,
+                    space_id.clone(),
+                    TeamItemKind::Memory,
+                    memory,
+                ),
+                brief: false,
+                private_source: false,
+                citations: Vec::new(),
+                migrated_page: false,
+                legacy_origin: None,
+                legacy_file: None,
+            });
+        }
+        let mut record = Record {
+            item: new_item(
+                &data.info,
+                &actor_name,
+                item_id.clone(),
+                space_id,
+                draft.kind,
+                TeamText {
+                    title: draft.title,
+                    body: draft.body,
+                },
+            ),
+            brief: draft.brief,
+            private_source: draft.private_source,
+            citations,
+            migrated_page: false,
+            legacy_origin: None,
+            legacy_file: None,
+        };
+        if let Some(authorship) = draft.authorship {
+            record.item.authorship = Some(authorship);
+        }
+        if let Some(previous) = previous {
+            record.item.revision = revision;
+            record
+                .item
+                .contributor
+                .clone_from(&previous.item.contributor);
+            record.item.publisher.clone_from(&previous.item.publisher);
+            record.citations.clone_from(&previous.citations);
+            record.private_source |= previous.private_source;
+            record.migrated_page = previous.migrated_page;
+            record.legacy_origin.clone_from(&previous.legacy_origin);
+        }
+        let receipt = TeamPublicationReceipt {
+            team_id: data.info.id.clone(),
+            item_id: item_id.clone(),
+            revision,
+            memory_ids: reviewed
+                .iter()
+                .map(|record| record.item.item_id.clone())
+                .collect(),
+        };
+        // The Brief is a designated page, with at most one head per scope.
+        if record.brief {
+            let conflict = data.heads().any(|old| {
+                old.brief
+                    && old.item.item_id != item_id
+                    && old.item.space_id == record.item.space_id
+            });
+            if conflict {
+                return Err(LibraryError::Conflict(
+                    "This destination has a Brief. Preview an edit to that page.",
+                ));
+            }
+        }
+        for memory in reviewed {
+            data.manifest
+                .records
+                .insert(memory.item.item_id.clone(), vec![memory]);
+        }
+        data.manifest
+            .records
+            .entry(item_id)
+            .or_default()
+            .push(record);
+        data.manifest.receipts.insert(
+            approved.id,
+            Receipt {
+                actor: actor.into(),
+                receipt: receipt.clone(),
+            },
+        );
+        data.save()?;
+        Ok(receipt)
+    }
+
     pub fn create_group(&self, actor: &str, name: &str, restricted: bool) -> Result<TeamGroup> {
         let name = name.trim();
         if name.is_empty() || name.len() > 128 || name.contains(['\r', '\n', '\0', '/']) {
@@ -283,6 +687,107 @@ impl Library {
         data.save()?;
         Ok(group)
     }
+
+    pub fn needs_migration(&self, group: &TeamGroup) -> Result<bool> {
+        Ok(!self.read()?.manifest.migrated.contains(&group.id))
+    }
+
+    pub fn reconcile_legacy_spaces(&self, mut spaces: Vec<LegacySpace>) -> Result<()> {
+        let _lock = team::lock_team(&self.team_path)?;
+        let mut data = self.open(team::read_team(&self.team_path)?)?;
+        let mut changed = false;
+        for space in &mut spaces {
+            changed |= data.import_legacy_space(space)?;
+        }
+        let current: BTreeMap<_, _> = spaces
+            .iter()
+            .map(|space| (&space.group.id, space))
+            .collect();
+        let mut removed = Vec::new();
+        for (id, revisions) in &mut data.manifest.records {
+            let Some(record) = revisions.last_mut().filter(|record| record.migrated_page) else {
+                continue;
+            };
+            let Some(space) = record.item.space_id.as_ref().and_then(|id| current.get(id)) else {
+                removed.push(id.clone());
+                continue;
+            };
+            // A new incarnation, a move, an edit or stale source evidence
+            // invalidates the host snapshot we inherited. A reviewed edit
+            // lives in the library and keeps that original host witness.
+            let proof = record.legacy_origin.as_ref();
+            if proof.is_none() || proof != space.authorized.legacy_head(id) {
+                removed.push(id.clone());
+                continue;
+            }
+            if record
+                .legacy_file
+                .as_ref()
+                .is_some_and(|file| !space.can_serve(id, file))
+            {
+                record.legacy_file = None;
+                changed = true;
+            }
+        }
+        changed |= !removed.is_empty();
+        for id in removed {
+            data.retire(&id);
+        }
+        if changed {
+            data.save()?;
+        }
+        Ok(())
+    }
+}
+
+fn new_item(
+    team: &TeamInfo,
+    actor: &TeamPerson,
+    id: String,
+    space_id: Option<String>,
+    kind: TeamItemKind,
+    text: TeamText,
+) -> TeamItem {
+    TeamItem {
+        team_id: team.id.clone(),
+        item_id: id,
+        kind,
+        revision: 1,
+        space_id,
+        title: text.title,
+        body: text.body,
+        contributor: Some(actor.clone()),
+        authorship: Some(TeamAuthorship::Human),
+        publisher: Some(actor.clone()),
+        last_editor: Some(actor.clone()),
+    }
+}
+
+/// A personal page's citation metadata and quoted source blocks are not
+/// part of the default review. A person can still paste exact prose.
+pub fn draft_page_body(body: &str) -> String {
+    let body = body
+        .split(crate::store::format::page::SOURCES_START)
+        .next()
+        .unwrap_or_default();
+    let mut text = String::new();
+    let mut quote = String::new();
+    let flush_quote = |text: &mut String, quote: &mut String| {
+        if crate::citations::marker_spans(quote).is_empty() {
+            text.push_str(quote);
+        }
+        quote.clear();
+    };
+    for line in body.split_inclusive('\n') {
+        if line.trim_start().starts_with('>') {
+            quote.push_str(line);
+        } else {
+            flush_quote(&mut text, &mut quote);
+            text.push_str(line);
+        }
+    }
+    flush_quote(&mut text, &mut quote);
+    crate::citations::strip_member_citation_markers(&text)
 }
 
 pub struct Reader {
@@ -357,6 +862,32 @@ impl Reader {
         Ok(self.page_record(id)?.item.clone())
     }
 
+    pub fn memory(&self, id: &str) -> Result<TeamItem> {
+        self.data
+            .revisions(id)
+            .and_then(|revisions| revisions.last())
+            .filter(|record| {
+                record.item.kind == TeamItemKind::Memory && self.can_read_item(&record.item, None)
+            })
+            .map(|record| record.item.clone())
+            .ok_or(LibraryError::Absent)
+    }
+
+    pub fn history(&self, id: &str) -> Result<TeamPageHistory> {
+        self.page_record(id)?;
+        Ok(TeamPageHistory {
+            revisions: self
+                .data
+                .revisions(id)
+                .unwrap_or_default()
+                .iter()
+                .rev()
+                .filter(|record| self.can_read_item(&record.item, None))
+                .map(|record| record.item.clone())
+                .collect(),
+        })
+    }
+
     pub fn pages(&self, space: Option<&str>, limit: usize, offset: usize) -> TeamPages {
         let pages = self
             .data
@@ -369,5 +900,138 @@ impl Reader {
             .map(|record| record.item.clone())
             .collect();
         TeamPages { pages }
+    }
+
+    pub fn recall(&self, space: Option<&str>, topic: &str, limit: usize) -> TeamRecall {
+        let lower = topic.to_lowercase();
+        let words: Vec<_> = lower.split_whitespace().collect();
+        if words.is_empty() {
+            return TeamRecall::default();
+        }
+        let mut hits: Vec<_> = self
+            .data
+            .heads()
+            .filter(|record| self.can_read_item(&record.item, space))
+            .filter_map(|record| {
+                let title = record.item.title.to_lowercase();
+                let body = record.item.body.to_lowercase();
+                let score: usize = words
+                    .iter()
+                    .map(|word| {
+                        2 * usize::from(title.contains(word)) + usize::from(body.contains(word))
+                    })
+                    .sum();
+                (score != 0).then_some((score, &record.item))
+            })
+            .collect();
+        hits.sort_by(|(a, left), (b, right)| {
+            b.cmp(a).then_with(|| left.item_id.cmp(&right.item_id))
+        });
+        let mut result = TeamRecall::default();
+        for (_, item) in hits.into_iter().take(limit.min(100)) {
+            match item.kind {
+                TeamItemKind::Page => result.pages.push(item.clone()),
+                TeamItemKind::Memory => result.memories.push(item.clone()),
+            }
+        }
+        result
+    }
+
+    pub fn brief(&self, space: Option<&str>, topic: Option<&str>, limit: usize) -> TeamBrief {
+        let group = space.or(self.pin.as_deref());
+        let brief = self
+            .data
+            .heads()
+            .find(|record| {
+                record.brief
+                    && record.item.space_id.as_deref() == group
+                    && self.can_read_item(&record.item, group)
+            })
+            .map(|record| record.item.clone());
+        TeamBrief {
+            brief,
+            related: topic
+                .map(|topic| self.recall(space, topic, limit))
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn sources(&self, id: &str) -> Result<TeamPageSources> {
+        let page = self.page_record(id)?;
+        let mut hidden = page.private_source;
+        let mut sources = Vec::new();
+        for citation in &page.citations {
+            let readable = self.data.revisions(&citation.id).and_then(|revisions| {
+                revisions.iter().find(|record| {
+                    record.item.kind == TeamItemKind::Memory
+                        && record.item.revision == citation.revision
+                        && self.can_read_item(&record.item, None)
+                })
+            });
+            match readable {
+                Some(record) => sources.push(TeamCitation::Memory {
+                    memory: Box::new(record.item.clone()),
+                }),
+                None => hidden = true,
+            }
+        }
+        if hidden {
+            sources.push(TeamCitation::PrivateSource {
+                label: "private source".into(),
+            });
+        }
+        Ok(TeamPageSources {
+            page_id: id.into(),
+            sources,
+        })
+    }
+
+    pub fn legacy_paths<'a>(&'a self, space_id: &'a str) -> impl Iterator<Item = &'a str> {
+        self.data
+            .heads()
+            .filter(move |record| self.can_read_item(&record.item, Some(space_id)))
+            .filter_map(|record| record.legacy_file.as_ref().map(|file| file.path.as_str()))
+    }
+
+    pub fn deleted_legacy_pages(&self, space_id: &str) -> Vec<String> {
+        if !self.can_read(Some(space_id)) {
+            return Vec::new();
+        }
+        let mut deleted = self
+            .data
+            .manifest
+            .legacy_pages
+            .get(space_id)
+            .cloned()
+            .unwrap_or_default();
+        deleted.extend(
+            self.data
+                .manifest
+                .retired
+                .iter()
+                .filter(|(_, entry)| {
+                    entry.was_legacy_page && entry.space_id.as_deref() == Some(space_id)
+                })
+                .map(|(id, _)| id.clone()),
+        );
+        for record in self.data.heads().filter(|record| {
+            record.migrated_page && record.item.space_id.as_deref() == Some(space_id)
+        }) {
+            if record.legacy_file.is_some() {
+                deleted.remove(&record.item.item_id);
+            } else {
+                deleted.insert(record.item.item_id.clone());
+            }
+        }
+        deleted.into_iter().collect()
+    }
+
+    pub fn legacy_file(&self, space_id: &str, path: &str) -> Option<String> {
+        self.data
+            .heads()
+            .filter(|record| self.can_read_item(&record.item, Some(space_id)))
+            .filter_map(|record| record.legacy_file.as_ref())
+            .find(|file| file.path == path)
+            .map(|file| file.bytes.clone())
     }
 }
