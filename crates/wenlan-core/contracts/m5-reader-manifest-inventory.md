@@ -730,6 +730,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/team/my-tools` | main | no | not_applicable | `none` | — | status only: this person's AI tools on each team they joined, names and dates; never a key, no page text |
 | `DELETE` | `/api/team/my-tools/{id}` | main | no | not_applicable | `none` | — | receipt only: the AI tools left on that team, names and dates; never a key, no page text |
 | `POST` | `/api/team/spaces` | main | no | not_applicable | `none` | — | receipt only: counts of the first sync pass of the Space hosted for the team; page files go to the folder, not the response |
+| `POST` | `/api/team/library/terminal` | main | yes | automatic | `none` | `terminal` | The person-key-gated review echoes the caller's exact supplied draft and verifies original revisions without returning their stored content. |
 | `POST` | `/api/team/join` | main | no | not_applicable | `none` | — | status only: the team server's address, this member's id and name and the Space names they may use; no page text |
 | `POST` | `/api/team/start` | main | no | not_applicable | `none` | — | status only: the team now started on this computer, its member names and Spaces, the team listener address and the address in invite links; no key, no page text |
 | `POST` | `/api/team/stop` | main | no | not_applicable | `none` | — | status only: the team with its listener now off, its member names and Spaces; no key, no page text |
