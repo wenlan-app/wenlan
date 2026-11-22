@@ -24,12 +24,14 @@ use serde::{Deserialize, Serialize};
 
 use super::version::{self, Author, AuthorKind, Decides, PageVersion, VersionMeta};
 use super::{now_ts, writer_edited_by, Pass};
+use crate::db::member_sync::{MemberSyncInput, MemberSyncOperation, MemberSyncOutcome};
 use crate::db::revision_cards::{OpenPageCard, PageCardState};
 use crate::error::WenlanError;
 use crate::pages::Page;
 use crate::post_write::Writer;
 use crate::rulesync_team;
 use crate::store::format::page::{PageFile, PageKind};
+use wenlan_types::team::MemberSyncRefusalReason as Refusal;
 
 /// What this Wenlan shared and staged, by scope.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +57,8 @@ struct Card {
     /// The page's version the card was staged over.
     #[serde(default)]
     at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stay: Option<String>,
 }
 
 fn review_key(key: &str) -> String {
@@ -76,7 +80,7 @@ fn proposal_stay(
 /// Whether `version` was made in its page's current stay, where `stays`
 /// tracks it (a team host); everywhere else every version counts.
 fn in_current_stay(
-    stays: &HashMap<&str, Option<String>>,
+    stays: &HashMap<String, Option<String>>,
     page: &str,
     version: &PageVersion,
 ) -> bool {
@@ -89,14 +93,18 @@ impl Pass<'_> {
     /// Shares the AI tools' cards, stages the others' proposals, and writes
     /// a decision for each card decided here. Runs after the page steps, so
     /// an accepted card's page is already written as a version.
-    pub(super) async fn review<'a>(
+    pub(super) async fn review(
         &self,
-        pages: &HashMap<String, Vec<PageVersion>>,
-        proposals: &HashMap<String, Vec<PageVersion>>,
-        decisions: &'a HashMap<String, Vec<PageVersion>>,
+        read: version::FolderRead,
         heads: &HashMap<String, String>,
-        team_approvals: Vec<(&'a str, &'a str)>,
+        team_approvals: Vec<(String, String)>,
     ) -> Result<(), WenlanError> {
+        let version::FolderRead {
+            pages,
+            proposals,
+            decisions,
+            ..
+        } = read;
         let key = review_key(&self.scope.key());
         let mut review: Review = match self.db.get_app_metadata(&key).await? {
             Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
@@ -106,13 +114,14 @@ impl Pass<'_> {
         // On a team host a member's proposal or decision counts only in the
         // page's current stay: one from before the page left the Space and
         // came back is ignored.
-        let mut stays: HashMap<&str, Option<String>> = HashMap::new();
+        let mut stays: HashMap<String, Option<String>> = HashMap::new();
         if self.settings.hosted && !self.library {
-            for page in decisions.keys().chain(proposals.keys()) {
-                if rulesync_team::is_master_page(page) || stays.contains_key(page.as_str()) {
+            let page_ids: HashSet<_> = decisions.keys().chain(proposals.keys()).cloned().collect();
+            for page in page_ids {
+                if rulesync_team::is_master_page(&page) {
                     continue;
                 }
-                let stay = match self.db.get_page(page).await? {
+                let stay = match self.reload_hosted(&page).await? {
                     Some(here) => self.db.shared_page_stay_token(&here, &self.space).await?,
                     None => None,
                 };
@@ -120,23 +129,102 @@ impl Pass<'_> {
             }
         }
         // A decision closes a card only for the page it is filed under.
-        let decided: HashSet<(&str, &str)> = decisions
-            .iter()
-            .flat_map(|(page, list)| list.iter().map(move |decision| (page.as_str(), decision)))
-            .filter(|(page, decision)| in_current_stay(&stays, page, decision))
-            .filter_map(|(page, decision)| {
-                Some((page, decision.meta.decides.as_ref()?.proposal.as_str()))
-            })
-            .chain(team_approvals)
-            .collect();
+        let mut decided: HashMap<String, HashSet<String>> = HashMap::new();
+        for (page, proposal) in team_approvals {
+            decided.entry(page).or_default().insert(proposal);
+        }
+        if !self.settings.hosted {
+            for (page, versions) in &decisions {
+                for decision in versions {
+                    if let Some(decision) = &decision.meta.decides {
+                        decided
+                            .entry(page.clone())
+                            .or_default()
+                            .insert(decision.proposal.clone());
+                    }
+                }
+            }
+        }
+        if self.settings.hosted {
+            let writer = self.member_writer();
+            let empty = Vec::new();
+            for (page_id, changes) in decisions.iter() {
+                if rulesync_team::is_master_page(page_id) {
+                    continue;
+                }
+                for decision in changes.iter() {
+                    if self.refused.contains(&decision.sha) {
+                        continue;
+                    }
+                    let Some(sha) = decision
+                        .meta
+                        .decides
+                        .as_ref()
+                        .map(|decision| decision.proposal.as_str())
+                    else {
+                        continue;
+                    };
+                    let Some(proposal) = proposals
+                        .get(page_id)
+                        .and_then(|list| list.iter().find(|proposal| proposal.sha == sha))
+                    else {
+                        writer.refuse(decision, Refusal::ReviewUnavailable).await?;
+                        continue;
+                    };
+                    let Some(page) = self
+                        .db
+                        .get_shared_page_scoped(page_id, &self.member_scope())
+                        .await?
+                    else {
+                        writer.refuse(decision, Refusal::PageUnavailable).await?;
+                        continue;
+                    };
+                    let card = review
+                        .staged
+                        .get(sha)
+                        .filter(|card| card.page == *page_id)
+                        .and_then(|card| Some((card.id.as_deref()?, card.stay.as_deref())))
+                        .or_else(|| {
+                            review
+                                .shared
+                                .iter()
+                                .find(|(_, card)| {
+                                    card.page == *page_id && card.id.as_deref() == Some(sha)
+                                })
+                                .map(|(id, card)| (id.as_str(), card.stay.as_deref()))
+                        });
+                    if let MemberSyncOutcome::Applied { .. } = writer
+                        .write(MemberSyncInput {
+                            change: decision,
+                            page: Some(&page),
+                            history: pages.get(page_id).unwrap_or(&empty),
+                            operation: MemberSyncOperation::Decide { proposal, card },
+                        })
+                        .await?
+                    {
+                        decided
+                            .entry(page_id.clone())
+                            .or_default()
+                            .insert(sha.to_owned());
+                    }
+                }
+            }
+        }
 
         // Proposals of others staged here.
         let staged: Vec<(String, Card)> = review.staged.clone().into_iter().collect();
         for (sha, card) in staged {
-            if decided.contains(&(card.page.as_str(), sha.as_str())) {
-                if let Some(id) = &card.id {
+            if decided
+                .get(&card.page)
+                .is_some_and(|shas| shas.contains(&sha))
+            {
+                if let Some(id) = card.id.as_ref().filter(|_| !self.settings.hosted) {
                     self.close_card(id).await?;
                 }
+                review.staged.remove(&sha);
+                continue;
+            }
+            if self.settings.hosted && !self.current_card_stay(&card).await? {
                 review.staged.remove(&sha);
                 continue;
             }
@@ -156,7 +244,7 @@ impl Pass<'_> {
                         &card.page,
                         &sha,
                         accepted,
-                        proposal_stay(proposals, &card.page, &sha),
+                        proposal_stay(&proposals, &card.page, &sha),
                     )
                     .await?;
                     review.staged.remove(&sha);
@@ -171,8 +259,17 @@ impl Pass<'_> {
                 review.shared.remove(&card_id);
                 continue;
             };
-            if decided.contains(&(card.page.as_str(), sha)) {
-                self.close_card(&card_id).await?;
+            if decided
+                .get(&card.page)
+                .is_some_and(|shas| shas.contains(sha))
+            {
+                if !self.settings.hosted {
+                    self.close_card(&card_id).await?;
+                }
+                review.shared.remove(&card_id);
+                continue;
+            }
+            if self.settings.hosted && !self.current_card_stay(&card).await? {
                 review.shared.remove(&card_id);
                 continue;
             }
@@ -185,7 +282,7 @@ impl Pass<'_> {
                         &card.page,
                         sha,
                         false,
-                        proposal_stay(proposals, &card.page, sha),
+                        proposal_stay(&proposals, &card.page, sha),
                     )
                     .await?;
                     review.shared.remove(&card_id);
@@ -196,7 +293,7 @@ impl Pass<'_> {
                         &card.page,
                         sha,
                         accepted,
-                        proposal_stay(proposals, &card.page, sha),
+                        proposal_stay(&proposals, &card.page, sha),
                     )
                     .await?;
                     review.shared.remove(&card_id);
@@ -204,7 +301,11 @@ impl Pass<'_> {
             }
         }
 
-        let open = self.db.open_page_cards().await?;
+        let open = if self.settings.hosted {
+            self.db.open_shared_page_cards(&self.space).await?
+        } else {
+            self.db.open_page_cards().await?
+        };
         let staged_ids: HashSet<String> = review
             .staged
             .values()
@@ -229,7 +330,12 @@ impl Pass<'_> {
                 {
                     continue;
                 }
-                let Some(page) = self.db.get_page(&card.page_id).await? else {
+                let page = if self.settings.hosted {
+                    self.reload_hosted(&card.page_id).await?
+                } else {
+                    self.db.get_page(&card.page_id).await?
+                };
+                let Some(page) = page else {
                     continue;
                 };
                 if page.status != "active" || !page.review_required {
@@ -239,17 +345,12 @@ impl Pass<'_> {
                     continue;
                 };
                 let author = self.card_author(card);
+                let stay = heads
+                    .get(&page.id)
+                    .and_then(|sha| pages.get(&page.id)?.iter().find(|v| &v.sha == sha))
+                    .and_then(|version| version.meta.stay.clone());
                 if let Some(sha) = self
-                    .propose(
-                        &page,
-                        &body,
-                        heads.get(&page.id),
-                        author,
-                        heads
-                            .get(&page.id)
-                            .and_then(|sha| pages.get(&page.id)?.iter().find(|v| &v.sha == sha))
-                            .and_then(|version| version.meta.stay.clone()),
-                    )
+                    .propose(&page, &body, heads.get(&page.id), author, stay.clone())
                     .await?
                 {
                     review.shared.insert(
@@ -259,6 +360,7 @@ impl Pass<'_> {
                             id: Some(sha),
                             digest: version::body_digest(&body),
                             at: card.page_version,
+                            stay,
                         },
                     );
                 }
@@ -275,23 +377,44 @@ impl Pass<'_> {
                 .filter_map(|card| card.id.as_deref())
                 .collect();
             let mut changes: Vec<(String, Card)> = Vec::new();
-            for (page_id, list) in proposals {
+            for (page_id, list) in proposals.iter() {
                 // The authoritative team Rules card is decided on the
                 // host by a Write member's authenticated person session.
-                if !self.space_pages.contains_key(page_id) || rulesync_team::is_master_page(page_id)
-                {
+                if rulesync_team::is_master_page(page_id) {
+                    continue;
+                }
+                if self.settings.hosted {
+                    let writer = self.member_writer();
+                    for proposal in list.iter() {
+                        if !self.refused.contains(&proposal.sha)
+                            && !in_current_stay(&stays, page_id, proposal)
+                            && !mine.contains(proposal.sha.as_str())
+                        {
+                            writer.refuse(proposal, Refusal::InvalidAncestry).await?;
+                        }
+                    }
+                }
+                if !self.space_pages.contains_key(page_id) {
                     continue;
                 }
                 let newest = list
                     .iter()
                     .filter(|proposal| {
                         in_current_stay(&stays, page_id, proposal)
-                            && !decided.contains(&(page_id.as_str(), proposal.sha.as_str()))
+                            && !self.refused.contains(&proposal.sha)
+                            && !decided
+                                .get(page_id)
+                                .is_some_and(|shas| shas.contains(&proposal.sha))
                             && !mine.contains(proposal.sha.as_str())
                     })
                     .max_by(|a, b| (&a.meta.ts, &a.sha).cmp(&(&b.meta.ts, &b.sha)));
                 let Some(proposal) = newest else { continue };
-                let Some(page) = self.db.get_page(page_id).await? else {
+                let page = if self.settings.hosted {
+                    self.reload_hosted(page_id).await?
+                } else {
+                    self.db.get_page(page_id).await?
+                };
+                let Some(page) = page else {
                     continue;
                 };
                 if page.status != "active" || !page.review_required {
@@ -322,7 +445,8 @@ impl Pass<'_> {
                         continue;
                     }
                 }
-                if let Some(id) = self.stage(&page, proposal).await? {
+                let history = pages.get(page_id).map(Vec::as_slice).unwrap_or_default();
+                if let Some(id) = self.stage(&page, proposal, history).await? {
                     changes.push((
                         proposal.sha.clone(),
                         Card {
@@ -330,6 +454,7 @@ impl Pass<'_> {
                             id: Some(id),
                             digest: proposal.meta.body_digest.clone(),
                             at: Some(page.version),
+                            stay: proposal.meta.stay.clone(),
                         },
                     ));
                 }
@@ -349,19 +474,38 @@ impl Pass<'_> {
     /// was last changed by accepting a card after it was staged (accepted
     /// with the person's own edits).
     async fn accepted(&self, card: &Card) -> Result<bool, WenlanError> {
-        let Some(page) = self.db.get_page(&card.page).await? else {
+        let page = if self.settings.hosted {
+            self.reload_hosted(&card.page).await?
+        } else {
+            self.db.get_page(&card.page).await?
+        };
+        let Some(page) = page else {
             return Ok(false);
         };
         if version::body_digest(&page.content) == card.digest {
             return Ok(true);
         }
         let since = card.at.unwrap_or(i64::MAX);
-        Ok(self
-            .db
-            .list_page_history(&card.page, 20)
-            .await?
+        let history = if self.settings.hosted {
+            self.db
+                .list_shared_page_history(&card.page, &self.member_scope(), 20)
+                .await?
+        } else {
+            self.db.list_page_history(&card.page, 20).await?
+        };
+        Ok(history
             .iter()
             .any(|row| row.version > since && row.edited_by == "revision_accept"))
+    }
+
+    async fn current_card_stay(&self, card: &Card) -> Result<bool, WenlanError> {
+        let Some(page) = self.reload_hosted(&card.page).await? else {
+            return Ok(false);
+        };
+        let Some(stay) = self.db.shared_page_stay_token(&page, &self.space).await? else {
+            return Ok(false);
+        };
+        Ok(card.stay.as_deref() == Some(&stay))
     }
 
     /// Takes a card away here because it was decided elsewhere. A card the
@@ -434,7 +578,11 @@ impl Pass<'_> {
             device: None,
             stay,
         };
-        let text = version::render(&file, &meta);
+        let text = if self.settings.hosted || self.settings.host.is_some() {
+            crate::member_view::MemberSnapshot::new(&file, &meta, &self.space_pages).render()
+        } else {
+            version::render(&file, &meta)
+        };
         let name = version::version_file_name(&version::sha256_hex(text.as_bytes()));
         match version::parse(&name, text.as_bytes()) {
             Ok(read) if read.page.body == body => {}
@@ -447,6 +595,22 @@ impl Pass<'_> {
             }
         }
         let member = meta.author.member.clone();
+        if self.settings.hosted {
+            let Some(stay) = meta.stay.as_deref() else {
+                return Ok(None);
+            };
+            return self
+                .member_writer()
+                .publish_current_review(
+                    page,
+                    stay,
+                    &self.folder,
+                    &member,
+                    version::PROPOSALS_DIR,
+                    &text,
+                )
+                .await;
+        }
         self.write_kind(&member, version::PROPOSALS_DIR, &page.id, text)
             .await
             .map(Some)
@@ -501,7 +665,23 @@ impl Pass<'_> {
         &self,
         page: &Page,
         proposal: &PageVersion,
+        history: &[PageVersion],
     ) -> Result<Option<String>, WenlanError> {
+        if self.settings.hosted {
+            return match self
+                .member_writer()
+                .write(MemberSyncInput {
+                    change: proposal,
+                    page: Some(page),
+                    history,
+                    operation: MemberSyncOperation::Stage,
+                })
+                .await?
+            {
+                MemberSyncOutcome::Applied { card, .. } => Ok(card),
+                MemberSyncOutcome::Refused => Ok(None),
+            };
+        }
         let author = &proposal.meta.author;
         let edited_by = writer_edited_by(author, &self.settings.member_id);
         let source_revision = self.db.get_page_source_revision(&page.id).await?;
@@ -570,6 +750,24 @@ impl Pass<'_> {
         };
         let text = version::render(&file, &meta);
         let member = self.settings.member_id.clone();
+        if self.settings.hosted {
+            let (Some(page), Some(stay)) =
+                (self.reload_hosted(page_id).await?, meta.stay.as_deref())
+            else {
+                return Ok(());
+            };
+            self.member_writer()
+                .publish_current_review(
+                    &page,
+                    stay,
+                    &self.folder,
+                    &member,
+                    version::DECISIONS_DIR,
+                    &text,
+                )
+                .await?;
+            return Ok(());
+        }
         self.write_kind(&member, version::DECISIONS_DIR, page_id, text)
             .await?;
         Ok(())

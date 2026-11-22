@@ -22,10 +22,10 @@ use super::night_tidy::{apply_tidies, undo_tidies, TidyApplied};
 use super::thing_map::DreamMapChanges;
 use super::things::history;
 use super::MemoryDB;
-use crate::conversation_intake::{PriorPoint, MAX_DREAM_CONVERSATIONS};
+use crate::conversation_intake::{PriorPoint, PriorWorking, WorkingKind, MAX_DREAM_CONVERSATIONS};
 use crate::read_scope::ReadScope;
 use crate::WenlanError;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use wenlan_types::{
     NightLinkMade, NightTidied, ThingActor, ThingConclusionSentence, ThingDream, ThingLastNight,
     ThingNightPoint, ThingNightPoints, ThingReplaced, ThingTidy,
@@ -82,6 +82,17 @@ struct DreamEntry {
     decided: Vec<String>,
     #[serde(default)]
     open: Vec<String>,
+    /// The preferences, tool problems and lessons it kept. They are not
+    /// points of the thing (nothing lists them as settled or open); the
+    /// entry holds them so Undo forgets them with the night and later nights
+    /// can tell which are standing. Older entries have none.
+    #[serde(default)]
+    working: Vec<String>,
+    /// The night kept only preferences, tool problems or lessons: it is not
+    /// "the night" of the thing (no morning line, no Undo of its own, no
+    /// conclusion), only a record of what it kept.
+    #[serde(default)]
+    working_only: bool,
     /// What it changed on the thing's map.
     #[serde(default)]
     map: DreamMapChanges,
@@ -97,6 +108,14 @@ struct DreamEntry {
     /// whose conclusion call failed, have none.
     #[serde(default)]
     conclusion: Vec<ThingConclusionSentence>,
+}
+
+impl DreamEntry {
+    /// A night of the thing: not the one-time connecting of old points, and
+    /// not a record of preferences, tool problems and lessons alone.
+    fn is_night(&self) -> bool {
+        !self.backfill && !self.working_only
+    }
 }
 
 impl MemoryDB {
@@ -255,8 +274,11 @@ impl MemoryDB {
         self.dream_points_where(thing_id, |_| true).await
     }
 
-    /// [`Self::dream_points`] kept in one Space (`""` for unfiled points), so
-    /// a night reading one Space's conversations is never shown another's.
+    /// [`Self::dream_points`] kept in `space` (`""` for none), by the Space
+    /// of the memory itself, never by a conversation's label (a label is a
+    /// model's guess, and a conversation labelled with a shared Space may
+    /// have been kept personal): a night reading one Space's conversations
+    /// is never shown another's and always sees its own.
     pub async fn dream_points_in(
         &self,
         thing_id: &str,
@@ -266,6 +288,158 @@ impl MemoryDB {
             point.space.as_deref().unwrap_or_default() == space
         })
         .await
+    }
+
+    /// The preferences, tool problems and lessons the thing's nights kept
+    /// that were not taken back and still stand (not forgotten, not
+    /// replaced), oldest first, kept in `space` (`""` for none): a night
+    /// reading one Space's conversations is never shown what another's kept.
+    pub async fn dream_working_in(
+        &self,
+        thing_id: &str,
+        space: &str,
+    ) -> Result<Vec<PriorWorking>, WenlanError> {
+        let nights = self.dream_nights(thing_id).await?;
+        let ids = Self::working_ids(nights.into_iter().filter(|(_, undone, _)| !undone));
+        Ok(self
+            .standing_working(ids, Some(space))
+            .await?
+            .into_iter()
+            .collect())
+    }
+
+    /// The preferences any thing's nights kept that were not taken back and
+    /// still stand, oldest first, at most the newest `limit`. A preference is
+    /// about the person, not about one piece of work, so a night is shown
+    /// the person's standing preferences from every thing, never the same
+    /// one twice.
+    pub async fn dream_preferences(&self, limit: usize) -> Result<Vec<PriorWorking>, WenlanError> {
+        let rows: Vec<String> = {
+            let conn = self.conn.lock().await;
+            let mut rows = conn
+                .query(
+                    "SELECT h.data FROM thing_history h
+                      WHERE h.op = 'thing.dream'
+                        AND NOT EXISTS (SELECT 1 FROM thing_history u
+                                         WHERE u.thing_id = h.thing_id
+                                           AND u.op = 'thing.dream_undo'
+                                           AND json_extract(u.data, '$.seq') = h.seq)
+                      ORDER BY h.seq",
+                    (),
+                )
+                .await
+                .map_err(db_err("dream preferences"))?;
+            let mut out = Vec::new();
+            while let Some(row) = rows.next().await.map_err(db_err("dream preferences row"))? {
+                out.push(row.get::<String>(0).unwrap_or_default());
+            }
+            out
+        };
+        let mut ids = Vec::new();
+        for data in rows {
+            let entry: DreamEntry = serde_json::from_str(&data).unwrap_or_default();
+            ids.extend(Self::working_ids(std::iter::once((
+                0,
+                false,
+                DreamEntryWithAt { at: 0, entry },
+            ))));
+        }
+        // And the confirmed preferences in no Space that the person or their
+        // tools saved themselves: a night's newer one can replace them too.
+        let saved = self.person_preferences(limit).await?;
+        ids.extend(saved.into_iter().rev().map(|(id, _)| id));
+        let mut seen = HashSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
+        let mut standing: Vec<PriorWorking> = self
+            .standing_working(ids, None)
+            .await?
+            .into_iter()
+            .filter(|w| w.kind == WorkingKind::Preference)
+            .collect();
+        let skip = standing.len().saturating_sub(limit);
+        standing.drain(..skip);
+        Ok(standing)
+    }
+
+    /// The memories nights kept as preferences, tool problems or lessons, or
+    /// tidied them into one, oldest first.
+    fn working_ids(nights: impl Iterator<Item = (i64, bool, DreamEntryWithAt)>) -> Vec<String> {
+        let mut ids = Vec::new();
+        for (_, _, night) in nights {
+            ids.extend(night.entry.working);
+            for change in &night.entry.changes {
+                if let NightChange::Tidy {
+                    new, wrote: true, ..
+                } = change
+                {
+                    ids.push(new.clone());
+                }
+            }
+        }
+        ids
+    }
+
+    /// Those of `ids` that still stand (not forgotten, hidden or replaced)
+    /// and are a preference, tool problem or lesson, in the order of `ids`.
+    /// With `space`, only those kept in that Space (`""` for none). A memory
+    /// the person has not confirmed yet is still here: it stands.
+    async fn standing_working(
+        &self,
+        ids: Vec<String>,
+        space: Option<&str>,
+    ) -> Result<Vec<PriorWorking>, WenlanError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into());
+        let mut found: HashMap<String, PriorWorking> = HashMap::new();
+        {
+            let conn = self.conn.lock().await;
+            // One query for all of them.
+            let mut rows = conn
+                .query(
+                    "SELECT m.source_id, MAX(m.content), MAX(m.memory_type), MAX(m.space)
+                       FROM memories m
+                      WHERE m.source = 'memory' AND m.pending_revision = 0
+                        AND m.source_id IN (SELECT value FROM json_each(?1))
+                        AND COALESCE(m.supersede_mode, '') <> 'evicted'
+                        AND NOT EXISTS (SELECT 1 FROM memories s
+                                         WHERE s.supersedes = m.source_id AND s.source = 'memory'
+                                           AND s.pending_revision = 0)
+                      GROUP BY m.source_id",
+                    libsql::params![wanted],
+                )
+                .await
+                .map_err(db_err("dream working"))?;
+            while let Some(row) = rows.next().await.map_err(db_err("dream working row"))? {
+                let id = row.get::<String>(0).unwrap_or_default();
+                let text = row.get::<String>(1).unwrap_or_default();
+                let kind = row
+                    .get::<Option<String>>(2)
+                    .unwrap_or(None)
+                    .and_then(|t| WorkingKind::from_memory_type(&t));
+                let memory_space = crate::space_context::normalize_unfiled_space(
+                    row.get::<Option<String>>(3).unwrap_or(None),
+                );
+                if let (false, Some(kind), true) = (
+                    text.is_empty(),
+                    kind,
+                    space.is_none_or(|space| memory_space.as_deref().unwrap_or_default() == space),
+                ) {
+                    found.insert(
+                        id.clone(),
+                        PriorWorking {
+                            id,
+                            text,
+                            kind,
+                            space: memory_space,
+                        },
+                    );
+                }
+            }
+        }
+        // In the order the nights kept them.
+        Ok(ids.into_iter().filter_map(|id| found.remove(&id)).collect())
     }
 
     async fn dream_points_where(
@@ -282,6 +456,7 @@ impl MemoryDB {
                 id: point.id,
                 text: point.text,
                 decided: point.decided,
+                space: point.space,
             })
             .collect())
     }
@@ -369,7 +544,8 @@ impl MemoryDB {
             let mut rows = conn
                 .query(
                     "SELECT MAX(m.content), MAX(m.title),
-                            COALESCE(MIN(m.created_at), MIN(m.last_modified)), MAX(m.space)
+                            COALESCE(MIN(m.created_at), MIN(m.last_modified)), MAX(m.space),
+                            MAX(m.memory_type)
                        FROM memories m
                       WHERE m.source = 'memory' AND m.source_id = ?1 AND m.pending_revision = 0
                         AND COALESCE(m.supersede_mode, '') <> 'evicted'
@@ -383,16 +559,22 @@ impl MemoryDB {
                 .map_err(db_err("dream point"))?;
             if let Some(row) = rows.next().await.map_err(db_err("dream point row"))? {
                 let text = row.get::<String>(0).unwrap_or_default();
-                if !text.is_empty() {
+                // A merged tool problem or lesson is not a point of the thing.
+                let working = row
+                    .get::<Option<String>>(4)
+                    .unwrap_or(None)
+                    .is_some_and(|kind| WorkingKind::from_memory_type(&kind).is_some());
+                if !text.is_empty() && !working {
+                    let space = crate::space_context::normalize_unfiled_space(
+                        row.get::<Option<String>>(3).unwrap_or(None),
+                    );
                     points.push(StandingPoint {
                         decided: decided.contains(&id),
                         id,
                         text,
                         title: row.get::<String>(1).unwrap_or_default(),
                         created_at: row.get::<i64>(2).unwrap_or(0),
-                        space: crate::space_context::normalize_unfiled_space(
-                            row.get::<Option<String>>(3).unwrap_or(None),
-                        ),
+                        space,
                     });
                 }
             }
@@ -458,7 +640,7 @@ impl MemoryDB {
         let Some((_, _, night)) = nights
             .into_iter()
             .rev()
-            .find(|(_, undone, night)| !undone && !night.entry.backfill)
+            .find(|(_, undone, night)| !undone && night.entry.is_night())
         else {
             return Ok(None);
         };
@@ -552,7 +734,7 @@ impl MemoryDB {
         let Some((_, _, night)) = nights
             .into_iter()
             .rev()
-            .find(|(_, undone, night)| !undone && !night.entry.backfill)
+            .find(|(_, undone, night)| !undone && night.entry.is_night())
         else {
             return Ok(None);
         };
@@ -779,7 +961,7 @@ impl MemoryDB {
             let newest = nights
                 .iter()
                 .rev()
-                .find(|(_, undone, night)| !undone && !night.entry.backfill);
+                .find(|(_, undone, night)| !undone && night.entry.is_night());
             if newest.is_none_or(|(_, _, night)| night.at < since) {
                 continue;
             }
@@ -823,6 +1005,35 @@ impl MemoryDB {
         conversations: &[DueConversation],
         tidied: &[TidyApplied],
     ) -> Result<Option<i64>, WenlanError> {
+        self.record_dream_full(
+            thing_id,
+            decided,
+            open,
+            &[],
+            map,
+            links,
+            conversations,
+            tidied,
+        )
+        .await
+    }
+
+    /// [`Self::record_dream_tidied`] with the preferences, tool problems and
+    /// lessons the night kept (`working`): recorded so Undo forgets them with
+    /// the night. They are not points: nothing lists them as settled or open.
+    /// A night that only kept those is recorded too.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_dream_full(
+        &self,
+        thing_id: &str,
+        decided: &[String],
+        open: &[String],
+        working: &[String],
+        map: &DreamMapChanges,
+        links: &[NightLink],
+        conversations: &[DueConversation],
+        tidied: &[TidyApplied],
+    ) -> Result<Option<i64>, WenlanError> {
         let mut changes: Vec<NightChange> = decided
             .iter()
             .chain(open)
@@ -845,10 +1056,32 @@ impl MemoryDB {
             self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
                 .await?;
         }
-        let tidies = changes
-            .iter()
-            .any(|change| matches!(change, NightChange::Tidy { .. }));
-        if !decided.is_empty() || !open.is_empty() || tidies {
+        // A tidy of preferences, tool problems or lessons is working too.
+        let mut tidies = false;
+        let mut working_tidies = false;
+        for change in &changes {
+            if let NightChange::Tidy { new, .. } = change {
+                if working_memory_in(&tx, new).await? {
+                    working_tidies = true;
+                } else {
+                    tidies = true;
+                }
+            }
+        }
+        let working_only = decided.is_empty()
+            && open.is_empty()
+            && !tidies
+            && (!working.is_empty() || working_tidies);
+        if !decided.is_empty()
+            || !open.is_empty()
+            || !working.is_empty()
+            || tidies
+            || working_tidies
+        {
+            let mut data = serde_json::json!({ "decided": decided, "open": open, "working": working, "map": map, "changes": changes });
+            if working_only {
+                data["working_only"] = serde_json::Value::Bool(true);
+            }
             history(
                 &tx,
                 now,
@@ -856,10 +1089,14 @@ impl MemoryDB {
                 "thing.dream",
                 thing_id,
                 None,
-                serde_json::json!({ "decided": decided, "open": open, "map": map, "changes": changes }),
+                data,
             )
             .await?;
-            seq = Some(tx.last_insert_rowid());
+            // A night of the thing has a sequence number (for its
+            // conclusion); a record of working memories alone is not one.
+            if !working_only {
+                seq = Some(tx.last_insert_rowid());
+            }
         }
         for conversation in conversations {
             tx.execute(
@@ -899,6 +1136,106 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// [`Self::attach_dream_point`] for a preference, tool problem or lesson:
+    /// the same source and Wenlan's own mark, but not confirmed. The person
+    /// does not see it on a thing's page, so it waits for their OK like any
+    /// other memory an AI extracted.
+    pub async fn attach_dream_working(
+        &self,
+        source_id: &str,
+        session_id: &str,
+        line: Option<&str>,
+    ) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET session_id = ?1,
+                    source_agent = COALESCE(source_agent, 'wenlan'), said_line = ?3
+              WHERE source = 'memory' AND source_id = ?2 AND session_id IS NULL",
+            libsql::params![session_id, source_id, line],
+        )
+        .await
+        .map_err(db_err("attach dream working"))?;
+        Ok(())
+    }
+
+    /// The memories that stand (not forgotten, replaced or only proposed)
+    /// of the same kind whose text is `content` up to case and spacing, as
+    /// `(source_id, space)`. Equal, not alike: "Ship on Friday" is not a copy
+    /// of "Ship on Friday after QA signs off".
+    pub async fn live_copies_of(
+        &self,
+        content: &str,
+        memory_type: &str,
+    ) -> Result<Vec<(String, Option<String>)>, WenlanError> {
+        let wanted = same_words(content);
+        // Cheap to narrow, whatever the spacing: the first word, and a length
+        // no shorter than the words alone (spacing only ever adds to it).
+        let first = wanted.split(' ').next().unwrap_or_default();
+        let pattern = format!(
+            "{}%",
+            first
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let shortest = wanted.chars().count() as i64;
+        let longest = shortest * 2 + 16;
+        let sql = format!(
+            "SELECT m.source_id, m.content, m.space FROM memories m
+              WHERE m.source = 'memory' AND m.chunk_index = 0
+                AND m.memory_type = ?2 AND ltrim(m.content) LIKE ?1 ESCAPE '\\'
+                AND length(m.content) BETWEEN ?3 AND ?4
+                AND COALESCE(m.pending_revision, 0) = 0
+                AND {} AND {}
+              ORDER BY m.created_at",
+            crate::db::not_self_archived("m"),
+            crate::db::not_hidden_by_superseder(&crate::read_scope::ReadScope::Global, "m"),
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &sql,
+                libsql::params![pattern, memory_type, shortest, longest],
+            )
+            .await
+            .map_err(db_err("live copies"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(db_err("live copies row"))? {
+            if same_words(&row.get::<String>(1).unwrap_or_default()) == wanted {
+                out.push((
+                    row.get::<String>(0).unwrap_or_default(),
+                    crate::space_context::normalize_unfiled_space(
+                        row.get::<Option<String>>(2).unwrap_or(None),
+                    ),
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Link a memory a night found it had already kept to the conversation
+    /// it came up in, only when it belongs to none and is nobody's own to
+    /// keep: not pinned, not confirmed by the person (a hand-saved one is).
+    /// Nothing else about it changes, and it is not recorded as written by
+    /// the night.
+    pub async fn link_existing_memory(
+        &self,
+        source_id: &str,
+        session_id: &str,
+    ) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET session_id = ?1
+              WHERE source = 'memory' AND source_id = ?2 AND session_id IS NULL
+                AND COALESCE(pinned, 0) = 0 AND COALESCE(confirmed, 0) = 0
+                AND COALESCE(pending_revision, 0) = 0",
+            libsql::params![session_id, source_id],
+        )
+        .await
+        .map_err(db_err("link existing memory"))?;
+        Ok(())
+    }
+
     /// A night came to read these conversations and their transcripts were
     /// gone. They are not marked read: they are left out of the nights until
     /// they go on again, and the thing's page says one could not be read.
@@ -921,26 +1258,100 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// How many of a thing's conversations went on since a night last read
-    /// them, and could not be read because their transcript was gone.
-    pub async fn thing_unread_conversations(&self, thing_id: &str) -> Result<usize, WenlanError> {
+    /// The AI tools of a thing's conversations a night cannot read, one
+    /// entry per conversation, limited to the caller's Space scope:
+    /// - labelled work conversations that went on since a night last read
+    ///   them and whose transcript was gone;
+    /// - conversations from a tool Wenlan has no transcript reader for. They
+    ///   never get a `conversation_labels` row (labels come only from a
+    ///   scanned transcript), only an `agent_sessions` row from the tool's
+    ///   own MCP calls. Only those active since a night last read the thing
+    ///   (its latest night with points, or the last line of its newest read
+    ///   conversation) count (all of them when no night has), so an old one stops being
+    ///   said once the thing has been read since.
+    pub async fn thing_unread_tools(
+        &self,
+        thing_id: &str,
+        scope: &ReadScope,
+    ) -> Result<Vec<String>, WenlanError> {
+        let readers = wenlan_types::session_context::TRANSCRIPT_TOOLS
+            .iter()
+            .map(|tool| format!("'{tool}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT COUNT(*) FROM conversation_labels cl
-                   JOIN thing_sessions ts ON ts.session_id = cl.session_id
-                  WHERE ts.thing_id = ?1 AND cl.work = 1
-                    AND cl.unread_at IS NOT NULL AND cl.unread_at >= cl.last_at
-                    AND (cl.dreamed_at IS NULL OR cl.dreamed_at < cl.last_at)",
+                &format!(
+                    "SELECT cl.tool, cl.space FROM conversation_labels cl
+                       JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                      WHERE ts.thing_id = ?1 AND cl.work = 1
+                        AND cl.unread_at IS NOT NULL AND cl.unread_at >= cl.last_at
+                        AND (cl.dreamed_at IS NULL OR cl.dreamed_at < cl.last_at)
+                     UNION ALL
+                     SELECT s.tool, COALESCE(s.space, '') FROM agent_sessions s
+                       JOIN thing_sessions ts ON ts.session_id = s.id
+                      WHERE ts.thing_id = ?1 AND s.tool NOT IN ({readers})
+                        AND NOT EXISTS (SELECT 1 FROM conversation_labels l
+                                         WHERE l.session_id = s.id)
+                        AND s.last_write_at > MAX(
+                              COALESCE((SELECT MAX(h.ts) FROM thing_history h
+                                WHERE h.thing_id = ?1 AND h.op = 'thing.dream'), 0),
+                              COALESCE((SELECT MAX(l2.dreamed_at) FROM conversation_labels l2
+                                JOIN thing_sessions t2 ON t2.session_id = l2.session_id
+                                WHERE t2.thing_id = ?1), 0))"
+                ),
                 libsql::params![thing_id],
             )
             .await
-            .map_err(db_err("thing unread"))?;
-        let count = match rows.next().await.map_err(db_err("thing unread row"))? {
-            Some(row) => row.get::<i64>(0).unwrap_or(0),
-            None => 0,
-        };
-        Ok(usize::try_from(count).unwrap_or(0))
+            .map_err(db_err("thing unread tools"))?;
+        let mut tools = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(db_err("thing unread tools row"))?
+        {
+            let space = row.get::<String>(1).unwrap_or_default();
+            if scope.matches(Some(space.as_str()).filter(|s| !s.is_empty())) {
+                tools.push(row.get::<String>(0).unwrap_or_default());
+            }
+        }
+        Ok(tools)
+    }
+
+    /// How many of a thing's conversations are due for reading (last line at
+    /// or before `quiet_since`, not read, not gone) in the caller's Space
+    /// scope. The caller passes the cutoff of a night that had no AI to read
+    /// with; the daemon keeps that in memory (`things_intake`).
+    pub async fn thing_waiting_conversations(
+        &self,
+        thing_id: &str,
+        quiet_since: i64,
+        scope: &ReadScope,
+    ) -> Result<usize, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT cl.space FROM conversation_labels cl
+                   JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                   JOIN things t ON t.id = ts.thing_id
+                  WHERE ts.thing_id = ?1 AND cl.work = 1
+                    AND t.merged_into IS NULL AND t.title IS NOT NULL
+                    AND (cl.dreamed_at IS NULL OR cl.last_at > cl.dreamed_at)
+                    AND (cl.unread_at IS NULL OR cl.last_at > cl.unread_at)
+                    AND cl.last_at <= ?2",
+                libsql::params![thing_id, quiet_since],
+            )
+            .await
+            .map_err(db_err("thing waiting"))?;
+        let mut count = 0;
+        while let Some(row) = rows.next().await.map_err(db_err("thing waiting row"))? {
+            let space = row.get::<String>(0).unwrap_or_default();
+            if scope.matches(Some(space.as_str()).filter(|s| !s.is_empty())) {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// The Space a night's point goes to when its conversation's label named
@@ -1008,7 +1419,7 @@ impl MemoryDB {
         let Some((seq, _, night)) = nights
             .into_iter()
             .rev()
-            .find(|(_, undone, night)| !undone && !night.entry.backfill)
+            .find(|(_, undone, night)| !undone && night.entry.is_night())
         else {
             return Ok(Vec::new());
         };
@@ -1034,6 +1445,7 @@ impl MemoryDB {
         super::thing_map::undo_dream_map_in(&tx, thing_id, &night.entry.map, now).await?;
         let mut ids = night.entry.decided;
         ids.extend(night.entry.open);
+        ids.extend(night.entry.working);
         ids.extend(tidied);
         for id in &ids {
             self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
@@ -1042,6 +1454,14 @@ impl MemoryDB {
         tx.commit().await.map_err(db_err("undo dream commit"))?;
         Ok(ids)
     }
+}
+
+/// Text compared up to case and spacing.
+fn same_words(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// A night point whose memory still stands.
@@ -1139,6 +1559,24 @@ fn last_night_of(
         linked,
         tidied,
     })
+}
+
+/// Whether `id` is a preference, tool problem or lesson.
+async fn working_memory_in(tx: &libsql::Transaction, id: &str) -> Result<bool, WenlanError> {
+    let mut rows = tx
+        .query(
+            "SELECT memory_type FROM memories
+              WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0",
+            libsql::params![id],
+        )
+        .await
+        .map_err(db_err("working memory"))?;
+    Ok(rows
+        .next()
+        .await
+        .map_err(db_err("working memory row"))?
+        .and_then(|row| row.get::<Option<String>>(0).unwrap_or(None))
+        .is_some_and(|kind| WorkingKind::from_memory_type(&kind).is_some()))
 }
 
 /// One night's entry and when it ran.

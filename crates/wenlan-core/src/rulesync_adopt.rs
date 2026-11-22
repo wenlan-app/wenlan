@@ -71,6 +71,7 @@ pub struct Adoption {
     pub personal_file_notes: BTreeMap<PathBuf, String>,
     pub skipped_personal_files: BTreeMap<PathBuf, String>,
     pub includes_personal_files: bool,
+    pub settings: crate::rulesync_settings::personal::Adoption,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, String>,
     /// Linked rule files that stay in place outside delivery.
@@ -301,6 +302,7 @@ fn discover_with_platform(
         personal_file_notes: BTreeMap::new(),
         skipped_personal_files: BTreeMap::new(),
         includes_personal_files: false,
+        settings: Default::default(),
         skipped,
         skipped_rules,
         skipped_tools: Vec::new(),

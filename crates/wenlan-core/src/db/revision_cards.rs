@@ -336,6 +336,28 @@ impl MemoryDB {
 
     /// Every open whole-page card, oldest first.
     pub async fn open_page_cards(&self) -> Result<Vec<OpenPageCard>, WenlanError> {
+        self.open_page_cards_in(None).await
+    }
+
+    pub(crate) async fn open_shared_page_cards(
+        &self,
+        space: &str,
+    ) -> Result<Vec<OpenPageCard>, WenlanError> {
+        self.open_page_cards_in(Some(space)).await
+    }
+
+    async fn open_page_cards_in(
+        &self,
+        space: Option<&str>,
+    ) -> Result<Vec<OpenPageCard>, WenlanError> {
+        let eligibility = space
+            .map(|_| {
+                format!(
+            "AND memories.space=?2 AND EXISTS (SELECT 1 FROM pages p WHERE p.id=memories.supersedes
+                  AND p.workspace=?2 AND {})", super::scoped_pages::shared_page_predicate("p.")
+        )
+            })
+            .unwrap_or_default();
         let sql = format!(
             "SELECT source_id, supersedes,
                     COALESCE(json_extract(structured_fields, '$.edited_by'), ''),
@@ -345,11 +367,16 @@ impl MemoryDB {
              FROM memories
              WHERE {OPEN_CARD_SQL}
                AND json_extract(structured_fields, '$.revision_kind') = ?1
+               {eligibility}
              ORDER BY last_modified, source_id"
         );
         let conn = self.conn.lock().await;
+        let mut params = vec![libsql::Value::Text(PAGE_WRITE_CARD_KIND.to_owned())];
+        if let Some(space) = space {
+            params.push(libsql::Value::Text(space.to_owned()));
+        }
         let mut rows = conn
-            .query(&sql, libsql::params![PAGE_WRITE_CARD_KIND])
+            .query(&sql, params)
             .await
             .map_err(db_err("open page cards"))?;
         let mut out = Vec::new();

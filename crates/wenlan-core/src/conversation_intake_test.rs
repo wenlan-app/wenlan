@@ -532,7 +532,9 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
   {"text": "", "settled": true, "from": "C0"},
   {"text": "Bad replace.", "settled": true, "from": "C0", "replaces": "P9"}
 ]}"#;
-    let points = parse_dream(answer, 2, 2, 0, 0).unwrap();
+    let points = parse_dream(answer, &[false, false], 2, &[], &[], 0, 0)
+        .unwrap()
+        .points;
     assert_eq!(
         points,
         vec![
@@ -565,8 +567,11 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
             },
         ]
     );
-    assert_eq!(parse_dream(r#"{"points": []}"#, 1, 0, 0, 0), Some(vec![]));
-    assert!(parse_dream("no json", 1, 0, 0, 0).is_none());
+    assert_eq!(
+        parse_dream(r#"{"points": []}"#, &[false], 0, &[], &[], 0, 0),
+        Some(Dream::default())
+    );
+    assert!(parse_dream("no json", &[false], 0, &[], &[], 0, 0).is_none());
     let prompt = dream_prompt(
         "Site",
         &[],
@@ -574,7 +579,9 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
             id: "m".into(),
             text: "Kept.".into(),
             decided: false,
+            space: None,
         }],
+        &[],
         &[MapPoint {
             text: "Which tagline?".into(),
             decided: None,
@@ -606,7 +613,9 @@ fn ux_chat_5_a_nights_point_names_its_map_point() {
   {"text": "Pricing waits.", "settled": false, "from": "C0", "map": "N1"},
   {"text": "Docs move.", "settled": true, "from": "C0", "map": "N5"}
 ]}"#;
-    let points = parse_dream(answer, 1, 0, 2, 0).unwrap();
+    let points = parse_dream(answer, &[false], 0, &[], &[], 2, 0)
+        .unwrap()
+        .points;
     assert_eq!(
         points.iter().map(|p| p.map).collect::<Vec<_>>(),
         [Some(1), None, None]
@@ -619,6 +628,7 @@ fn ux_chat_5_a_nights_point_names_its_map_point() {
 fn ux_chat_5_a_nights_point_names_its_topic_from_the_list() {
     let prompt = dream_prompt(
         "Site",
+        &[],
         &[],
         &[],
         &[],
@@ -635,7 +645,9 @@ fn ux_chat_5_a_nights_point_names_its_topic_from_the_list() {
   {"text": "Made up a name.", "settled": true, "from": "C0", "topic": "Billing"},
   {"text": "Never said.", "settled": true, "from": "C0"}
 ]}"#;
-    let points = parse_dream(answer, 1, 0, 0, 2).unwrap();
+    let points = parse_dream(answer, &[false], 0, &[], &[], 0, 2)
+        .unwrap()
+        .points;
     assert_eq!(
         points.iter().map(|p| p.topic).collect::<Vec<_>>(),
         [Some(0), None, None, None, None]
@@ -749,6 +761,7 @@ fn ux_view_6_the_conclusion_prompt_lists_the_newest_points() {
             id: format!("mem_{i}"),
             text: format!("point {i}"),
             decided: i % 2 == 0,
+            space: None,
         })
         .collect();
     let kept = conclusion_points(&points);
@@ -840,7 +853,7 @@ fn ux_who_6_a_nights_point_names_the_line_it_came_from() {
             (1, "second chat".to_string()),
         ]
     );
-    let prompt = dream_prompt("Resume", &conversations, &[], &[], &[], "English");
+    let prompt = dream_prompt("Resume", &conversations, &[], &[], &[], &[], "English");
     assert!(prompt.contains("L1: keep one page"), "{prompt}");
     assert!(prompt.contains("L2: second chat"), "{prompt}");
     assert!(prompt.contains("\"line\": \"L0\""), "{prompt}");
@@ -849,8 +862,213 @@ fn ux_who_6_a_nights_point_names_the_line_it_came_from() {
       {"text": "Second point here.", "settled": false, "from": "C1", "line": "bad"},
       {"text": "Merged in PR #43.", "settled": true, "from": "C0", "line": "L0"}
     ]}"#;
-    let points = parse_dream(answer, 2, 0, 0, 0).unwrap();
+    let points = parse_dream(answer, &[false, false], 0, &[], &[0, 0, 1], 0, 0)
+        .unwrap()
+        .points;
     assert_eq!(points.len(), 2);
     assert_eq!(points[0].line, Some(1));
     assert_eq!(points[1].line, None);
+}
+
+/// The night also keeps how the person wants AI tools to work, tool problems
+/// and lessons, in the same call: the prompt asks for them, shows the ones
+/// already kept as W0.., and no longer leaves them out of the points.
+#[test]
+fn the_night_prompt_asks_for_preferences_tool_problems_and_lessons() {
+    let kept = [PriorWorking {
+        id: "m1".into(),
+        text: "Run tests with the narrowest command.".into(),
+        kind: WorkingKind::Preference,
+        space: None,
+    }];
+    let prompt = dream_prompt("Site", &[], &[], &kept, &[], &[], "English");
+    assert!(
+        prompt.contains("W0 (preference): Run tests with the narrowest command."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "\"working\": [{\"text\": string, \"kind\": \"preference\"|\"gotcha\"|\"lesson\""
+        ),
+        "{prompt}"
+    );
+    assert!(prompt.contains("\"replaces\": \"W0\" or null"), "{prompt}");
+    assert!(
+        prompt.contains("only from a line the person typed"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("the conversation shows the way around worked"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("with the condition it happened under"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(&format!("At most {MAX_DREAM_WORKING}")),
+        "{prompt}"
+    );
+    // Points stay about the work; where files are is still left out.
+    assert!(prompt.contains("where files are;"), "{prompt}");
+    assert!(
+        !prompt.contains("where files are or problems with tools"),
+        "{prompt}"
+    );
+    let empty = dream_prompt("Site", &[], &[], &[], &[], &[], "English");
+    assert!(empty.contains("Already kept from it:\n(none)"), "{empty}");
+}
+
+/// A preference is only what the person typed: without a line in its own
+/// conversation it is dropped. A tool problem or lesson keeps its text but
+/// loses a line that is not its own; an answer with no "working" has none.
+#[test]
+fn a_preference_needs_a_line_the_person_typed_in_its_own_conversation() {
+    let answer = r#"{"points": [], "working": [
+      {"text": "Answer in short sentences.", "kind": "preference", "from": "C0", "line": "L1"},
+      {"text": "Never use the pager.", "kind": "preference", "from": "C0", "line": null},
+      {"text": "Always squash commits.", "kind": "preference", "from": "C0"},
+      {"text": "Keep the changelog short.", "kind": "preference", "from": "C0", "line": "L2"},
+      {"text": "The proxy blocked npm; setting the registry fixed it.", "kind": "gotcha", "from": "C1", "line": "L0"},
+      {"text": "The cache failed on an old laptop with little disk.", "kind": "lesson", "from": "C0", "line": "L9", "replaces": "W1"},
+      {"text": "A made up kind.", "kind": "habit", "from": "C0", "line": "L0"},
+      {"text": "No such chat.", "kind": "lesson", "from": "C5"},
+      {"text": "Replaces nothing real.", "kind": "lesson", "from": "C0", "replaces": "W7"}
+    ]}"#;
+    let dream = parse_dream(
+        answer,
+        &[false, false],
+        0,
+        &[WorkingKind::Lesson, WorkingKind::Lesson],
+        &[0, 0, 1],
+        0,
+        0,
+    )
+    .unwrap();
+    let got: Vec<_> = dream
+        .working
+        .iter()
+        .map(|w| (w.text.as_str(), w.kind, w.from, w.line, w.replaces))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (
+                "Answer in short sentences.",
+                WorkingKind::Preference,
+                0,
+                Some(1),
+                None
+            ),
+            // L2 is in conversation 1, not its own C0: dropped.
+            (
+                "The proxy blocked npm; setting the registry fixed it.",
+                WorkingKind::Gotcha,
+                1,
+                None,
+                None
+            ),
+            (
+                "The cache failed on an old laptop with little disk.",
+                WorkingKind::Lesson,
+                0,
+                None,
+                Some(1)
+            ),
+            ("Replaces nothing real.", WorkingKind::Lesson, 0, None, None),
+        ]
+    );
+    // Old answers have no "working".
+    let old = parse_dream(
+        r#"{"points": [{"text": "Keep it private.", "settled": true, "from": "C0"}]}"#,
+        &[false],
+        0,
+        &[],
+        &[],
+        0,
+        0,
+    )
+    .unwrap();
+    assert_eq!((old.points.len(), old.working.len()), (1, 0));
+    // The cap.
+    let many: Vec<String> = (0..MAX_DREAM_WORKING + 3)
+        .map(|i| {
+            format!(
+                r#"{{"text": "Lesson number {}.", "kind": "lesson", "from": "C0"}}"#,
+                "x".repeat(i + 1)
+            )
+        })
+        .collect();
+    let capped = parse_dream(
+        &format!(r#"{{"working": [{}]}}"#, many.join(",")),
+        &[false],
+        0,
+        &[],
+        &[],
+        0,
+        0,
+    )
+    .unwrap();
+    assert_eq!(capped.working.len(), MAX_DREAM_WORKING);
+}
+
+/// Lines an assistant typed for the person are not the person's: a point or
+/// lesson from that conversation keeps no line, and a preference from it is
+/// dropped. The prompt says whose words they are.
+#[test]
+fn nothing_an_assistant_typed_counts_as_a_line_the_person_typed() {
+    let answer = r#"{"points": [
+        {"text": "The release ships on Tuesday.", "settled": true, "from": "C0", "line": "L0"},
+        {"text": "The tagline stays.", "settled": true, "from": "C1", "line": "L1"}],
+      "working": [
+        {"text": "Answer in short sentences.", "kind": "preference", "from": "C0", "line": "L0"},
+        {"text": "Always squash commits.", "kind": "preference", "from": "C1", "line": "L1"},
+        {"text": "The cache failed on an old laptop.", "kind": "lesson", "from": "C0", "line": "L0"}]}"#;
+    let dream = parse_dream(answer, &[true, false], 0, &[], &[0, 1], 0, 0).unwrap();
+    assert_eq!(dream.points[0].line, None, "C0 is an assistant's");
+    assert_eq!(dream.points[1].line, Some(1));
+    let kept: Vec<_> = dream
+        .working
+        .iter()
+        .map(|w| (w.text.as_str(), w.line))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("Always squash commits.", Some(1)),
+            ("The cache failed on an old laptop.", None)
+        ]
+    );
+    let mut assistant = conv(&["Ship the release notes"]);
+    assistant.on_behalf = true;
+    let prompt = dream_prompt("Site", &[assistant], &[], &[], &[], &[], "English");
+    assert!(
+        prompt.contains("what an assistant typed for the person (not the person's own words)"),
+        "{prompt}"
+    );
+}
+
+/// A replacement names an earlier one only of its own kind. A tool problem or
+/// lesson over the length limit is dropped, not cut: a cut condition says
+/// something else.
+#[test]
+fn a_replacement_is_of_the_same_kind_and_a_long_lesson_is_dropped_not_cut() {
+    let kinds = [WorkingKind::Lesson, WorkingKind::Gotcha];
+    let long = "x ".repeat(MAX_POINT_CHARS);
+    let answer = format!(
+        r#"{{"working": [
+        {{"text": "The proxy now needs the registry setting.", "kind": "gotcha", "from": "C0", "replaces": "W0"}},
+        {{"text": "Caching failed on old laptops until the disk check.", "kind": "lesson", "from": "C0", "replaces": "W0"}},
+        {{"text": "{long}", "kind": "lesson", "from": "C0"}}]}}"#
+    );
+    let dream = parse_dream(&answer, &[false], 0, &kinds, &[], 0, 0).unwrap();
+    let got: Vec<_> = dream.working.iter().map(|w| (w.kind, w.replaces)).collect();
+    assert_eq!(
+        got,
+        [
+            // W0 is a lesson, not a tool problem: ignored.
+            (WorkingKind::Gotcha, None),
+            (WorkingKind::Lesson, Some(0)),
+        ]
+    );
 }

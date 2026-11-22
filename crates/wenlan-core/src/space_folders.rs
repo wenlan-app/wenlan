@@ -574,6 +574,29 @@ pub async fn space_folder(db: &MemoryDB, root: &Path, space: &str) -> Option<Str
     layout(&input).get(space).cloned()
 }
 
+/// Resolve a Space folder from the caller's already-locked capability scan.
+/// Unlike the ordinary helper above, this intentionally computes the layout
+/// even when the user-facing folder switch is off: member projection still
+/// needs a dedicated containment boundary.
+pub(crate) fn member_sync_space_folder(
+    spaces: Vec<String>,
+    settings_path: &Path,
+    top_folders: Vec<String>,
+    space: &str,
+) -> Result<String, WenlanError> {
+    let teams = crate::shared_space::team_names_by_space(settings_path)?;
+    let input = LayoutInput {
+        spaces,
+        teams,
+        top_folders,
+        skip: vault_folders(),
+    };
+    layout(&input)
+        .get(space)
+        .cloned()
+        .ok_or_else(|| WenlanError::Validation("member_sync_space_folder_unavailable".into()))
+}
+
 /// Whether a member write to page `page_id` in Space `space` stays inside
 /// that Space's folder: the page's recorded file (or, with none, the folder
 /// it was first placed in) must be inside it. A page whose file the host

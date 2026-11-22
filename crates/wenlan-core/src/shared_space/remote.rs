@@ -429,6 +429,11 @@ pub(super) async fn push(
         .iter()
         .map(|path| version::version_key(path))
         .collect();
+    let refused: HashSet<&str> = listed
+        .refused_changes
+        .iter()
+        .map(|receipt| receipt.change.as_str())
+        .collect();
     let mine = {
         let folder = folder.to_path_buf();
         let member = member.to_string();
@@ -439,7 +444,15 @@ pub(super) async fn push(
     let client = client()?;
     let missing: Vec<(String, String, PathBuf)> = mine
         .into_iter()
-        .filter(|(path, page, _)| {
+        .filter(|(path, page, file)| {
+            let already_refused = file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(version::version_sha)
+                .is_some_and(|hash| refused.contains(hash));
+            if already_refused {
+                return false;
+            }
             if rulesync_team::is_master_page(page) {
                 let is_proposal = path.split('/').nth(2) == Some(version::PROPOSALS_DIR);
                 if !is_proposal

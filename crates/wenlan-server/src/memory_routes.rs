@@ -704,7 +704,23 @@ async fn handle_store_memory_inner(
     if let Some(target) = req.supersedes.as_deref() {
         crate::note_routes::refuse_ai_change_to_note(&headers, target)?;
     }
-    let pending_revision = req.supersedes.is_some() && trust_level != "full";
+    let mut pending_revision = req.supersedes.is_some() && trust_level != "full";
+    // What the person confirmed is theirs: an AI tool's (or a night's) newer
+    // version of a confirmed preference, tool problem or lesson waits for
+    // their OK as a proposed revision, whatever the tool's trust, and the
+    // confirmed one stays until then (UX-CHAT-5).
+    let mut replaced_preference = false;
+    if let Some(target) = req.supersedes.as_deref() {
+        replaced_preference = crate::skill_grow::is_person_preference(&db, target).await;
+        if !pending_revision && !caller_is_person(&headers) {
+            if let Ok(Some(old)) = db.get_memory_detail(target).await {
+                let working = old.memory_type.as_deref().is_some_and(|kind| {
+                    wenlan_core::conversation_intake::WorkingKind::from_memory_type(kind).is_some()
+                });
+                pending_revision = working && old.confirmed;
+            }
+        }
+    }
     let final_supersedes = req.supersedes.clone();
 
     #[cfg(test)]
@@ -1216,6 +1232,11 @@ async fn handle_store_memory_inner(
         );
     }
 
+    // A confirmed preference the new one takes the place of is no longer
+    // given to the person's tools.
+    if replaced_preference && !pending_revision {
+        crate::skill_grow::rules_may_have_changed(&state).await;
+    }
     Ok(Json(StoreMemoryResponse {
         source_id,
         chunks_created,
@@ -1585,6 +1606,27 @@ async fn handle_search_memory_inner(
         _ => None,
     };
 
+    // The notes this recall showed the AI tool, so the night can find them if
+    // the conversation turns out to contradict a sentence in one. Only what the
+    // caller was actually given (after the grant filter), so a note it never
+    // saw is never a candidate. Same contract as the query line above. Only an
+    // explicit recall counts: the "recent context" request an AI tool makes
+    // when it starts a session is not the tool reading those notes.
+    if let Some(pages) = supplemental_pages
+        .as_deref()
+        .filter(|_| req.query != "recent context")
+    {
+        for page in pages.iter().filter(|row| row.source == "page") {
+            crate::session_routes::note_session_read(
+                db.clone(),
+                &headers,
+                wenlan_types::SessionReadKind::RecallPage,
+                &page.source_id,
+                wenlan_core::db::sessions::session_read_space(&scope),
+            );
+        }
+    }
+
     Ok(Json(SearchMemoryResponse {
         linked_pages,
         results,
@@ -1608,9 +1650,43 @@ async fn caller_trust_level(db: &wenlan_core::db::MemoryDB, headers: &HeaderMap)
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// A preference, tool problem or lesson is the person's to confirm: it then
+/// reaches their tools as theirs (UX-CHAT-5), and an AI tool cannot say yes
+/// for them.
+async fn refuse_ai_confirming_working_memory(
+    db: &wenlan_core::db::MemoryDB,
+    headers: &HeaderMap,
+    source_id: &str,
+) -> Result<(), ServerError> {
+    if caller_is_person(headers) {
+        return Ok(());
+    }
+    let working = db
+        .get_memory_detail(source_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|memory| memory.memory_type)
+        .is_some_and(|kind| {
+            wenlan_core::conversation_intake::WorkingKind::from_memory_type(&kind).is_some()
+        });
+    if working {
+        return Err(ServerError::Structured {
+            status: axum::http::StatusCode::FORBIDDEN,
+            body: serde_json::json!({
+                "code": "confirm_needs_person",
+                "error": "confirm_needs_person: a preference, tool problem or lesson is \
+                          confirmed by the person in the Wenlan app, not by an AI tool",
+            }),
+        });
+    }
+    Ok(())
+}
+
 /// POST /api/memory/confirm/{source_id}
 pub async fn handle_confirm_memory(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     Path(source_id): Path<String>,
     body: Option<Json<ConfirmRequest>>,
 ) -> Result<Json<ConfirmResponse>, ServerError> {
@@ -1621,6 +1697,7 @@ pub async fn handle_confirm_memory(
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
+    refuse_ai_confirming_working_memory(&db, &headers, &source_id).await?;
     let stability = if confirmed { "confirmed" } else { "new" };
     let updated = db
         .set_stability(&source_id, stability)
@@ -1629,6 +1706,11 @@ pub async fn handle_confirm_memory(
         .map_err(ServerError::from)?;
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", source_id)));
+    }
+    // A preference kept in no Space is given to the person's tools once
+    // confirmed, and no longer when not.
+    if crate::skill_grow::is_person_preference(&db, &source_id).await {
+        crate::skill_grow::rules_may_have_changed(&state).await;
     }
     Ok(Json(ConfirmResponse { confirmed, updated }))
 }
@@ -1712,6 +1794,7 @@ pub async fn handle_delete_memory(
         (db, agent)
     }; // guard dropped here — writers may proceed
 
+    let preference = crate::skill_grow::is_person_preference(&db, &source_id).await;
     // Capture title before the delete so the activity log can name it.
     let title = db
         .get_memory_detail(&source_id)
@@ -1733,6 +1816,9 @@ pub async fn handle_delete_memory(
             .await
             .map_err(|e| ServerError::Internal(e.to_string()))?;
         let found = outcome != wenlan_core::db::ForgetOutcome::NotFound;
+        if preference {
+            crate::skill_grow::rules_may_have_changed(&state).await;
+        }
         return Ok(Json(ForgetMemoryResponse {
             deleted: found,
             restorable: found,
@@ -1743,6 +1829,9 @@ pub async fn handle_delete_memory(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
     tracing::info!(source_id = %source_id, agent = %agent, "deleted a memory permanently");
+    if preference {
+        crate::skill_grow::rules_may_have_changed(&state).await;
+    }
     let ids = vec![source_id.clone()];
     if let Err(e) = db
         .log_agent_activity(&agent, "forget", &ids, None, &detail)
@@ -1780,6 +1869,9 @@ pub async fn handle_restore_memory(
         .restore_forgotten_memory(&source_id, &agent)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
+    if restored && crate::skill_grow::is_person_preference(&db, &source_id).await {
+        crate::skill_grow::rules_may_have_changed(&state).await;
+    }
     Ok(Json(RestoreMemoryResponse { restored }))
 }
 
@@ -2232,6 +2324,10 @@ pub async fn handle_update_memory(
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
+    if req.confirmed == Some(true) {
+        refuse_ai_confirming_working_memory(&db, &headers, &id).await?;
+    }
+    let preference_before = crate::skill_grow::is_person_preference(&db, &id).await;
 
     let memory_type = req
         .memory_type
@@ -2253,6 +2349,9 @@ pub async fn handle_update_memory(
     )
     .await
     .map_err(ServerError::from)?;
+    if preference_before || crate::skill_grow::is_person_preference(&db, &id).await {
+        crate::skill_grow::rules_may_have_changed(&state).await;
+    }
     Ok(Json(wenlan_types::responses::SuccessResponse { ok: true }))
 }
 
@@ -3672,6 +3771,205 @@ mod novelty_store_tests {
             retrieval_cue: None,
             said: None,
         }
+    }
+
+    /// The store's copy check does not count a memory a live superseder
+    /// hides: going back to an earlier decision (Friday, Monday, Friday) is
+    /// written. The same text while one stands is still refused, and so is a
+    /// shorter restatement of what stands (a known limit).
+    #[tokio::test]
+    async fn a_copy_check_does_not_count_a_replaced_memory() {
+        let (state, _db, _tmp) = state_with_seed("User prefers dark mode for all IDEs").await;
+        let store = |text: &'static str, supersedes: Option<String>| {
+            let state = state.clone();
+            async move {
+                handle_store_memory(
+                    State(state),
+                    HeaderMap::new(),
+                    crate::space_header::SpaceHeader(None),
+                    Json(store_request(text, supersedes.as_deref())),
+                )
+                .await
+                .map(|response| response.0.source_id)
+            }
+        };
+        let friday = "Ship on Friday after QA signs off";
+        let a = store(friday, None).await.unwrap();
+        let b = store("Ship on Monday after the long weekend", Some(a))
+            .await
+            .unwrap();
+        store(friday, Some(b)).await.expect("going back is written");
+        assert!(matches!(
+            store(friday, None).await,
+            Err(ServerError::ValidationError(m)) if m.starts_with("Duplicate:")
+        ));
+    }
+
+    async fn seed_preference(
+        db: &wenlan_core::db::MemoryDB,
+        id: &str,
+        text: &str,
+        confirmed: bool,
+    ) {
+        db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+            content: text.to_string(),
+            source_id: id.to_string(),
+            source: "memory".to_string(),
+            title: text.to_string(),
+            memory_type: Some("preference".to_string()),
+            confirmed: Some(confirmed),
+            last_modified: chrono::Utc::now().timestamp(),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+
+    fn as_agent(name: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-agent-name", name.parse().unwrap());
+        headers
+    }
+
+    fn as_person() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE.parse().unwrap(),
+        );
+        headers
+    }
+
+    /// UX-CHAT-5: a night's (or a tool's) newer version of a preference the
+    /// person confirmed waits as a proposed revision and the confirmed one
+    /// stays; one nobody confirmed is replaced at once; the person's own
+    /// replacement is not held. The night's agent, "wenlan", is a full-trust
+    /// agent, so without this it would hide the confirmed one at once.
+    #[tokio::test]
+    async fn a_confirmed_preference_is_replaced_only_when_the_person_says_so() {
+        let (state, db, _tmp) = state_with_seed("User prefers dark mode for all IDEs").await;
+        assert_eq!(db.check_agent_for_write("wenlan").await.unwrap(), "full");
+        seed_preference(
+            &db,
+            "pref_ok",
+            "I prefer small commits with clear messages.",
+            true,
+        )
+        .await;
+        seed_preference(
+            &db,
+            "pref_new",
+            "I prefer reviews that lead with the risks.",
+            false,
+        )
+        .await;
+        let store = |headers: HeaderMap, text: &str, target: &str| {
+            let state = state.clone();
+            let request = store_request(text, Some(target));
+            async move {
+                handle_store_memory(
+                    State(state),
+                    headers,
+                    crate::space_header::SpaceHeader(None),
+                    Json(request),
+                )
+                .await
+                .unwrap()
+                .0
+            }
+        };
+        let held = store(
+            as_agent("wenlan"),
+            "I prefer to commit often, in small steps.",
+            "pref_ok",
+        )
+        .await;
+        assert!(held.gated, "held for the person's OK");
+        assert!(
+            db.get_memory_detail("pref_ok")
+                .await
+                .unwrap()
+                .unwrap()
+                .supersede_mode
+                != "evicted"
+        );
+        let open = db.get_memory_detail("pref_ok").await.unwrap().unwrap();
+        assert!(open.confirmed, "the confirmed one stands");
+        // One nobody confirmed is replaced at once.
+        let direct = store(
+            as_agent("wenlan"),
+            "I prefer reviews that open with the risks first.",
+            "pref_new",
+        )
+        .await;
+        assert!(!direct.gated);
+        // The person's own replacement is not held.
+        let own = store(
+            as_person(),
+            "I prefer one commit per fix, with a message.",
+            "pref_ok",
+        )
+        .await;
+        assert!(!own.gated);
+    }
+
+    /// UX-CHAT-5: confirming a preference, tool problem or lesson is the
+    /// person's; an AI tool is refused (and so is `confirm_memory` over MCP),
+    /// while it may still confirm a fact.
+    #[tokio::test]
+    async fn only_the_person_confirms_a_preference() {
+        let (state, db, _tmp) = state_with_seed("User prefers dark mode for all IDEs").await;
+        seed_preference(
+            &db,
+            "pref_a",
+            "I prefer small commits with clear messages.",
+            false,
+        )
+        .await;
+        let confirm = |headers: HeaderMap, id: &str| {
+            let state = state.clone();
+            let id = id.to_string();
+            async move {
+                handle_confirm_memory(State(state), headers, axum::extract::Path(id), None).await
+            }
+        };
+        let refused = confirm(as_agent("codex"), "pref_a").await;
+        assert!(
+            matches!(&refused, Err(ServerError::Structured { status, .. }) if *status == axum::http::StatusCode::FORBIDDEN),
+            "{refused:?}"
+        );
+        assert!(
+            !db.get_memory_detail("pref_a")
+                .await
+                .unwrap()
+                .unwrap()
+                .confirmed
+        );
+        // The same through an update that confirms.
+        let update = handle_update_memory(
+            State(state.clone()),
+            as_agent("codex"),
+            axum::extract::Path("pref_a".to_string()),
+            Json(wenlan_types::requests::UpdateMemoryRequest {
+                content: None,
+                expected_content: None,
+                space: None,
+                confirmed: Some(true),
+                memory_type: None,
+            }),
+        )
+        .await;
+        assert!(update.is_err());
+        assert!(confirm(as_person(), "pref_a").await.is_ok());
+        assert!(
+            db.get_memory_detail("pref_a")
+                .await
+                .unwrap()
+                .unwrap()
+                .confirmed
+        );
+        // A fact is not the person's alone to confirm.
+        assert!(confirm(as_agent("codex"), "mem_existing").await.is_ok());
     }
 
     #[tokio::test]

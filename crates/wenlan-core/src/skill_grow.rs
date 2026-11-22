@@ -132,6 +132,30 @@ pub fn meaning_is_consistent(text: &str, quote: &str) -> bool {
     text == quote
 }
 
+/// Which of a page's sentences a rule's quote was taken from: the one sentence
+/// holding the whole quote, or, for a quote across sentences, every sentence
+/// inside it. Compared without case, spacing, punctuation or citation markers.
+/// Empty when the quote matches no sentence of the page as it is now.
+pub fn sentences_quoted(quote: &str, sentences: &[&str]) -> Vec<usize> {
+    let quote = normalized(&citation_free(quote));
+    if quote.is_empty() {
+        return Vec::new();
+    }
+    let texts: Vec<String> = sentences
+        .iter()
+        .map(|text| normalized(&citation_free(text)))
+        .collect();
+    if let Some(idx) = texts.iter().position(|text| text.contains(&quote)) {
+        return vec![idx];
+    }
+    texts
+        .iter()
+        .enumerate()
+        .filter(|(_, text)| !text.is_empty() && quote.contains(text.as_str()))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
 /// The text with numbered citation markers (`[1]`, `[12]`) removed. Pages
 /// that end every sentence with one would otherwise offer no span a model can
 /// quote as a clean sentence; the model sees, and grounding checks against,
@@ -1262,37 +1286,77 @@ pub const RULES_MAIN_FILE_MAX: usize = 30;
 pub const TOOL_RULES_START: &str = "<!-- WENLAN:RULES:START -->";
 pub const TOOL_RULES_END: &str = "<!-- WENLAN:RULES:END -->";
 
-/// The sentences a tool's own file gets: the rules used in every Space, each
-/// on one line.
-pub fn tool_rules(lines: &[SkillLine]) -> Vec<String> {
+/// The heading of what the person told their tools in conversation and
+/// confirmed (UX-CHAT-5): lines with no page behind them.
+pub const PREFERENCES_HEADING: &str = "What you told your tools";
+/// Most of those a tool's file carries, apart from the cap on page rules.
+pub const PERSON_PREFERENCES_MAX: usize = 30;
+
+/// Whether a line is one of the person's preferences kept in no Space.
+pub fn is_person_preference_line(line: &SkillLine) -> bool {
+    line.source_page_id.is_empty() && line.id.starts_with("preference:")
+}
+
+fn tool_rule_texts(lines: &[SkillLine], preferences: bool, cap: usize) -> Vec<String> {
     // Only rules: a decision or a pitfall read as a bare order misleads.
     lines
         .iter()
         .filter(|line| line.kind == SkillLineKind::Rule)
+        .filter(|line| is_person_preference_line(line) == preferences)
         .filter(|line| !line.text.contains(TOOL_RULES_END))
         .map(|line| tool_file_text(&line.text))
         .filter(|text| !text.is_empty())
-        .take(RULES_MAIN_FILE_MAX)
+        .take(cap)
         .collect()
+}
+
+/// The sentences a tool's own file gets: the rules used in every Space, each
+/// on one line, then what the person told their tools (each part capped on
+/// its own).
+pub fn tool_rules(lines: &[SkillLine]) -> Vec<String> {
+    let mut rules = tool_rule_texts(lines, false, RULES_MAIN_FILE_MAX);
+    rules.extend(tool_rule_texts(lines, true, PERSON_PREFERENCES_MAX));
+    rules
 }
 
 const TOOL_RULES_INTRO: &str = "Kept by Wenlan from my own pages. What I ask for in a \
      conversation wins over these.";
 
+/// The section of what the person told their tools, from conversations and
+/// confirmed by them. Empty when there is none.
+fn told_section(told: &[String]) -> String {
+    if told.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "## {PREFERENCES_HEADING}\n\nHow I said I like to work, in conversations with my AI \
+         tools; Wenlan rewrites this part. What I ask for in a conversation wins over these.\n\n"
+    );
+    for line in told {
+        out.push_str(&format!("- {line}\n"));
+    }
+    out
+}
+
 /// The block for a tool's own file: the rules used in every Space, one per
-/// line. `None` when there are none.
+/// line, then what the person told their tools. `None` when there are none.
 pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
-    let rules = tool_rules(lines);
-    if rules.is_empty() {
+    let rules = tool_rule_texts(lines, false, RULES_MAIN_FILE_MAX);
+    let told = tool_rule_texts(lines, true, PERSON_PREFERENCES_MAX);
+    if rules.is_empty() && told.is_empty() {
         return None;
     }
-    let mut block = format!(
-        "{TOOL_RULES_START}\n## How I work\n\n{TOOL_RULES_INTRO} Wenlan rewrites this part; \
-         change the pages, not these lines.\n\n"
-    );
-    for rule in rules {
-        block.push_str(&format!("- {rule}\n"));
+    let mut block = format!("{TOOL_RULES_START}\n");
+    if !rules.is_empty() {
+        block.push_str(&format!(
+            "## How I work\n\n{TOOL_RULES_INTRO} Wenlan rewrites this part; \
+             change the pages, not these lines.\n\n"
+        ));
+        for rule in rules {
+            block.push_str(&format!("- {rule}\n"));
+        }
     }
+    block.push_str(&told_section(&told));
     block.push_str(TOOL_RULES_END);
     Some(block)
 }
@@ -1302,17 +1366,22 @@ pub fn tool_rules_block(lines: &[SkillLine]) -> Option<String> {
 /// file; Wenlan's managed mark is the line right after it. `None` when there
 /// are no rules.
 pub fn tool_rules_owned_file(lines: &[SkillLine], front_matter: Option<&str>) -> Option<String> {
-    let rules = tool_rules(lines);
-    if rules.is_empty() {
+    let rules = tool_rule_texts(lines, false, RULES_MAIN_FILE_MAX);
+    let told = tool_rule_texts(lines, true, PERSON_PREFERENCES_MAX);
+    if rules.is_empty() && told.is_empty() {
         return None;
     }
     let mut file = format!(
-        "{}{RULES_FILE_MARK}\n# How I work\n\n{TOOL_RULES_INTRO}\n\n",
+        "{}{RULES_FILE_MARK}\n# How I work\n\n",
         front_matter.unwrap_or_default()
     );
-    for rule in rules {
-        file.push_str(&format!("- {rule}\n"));
+    if !rules.is_empty() {
+        file.push_str(&format!("{TOOL_RULES_INTRO}\n\n"));
+        for rule in rules {
+            file.push_str(&format!("- {rule}\n"));
+        }
     }
+    file.push_str(&told_section(&told));
     Some(file)
 }
 
@@ -1582,7 +1651,10 @@ pub fn rules_layer_files(space: Option<&str>, lines: &[SkillLine]) -> Vec<(&'sta
             .filter(|line| line.kind == kind)
             .collect::<Vec<_>>()
     };
-    let rules = of_kind(SkillLineKind::Rule);
+    let (told, rules): (Vec<&SkillLine>, Vec<&SkillLine>) = of_kind(SkillLineKind::Rule)
+        .into_iter()
+        .partition(|line| is_person_preference_line(line));
+    let told = &told[..told.len().min(PERSON_PREFERENCES_MAX)];
     let decisions = of_kind(SkillLineKind::Decision);
     let pitfalls = of_kind(SkillLineKind::Pitfall);
     let (main_rules, more_rules) = rules.split_at(rules.len().min(RULES_MAIN_FILE_MAX));
@@ -1599,7 +1671,8 @@ pub fn rules_layer_files(space: Option<&str>, lines: &[SkillLine]) -> Vec<(&'sta
         None => {
             main.push_str("# How I work\n\n");
             main.push_str(
-                "Rules that hold in any project, each with the page it comes from. \
+                "Rules that hold in any project, each with the page it comes from \
+                 (what you told your tools comes from your conversations). \
                  A Space's own rules are in spaces/<Space>/AGENTS.md and win over these.\n",
             );
         }
@@ -1607,6 +1680,12 @@ pub fn rules_layer_files(space: Option<&str>, lines: &[SkillLine]) -> Vec<(&'sta
     if !main_rules.is_empty() {
         main.push_str("\n## Rules\n\n");
         for line in main_rules {
+            main.push_str(&rules_file_item(line));
+        }
+    }
+    if !told.is_empty() {
+        main.push_str(&format!("\n## {PREFERENCES_HEADING}\n\n"));
+        for line in told {
             main.push_str(&rules_file_item(line));
         }
     }
