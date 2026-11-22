@@ -329,7 +329,7 @@ fn swap_in(next: &Path, current: &Path, old: &Path) -> Result<(), WenlanError> {
 
 /// Flushes the renames in `path`'s folder where a folder can be opened
 /// (not on Windows, which flushes them itself).
-fn sync_parent(path: &Path) -> Result<(), WenlanError> {
+pub(crate) fn sync_parent(path: &Path) -> Result<(), WenlanError> {
     if let Some(Ok(parent)) = path.parent().map(std::fs::File::open) {
         parent.sync_all()?;
     }

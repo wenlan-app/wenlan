@@ -23,6 +23,8 @@ fn member(
         keys: Vec::new(),
         invite: None,
         spaces: map(own),
+        library_access: None,
+        space_only: false,
         added_at: "2026-11-17T00:00:00Z".into(),
         removed_at: removed.then(|| "2026-11-17T01:00:00Z".into()),
         role,
