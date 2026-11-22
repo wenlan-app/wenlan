@@ -358,6 +358,84 @@ fn personal_rules_dry_run_leaves_an_oversized_skill_unmanaged() {
     assert!(!state.path().join("unused-data-root").exists());
 }
 
+fn session_rules_read(args: &[&str], sync: bool, named: bool) {
+    let state = tempfile::tempdir().unwrap();
+    let data = state.path().join("unused-data-root");
+    fs::create_dir_all(&data).unwrap();
+    fs::write(data.join("person.key"), "a".repeat(64)).unwrap();
+    let mut routes = vec![("GET /api/health", "{}".to_string())];
+    if sync {
+        routes.push((
+            "POST /api/rules/setup/sync",
+            json!({"written":[],"blocked":[],"proposals":[],"message":"done"}).to_string(),
+        ));
+        routes.push(("GET /api/health", "{}".to_string()));
+    }
+    let (route, payload) = if args.contains(&"review") {
+        (
+            "GET /api/rules/setup/review",
+            serde_json::to_string(&wenlan_types::rulesync::RulesReviewList::default()).unwrap(),
+        )
+    } else {
+        (
+            "GET /api/rules/setup/status",
+            serde_json::to_string(&wenlan_types::rulesync::RulesSetupStatus::default()).unwrap(),
+        )
+    };
+    routes.push((route, payload));
+    let (base, _) = spawn_stub(routes);
+    let mut cmd = personal_rules_cli(state.path());
+    cmd.env("WENLAN_HOST", base)
+        .env("WENLAN_RULESYNC", "1")
+        .args(args);
+    if named {
+        cmd.env("WENLAN_AGENT_NAME", "fixture-agent");
+    } else {
+        for_agent_session(&mut cmd);
+    }
+    let assertion = cmd.assert().success();
+    if sync {
+        assertion.stderr(predicate::str::contains("done"));
+    }
+}
+
+fn for_agent_session(cmd: &mut Command) -> &mut Command {
+    cmd.env("WENLAN_SESSION", "codex:fixture")
+}
+
+#[test]
+fn rules_status_allowed_in_session() {
+    session_rules_read(&["rules", "status"], false, false);
+    session_rules_read(&["rules", "status"], false, true);
+}
+#[test]
+fn rules_status_sync_allowed_in_session() {
+    session_rules_read(&["rules", "status", "--sync"], true, false);
+    session_rules_read(&["rules", "status", "--sync"], true, true);
+}
+#[test]
+fn rules_review_list_allowed_in_session() {
+    session_rules_read(&["rules", "review"], false, false);
+    session_rules_read(&["rules", "review"], false, true);
+}
+
+fn session_rules_refused(args: &[&str]) {
+    let state = tempfile::tempdir().unwrap();
+    for_agent_session(personal_rules_cli(state.path()).args(args)).assert().failure().stderr(predicate::str::contains("Only you can change your personal tool setup. Run this from your own terminal outside an AI session."));
+}
+#[test]
+fn rules_adopt_refused_in_session() {
+    session_rules_refused(&["rules", "adopt"]);
+}
+#[test]
+fn rules_restore_refused_in_session() {
+    session_rules_refused(&["rules", "restore"]);
+}
+#[test]
+fn rules_review_answer_refused_in_session() {
+    session_rules_refused(&["rules", "review", "card-1", "all-tools"]);
+}
+
 #[test]
 fn personal_rules_setup_refuses_the_strict_space_pin() {
     let state = tempfile::tempdir().unwrap();

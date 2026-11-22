@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One person-only queue for the existing personal setup reviews.
+//! One local queue for the existing personal setup reviews.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -24,7 +24,7 @@ use wenlan_types::{
 };
 
 use super::{
-    require_local_person, require_personal_rules_writer, tool_label, Setup, PERSONAL_TARGETS,
+    require_local_rules_access, require_personal_rules_writer, tool_label, Setup, PERSONAL_TARGETS,
 };
 use crate::{
     error::ServerError, rulesync_apply::FileRoot, rulesync_registry, rulesync_settings_routes,
@@ -77,7 +77,7 @@ pub(super) async fn existing_update_check() -> Result<Vec<AdoptedSkillUpdate>, S
 }
 
 pub(super) async fn list(headers: HeaderMap) -> Result<Json<RulesReviewList>, ServerError> {
-    require_local_person(&headers)?;
+    require_local_rules_access(&headers)?;
     if !enabled() {
         return Ok(Json(RulesReviewList::default()));
     }

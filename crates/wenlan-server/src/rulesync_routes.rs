@@ -99,8 +99,27 @@ fn require_local_person_at(
     Ok(())
 }
 
+// The person marker has already been verified against the local key by the
+// middleware. These three operations also permit a named local AI caller.
+fn require_local_rules_access(headers: &HeaderMap) -> Result<(), ServerError> {
+    let local = matches!(
+        crate::security::bind_scope_from_env(),
+        crate::security::BindScope::Unset | crate::security::BindScope::Loopback
+    );
+    let authenticated = headers
+        .get(wenlan_types::requests::CALLER_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim() == wenlan_types::requests::PERSON_CALLER_VALUE);
+    if !local || !authenticated {
+        return Err(ServerError::ValidationError(
+            "only the person using the daemon on this computer can change the tool setup".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn status(headers: HeaderMap) -> Result<Json<RulesSetupStatus>, ServerError> {
-    require_local_person(&headers)?;
+    require_local_rules_access(&headers)?;
     tokio::task::spawn_blocking(|| {
         setup_status(wenlan_core::rulesync_personal::enabled(), Setup::system)
     })
@@ -205,7 +224,16 @@ async fn execute(
     headers: HeaderMap,
     operation: Operation,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    require_personal_rules_writer(&headers)?;
+    if matches!(operation, Operation::Sync) {
+        require_local_rules_access(&headers)?;
+        if !wenlan_core::rulesync_personal::enabled() {
+            return Err(ServerError::ValidationError(
+                "WENLAN_RULESYNC is off".into(),
+            ));
+        }
+    } else {
+        require_personal_rules_writer(&headers)?;
+    }
     let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
@@ -12334,6 +12362,17 @@ mod tests {
         assert!(require_local_person_at(&person, BindScope::Unparseable).is_err());
         person.insert("x-agent-name", "cursor".parse().unwrap());
         assert!(require_local_person_at(&person, BindScope::Loopback).is_err());
+    }
+
+    #[test]
+    fn rulesync_local_rules_access_accepts_authenticated_named_agent() {
+        use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
+        let mut headers = HeaderMap::new();
+        headers.insert("x-agent-name", "fixture-agent".parse().unwrap());
+        assert!(require_local_rules_access(&headers).is_err());
+        headers.insert(CALLER_HEADER, PERSON_CALLER_VALUE.parse().unwrap());
+        assert!(require_local_rules_access(&headers).is_ok());
+        assert!(require_local_person(&headers).is_err());
     }
 
     #[test]

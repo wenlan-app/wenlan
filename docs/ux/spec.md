@@ -1161,6 +1161,12 @@ and wait for evidence that people need them.
   `~/.cursor/AGENTS.md`. Automatic loading by Cursor is unverified.
   A skill that exceeds 32 MiB total or 2048 files and directories stays
   where it is, unmanaged. The preview states the limit it exceeded.
+  An AI session or named agent may run `wenlan rules status`, `wenlan rules
+  status --sync`, and the `wenlan rules review` list. Only the person may
+  adopt, restore, or answer a review card. Tests `rules_status_allowed_in_session`,
+  `rules_status_sync_allowed_in_session`, `rules_review_list_allowed_in_session`,
+  `rules_adopt_refused_in_session`, `rules_restore_refused_in_session`, and
+  `rules_review_answer_refused_in_session`.
   `wenlan rules restore` asks the person again and uses that backup to
   restore the original bytes and link targets. It keeps any destination
   that has changed since delivery available for review.

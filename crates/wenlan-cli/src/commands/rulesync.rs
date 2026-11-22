@@ -134,7 +134,8 @@ async fn run_inner(
         return show(format, quiet, &adoption_plan()?, plan_for_a_person);
     }
     ensure!(
-        !names_an_agent && session.session.is_none(),
+        matches!(command, RulesSetupCmd::Status { .. } | RulesSetupCmd::Review { id: None, .. })
+            || (!names_an_agent && session.session.is_none()),
         "Only you can change your personal tool setup. Run this from your own terminal outside an AI session."
     );
     ensure!(
@@ -181,7 +182,10 @@ async fn run_inner(
         }
         RulesSetupCmd::Status { sync } => {
             if *sync {
-                client.sync_rules_as_person().await?;
+                let sync_report = client.sync_rules_as_person().await?;
+                if !quiet {
+                    eprint!("{}", report_for_a_person(&sync_report));
+                }
             }
             let status = client.rules_setup_status().await?;
             return show(format, quiet, &status, status_for_a_person);
