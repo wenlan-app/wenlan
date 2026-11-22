@@ -891,6 +891,7 @@ pub(super) async fn terminal(
         sessions: Arc::default(),
         auth: Arc::default(),
         device: Arc::default(),
+        cloud: None,
     };
     let result = terminal_action(host, &state, &db, action).await;
     let mut response = match result {
