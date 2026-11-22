@@ -2202,9 +2202,34 @@ impl Setup {
             let Ok(current) = root.read(path, false) else {
                 continue;
             };
-            let Ok(desired) = without_revoked_rules(&current, &keys) else {
+            let record = &manifest.delivered[path];
+            let previous = record.observed.as_ref().unwrap_or(&record.delivered);
+            let (Ok(before), Ok(delivered), Ok(after)) =
+                (text(previous), text(&record.delivered), text(&current))
+            else {
                 continue;
             };
+            let Ok(additions) = rulesync_layers::revoked_additions(before, delivered, after, &keys)
+            else {
+                continue;
+            };
+            let Ok(mut desired) = without_revoked_rules(&current, &keys) else {
+                continue;
+            };
+            if !additions.is_empty() {
+                let Ok(personal) = text(&desired) else {
+                    continue;
+                };
+                let separator = if personal.is_empty() || personal.ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                };
+                desired = with_bytes(
+                    &desired,
+                    format!("{personal}{separator}{additions}").into_bytes(),
+                );
+            }
             if current != desired {
                 operations.push(Pending {
                     path: path.clone(),
@@ -2234,6 +2259,12 @@ impl Setup {
                     continue;
                 };
                 if !changes.is_empty() {
+                    if changes
+                        .iter()
+                        .any(|(key, _)| !accessible.contains_key(*key))
+                    {
+                        continue;
+                    }
                     // Leave a mixed or stale edit in place for the member to separate.
                     if rulesync_layers::only_personal(before)?
                         != rulesync_layers::only_personal(after)?
@@ -4434,7 +4465,7 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
             continue;
         };
         if !rulesync_layers::edits(before, after).is_ok_and(|edits| edits.is_empty()) {
-            blocked.insert(path.clone(), (Code::SharedRuleChanged, "A shared section or its markers changed. Restore that section from the shared Rules page and sync again.".into()));
+            blocked.insert(path.clone(), (Code::SharedRuleChanged, "A shared section or its markers changed. Your edits are still in this file. If you no longer have access, copy the edits you want to keep outside the shared section, remove the section, and sync again. Otherwise restore it from the shared Rules page.".into()));
             continue;
         }
         let before = rulesync_layers::only_personal(before)?;
@@ -10056,6 +10087,85 @@ mod tests {
             .proposals
             .iter()
             .any(|proposal| proposal.files == [CODEX] && proposal.diff.contains(personal.trim())));
+    }
+
+    #[test]
+    fn rulesync_revoked_block_edits_are_reviewed_and_other_files_continue() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let section = |key: &str, wording: &str| {
+            format!(
+            "<!-- WENLAN SHARED RULES {key} {} -->\n## Shared rules\n\nLast synced date.\n\n{wording}\n<!-- END WENLAN SHARED RULES -->\n", "b".repeat(64))
+        };
+        let edited_block = section(&"a".repeat(64), "First shared rule.");
+        let clean_block = section(&"c".repeat(64), "Second shared rule.");
+        f.sync_with(&format!("{edited_block}{clean_block}"));
+        let edited = f.text(CODEX).replace(
+            "First shared rule.\n",
+            "First shared rule.\nMy added rule.\n",
+        );
+        f.write(CODEX, &edited);
+        {
+            let _lock = f.setup.lock().unwrap();
+            let root = FileRoot::open(&f.setup.home).unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            f.setup
+                .capture_team_edits(
+                    &root,
+                    &mut manifest,
+                    &f.setup.data.join("settings.toml"),
+                    &[],
+                )
+                .unwrap();
+        }
+        let report = f.sync_with("");
+        assert!(
+            f.text(CODEX).contains("My added rule.")
+                || report
+                    .proposals
+                    .iter()
+                    .any(|p| p.files == [CODEX] && p.diff.contains("My added rule.")),
+            "edited text lost: {report:?}"
+        );
+        assert!(
+            report
+                .proposals
+                .iter()
+                .any(|p| p.files == [CODEX] && p.diff.contains("My added rule.")),
+            "no review card: {report:?}"
+        );
+        assert!(!f.text(CODEX).contains("Second shared rule."));
+        assert!(!f.text(CLAUDE).contains("First shared rule."));
+        assert!(!f.text(CLAUDE).contains("Second shared rule."));
+    }
+
+    #[test]
+    fn rulesync_revoked_block_replacement_is_left_for_manual_review() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Shared rules\n\nLast synced date.\n\nOriginal shared rule.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        let edited = f
+            .text(CODEX)
+            .replace("Original shared rule.", "My replacement rule.");
+        f.write(CODEX, &edited);
+        {
+            let _lock = f.setup.lock().unwrap();
+            let root = FileRoot::open(&f.setup.home).unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            f.setup
+                .capture_team_edits(
+                    &root,
+                    &mut manifest,
+                    &f.setup.data.join("settings.toml"),
+                    &[],
+                )
+                .unwrap();
+        }
+        let report = f.sync_with("");
+        assert_eq!(f.text(CODEX), edited);
+        assert!(report.blocked.iter().any(|message| message.contains(CODEX) && message.contains("no longer have access")), "{report:?}");
+        assert!(!f.text(CLAUDE).contains("Original shared rule."));
     }
 
     #[cfg(unix)]
