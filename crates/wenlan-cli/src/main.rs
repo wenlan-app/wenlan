@@ -352,8 +352,8 @@ fn grouped_help_template(cmd: &clap::Command, all: bool) -> String {
     template
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<ExitCode> {
+// Keep Clap parsing off the stack frame used to poll command dispatch.
+fn parse_cli() -> anyhow::Result<Option<Cli>> {
     let cmd = Cli::command();
     // `wenlan help all`: every group, full descriptions and the options.
     let wants_all = std::env::args()
@@ -362,11 +362,38 @@ async fn main() -> anyhow::Result<ExitCode> {
     if wants_all {
         let template = grouped_help_template(&cmd, true);
         cmd.help_template(template).print_help()?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(None);
     }
     let template = grouped_help_template(&cmd, false);
     let matches = cmd.help_template(template).get_matches();
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    Ok(Some(
+        Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit()),
+    ))
+}
+
+fn main() -> anyhow::Result<ExitCode> {
+    // Debug clap derive builders nest and grow with every subcommand
+    // (measured 2026-11 on macOS debug: Commands::augment_subcommands 446 KB,
+    // TeamCmd 315 KB, Cli::augment_args 61 KB; `--version` alone ~0.9 MiB).
+    // The Windows main thread has only 1 MiB, so run on an 8 MiB thread.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(async {
+                    match parse_cli()? {
+                        Some(cli) => Box::pin(dispatch(cli)).await,
+                        None => Ok(ExitCode::SUCCESS),
+                    }
+                })
+        })?
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
     if cli.all_spaces && matches!(&cli.command, Commands::Brief(_)) {
         anyhow::bail!("Brief is owned by one Space; --all-spaces is not supported");
     }
