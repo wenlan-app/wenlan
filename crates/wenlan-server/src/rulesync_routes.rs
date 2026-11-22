@@ -12391,6 +12391,20 @@ mod tests {
 
     #[test]
     fn rulesync_local_rules_access_accepts_authenticated_named_agent() {
+        if std::env::var_os("WENLAN_RULESYNC_GUARD_CHILD").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "rulesync_routes::tests::rulesync_local_rules_access_accepts_authenticated_named_agent"])
+                .env("WENLAN_RULESYNC_GUARD_CHILD", "1")
+                .env("WENLAN_RULESYNC", "1")
+                .env("WENLAN_BIND_ADDR", "127.0.0.1:17917")
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
         use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
         let mut headers = HeaderMap::new();
         headers.insert("x-agent-name", "fixture-agent".parse().unwrap());
