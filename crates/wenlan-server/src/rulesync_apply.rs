@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
 use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
 #[cfg(windows)]
@@ -28,6 +29,8 @@ use wenlan_core::rulesync_settings::personal::is_settings_path;
 pub(crate) fn is_personal_entry(path: &Path) -> bool {
     is_personal_path(path) || is_settings_path(path)
 }
+
+const PERSONAL_LOCK: &str = "personal.lock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileMode(u32);
@@ -292,12 +295,15 @@ impl FileRoot {
     }
 
     pub(crate) fn open_data(home: &Path, path: &Path) -> io::Result<Self> {
+        Self::open(path)?.guard_data(home, path)
+    }
+
+    pub(crate) fn guard_data(mut self, home: &Path, path: &Path) -> io::Result<Self> {
         let guard = HarnessGuard::new(home)?;
         guard.check_absolute(path)?;
-        let mut root = Self::open(path)?;
-        guard.check(&root.dir.dir_metadata()?)?;
-        root.harness = Some(guard);
-        Ok(root)
+        guard.check(&self.dir.dir_metadata()?)?;
+        self.harness = Some(guard);
+        Ok(self)
     }
 
     pub(crate) fn with_private_directories(mut self) -> Self {
@@ -340,7 +346,14 @@ impl FileRoot {
             .follow(FollowSymlinks::No);
         #[cfg(unix)]
         options.mode(0o600);
-        Ok(self.dir.open_with("personal.lock", &options)?.into_std())
+        Ok(self.dir.open_with(PERSONAL_LOCK, &options)?.into_std())
+    }
+
+    /// Open the setup lock without creating anything or repairing permissions.
+    pub(crate) fn open_existing_private_lock(&self) -> io::Result<std::fs::File> {
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).follow(FollowSymlinks::No);
+        Ok(self.dir.open_with(PERSONAL_LOCK, &options)?.into_std())
     }
 
     /// On writes, repair a matching existing file on the descriptor used to
@@ -527,6 +540,19 @@ impl FileRoot {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    pub(crate) fn file_stamp(&self, path: &Path) -> io::Result<Option<(SystemTime, u64)>> {
+        let Some(metadata) = self.entry_metadata(path)? else {
+            return Ok(None);
+        };
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "expected a regular file",
+            ));
+        }
+        Ok(Some((metadata.modified()?.into_std(), metadata.len())))
     }
 
     pub(crate) fn case_alias(&self, path: &Path, known: &Path) -> io::Result<bool> {

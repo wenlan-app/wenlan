@@ -53,6 +53,7 @@ mod personal_files;
 mod personal_settings;
 mod settings;
 mod storage;
+pub(super) mod watch;
 
 pub(crate) use settings::SETTINGS_RESUME_NOTICE;
 
@@ -336,8 +337,7 @@ impl Setup {
             .extend(cards.into_iter().map(|card| card.wire));
         status.proposals.extend(
             manifest
-                .scope_reviews
-                .values()
+                .current_scope_reviews()
                 .filter(|review| {
                     manifest.delivered.contains_key(&review.path)
                         && !blocked.contains_key(&review.path)
@@ -644,6 +644,10 @@ struct Manifest<Content = Vec<u8>> {
     unmanaged_personal_files: BTreeMap<PathBuf, String>,
     worktree_writes: BTreeMap<PathBuf, PathBuf>,
     scope_reviews: BTreeMap<String, ScopeReview>,
+    // The watch can add a new card while keeping earlier cards intact.
+    // Old manifests have at most one card per path and need no head entry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    scope_review_heads: BTreeMap<PathBuf, String>,
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
 }
 
@@ -674,10 +678,16 @@ impl Manifest {
         Ok(None)
     }
 
-    fn active_deliveries(&self) -> impl Iterator<Item = (&PathBuf, &Delivery)> {
-        self.delivered
-            .iter()
-            .filter(|(path, _)| !self.extension_paths.contains(*path))
+    fn is_current_scope_review(&self, review: &ScopeReview) -> bool {
+        self.scope_review_heads
+            .get(&review.path)
+            .is_none_or(|id| *id == review.card.id)
+    }
+
+    fn current_scope_reviews(&self) -> impl Iterator<Item = &ScopeReview> {
+        self.scope_reviews
+            .values()
+            .filter(|review| self.is_current_scope_review(review))
     }
 
     fn new(master: PersonalMaster, backup: BTreeMap<PathBuf, Snapshot>) -> Self {
@@ -700,8 +710,17 @@ impl Manifest {
             unmanaged_personal_files: BTreeMap::new(),
             worktree_writes: BTreeMap::new(),
             scope_reviews: BTreeMap::new(),
+            scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
         }
+    }
+}
+
+impl<Content> Manifest<Content> {
+    fn active_deliveries(&self) -> impl Iterator<Item = (&PathBuf, &Delivery<Content>)> {
+        self.delivered
+            .iter()
+            .filter(|(path, _)| !self.extension_paths.contains(*path))
     }
 }
 
@@ -865,6 +884,17 @@ pub(crate) struct Setup {
 
 impl Setup {
     pub(crate) fn system() -> Result<Self> {
+        let home = Self::tool_home()?;
+        let data = wenlan_core::config::data_root().join("rulesync");
+        let binary = std::env::var_os("WENLAN_RULESYNC_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                data.join(rulesync_renderer::pinned_binary_name().unwrap_or("rulesync"))
+            });
+        Ok(Self { home, data, binary })
+    }
+
+    fn tool_home() -> Result<PathBuf> {
         let dev_state =
             std::env::var_os("WENLAN_DEV_STATE_DIR").is_some_and(|path| !path.is_empty());
         ensure!(
@@ -875,17 +905,7 @@ impl Setup {
             },
             "this daemon has no isolated AI-tool home"
         );
-        let root = wenlan_core::config::data_root().join("rulesync");
-        let binary = std::env::var_os("WENLAN_RULESYNC_BINARY")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                root.join(rulesync_renderer::pinned_binary_name().unwrap_or("rulesync"))
-            });
-        Ok(Self {
-            home: system_home()?,
-            data: root,
-            binary,
-        })
+        system_home()
     }
 
     pub(crate) fn data_files(&self) -> Result<FileRoot> {
@@ -2439,38 +2459,19 @@ impl Setup {
         } = inspect(&self.home, root, manifest)?;
         blocked.extend(pending_skills);
         if !drafts.is_empty() {
+            let unchanged = |path: &Path| !drafts.iter().any(|draft| draft.path == path);
             manifest
                 .scope_reviews
-                .retain(|_, review| !drafts.iter().any(|draft| draft.path == review.path));
+                .retain(|_, review| unchanged(&review.path));
+            manifest
+                .scope_review_heads
+                .retain(|path, _| unchanged(path));
         }
         for draft in drafts
             .iter()
             .filter(|draft| !cards.iter().any(|card| card.paths.contains(&draft.path)))
         {
-            let delivery = &manifest.delivered[&draft.path];
-            let before = rulesync_layers::only_personal(text(
-                delivery.observed.as_ref().unwrap_or(&delivery.delivered),
-            )?)?;
-            let after = rulesync_layers::only_personal(text(&draft.current)?)?;
-            let id = fingerprint(&(&draft.path, &before, &after))?;
-            accept_tool_edit(manifest, draft)?;
-            manifest.scope_reviews.insert(
-                id.clone(),
-                ScopeReview {
-                    path: draft.path.clone(),
-                    before,
-                    after,
-                    card: PullbackCard {
-                        id,
-                        files: vec![draft.path.display().to_string()],
-                        diff: draft.diff.clone(),
-                        reason: "Kept for this tool. Share across tools?".into(),
-                        kind: PullbackKind::Scope,
-                        reason_code: Some(Code::ScopeEdit),
-                        diff_codes: Vec::new(),
-                    },
-                },
-            );
+            record_scope_review(manifest, draft)?;
         }
         if !drafts.is_empty() {
             self.save(manifest)?;
@@ -2488,7 +2489,7 @@ impl Setup {
         }
         result
             .proposals
-            .extend(manifest.scope_reviews.values().map(ScopeReview::wire));
+            .extend(manifest.current_scope_reviews().map(ScopeReview::wire));
         for (path, (code, reason)) in &blocked {
             block_path(result, path, *code, format!("{}: {reason}", path.display()));
         }
@@ -3121,6 +3122,10 @@ impl Setup {
             .load_if_present()?
             .context("run wenlan rules adopt first")?;
         if let Some(scope) = manifest.scope_reviews.get(&request.id) {
+            ensure!(
+                manifest.is_current_scope_review(scope),
+                "the proposal is no longer current"
+            );
             return Ok(PullbackPreview {
                 diff: scope.card.diff.clone(),
                 plan: scope.card.reason.clone(),
@@ -3168,7 +3173,12 @@ impl Setup {
             result.extend_blocks(Code::ReviewNeeded, blocked);
             return Ok(result);
         }
-        if let Some(scope) = manifest.scope_reviews.remove(&request.id) {
+        if let Some(scope) = manifest.scope_reviews.get(&request.id) {
+            ensure!(
+                manifest.is_current_scope_review(scope),
+                "the proposal is no longer current"
+            );
+            let scope = scope.clone();
             if matches!(request.action, PullbackAction::AllTools) {
                 let delivery = manifest
                     .delivered
@@ -3210,6 +3220,10 @@ impl Setup {
                 delivery.observed = Some(expected.clone());
                 delivery.reviewed = true;
             }
+            manifest
+                .scope_reviews
+                .retain(|_, review| review.path != scope.path);
+            manifest.scope_review_heads.remove(&scope.path);
             self.save(&manifest)?;
             return sync(&root, &mut manifest);
         }
@@ -4404,17 +4418,13 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                 continue;
             }
         };
-        let baseline = if matches!(delivery.kind, Kind::PersonalFile) {
+        if matches!(delivery.kind, Kind::PersonalFile) {
             // The applied batch is the receipt. An older interrupted approval
             // can have an observed snapshot without a completed delivery.
-            &delivery.delivered
-        } else {
-            delivery.observed.as_ref().unwrap_or(&delivery.delivered)
-        };
-        if *baseline == current {
-            continue;
-        }
-        if matches!(delivery.kind, Kind::PersonalFile) {
+            let baseline = &delivery.delivered;
+            if *baseline == current {
+                continue;
+            }
             match personal_files::draft(root, path, baseline, current, &manifest.master) {
                 Ok(draft) => drafts.push(draft),
                 Err(error) => {
@@ -4427,60 +4437,13 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                     );
                 }
             }
-            continue;
+        } else if let Some(draft) = inspect_rule(path, delivery, current, &mut blocked)? {
+            drafts.push(draft);
         }
-        let (Ok(before), Ok(after)) = (text(baseline), text(&current)) else {
-            blocked.insert(path.clone(), (Code::RuleEncoding, "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into()));
-            continue;
-        };
-        if !rulesync_layers::edits(before, after).is_ok_and(|edits| edits.is_empty()) {
-            blocked.insert(path.clone(), (Code::SharedRuleChanged, "A shared section or its markers changed. Restore that section from the shared Rules page and sync again.".into()));
-            continue;
-        }
-        let before = rulesync_layers::only_personal(before)?;
-        let after = rulesync_layers::only_personal(after)?;
-        let changes = match line_changes(&before, &after) {
-            Ok(changes) => changes,
-            Err(error) => {
-                blocked.insert(path.clone(), (Code::RuleCompareFailed, format!("Cannot compare the rules edits ({error:#}). Split large changes into smaller edits and sync again.")));
-                continue;
-            }
-        };
-        if changes.is_empty() {
-            blocked.insert(path.clone(), (Code::MetadataChanged, "The file metadata changed without a rules edit. Check its permissions and sync again.".into()));
-            continue;
-        }
-        let needs_review =
-            delivery.reviewed || changes.iter().any(|change| change.removed.is_empty());
-        let (_, _, diff) = describe_change(&path.display().to_string(), &before, &after);
-        drafts.push(Draft {
-            path: path.clone(),
-            current,
-            scope: DraftScope::Rule(changes),
-            diff,
-            diff_codes: Vec::new(),
-            needs_review,
-        });
-    }
-    let mut grouped: Vec<Vec<usize>> = Vec::new();
-    for (index, draft) in drafts.iter().enumerate() {
-        let mut group = vec![index];
-        grouped.retain(|previous| {
-            if previous
-                .iter()
-                .any(|other| competing_edits(draft, &drafts[*other]))
-            {
-                group.extend(previous);
-                false
-            } else {
-                true
-            }
-        });
-        grouped.push(group);
     }
     let mut cards = Vec::new();
-    for group in grouped {
-        if group.len() == 1 && !drafts[group[0]].needs_review {
+    for group in group_drafts(&drafts) {
+        if !needs_conflict_card(&drafts, &group) {
             continue;
         }
         let paths: BTreeSet<_> = group.iter().map(|i| drafts[*i].path.clone()).collect();
@@ -4565,6 +4528,73 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
     })
 }
 
+fn inspect_rule(
+    path: &Path,
+    delivery: &Delivery,
+    current: Snapshot,
+    blocked: &mut BTreeMap<PathBuf, (Code, String)>,
+) -> Result<Option<Draft>> {
+    let baseline = delivery.observed.as_ref().unwrap_or(&delivery.delivered);
+    if *baseline == current {
+        return Ok(None);
+    }
+    let (Ok(before), Ok(after)) = (text(baseline), text(&current)) else {
+        blocked.insert(path.to_owned(), (Code::RuleEncoding, "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into()));
+        return Ok(None);
+    };
+    if !rulesync_layers::edits(before, after).is_ok_and(|edits| edits.is_empty()) {
+        blocked.insert(path.to_owned(), (Code::SharedRuleChanged, "A shared section or its markers changed. Restore that section from the shared Rules page and sync again.".into()));
+        return Ok(None);
+    }
+    let before = rulesync_layers::only_personal(before)?;
+    let after = rulesync_layers::only_personal(after)?;
+    let changes = match line_changes(&before, &after) {
+        Ok(changes) => changes,
+        Err(error) => {
+            blocked.insert(path.to_owned(), (Code::RuleCompareFailed, format!("Cannot compare the rules edits ({error:#}). Split large changes into smaller edits and sync again.")));
+            return Ok(None);
+        }
+    };
+    if changes.is_empty() {
+        blocked.insert(path.to_owned(), (Code::MetadataChanged, "The file metadata changed without a rules edit. Check its permissions and sync again.".into()));
+        return Ok(None);
+    }
+    let needs_review = delivery.reviewed || changes.iter().any(|change| change.removed.is_empty());
+    let (_, _, diff) = describe_change(&path.display().to_string(), &before, &after);
+    Ok(Some(Draft {
+        path: path.to_owned(),
+        current,
+        scope: DraftScope::Rule(changes),
+        diff,
+        diff_codes: Vec::new(),
+        needs_review,
+    }))
+}
+
+fn group_drafts(drafts: &[Draft]) -> Vec<Vec<usize>> {
+    let mut grouped: Vec<Vec<usize>> = Vec::new();
+    for (index, draft) in drafts.iter().enumerate() {
+        let mut group = vec![index];
+        grouped.retain(|previous| {
+            if previous
+                .iter()
+                .any(|other| competing_edits(draft, &drafts[*other]))
+            {
+                group.extend(previous);
+                false
+            } else {
+                true
+            }
+        });
+        grouped.push(group);
+    }
+    grouped
+}
+
+fn needs_conflict_card(drafts: &[Draft], group: &[usize]) -> bool {
+    group.len() > 1 || drafts[group[0]].needs_review
+}
+
 fn rule_review_code(action: PullbackAction) -> Code {
     match action {
         PullbackAction::AllTools => Code::ShareRule,
@@ -4590,6 +4620,39 @@ fn competing_edits(first: &Draft, second: &Draft) -> bool {
                     .any(|line| !line.trim().is_empty() && other.removed.contains(line))
         })
     })
+}
+
+// Scope pullback changes only the in-memory Wenlan state. The caller saves
+// that state under the setup lock. Delivery is handled separately.
+fn record_scope_review(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
+    let delivery = &manifest.delivered[&draft.path];
+    let before = rulesync_layers::only_personal(text(
+        delivery.observed.as_ref().unwrap_or(&delivery.delivered),
+    )?)?;
+    let after = rulesync_layers::only_personal(text(&draft.current)?)?;
+    let id = fingerprint(&(&draft.path, &before, &after))?;
+    accept_tool_edit(manifest, draft)?;
+    manifest
+        .scope_review_heads
+        .insert(draft.path.clone(), id.clone());
+    manifest
+        .scope_reviews
+        .entry(id.clone())
+        .or_insert_with(|| ScopeReview {
+            path: draft.path.clone(),
+            before,
+            after,
+            card: PullbackCard {
+                id,
+                files: vec![draft.path.display().to_string()],
+                diff: draft.diff.clone(),
+                reason: "Kept for this tool. Share across tools?".into(),
+                kind: PullbackKind::Scope,
+                reason_code: Some(Code::ScopeEdit),
+                diff_codes: Vec::new(),
+            },
+        });
+    Ok(())
 }
 
 fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
@@ -4672,8 +4735,8 @@ mod tests {
     use super::*;
 
     const SHARED: &str = "# Shared\n\nOne rule.\nSecond rule.\n";
-    const CLAUDE: &str = ".claude/CLAUDE.md";
-    const CODEX: &str = ".codex/AGENTS.md";
+    pub(super) const CLAUDE: &str = ".claude/CLAUDE.md";
+    pub(super) const CODEX: &str = ".codex/AGENTS.md";
 
     fn assert_block(report: &RulesSyncReport, legacy_text: &str, code: Code) {
         assert_eq!(
@@ -4716,13 +4779,13 @@ mod tests {
         );
     }
 
-    struct Fixture {
+    pub(super) struct Fixture {
         _temp: tempfile::TempDir,
-        setup: Setup,
+        pub(super) setup: Setup,
     }
 
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let _temp = tempfile::tempdir().unwrap();
             let home = _temp.path().join("home");
             let data = _temp.path().join("data");
@@ -4743,7 +4806,7 @@ mod tests {
             }
         }
 
-        fn adopt_from_plan(&self) {
+        pub(super) fn adopt_from_plan(&self) {
             let adoption = discover_adoption(&self.setup.home).unwrap();
             let master = PersonalMaster::new(&adoption);
             let root = FileRoot::open_home(&self.setup.home).unwrap();
@@ -4772,7 +4835,11 @@ mod tests {
                 .unwrap()
         }
 
-        fn sync_review(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<RulesSyncReport> {
+        pub(super) fn sync_review(
+            &self,
+            root: &FileRoot,
+            manifest: &mut Manifest,
+        ) -> Result<RulesSyncReport> {
             self.setup.sync_locked(
                 root,
                 manifest,
@@ -4782,12 +4849,12 @@ mod tests {
             )
         }
 
-        fn text(&self, path: &str) -> String {
+        pub(super) fn text(&self, path: &str) -> String {
             fs::read_to_string(self.setup.home.join(path))
                 .unwrap_or_else(|err| panic!("{path}: {err}"))
         }
 
-        fn write(&self, path: &str, text: &str) {
+        pub(super) fn write(&self, path: &str, text: &str) {
             fs::write(self.setup.home.join(path), text).unwrap();
         }
     }
