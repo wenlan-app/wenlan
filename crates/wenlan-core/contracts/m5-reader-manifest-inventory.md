@@ -899,6 +899,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/library/shared/main` | main | no | not_applicable | `none` | — | status only: makes one of the library's computers the main one; returns the library's folder, computer names and last sync pass; no page text |
 | `GET` | `/api/library/shared` | main | no | not_applicable | `none` | — | status only: the library's shared folder, member names and last sync pass; no page text |
 | `DELETE` | `/api/library/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing the library from here; {ok: true} |
+| `GET` | `/api/cloud` | main | no | not_applicable | `none` | — | status only: whether this computer is connected to its Wenlan cloud, the cloud's address, a short code while connecting and when it last synced; no key, no page text |
+| `DELETE` | `/api/cloud` | main | no | not_applicable | `none` | — | status only: disconnects this computer from its Wenlan cloud and returns the same status; no key, no page text |
+| `POST` | `/api/cloud/connect` | main | no | not_applicable | `none` | — | receipt only: the short code to type in the browser, its page and how long it lasts; no key, no page text |
 | `GET` | `/api/shared` | main | no | not_applicable | `none` | — | status only: every shared Space name or page id with its folder, member names and last sync pass; no page text |
 | `POST` | `/api/shared/folder` | main | no | not_applicable | `none` | — | status only: what a folder's space.json says it shares (a Space name or a page title and id) and member names; no page text |
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |
