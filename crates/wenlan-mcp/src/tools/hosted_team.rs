@@ -86,6 +86,10 @@ pub(super) fn allowed(name: &str, profile: ToolProfile) -> bool {
     })
 }
 
+pub(super) fn rules_allowed(name: &str, profile: ToolProfile) -> bool {
+    matches!(name, "read_space_rules" | "report_space_rule_use") && allowed(name, profile)
+}
+
 fn registered_tool(name: &str, profile: ToolProfile) -> Option<MemberTool> {
     let grant = grant(profile)?;
     MEMBER_TOOLS
@@ -389,7 +393,7 @@ impl MemberOutput {
     }
 }
 
-fn structured_result<T: Serialize>(output: T) -> Result<CallToolResult, McpError> {
+pub(super) fn structured_result<T: Serialize>(output: T) -> Result<CallToolResult, McpError> {
     query_success(output)
 }
 

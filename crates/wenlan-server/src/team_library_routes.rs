@@ -18,22 +18,35 @@ use wenlan_core::team::{self, Member};
 use wenlan_core::team_library::{
     LegacyFile, LegacyHead, LegacySpace, Library, LibraryError, Reader,
 };
-use wenlan_types::team::{TeamPerson, TeamRole};
+use wenlan_mcp::tools::team_library as tools;
+use wenlan_types::team::{TeamAccess, TeamPerson, TeamRole};
 use wenlan_types::team_library::{
     TeamAuthorship, TeamGroup, TeamGroupCreate, TeamItem, TeamItemKind, TeamLibraryGrant,
     TeamOriginal, TeamPublication, TeamPublicationConfirm, TeamPublicationPreview,
-    TeamPublicationReceipt, TeamTerminalAction, TeamTerminalReply,
+    TeamPublicationReceipt, TeamTerminalAction, TeamTerminalReply, TeamToolKeyCreate,
+    TeamToolKeyReceipt, TeamToolScope,
 };
 
 use super::TeamState;
 use crate::member_view::{self, MemberBody, MemberResponse};
 
 pub(super) const PREFIX: &str = "/team/v1/library";
+type McpSessions = Arc<Mutex<HashMap<McpSessionKey, super::McpService>>>;
+
+#[derive(Eq, Hash, PartialEq)]
+struct McpSessionKey {
+    member: String,
+    pin: Option<String>,
+    tool_key: Option<String>,
+    rules: Option<(String, TeamAccess)>,
+}
+
 #[derive(Clone)]
 pub(super) struct Host {
     pub(super) library: Library,
     previews: Arc<Mutex<HashMap<String, Pending>>>,
     migration: Arc<tokio::sync::Mutex<()>>,
+    mcp: McpSessions,
 }
 
 struct Pending {
@@ -53,6 +66,7 @@ impl Host {
             library: Library::new(team_path.to_owned(), memories),
             previews: Arc::default(),
             migration: Arc::default(),
+            mcp: Arc::default(),
         }
     }
 
@@ -343,6 +357,8 @@ pub(super) fn routes() -> Router<TeamState> {
     let router = post(publish).install(router, "/team/v1/library/publish");
     let router = post(create_group).install(router, "/team/v1/library/spaces");
     let router = put(set_grant).install(router, "/team/v1/library/members/{id}/grant");
+    let router = post(issue_key).install(router, "/team/v1/library/tool-keys");
+    let router = post(revoke_key).install(router, "/team/v1/library/tool-keys/{id}/revoke");
     router.layer(axum::middleware::from_fn(no_store))
 }
 
@@ -558,6 +574,210 @@ async fn set_grant(
             "The team member or grant is unavailable.",
         ),
     }
+}
+
+async fn issue_key(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
+    headers: HeaderMap,
+    Json(key): Json<TeamToolKeyCreate>,
+) -> MemberResponse {
+    reply(
+        async {
+            human(&state, &credential, &headers)?;
+            let host = host(&state)?;
+            host.migrate(&state).await?;
+            let library = host.library.reader(&member.id, key.space_id.as_deref())?;
+            if key.space_id.is_none() && member.library_access().is_none() {
+                return Err(LibraryError::Denied);
+            }
+            let scope = TeamToolScope {
+                team_id: library.info().team.id,
+                space_id: key.space_id,
+            };
+            let (id, secret) = team::issue_scoped_tool_key(
+                &state.team_path,
+                &member.id,
+                &key.name,
+                Some(scope.clone()),
+            )?;
+            Ok(TeamToolKeyReceipt {
+                id,
+                key: secret,
+                scope,
+            })
+        }
+        .await,
+    )
+}
+
+async fn revoke_key(
+    State(state): State<TeamState>,
+    Extension(member): Extension<Member>,
+    Extension(credential): Extension<team::Credential>,
+    headers: HeaderMap,
+    UrlPath(id): UrlPath<String>,
+) -> MemberResponse {
+    if let Err(error) = human(&state, &credential, &headers) {
+        return failure(error);
+    }
+    match team::revoke_tool_key(&state.team_path, &member.id, &id) {
+        Ok(()) => MemberResponse::status(StatusCode::NO_CONTENT),
+        Err(_) => failure(LibraryError::Absent),
+    }
+}
+
+pub(super) async fn serve_mcp(
+    state: &TeamState,
+    member: &Member,
+    credential: &team::Credential,
+    space: Option<&str>,
+    req: Request,
+) -> MemberResponse {
+    let key_id = match credential {
+        team::Credential::ToolKey { id } => Some(id),
+        _ => None,
+    };
+    let bound = key_id
+        .and_then(|id| member.keys.iter().find(|key| &key.id == id))
+        .and_then(|key| key.scope.as_ref());
+    let get_scope = async {
+        let host = host(state)?;
+        let reader = host.reader(state, member).await?;
+        let pin = if let Some(pin) = bound.and_then(|binding| binding.space_id.as_deref()) {
+            host.library.reader(&member.id, Some(pin))?;
+            if space.is_some_and(|space| reader.space(space).as_deref() != Some(pin)) {
+                return Err(LibraryError::Absent);
+            }
+            Some(pin.into())
+        } else {
+            match space {
+                Some(space) => Some(reader.space(space).ok_or(LibraryError::Absent)?),
+                None if member.library_access().is_some() => None,
+                None => {
+                    let info = reader.info();
+                    let [group] = info.spaces.as_slice() else {
+                        return Err(LibraryError::Denied);
+                    };
+                    Some(group.id.clone())
+                }
+            }
+        };
+        let rules = pin.as_deref().and_then(|pin| {
+            let name = reader.migrated_space(pin)?;
+            let (folder, access) = super::member_space_folder(state, member, name).ok()?;
+            (team::hosted_space_id(&folder).as_deref() == Some(pin))
+                .then(|| (name.to_owned(), access))
+        });
+        Ok::<_, LibraryError>((host, pin, rules))
+    };
+    let (host, pin, rules) = match get_scope.await {
+        Ok(scope) => scope,
+        Err(error) => return failure(error),
+    };
+    let service = {
+        let mut services = host.mcp.lock().unwrap_or_else(|error| error.into_inner());
+        let key = McpSessionKey {
+            member: member.id.clone(),
+            pin: pin.clone(),
+            tool_key: key_id.cloned(),
+            rules: rules.clone(),
+        };
+        match services.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                use wenlan_mcp::serve::MigratedSpaceRules;
+                use wenlan_mcp::tools::ToolProfile;
+                let rules = if let Some((space, access)) = rules {
+                    let daemon_client = match super::team_mcp_client(state) {
+                        Ok(client) => client,
+                        Err(_) => {
+                            return crate::member_view::team::empty(
+                                StatusCode::SERVICE_UNAVAILABLE,
+                            );
+                        }
+                    };
+                    Some(MigratedSpaceRules {
+                        daemon_client,
+                        space,
+                        profile: match access {
+                            TeamAccess::Read => ToolProfile::QueryOnly,
+                            TeamAccess::Write => ToolProfile::WebWrite,
+                        },
+                    })
+                } else {
+                    None
+                };
+                let library = host.library.clone();
+                let actor = member.id.clone();
+                let scoped = pin.is_some();
+                let lookup = Arc::new(move |call| {
+                    let library = library.clone();
+                    let actor = actor.clone();
+                    let pin = pin.clone();
+                    Box::pin(async move {
+                        tokio::task::spawn_blocking(move || {
+                            read_tool(&library, &actor, pin.as_deref(), call)
+                        })
+                        .await
+                        .map_err(|_| "The team library is unavailable.")?
+                    }) as tools::ReadFuture
+                });
+                entry
+                    .insert(wenlan_mcp::serve::team_library_service(
+                        member.id.clone(),
+                        scoped,
+                        lookup,
+                        rules,
+                    ))
+                    .clone()
+            }
+        }
+    };
+    crate::member_view::team::hosted_mcp(service, req).await
+}
+
+fn read_tool(
+    library: &Library,
+    actor: &str,
+    pin: Option<&str>,
+    call: tools::Read,
+) -> Result<tools::Output, &'static str> {
+    fn closed(error: LibraryError) -> &'static str {
+        match error {
+            LibraryError::Absent | LibraryError::Denied => "Team item not found.",
+            _ => "The team library is unavailable.",
+        }
+    }
+    let reader = library.reader(actor, pin).map_err(closed)?;
+    let scope = |space: Option<String>| {
+        if pin.is_some() {
+            return Ok(None);
+        }
+        space
+            .map(|space| reader.space(&space).ok_or("Team Space not found."))
+            .transpose()
+    };
+    Ok(match call {
+        tools::Read::Page(id) => tools::Output::Page(Box::new(reader.page(&id).map_err(closed)?)),
+        tools::Read::Sources(id) => tools::Output::Sources(reader.sources(&id).map_err(closed)?),
+        tools::Read::Pages {
+            space,
+            limit,
+            offset,
+        } => tools::Output::Pages(reader.pages(scope(space)?.as_deref(), limit, offset)),
+        tools::Read::Recall {
+            space,
+            query,
+            limit,
+        } => tools::Output::Recall(reader.recall(scope(space)?.as_deref(), &query, limit)),
+        tools::Read::Brief { space, topic } => tools::Output::Brief(Box::new(reader.brief(
+            scope(space)?.as_deref(),
+            topic.as_deref(),
+            10,
+        ))),
+    })
 }
 
 pub(super) async fn legacy_inventory(

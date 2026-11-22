@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Step 4 acceptance against the authenticated team router.
+//! Step 4 acceptance against the authenticated team router and real MCP service.
 
 use super::*;
 use serde_json::{json, Value};
@@ -8,6 +8,7 @@ const ORIGIN: &str = "https://team.example.com";
 const LIBRARY: &str = "/team/v1/library";
 const PRIVATE: &str = "orchid-local-only";
 const PUBLIC: &str = "orchid-team-note";
+const RESTRICTED: &str = "orchid-restricted-note";
 
 async fn profiles() -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.scratch/step4/acceptance");
@@ -89,6 +90,13 @@ async fn confirm(f: &Fixture, cookie: &str, preview: &Value) -> (StatusCode, Val
     .await
 }
 
+async fn publish(f: &Fixture, cookie: &str, draft: Value) -> Value {
+    let p = preview(f, cookie, draft).await;
+    let (status, body) = confirm(f, cookie, &p).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
 fn page(body: &str, space_id: Option<&str>) -> Value {
     json!({"kind":"page","title":"Release decision","body":body,"space_id":space_id})
 }
@@ -96,6 +104,82 @@ fn page(body: &str, space_id: Option<&str>) -> Value {
 async fn read(f: &Fixture, key: &str, path: &str) -> (StatusCode, String) {
     let (status, bytes) = call(&f.state, Method::GET, path, Some(key), vec![]).await;
     (status, String::from_utf8(bytes).unwrap())
+}
+
+async fn rpc(
+    f: &Fixture,
+    key: &str,
+    path: &str,
+    session: Option<&str>,
+    message: Value,
+) -> Response {
+    let mut request = Request::post(path)
+        .header(header::HOST, "team.example.com")
+        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(session) = session {
+        request = request
+            .header("mcp-session-id", session)
+            .header("mcp-protocol-version", "2025-06-18");
+    }
+    team_router(f.state.clone())
+        .oneshot(request.body(Body::from(message.to_string())).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn initialize(f: &Fixture, key: &str, path: &str) -> String {
+    let response = rpc(
+        f,
+        key,
+        path,
+        None,
+        json!({
+            "jsonrpc":"2.0", "id":1, "method":"initialize",
+            "params":{"protocolVersion":"2025-06-18","capabilities":{},
+                      "clientInfo":{"name":"step4-acceptance","version":"1"}}
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let session = response.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(response_text(response).await);
+    let response = rpc(
+        f,
+        key,
+        path,
+        Some(&session),
+        json!({"jsonrpc":"2.0", "method":"notifications/initialized"}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    session
+}
+
+async fn tool(f: &Fixture, key: &str, path: &str, session: &str, name: &str, args: Value) -> Value {
+    let response = rpc(
+        f,
+        key,
+        path,
+        Some(session),
+        json!({
+            "jsonrpc":"2.0", "id":2, "method":"tools/call",
+            "params":{"name":name,"arguments":args}
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_text(response).await;
+    let data = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .find(|data| !data.trim().is_empty())
+        .unwrap_or(&body);
+    serde_json::from_str(data).unwrap()
 }
 
 async fn seed(db: &wenlan_core::db::MemoryDB, id: &str, body: &str) {
@@ -109,6 +193,155 @@ async fn seed(db: &wenlan_core::db::MemoryDB, id: &str, body: &str) {
     }])
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn step4_mcp_reads_apply_grants_before_retrieval() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (mut f, db) = profiles().await;
+    let personal_requests = Arc::new(AtomicUsize::new(0));
+    let counter = personal_requests.clone();
+    f.state.in_process_daemon = Some(crate::router::AppRouter::from_test_router(
+        axum::Router::new().fallback(move || async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }),
+    ));
+    seed(&db, "host-personal-id", PRIVATE).await;
+    let writer = f.state.sessions.create_fresh(&f.writer.0.id).unwrap();
+    let mut draft = page(PUBLIC, None);
+    draft["brief"] = json!(true);
+    draft["private_source"] = json!(true);
+    let published = publish(&f, &writer, draft).await;
+    let id = published["item_id"].as_str().unwrap();
+    publish(&f, &writer, page(RESTRICTED, Some("design"))).await;
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let owner_session = f.state.sessions.create_fresh(&owner.id).unwrap();
+    let (status, group) = browser(
+        &f,
+        &owner_session,
+        Method::POST,
+        &format!("{LIBRARY}/spaces"),
+        json!({"name":"Roadmap"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let ordinary = publish(
+        &f,
+        &writer,
+        page("A team-wide decision", group["id"].as_str()),
+    )
+    .await;
+    let ordinary_url = format!("{LIBRARY}/pages/{}", ordinary["item_id"].as_str().unwrap());
+    assert_eq!(read(&f, &f.reader.1, &ordinary_url).await.0, StatusCode::OK);
+
+    let session = initialize(&f, &f.reader.1, "/mcp").await;
+    for (name, args, marker) in [
+        ("recall", json!({"topic":"orchid"}), PUBLIC),
+        ("brief", json!({"topic":"orchid"}), PUBLIC),
+        ("list_pages", json!({}), "Release decision"),
+        ("read_page", json!({"page_id":id}), PUBLIC),
+        ("get_page_sources", json!({"page_id":id}), "private source"),
+    ] {
+        let value = tool(&f, &f.reader.1, "/mcp", &session, name, args).await;
+        let result = &value["result"];
+        assert_ne!(result["isError"], true, "{name}: {value}");
+        let blob = result["structuredContent"].to_string();
+        assert!(blob.contains(marker), "{name}: {value}");
+        assert!(
+            !blob.contains(PRIVATE) && !blob.contains(RESTRICTED),
+            "{blob}"
+        );
+        if name == "read_page" {
+            assert!(
+                blob.contains("publisher") && blob.contains(&f.writer.0.id),
+                "{blob}"
+            );
+            assert!(
+                blob.contains("revision") && blob.contains("human"),
+                "{blob}"
+            );
+        }
+    }
+    let miss = tool(
+        &f,
+        &f.reader.1,
+        "/mcp",
+        &session,
+        "recall",
+        json!({"topic":PRIVATE}),
+    )
+    .await;
+    assert_eq!(miss["result"]["structuredContent"]["memories"], json!([]));
+    assert_eq!(miss["result"]["structuredContent"]["pages"], json!([]));
+    assert_eq!(personal_requests.load(Ordering::SeqCst), 0);
+
+    let (guest, key) = team::invite_with_key(
+        &f.state.team_path,
+        "Guest",
+        &[TeamSpaceAccess {
+            space: "Design".into(),
+            access: TeamAccess::Read,
+            id: None,
+        }],
+    )
+    .unwrap();
+    assert_ne!(guest.id, f.reader.0.id);
+    let session = initialize(&f, &key, "/mcp/Design").await;
+    let reply = tool(
+        &f,
+        &key,
+        "/mcp/Design",
+        &session,
+        "recall",
+        json!({"topic":"orchid"}),
+    )
+    .await;
+    assert!(reply.to_string().contains(RESTRICTED) && !reply.to_string().contains(PUBLIC));
+    let (status, issued) = browser(
+        &f,
+        &writer,
+        Method::POST,
+        &format!("{LIBRARY}/tool-keys"),
+        json!({"name":"Narrow connector","space_id":"design"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let pinned_key = issued["key"].as_str().unwrap();
+    let pinned = initialize(&f, pinned_key, "/mcp").await;
+    let result = tool(
+        &f,
+        pinned_key,
+        "/mcp",
+        &pinned,
+        "recall",
+        json!({"query":"orchid"}),
+    )
+    .await;
+    assert!(result.to_string().contains(RESTRICTED) && !result.to_string().contains(PUBLIC));
+    assert_eq!(
+        read(&f, pinned_key, &format!("{LIBRARY}/pages/{id}"))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        read(&f, &key, &format!("{LIBRARY}/pages/{id}")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(read(&f, &key, &ordinary_url).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        read(&f, &f.outsider.1, &format!("{LIBRARY}/pages/{id}"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        read(&f, "invalid-outsider-key", &format!("{LIBRARY}/pages/{id}"))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
@@ -145,6 +378,21 @@ async fn step4_review_publishes_only_approved_snapshot_and_retries_once() {
     let list: Value = serde_json::from_str(&sources).unwrap();
     assert_eq!(list["sources"].as_array().unwrap().len(), 2);
     assert!(sources.contains("approved redacted orchid") && sources.contains("private source"));
+    let mcp = initialize(&f, &f.reader.1, "/mcp").await;
+    let result = tool(
+        &f,
+        &f.reader.1,
+        "/mcp",
+        &mcp,
+        "recall",
+        json!({"query":"orchid"}),
+    )
+    .await;
+    let memories = result["result"]["structuredContent"]["memories"]
+        .as_array()
+        .unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0]["body"], "approved redacted orchid");
     for suffix in ["", "/sources", "/history", "/file"] {
         let (status, body) = read(&f, &f.reader.1, &format!("{LIBRARY}/pages/{id}{suffix}")).await;
         assert_eq!(status, StatusCode::OK, "{suffix}: {body}");
@@ -284,4 +532,44 @@ async fn step4_legacy_migration_keeps_only_member_heads_and_refuses_uploads() {
     team::set_everyone(&f.state.team_path, "Design", Some(TeamAccess::Read)).unwrap();
     let (_, future) = team::add_member(&f.state.team_path, "Future", &[]).unwrap();
     assert_eq!(read(&f, &future, &file).await.0, StatusCode::OK);
+    f.state.library = Some(library::Host::new(&f.state.team_path, true));
+    f.state.in_process_daemon = Some(crate::router::AppRouter::from_test_router(
+        axum::Router::new().route(
+            "/api/skills/rules",
+            axum::routing::get(|| async {
+                Json(json!({"space_id":"design","space_name":"Design","lines":[]}))
+            }),
+        ),
+    ));
+    let session = initialize(&f, &future, "/mcp/Design").await;
+    let reply = tool(
+        &f,
+        &future,
+        "/mcp/Design",
+        &session,
+        "recall",
+        json!({"topic":PRIVATE}),
+    )
+    .await;
+    assert_eq!(reply["result"]["structuredContent"]["memories"], json!([]));
+    let rules = tool(
+        &f,
+        &future,
+        "/mcp/Design",
+        &session,
+        "read_space_rules",
+        json!({}),
+    )
+    .await;
+    assert_eq!(rules["result"]["structuredContent"]["space_name"], "Design");
+    let refused = tool(
+        &f,
+        &future,
+        "/mcp/Design",
+        &session,
+        "write_page",
+        json!({}),
+    )
+    .await;
+    assert_eq!(refused["result"]["isError"], true);
 }
