@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.22.6](https://github.com/wenlan-app/wenlan/compare/v0.22.5...v0.22.6) (2026-11-22)
+
+
+### Features
+
+* **app:** rules and skills setup in the app (status, review cards, bring in, restore) ([#1370](https://github.com/wenlan-app/wenlan/issues/1370)) ([5c8503a](https://github.com/wenlan-app/wenlan/commit/5c8503a6dbf971dfb45192a4de7ff3f2a588d724))
+* **mcp:** read the team library within member grants (step 4, 3/4) ([#1366](https://github.com/wenlan-app/wenlan/issues/1366)) ([cae0bbe](https://github.com/wenlan-app/wenlan/commit/cae0bbe4c0f6bd705fdb6a62beae3c5ef06bebe3))
+* **rules:** adopt and deliver personal tool settings (rules migration step 3) ([#1362](https://github.com/wenlan-app/wenlan/issues/1362)) ([312b85a](https://github.com/wenlan-app/wenlan/commit/312b85a3d64c5835215f96580189559a523c306c))
+* **rules:** notice tool edits in the background ([#1373](https://github.com/wenlan-app/wenlan/issues/1373)) ([3e87c99](https://github.com/wenlan-app/wenlan/commit/3e87c991932d699e4755a7f0d4b2259566f01a9d))
+* **rules:** one setup entry with bring in, status, to review and restore ([#1374](https://github.com/wenlan-app/wenlan/issues/1374)) ([64e3366](https://github.com/wenlan-app/wenlan/commit/64e336619c6d7d3cd12cc4e18adbd461077ded31))
+* **rules:** one-sentence sync from AI tools via /wenlan ([#1377](https://github.com/wenlan-app/wenlan/issues/1377)) ([a8bdf1e](https://github.com/wenlan-app/wenlan/commit/a8bdf1eee600a86cb3fcffdc25d4774b878641e9))
+* **search:** find pages by any section, not only their start ([#1376](https://github.com/wenlan-app/wenlan/issues/1376)) ([7336eba](https://github.com/wenlan-app/wenlan/commit/7336eba1e36fb38e615657d59efd2953de37e2f8))
+* **search:** say which section matched; memory hits bring the pages built from them ([#1380](https://github.com/wenlan-app/wenlan/issues/1380)) ([a1c95a0](https://github.com/wenlan-app/wenlan/commit/a1c95a0015817f27107c4c508ef744315c556be7))
+* **server:** personal cloud entrance, per-person process pool and pass ([#1375](https://github.com/wenlan-app/wenlan/issues/1375)) ([af0f580](https://github.com/wenlan-app/wenlan/commit/af0f580cf47fc192a327ff269bcdb35d48655ef6))
+* **team:** add scoped library records and permissions ([5a0251b](https://github.com/wenlan-app/wenlan/commit/5a0251b2cd82a98d0954e741354f322d8a3b93d2))
+* **team:** persist withdrawal and verify member removal (step 4, 4/4) ([#1367](https://github.com/wenlan-app/wenlan/issues/1367)) ([8958e3c](https://github.com/wenlan-app/wenlan/commit/8958e3c5cb19a3214e6a7ab1b0de113552c64a5a))
+* **team:** review team library publications (step 4, 2/4) ([#1365](https://github.com/wenlan-app/wenlan/issues/1365)) ([4addc76](https://github.com/wenlan-app/wenlan/commit/4addc7665a110f3b704398e7559ff42433d77b75))
+* **team:** scoped team library records and permissions (step 4, 1/4) ([#1364](https://github.com/wenlan-app/wenlan/issues/1364)) ([5a0251b](https://github.com/wenlan-app/wenlan/commit/5a0251b2cd82a98d0954e741354f322d8a3b93d2))
+
+
+### Bug Fixes
+
+* **cli:** run the CLI and daemon on 8 MiB threads so debug builds fit the Windows stack ([#1381](https://github.com/wenlan-app/wenlan/issues/1381)) ([7e52d70](https://github.com/wenlan-app/wenlan/commit/7e52d70d1080e13df28821b9975f09b7c2e162d7))
+* **memory:** rules trace to the person, the night fixes only contradicted sentences on read pages, things say what was not read ([#1361](https://github.com/wenlan-app/wenlan/issues/1361)) ([41b1060](https://github.com/wenlan-app/wenlan/commit/41b10600b1ae4844944b79c6ece34f153e7d7407))
+* **memory:** the night keeps working habits, never writes personal talk into shared Spaces, and habits reach every own tool ([#1372](https://github.com/wenlan-app/wenlan/issues/1372)) ([115b4dc](https://github.com/wenlan-app/wenlan/commit/115b4dc451191d87f972abcbf212e63d85a9d180))
+* **plugin:** handoff no longer edits pages — pages follow memory changes and the night read check ([#1368](https://github.com/wenlan-app/wenlan/issues/1368)) ([fb40010](https://github.com/wenlan-app/wenlan/commit/fb40010f82ac6530d4c2ab5b7f1a76ea78e8563c))
+* preserve edits in revoked shared rules ([dcc184c](https://github.com/wenlan-app/wenlan/commit/dcc184c2f7a8eefba5f3f395ceacf49999f6ed1e))
+* **retrieval:** page search falls back to any-word keyword match ([#1371](https://github.com/wenlan-app/wenlan/issues/1371)) ([e5281a5](https://github.com/wenlan-app/wenlan/commit/e5281a5ce60754996cf180dea5e127427eec3a73))
+* **rules:** review hand edits inside a revoked shared rules block ([#1379](https://github.com/wenlan-app/wenlan/issues/1379)) ([dcc184c](https://github.com/wenlan-app/wenlan/commit/dcc184c2f7a8eefba5f3f395ceacf49999f6ed1e))
+* **sync:** typed refusals and one-transaction gate for hosted member writes ([#1363](https://github.com/wenlan-app/wenlan/issues/1363)) ([ca8933f](https://github.com/wenlan-app/wenlan/commit/ca8933faa55c2fd89a489e3bd248233ba9e3a3c3))
+
 ## [0.22.5](https://github.com/wenlan-app/wenlan/compare/v0.22.4...v0.22.5) (2026-11-21)
 
 
