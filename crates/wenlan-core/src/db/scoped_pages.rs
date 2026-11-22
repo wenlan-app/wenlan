@@ -334,7 +334,7 @@ impl MemoryDB {
              ORDER BY dist ASC LIMIT ?2"
         );
         let mut vector_params = vec![
-            libsql::Value::Text(vec_str),
+            libsql::Value::Text(vec_str.clone()),
             libsql::Value::Integer(fetch_limit),
         ];
         vector_params.extend(values.clone());
@@ -362,6 +362,23 @@ impl MemoryDB {
                 log::warn!("[search_pages_scoped] vector search failed: {error}");
                 channel_errors.push(format!("vector: {error}"));
             }
+        }
+
+        // A page is also found by its closest section (db/page_chunks.rs).
+        if vector_succeeded && super::page_chunks::page_chunk_vectors_enabled() {
+            let chunk_sql = super::page_chunks::page_chunk_vector_sql(&select, &where_clause);
+            let mut chunk_params = vec![
+                libsql::Value::Text(vec_str.clone()),
+                libsql::Value::Integer(fetch_limit),
+            ];
+            chunk_params.extend(values.clone());
+            let chunk_hits =
+                super::page_chunks::page_chunk_vector_hits(&conn, &chunk_sql, chunk_params).await;
+            super::page_chunks::merge_page_chunk_hits(
+                &mut vector_results,
+                chunk_hits,
+                fetch_limit as usize,
+            );
         }
 
         use crate::retrieval::fts_query::{

@@ -1471,6 +1471,7 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     // `note_codes` stays aligned with `notes` by index.
     notes.extend(adoption.settings.notes.iter().cloned());
     Ok(AdoptionPlan {
+        settings: None,
         token: adoption_token(adoption)?,
         files,
         skills,

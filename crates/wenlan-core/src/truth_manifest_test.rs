@@ -363,9 +363,10 @@ fn manifest_counts_match_the_spec() {
     // and subagent review preview; no page text). GET setup status adds one.
     // Then 419 after POST `/api/team/library/terminal` (the person-key-gated
     // team publication review, which echoes the supplied draft).
+    // The personal review queue and release-notice dismissal bring this to 421.
     assert_eq!(
         HTTP_READERS.len(),
-        419,
+        421,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -379,7 +380,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        431,
+        433,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -387,7 +388,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        414,
+        416,
         "main builder entries"
     );
     assert_eq!(
@@ -595,7 +596,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        409 // 21 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes, POST /api/handoff and the team publication review, all with no page markers.
+        411 // 21 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes, POST /api/handoff and the team publication review, all with no page markers.
     );
 }
 

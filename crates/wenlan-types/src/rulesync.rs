@@ -4,6 +4,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::{rulesync_settings::SettingsPlan, rulesync_skill::SkillProposal};
+
+pub const BRING_IN_COMMAND: &str = "wenlan rules adopt";
+pub const STATUS_COMMAND: &str = "wenlan rules status";
+pub const SYNC_COMMAND: &str = "wenlan rules status --sync";
+pub const TO_REVIEW_COMMAND: &str = "wenlan rules review";
+pub const RESTORE_COMMAND: &str = "wenlan rules restore";
+
 /// Localizable setup diagnostics. Legacy terminal copy is carried separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,6 +140,8 @@ pub struct AdoptionPlan {
     /// Binds approval to the exact files seen by the preview.
     pub token: String,
     pub files: Vec<AdoptionChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<SettingsPlan>,
     #[serde(default)]
     pub skills: Vec<AdoptionSkill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -309,12 +319,70 @@ pub struct RulesSetupStatus {
     pub proposals: Vec<PullbackCard>,
     /// Source files for these cards, with their actual owning tool.
     pub review_tools: BTreeMap<String, RulesSetupTool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<i64>,
+    #[serde(default)]
+    pub tools: Vec<RulesToolStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RulesSetupTool {
     pub id: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesToolStatus {
+    #[serde(flatten)]
+    pub tool: RulesSetupTool,
+    pub state: RulesToolState,
+    pub counts: RulesToolCounts,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RulesToolState {
+    UpToDate,
+    NeedsReview,
+    #[default]
+    NotManaged,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesToolCounts {
+    pub rules: usize,
+    pub skills: usize,
+    pub commands: usize,
+    pub subagents: usize,
+    pub mcp: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesReviewList {
+    pub items: Vec<RulesReviewItem>,
+    pub review_tools: BTreeMap<String, RulesSetupTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RulesReviewItem {
+    pub id: String,
+    pub answers: Vec<PullbackAction>,
+    #[serde(flatten)]
+    pub content: RulesReviewContent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RulesReviewContent {
+    ToolEdit { card: PullbackCard },
+    SkillProposal { proposal: SkillProposal },
+    SkillUpdate { update: AdoptedSkillUpdate },
+    Settings { plan: SettingsPlan },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DismissSkillUpdate {
+    pub id: String,
 }
 
 /// The selected action and source as shown to the person before approval.
@@ -343,6 +411,7 @@ pub enum PullbackAction {
     ToolOnly,
     AllTools,
     Dismiss,
+    Revert,
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckoutRulesRequest {

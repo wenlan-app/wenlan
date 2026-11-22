@@ -13,18 +13,18 @@ use sha2::{Digest, Sha256};
 use super::{
     AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup, UnsupportedRulesyncState,
 };
-use crate::rulesync_apply::{ApplyOutcome, Snapshot};
+use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 
-const MANIFEST: &str = "personal.json";
+pub(super) const MANIFEST: &str = "personal.json";
 const BLOBS: &str = "personal-blobs";
 const FORMAT: u32 = 3;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-struct BlobHash(String);
+pub(super) struct BlobHash(String);
 
 impl BlobHash {
-    fn of(bytes: &[u8]) -> Self {
+    pub(super) fn of(bytes: &[u8]) -> Self {
         Self(hex::encode(Sha256::digest(bytes)))
     }
 
@@ -43,9 +43,9 @@ impl BlobHash {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StoredSetup {
+pub(super) struct StoredSetup {
     format: u32,
-    state: Manifest<BlobHash>,
+    pub(super) state: Manifest<BlobHash>,
 }
 
 impl Setup {
@@ -59,83 +59,22 @@ impl Setup {
 
     pub(super) fn load(&self) -> Result<Option<Manifest>> {
         let root = self.data_files()?.with_private_directories();
-        let path = Path::new(MANIFEST);
-        let bytes = match root.read_private(path, None)? {
-            Snapshot::File { bytes, .. } => bytes,
-            Snapshot::Absent => return Ok(None),
-            _ => bail!("unexpected personal rules master file type"),
+        let Some(stored) = StoredSetup::read(&root)? else {
+            return Ok(None);
         };
-        let stored: StoredSetup =
-            serde_json::from_slice(&bytes).context(UnsupportedRulesyncState)?;
-        ensure!(stored.format == FORMAT, UnsupportedRulesyncState);
-
-        let mut cache = BTreeMap::<String, Vec<u8>>::new();
-        let loaded = map_contents(&stored.state, |hash| {
-            if let Some(bytes) = cache.get(&hash.0) {
-                return Ok(bytes.clone());
-            }
-            let blob = hash.path()?;
-            let Snapshot::File { bytes, .. } = root.read_private(&blob, None)? else {
-                bail!("missing personal rules blob");
-            };
-            ensure!(
-                BlobHash::of(&bytes).0 == hash.0,
-                "damaged personal rules blob"
-            );
-            cache.insert(hash.0.clone(), bytes.clone());
-            Ok(bytes)
-        });
+        let loaded = stored.load_contents(&root);
         // An unlocked status reader can race a successful restore, which
         // removes the manifest first and then retires its blob directory.
         match loaded {
             Ok(manifest) => Ok(Some(manifest)),
-            Err(_) if root.read_private(path, None)? == Snapshot::Absent => Ok(None),
+            Err(_) if root.read_private(Path::new(MANIFEST), None)? == Snapshot::Absent => Ok(None),
             Err(error) => Err(error),
         }
     }
 
     pub(super) fn save(&self, manifest: &Manifest) -> Result<()> {
         let root = self.data_files()?.with_private_directories();
-        let mut saved = BTreeSet::new();
-        let mut added_blob = false;
-        let state = map_contents(manifest, |bytes| {
-            let hash = BlobHash::of(bytes);
-            if saved.insert(hash.0.clone()) {
-                let path = hash.path()?;
-                match root.read_private(&path, Some(bytes))? {
-                    Snapshot::Absent => {
-                        let desired = Snapshot::file(bytes.clone());
-                        ensure!(
-                            root.apply(&path, &Snapshot::Absent, &desired, false)?
-                                == ApplyOutcome::Applied,
-                            "personal rules blob changed while saving"
-                        );
-                        added_blob = true;
-                    }
-                    Snapshot::File { bytes: current, .. } if current == *bytes => (),
-                    _ => bail!("damaged personal rules blob"),
-                }
-            }
-            Ok(hash)
-        })?;
-        if added_blob {
-            root.sync_directory(Path::new(BLOBS))?;
-            root.sync_directory(Path::new(""))?;
-        }
-        let path = Path::new(MANIFEST);
-        let seen = root.read(path, false)?;
-        let next = Snapshot::file(serde_json::to_vec(&StoredSetup {
-            format: FORMAT,
-            state,
-        })?);
-        ensure!(
-            root.apply(path, &seen, &next, false)? == ApplyOutcome::Applied,
-            "personal rules state changed during the operation"
-        );
-        root.sync_directory(Path::new(""))?;
-        #[cfg(test)]
-        super::MANIFEST_SAVES.set(super::MANIFEST_SAVES.get() + 1);
-        Ok(())
+        save_manifest(&root, manifest)
     }
 
     pub(super) fn retire_backup(&self) -> Result<()> {
@@ -152,6 +91,83 @@ impl Setup {
         }
         Ok(())
     }
+}
+
+impl StoredSetup {
+    pub(super) fn read(root: &FileRoot) -> Result<Option<Self>> {
+        let path = Path::new(MANIFEST);
+        let bytes = match root.read_private(path, None)? {
+            Snapshot::File { bytes, .. } => bytes,
+            Snapshot::Absent => return Ok(None),
+            _ => bail!("unexpected personal rules master file type"),
+        };
+        let stored: Self = serde_json::from_slice(&bytes).context(UnsupportedRulesyncState)?;
+        ensure!(stored.format == FORMAT, UnsupportedRulesyncState);
+
+        Ok(Some(stored))
+    }
+
+    pub(super) fn load_contents(&self, root: &FileRoot) -> Result<Manifest> {
+        let mut cache = BTreeMap::<String, Vec<u8>>::new();
+        map_contents(&self.state, |hash| {
+            if let Some(bytes) = cache.get(&hash.0) {
+                return Ok(bytes.clone());
+            }
+            let blob = hash.path()?;
+            let Snapshot::File { bytes, .. } = root.read_private(&blob, None)? else {
+                bail!("missing personal rules blob");
+            };
+            ensure!(
+                BlobHash::of(&bytes).0 == hash.0,
+                "damaged personal rules blob"
+            );
+            cache.insert(hash.0.clone(), bytes.clone());
+            Ok(bytes)
+        })
+    }
+}
+
+pub(super) fn save_manifest(root: &FileRoot, manifest: &Manifest) -> Result<()> {
+    let mut saved = BTreeSet::new();
+    let mut added_blob = false;
+    let state = map_contents(manifest, |bytes| {
+        let hash = BlobHash::of(bytes);
+        if saved.insert(hash.0.clone()) {
+            let path = hash.path()?;
+            match root.read_private(&path, Some(bytes))? {
+                Snapshot::Absent => {
+                    let desired = Snapshot::file(bytes.clone());
+                    ensure!(
+                        root.apply(&path, &Snapshot::Absent, &desired, false)?
+                            == ApplyOutcome::Applied,
+                        "personal rules blob changed while saving"
+                    );
+                    added_blob = true;
+                }
+                Snapshot::File { bytes: current, .. } if current == *bytes => (),
+                _ => bail!("damaged personal rules blob"),
+            }
+        }
+        Ok(hash)
+    })?;
+    if added_blob {
+        root.sync_directory(Path::new(BLOBS))?;
+        root.sync_directory(Path::new(""))?;
+    }
+    let path = Path::new(MANIFEST);
+    let seen = root.read(path, false)?;
+    let next = Snapshot::file(serde_json::to_vec(&StoredSetup {
+        format: FORMAT,
+        state,
+    })?);
+    ensure!(
+        root.apply(path, &seen, &next, false)? == ApplyOutcome::Applied,
+        "personal rules state changed during the operation"
+    );
+    root.sync_directory(Path::new(""))?;
+    #[cfg(test)]
+    super::MANIFEST_SAVES.set(super::MANIFEST_SAVES.get() + 1);
+    Ok(())
 }
 
 fn map_contents<From, To>(
@@ -252,6 +268,8 @@ fn map_contents<From, To>(
         unmanaged_personal_files: manifest.unmanaged_personal_files.clone(),
         worktree_writes: manifest.worktree_writes.clone(),
         scope_reviews: manifest.scope_reviews.clone(),
+        scope_review_heads: manifest.scope_review_heads.clone(),
+        dismissed_skill_updates: manifest.dismissed_skill_updates.clone(),
         delivery_issues: manifest.delivery_issues.clone(),
     })
 }

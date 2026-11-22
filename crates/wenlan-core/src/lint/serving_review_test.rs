@@ -94,6 +94,8 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/rules/setup/restore"),
         (Method::Post, "/api/rules/setup/skill-updates"),
         (Method::Post, "/api/rules/setup/sync"),
+        (Method::Get, "/api/rules/setup/review"),
+        (Method::Post, "/api/rules/setup/review/dismiss-update"),
         (Method::Post, "/api/rules/setup/review"),
         (Method::Post, "/api/rules/setup/review/preview"),
         (Method::Post, "/api/rules/setup/settings/preview"),

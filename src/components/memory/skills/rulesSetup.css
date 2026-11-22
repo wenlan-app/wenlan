@@ -136,3 +136,21 @@
 
 .section-list > div > .rules-tools { margin-bottom: 0; }
 .section-list > div:has(.rules-setup-review) > .rules-tools { margin-bottom: 16px; }
+
+
+.rules-setup-settings > .rules-setup-actions {
+  margin: 0 0 0.75rem;
+}
+
+.rules-setup-count {
+  margin-inline-start: 0.45em;
+  font-variant-numeric: tabular-nums;
+}
+
+.rules-setup-status-panel {
+  padding: 0.75rem;
+}
+
+.rules-setup-status-panel > .rules-setup-actions {
+  margin-top: 8px;
+}

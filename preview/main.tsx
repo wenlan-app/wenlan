@@ -186,9 +186,7 @@ function Harness() {
           </button>
         </div>}
         <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-          <Main initialView={state === "adopt" || state === "restore"
-            ? { kind: "settings", section: "agents" }
-            : { kind: "pages", section: state === "skill" ? "skills" : "rules" }} />
+          <Main initialView={{ kind: "pages", section: state === "skill" ? "skills" : "rules" }} />
         </div>
       </div>
     );

@@ -47,6 +47,14 @@ async fn seed_page(db: &MemoryDB) {
     )
     .await
     .unwrap();
+    // Chunked at its version, as the seed's page chunk step leaves it.
+    conn.execute(
+        "INSERT INTO page_chunks (page_id, page_version, chunk_index, content)
+         VALUES ('page-live', 1, 0, 'body')",
+        (),
+    )
+    .await
+    .unwrap();
 }
 
 fn assert_refused(error: crate::error::WenlanError, substrate: &str) {

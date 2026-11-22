@@ -34,7 +34,12 @@ async fn preview(
     headers: HeaderMap,
     Json(request): Json<SettingsPreviewRequest>,
 ) -> Result<Json<SettingsPlan>, ServerError> {
-    execute(headers, request.source, |_, _, plan| Ok(plan.response)).await
+    execute(
+        headers,
+        Some(request.source),
+        |_, _, plan| Ok(plan.response),
+    )
+    .await
 }
 
 async fn apply(
@@ -49,7 +54,7 @@ async fn apply(
 
 async fn execute<T: Send + 'static>(
     headers: HeaderMap,
-    source: PathBuf,
+    source: Option<PathBuf>,
     finish: impl FnOnce(&Setup, &FileRoot, LocalPlan) -> Result<T> + Send + 'static,
 ) -> Result<Json<T>, ServerError> {
     require_local_person(&headers)?;
@@ -63,8 +68,12 @@ async fn execute<T: Send + 'static>(
         let setup = Setup::system()?;
         let _lock = setup.lock()?;
         let root = FileRoot::open_home(&setup.home).context("open local AI-tool home")?;
-        let rendered = rulesync_settings::render_source(&setup.binary, &setup.data, &source)?;
-        let plan = plan_rendered(&setup, &root, &source, rendered)?;
+        let plan = if let Some(source) = source {
+            let rendered = rulesync_settings::render_source(&setup.binary, &setup.data, &source)?;
+            plan_rendered(&setup, &root, &source, rendered)?
+        } else {
+            plan_local(&setup, &root)?.context("No settings changes to review")?
+        };
         finish(&setup, &root, plan)
     })
     .await
@@ -81,10 +90,26 @@ struct PlannedWrite {
     desired: Snapshot,
 }
 
-struct LocalPlan {
-    response: SettingsPlan,
+pub(crate) struct LocalPlan {
+    pub(crate) response: SettingsPlan,
     source_digest: String,
     writes: Vec<PlannedWrite>,
+}
+
+pub(crate) fn plan_local(setup: &Setup, root: &FileRoot) -> Result<Option<LocalPlan>> {
+    if !setup.data.try_exists()? {
+        return Ok(None);
+    }
+    setup.data_files()?;
+    let Some(rendered) = rulesync_settings::render_local_source(&setup.binary, &setup.data)? else {
+        return Ok(None);
+    };
+    let plan = plan_rendered(setup, root, &setup.data, rendered)?;
+    Ok((!plan.response.files.is_empty() || plan.response.notice.is_some()).then_some(plan))
+}
+
+pub(crate) fn has_settings_review(setup: &Setup, root: &FileRoot) -> Result<bool> {
+    Ok(plan_local(setup, root)?.is_some())
 }
 
 fn plan_rendered(
@@ -114,7 +139,9 @@ fn plan_rendered(
         };
         let change = rulesync_settings::merge_file(&path, current, &staged)
             .with_context(|| format!("merge {}", path.display()))?;
-        if let Some(change) = change {
+        if let Some(mut change) = change {
+            change.preview.tool = crate::rulesync_routes::tool_for_path(&path)
+                .map(crate::rulesync_routes::tool_label);
             let desired = match &seen {
                 Snapshot::File { mode, .. } => Snapshot::File {
                     bytes: change.bytes,
@@ -149,7 +176,7 @@ fn plan_rendered(
     })
 }
 
-fn apply_plan(
+pub(crate) fn apply_plan(
     setup: &Setup,
     root: &FileRoot,
     plan: LocalPlan,

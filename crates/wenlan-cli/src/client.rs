@@ -886,12 +886,22 @@ impl WenlanClient {
             .await
     }
 
-    pub(crate) async fn adopted_skill_updates_as_person(
+    pub(crate) async fn rules_setup_status(
         &self,
-    ) -> Result<Vec<wenlan_types::rulesync::AdoptedSkillUpdate>> {
+    ) -> Result<wenlan_types::rulesync::RulesSetupStatus> {
+        self.get_local_as_person("/api/rules/setup/status").await
+    }
+
+    pub(crate) async fn rules_setup_review(
+        &self,
+    ) -> Result<wenlan_types::rulesync::RulesReviewList> {
+        self.get_local_as_person("/api/rules/setup/review").await
+    }
+
+    pub(crate) async fn dismiss_rules_skill_update(&self, id: &str) -> Result<()> {
         self.post_json_as_person(
-            "/api/rules/setup/skill-updates",
-            &serde_json::json!({}),
+            "/api/rules/setup/review/dismiss-update",
+            &wenlan_types::rulesync::DismissSkillUpdate { id: id.into() },
             None,
             true,
         )
@@ -1014,14 +1024,19 @@ impl WenlanClient {
     pub(crate) async fn pending_saved_skills(
         &self,
     ) -> Result<wenlan_types::rulesync_skill::SkillProposalsResponse> {
+        self.get_local_as_person("/api/skills/registry/proposals")
+            .await
+    }
+
+    async fn get_local_as_person<R: DeserializeOwned>(&self, path: &str) -> Result<R> {
         anyhow::ensure!(
             self.is_local() && !self.names_an_agent() && self.session().is_none(),
-            "Only you can see saved skill proposals on this computer."
+            "Only you can see the personal tool setup on this computer."
         );
         let key = self.person_key().await.context(
             "Wenlan could not read the person key. Run this from your own account with the local daemon running.",
         )?;
-        let url = format!("{}/api/skills/registry/proposals", self.base_url);
+        let url = format!("{}{path}", self.base_url);
         let http = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -1039,7 +1054,7 @@ impl WenlanClient {
             .await?
             .json()
             .await
-            .context("parsing saved skill proposals")
+            .with_context(|| format!("parsing {path} response"))
     }
 
     pub(crate) async fn review_saved_skill(

@@ -529,7 +529,7 @@ Arguments:
 
 #### `wenlan rules adopt`
 
-Adopt personal rules, skills, commands, subagents and settings.
+Bring in your personal AI-tool setup and preview the changes.
 
 ```text
 wenlan rules adopt [OPTIONS]
@@ -539,6 +539,37 @@ Options:
 
 - `--dry-run`: Preview the changes, or list the installed files while offline.
 
+#### `wenlan rules status`
+
+Status of the personal setup in each tool.
+
+```text
+wenlan rules status [OPTIONS]
+```
+
+Options:
+
+- `--sync`: Check for edits and sync approved content now.
+
+#### `wenlan rules review`
+
+To review: list changes, or answer one item.
+
+Skill proposals and updates also accept `dismiss`.
+
+```text
+wenlan rules review [OPTIONS] [ID] [ANSWER]
+```
+
+Arguments:
+
+- `[ID]`: The ID shown by `wenlan rules review`.
+- `[ANSWER]` Possible values: `tool-only` (Keep the change in that tool only), `all-tools` (Use the change in all tools), `revert` (Put the tool back to the earlier version).
+
+Options:
+
+- `--file <PATH>`: Choose the source file when a proposal contains competing edits.
+
 #### `wenlan rules restore`
 
 Restore the original files and links from the local setup backup.
@@ -546,55 +577,6 @@ Restore the original files and links from the local setup backup.
 ```text
 wenlan rules restore [OPTIONS]
 ```
-
-#### `wenlan rules sync`
-
-Merge personal settings and check the local tool setup for changes to review.
-
-```text
-wenlan rules sync [OPTIONS]
-```
-
-#### `wenlan rules skill-updates`
-
-Check adopted skills for upstream releases and list offers for review.
-
-```text
-wenlan rules skill-updates [OPTIONS]
-```
-
-#### `wenlan rules settings`
-
-Preview and approve an explicit local rulesync settings source.
-
-```text
-wenlan rules settings [OPTIONS] <SOURCE>
-```
-
-Arguments:
-
-- `<SOURCE>`: A local rulesync source folder.
-
-Options:
-
-- `--dry-run`: Show only the proposed settings changes.
-
-#### `wenlan rules review`
-
-Answer a proposal shown by `wenlan rules sync`.
-
-```text
-wenlan rules review [OPTIONS] <ID> <ACTION>
-```
-
-Arguments:
-
-- `<ID>`: The proposal ID shown by `wenlan rules sync`.
-- `<ACTION>` Possible values: `tool-only` (Keep the change for the tool that made it), `all-tools` (Share the change with all compatible tools), `dismiss` (Discard the proposal).
-
-Options:
-
-- `--file <PATH>`: Choose the source file when a proposal contains competing edits.
 
 ### `wenlan pages`
 
@@ -1185,32 +1167,6 @@ Options:
 - `--body <FILE>`: Markdown file containing the SKILL.md body without YAML front matter.
 - `--extra <PATH>`: A UTF-8 file relative to the body file's folder. Repeat for each extra file.
 - `--tool <TOOL>`: Use the skill for one tool. Omit to share across tools. Possible values: `claude-code`, `codex`, `gemini-cli`, `antigravity`, `copilot-cli`, `cursor`, `opencode`, `muse-code`.
-
-#### `wenlan skills pending`
-
-List personal skill proposals waiting for your review.
-
-```text
-wenlan skills pending [OPTIONS]
-```
-
-#### `wenlan skills review`
-
-Show a skill proposal and ask whether to accept or dismiss it.
-
-```text
-wenlan skills review [OPTIONS] <ID> <ACTION>
-```
-
-Arguments:
-
-- `<ID>`: A proposal ID printed by `wenlan skills pending`.
-- `<ACTION>` Possible values: `accept`, `dismiss`.
-
-Options:
-
-- `--tool <TOOL>`: Keep an accepted skill for one tool. Possible values: `claude-code`, `codex`, `gemini-cli`, `antigravity`, `copilot-cli`, `cursor`, `opencode`, `muse-code`.
-- `--shared`: Share an accepted skill across tools.
 
 ### `wenlan memories`
 

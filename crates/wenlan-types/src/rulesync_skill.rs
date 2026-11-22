@@ -8,7 +8,7 @@ use crate::{rulesync::RulesSyncReport, skill_registry::SkillPreviewFile};
 pub const MAX_SAVED_SKILL_FILES: usize = 100;
 pub const MAX_SAVED_SKILL_FILE_BYTES: usize = 256 * 1024;
 pub const MAX_SAVED_SKILL_BYTES: usize = 512 * 1024;
-pub const PENDING_SKILLS_COMMAND: &str = "wenlan skills pending";
+pub const PENDING_SKILLS_COMMAND: &str = crate::rulesync::TO_REVIEW_COMMAND;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
