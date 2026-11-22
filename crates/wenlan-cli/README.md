@@ -529,7 +529,7 @@ Arguments:
 
 #### `wenlan rules adopt`
 
-Bring your personal rules, skills, commands and subagents under Wenlan management.
+Adopt personal rules, skills, commands, subagents and settings.
 
 ```text
 wenlan rules adopt [OPTIONS]
@@ -549,7 +549,7 @@ wenlan rules restore [OPTIONS]
 
 #### `wenlan rules sync`
 
-Review local changes and deliver the current personal tool setup.
+Merge personal settings and check the local tool setup for changes to review.
 
 ```text
 wenlan rules sync [OPTIONS]
@@ -565,7 +565,7 @@ wenlan rules skill-updates [OPTIONS]
 
 #### `wenlan rules settings`
 
-Preview local MCP servers, hooks and permissions and confirm before applying.
+Preview and approve an explicit local rulesync settings source.
 
 ```text
 wenlan rules settings [OPTIONS] <SOURCE>

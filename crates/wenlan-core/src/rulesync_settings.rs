@@ -23,6 +23,9 @@ use crate::rulesync_personal::{fingerprint, reject_secret_lines};
 use crate::rulesync_renderer;
 use crate::skill_registry::{is_invisible, printable};
 
+mod document;
+pub mod personal;
+
 type JsonObject = Map<String, Value>;
 
 const MAX_SETTINGS_BYTES: u64 = 10 * 1024 * 1024;

@@ -505,6 +505,33 @@ pub fn require_plain_personal_directory(dir: &cap_std::fs::Dir) -> std::io::Resu
     }
 }
 
+pub fn require_plain_personal_file(
+    file: &cap_std::fs::File,
+    metadata: &Metadata,
+) -> io::Result<()> {
+    if cfg!(windows) && metadata.permissions().readonly() {
+        return Err(readonly_personal_file());
+    }
+    if metadata.nlink() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the file has multiple hard links. Its link will be kept in place",
+        ));
+    }
+    #[cfg(unix)]
+    require_plain_unix_acl(file)?;
+    #[cfg(windows)]
+    crate::rulesync_personal::check_windows_replacement(file)?;
+    Ok(())
+}
+
+pub fn readonly_personal_file() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Windows cannot safely replace this read-only personal configuration file",
+    )
+}
+
 #[cfg(target_os = "macos")]
 pub fn require_plain_macos_link(parent: &cap_std::fs::Dir, name: &Path) -> io::Result<()> {
     use rustix::fs::{openat, Mode, OFlags};
