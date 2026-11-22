@@ -535,3 +535,18 @@ test("real tree: steep keeps common rules brief and loads only relevant operatio
     assert.ok(!/Claude Code|AskUserQuestion|mcp__plugin_wenlan_wenlan__/.test(text), "shared references are host-neutral");
   }
 });
+
+test("wenlan front doors route rules commands and reserve answers for the person", () => {
+  for (const file of ["plugin/skills/wenlan/SKILL.md", "plugin-codex/skills/wenlan/SKILL.md", "plugin-agents/skills/wenlan/SKILL.md"]) {
+    const content = read(file);
+    for (const phrase of ["同步我的規則", "同步規則", "同步我的规则", "同步规则", "sync my rules", "規則狀態", "规则状态", "rules status", "有什麼要確認", "有什么要确认", "待確認", "待确认", "what needs review", "wenlan rules status --sync", "wenlan rules status", "wenlan rules review", "AI never answers a card"]) {
+      assert.ok(content.includes(phrase), `${file} missing ${phrase}`);
+    }
+    assert.match(content, /sync my rules[^\n]*rules sync below/);
+    assert.match(content, /rules status[^\n]*rules status below/);
+    assert.match(content, /what needs review[^\n]*rules review below/);
+    assert.match(content, /Rules sync: run `wenlan rules status --sync`/);
+    assert.match(content, /Rules status: run `wenlan rules status`/);
+    assert.match(content, /Rules review: run `wenlan rules review`/);
+  }
+});
