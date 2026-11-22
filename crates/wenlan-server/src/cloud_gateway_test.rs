@@ -268,7 +268,7 @@ async fn a_person_signs_in_and_reaches_their_own_wenlan_with_a_pass() {
     let pass = seen["pass"].as_str().unwrap();
     assert_eq!(
         env.key.for_account(&alice).verify(pass),
-        Some(alice.clone())
+        Some((alice.clone(), crate::cloud_pass::Via::Browser))
     );
     assert_eq!(*env.gateway.locator.asked.lock().unwrap(), vec![alice]);
 }
@@ -327,7 +327,7 @@ async fn a_persons_wenlans_sign_in_routes_are_never_reached() {
     add_account(env.dir.path(), "alice@example.com").unwrap();
     let session = sign_in(&env).await.unwrap();
     let cookie = format!("__Host-wenlan-session={session}");
-    let response = send(&env, get("/auth/device/token", &[("cookie", &cookie)])).await;
+    let response = send(&env, get("/auth/link/github", &[("cookie", &cookie)])).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(env.gateway.locator.asked.lock().unwrap().is_empty());
 }
@@ -367,4 +367,262 @@ async fn signing_out_ends_the_session() {
     assert_eq!(send(&env, out).await.status(), StatusCode::NO_CONTENT);
     let after = send(&env, get("/team/v1/app/pages", &[("cookie", &cookie)])).await;
     assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+}
+
+fn post_json(uri: &str, headers: &[(&str, &str)], body: Value) -> axum::http::Request<Body> {
+    let mut req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("content-type", "application/json");
+    for (name, value) in headers {
+        req = req.header(*name, *value);
+    }
+    req.body(Body::from(body.to_string())).unwrap()
+}
+
+/// A computer asks, the signed-in person allows it on the page, and the
+/// computer collects its key: `(key, key id)`.
+async fn connect_computer(env: &Env, cookie: &str) -> (String, String) {
+    let started = json_of(
+        send(
+            env,
+            post_json("/auth/device", &[], json!({"tool": "Alice's laptop"})),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(started["verification_uri"], format!("{ORIGIN}/app/device"));
+    let code = started["user_code"].as_str().unwrap().to_string();
+    let device_code = started["device_code"].as_str().unwrap().to_string();
+    let page = [("cookie", cookie), ("origin", ORIGIN)];
+    let looked = send(
+        env,
+        post_json("/auth/device/lookup", &page, json!({"user_code": code})),
+    )
+    .await;
+    assert_eq!(looked.status(), StatusCode::OK);
+    assert_eq!(json_of(looked).await["tool"], "Alice's laptop");
+    let allowed = send(
+        env,
+        post_json("/auth/device/approve", &page, json!({"user_code": code})),
+    )
+    .await;
+    assert_eq!(allowed.status(), StatusCode::NO_CONTENT);
+    let grant = json_of(
+        send(
+            env,
+            post_json(
+                "/auth/device/token",
+                &[],
+                json!({"device_code": device_code}),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let key = grant["key"].as_str().unwrap().to_string();
+    assert!(key.starts_with(DEVICE_KEY_PREFIX));
+    (key, grant["key_id"].as_str().unwrap().to_string())
+}
+
+#[tokio::test]
+async fn a_computer_connects_with_a_short_code_and_reaches_its_persons_wenlan() {
+    let env = env().await;
+    let alice = add_account(env.dir.path(), "alice@example.com").unwrap();
+    let session = sign_in(&env).await.unwrap();
+    let cookie = format!("__Host-wenlan-session={session}");
+    let (key, key_id) = connect_computer(&env, &cookie).await;
+    assert!(
+        !std::fs::read_to_string(env.dir.path().join(ACCOUNTS_FILE))
+            .unwrap()
+            .contains(&key),
+        "only the key's hash is kept"
+    );
+
+    let bearer = format!("Bearer {key}");
+    let answer = send(
+        &env,
+        get("/team/v1/library/files", &[("authorization", &bearer)]),
+    )
+    .await;
+    assert_eq!(answer.status(), StatusCode::CREATED);
+    let seen = json_of(answer).await["seen"].clone();
+    assert_eq!(
+        seen["authorization"],
+        Value::Null,
+        "the key stays at the entrance"
+    );
+    assert_eq!(
+        env.key
+            .for_account(&alice)
+            .verify(seen["pass"].as_str().unwrap()),
+        Some((alice.clone(), crate::cloud_pass::Via::Computer))
+    );
+
+    let list = json_of(send(&env, get("/auth/devices", &[("cookie", &cookie)])).await).await;
+    assert_eq!(list[0]["id"], key_id.as_str());
+    assert_eq!(list[0]["name"], "Alice's laptop");
+    assert_eq!(list[0].get("key_sha256"), None);
+
+    // Removed: refused at its very next request.
+    let remove = axum::http::Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/auth/devices/{key_id}"))
+        .header("cookie", &cookie)
+        .header("origin", ORIGIN)
+        .body(Body::empty())
+        .unwrap();
+    let left = send(&env, remove).await;
+    assert_eq!(left.status(), StatusCode::OK);
+    assert_eq!(json_of(left).await, json!([]));
+    let after = send(
+        &env,
+        get("/team/v1/library/files", &[("authorization", &bearer)]),
+    )
+    .await;
+    assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_computer_is_allowed_only_from_the_entrances_own_signed_in_page() {
+    let env = env().await;
+    add_account(env.dir.path(), "alice@example.com").unwrap();
+    let session = sign_in(&env).await.unwrap();
+    let cookie = format!("__Host-wenlan-session={session}");
+    let started = json_of(
+        send(
+            &env,
+            post_json("/auth/device", &[], json!({"tool": "laptop"})),
+        )
+        .await,
+    )
+    .await;
+    let code = started["user_code"].as_str().unwrap();
+    let device_code = started["device_code"].as_str().unwrap();
+    for (headers, want) in [
+        (vec![("cookie", cookie.as_str())], StatusCode::FORBIDDEN),
+        (
+            vec![
+                ("cookie", cookie.as_str()),
+                ("origin", "https://evil.example"),
+            ],
+            StatusCode::FORBIDDEN,
+        ),
+        (vec![("origin", ORIGIN)], StatusCode::UNAUTHORIZED),
+    ] {
+        let refused = send(
+            &env,
+            post_json("/auth/device/approve", &headers, json!({"user_code": code})),
+        )
+        .await;
+        assert_eq!(refused.status(), want);
+    }
+    let polled = send(
+        &env,
+        post_json(
+            "/auth/device/token",
+            &[],
+            json!({"device_code": device_code}),
+        ),
+    )
+    .await;
+    assert_eq!(json_of(polled).await["error"], "authorization_pending");
+    // A wrong short code is a miss; a made-up key reaches nobody.
+    let page = [("cookie", cookie.as_str()), ("origin", ORIGIN)];
+    let wrong = send(
+        &env,
+        post_json(
+            "/auth/device/approve",
+            &page,
+            json!({"user_code": "AAAA-AAAA"}),
+        ),
+    )
+    .await;
+    assert_eq!(wrong.status(), StatusCode::NOT_FOUND);
+    let made_up = format!("Bearer {DEVICE_KEY_PREFIX}{}", "0".repeat(64));
+    let reached = send(
+        &env,
+        get("/team/v1/library/files", &[("authorization", &made_up)]),
+    )
+    .await;
+    assert_eq!(reached.status(), StatusCode::UNAUTHORIZED);
+    assert!(env.gateway.locator.asked.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn signing_in_again_needs_this_persons_own_session_and_account() {
+    let env = env().await;
+    add_account(env.dir.path(), "alice@example.com").unwrap();
+    let session = sign_in(&env).await.unwrap();
+    let cookie = format!("__Host-wenlan-session={session}");
+    let no_origin = send(
+        &env,
+        post_json("/auth/reauth/github", &[("cookie", &cookie)], json!({})),
+    )
+    .await;
+    assert_eq!(no_origin.status(), StatusCode::FORBIDDEN);
+    let started = send(
+        &env,
+        post_json(
+            "/auth/reauth/github",
+            &[("cookie", &cookie), ("origin", ORIGIN)],
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(started.status(), StatusCode::OK);
+    let login = cookie_named(&started, "__Host-wenlan-login").unwrap();
+    let url = json_of(started).await["url"].as_str().unwrap().to_string();
+    let state = url::Url::parse(&url)
+        .unwrap()
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .unwrap()
+        .1
+        .to_string();
+    let callback = format!("/auth/callback/github?state={state}&code=good");
+    // Without the session that asked, it does not complete.
+    let stranger = send(
+        &env,
+        get(
+            &callback,
+            &[("cookie", &format!("__Host-wenlan-login={login}"))],
+        ),
+    )
+    .await;
+    assert_eq!(stranger.status(), StatusCode::FORBIDDEN);
+
+    let started = send(
+        &env,
+        post_json(
+            "/auth/reauth/github",
+            &[("cookie", &cookie), ("origin", ORIGIN)],
+            json!({}),
+        ),
+    )
+    .await;
+    let login = cookie_named(&started, "__Host-wenlan-login").unwrap();
+    let url = json_of(started).await["url"].as_str().unwrap().to_string();
+    let state = url::Url::parse(&url)
+        .unwrap()
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .unwrap()
+        .1
+        .to_string();
+    let back = send(
+        &env,
+        get(
+            &format!("/auth/callback/github?state={state}&code=good"),
+            &[("cookie", &format!("{cookie}; __Host-wenlan-login={login}"))],
+        ),
+    )
+    .await;
+    assert_eq!(back.status(), StatusCode::FOUND);
+    let fresh = cookie_named(&back, "__Host-wenlan-session").unwrap();
+    assert_ne!(fresh, session, "a new session");
+    assert!(env
+        .gateway
+        .sessions
+        .fresh(&fresh, team_session::REAUTH_WINDOW));
 }

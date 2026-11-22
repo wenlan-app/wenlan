@@ -16,6 +16,7 @@ pub mod briefing_routes;
 pub mod check_routes;
 pub mod cloud_files;
 pub mod cloud_gateway;
+pub mod cloud_library;
 pub mod cloud_locator;
 pub mod cloud_pass;
 pub mod code_basis_routes;

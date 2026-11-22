@@ -128,7 +128,7 @@ const METADATA_TTL: Duration = Duration::from_secs(60 * 60);
 /// keys), but not more often than this.
 const METADATA_REFRESH_MIN: Duration = Duration::from_secs(5 * 60);
 /// How far the provider's clock and this one may differ.
-const CLOCK_SKEW: chrono::Duration = chrono::Duration::seconds(60);
+pub(crate) const CLOCK_SKEW: chrono::Duration = chrono::Duration::seconds(60);
 /// Peers remembered by the rate limiter.
 const LIMITER_CAP: usize = 10_000;
 /// Requests a peer may make at once, and per second after that.

@@ -2,8 +2,9 @@
 //! Personal cloud: the pass the entrance signs for each request it forwards.
 //!
 //! A person's Wenlan never signs anyone in. The entrance does, and puts a
-//! pass on every request it forwards: the account it is for and when it
-//! expires, signed with HMAC-SHA256. A pass lives a minute.
+//! pass on every request it forwards: the account it is for, when it
+//! expires and whether a browser or one of the person's computers sent it,
+//! signed with HMAC-SHA256. A pass lives a minute.
 //!
 //! Each person's Wenlan gets only its own key, derived from the entrance's
 //! key and the account id, so one person's Wenlan cannot make a pass that
@@ -105,41 +106,84 @@ impl PassKey {
     /// A pass for `account`, good until `expires` (seconds since 1970).
     /// The entrance signs with the account's key ([`PassKey::for_account`]).
     pub fn sign_until(&self, account: &AccountId, expires: u64) -> String {
-        let body = format!("{VERSION}.{account}.{expires}");
+        self.sign_via_until(account, Via::Browser, expires)
+    }
+
+    /// [`PassKey::sign_until`] for a request that came `via` this way.
+    pub fn sign_via_until(&self, account: &AccountId, via: Via, expires: u64) -> String {
+        let body = format!("{VERSION}.{account}.{expires}.{}", via.as_str());
         let mac = hex::encode(self.mac(&body));
         format!("{body}.{mac}")
     }
 
-    /// A pass for `account` good for [`PASS_TTL`] from now.
+    /// A browser's pass for `account` good for [`PASS_TTL`] from now.
     pub fn sign(&self, account: &AccountId) -> String {
-        self.sign_until(account, now_unix() + PASS_TTL.as_secs())
+        self.sign_via(account, Via::Browser)
     }
 
-    /// The account a pass is for, when this key signed it and it has not
-    /// expired at `now`. A pass that claims to last longer than
-    /// [`PASS_TTL`] is refused too.
-    pub fn verify_at(&self, pass: &str, now: u64) -> Option<AccountId> {
+    /// A pass for `account` good for [`PASS_TTL`] from now.
+    pub fn sign_via(&self, account: &AccountId, via: Via) -> String {
+        self.sign_via_until(account, via, now_unix() + PASS_TTL.as_secs())
+    }
+
+    /// The account a pass is for and how the request came, when this key
+    /// signed it and it has not expired at `now`. A pass that claims to
+    /// last longer than [`PASS_TTL`] is refused too.
+    pub fn verify_at(&self, pass: &str, now: u64) -> Option<(AccountId, Via)> {
         let mut parts = pass.split('.');
-        let (version, account, expires, mac) =
-            (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+        let (version, account, expires, via, mac) = (
+            parts.next()?,
+            parts.next()?,
+            parts.next()?,
+            parts.next()?,
+            parts.next()?,
+        );
         if parts.next().is_some() || version != VERSION {
             return None;
         }
         let account = AccountId::parse(account)?;
+        let via = Via::parse(via)?;
         let expires: u64 = expires.parse().ok()?;
         if expires < now || expires > now + PASS_TTL.as_secs() {
             return None;
         }
         let mac = hex::decode(mac).ok()?;
         let mut check = HmacSha256::new_from_slice(&self.0).expect("any key length");
-        check.update(format!("{VERSION}.{account}.{expires}").as_bytes());
+        check.update(format!("{VERSION}.{account}.{expires}.{}", via.as_str()).as_bytes());
         check.verify_slice(&mac).ok()?;
-        Some(account)
+        Some((account, via))
     }
 
     /// [`PassKey::verify_at`] now.
-    pub fn verify(&self, pass: &str) -> Option<AccountId> {
+    pub fn verify(&self, pass: &str) -> Option<(AccountId, Via)> {
         self.verify_at(pass, now_unix())
+    }
+}
+
+/// How a forwarded request reached the entrance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Via {
+    /// A signed-in browser (its session cookie): a change must come from
+    /// the personal cloud's own page.
+    Browser,
+    /// One of the person's computers, with its own key.
+    Computer,
+}
+
+impl Via {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
+            Self::Computer => "computer",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "browser" => Some(Self::Browser),
+            "computer" => Some(Self::Computer),
+            _ => None,
+        }
     }
 }
 

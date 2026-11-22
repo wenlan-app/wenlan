@@ -34,7 +34,21 @@ browser / desktop / AI tools
 - **The pass.** The entrance forwards each request with a pass that names
   the account and expires within a minute, signed with a key derived for that
   account alone. A person's Wenlan takes nothing else: no member key, no
-  cookie, no other account's pass.
+  cookie, no other account's pass. The pass also says whether the person's
+  browser or one of their computers sent the request; a browser's change
+  must come from the personal cloud's own page.
+- **Computers.** A computer connects with the team server's short-code flow
+  (`POST /auth/device`, then the person types the code at `/app/device`
+  while signed in, having signed in again within five minutes) and gets a
+  key of its own (`wlc_…`, only its hash kept in `accounts.json`). The
+  person sees their computers at `GET /auth/devices` and removes one with
+  `DELETE /auth/devices/<id>`; its key is refused from its next request.
+- **The library copy.** Each person's Wenlan keeps a copy of their library
+  folder (`space.json` and `members/<member>/<kind>/<id>/<sha>.wlv`, memories
+  included) under `cloud-library/` in its folder, at
+  `/team/v1/library/files` and `/team/v1/library/file?path=…`. A version is
+  kept only when its bytes match its name and is never replaced. The cloud
+  copy only stores; it never joins the library as a computer.
 
 ## Running it
 
@@ -48,5 +62,5 @@ Put HTTPS in front of `--listen`. `--root` holds `accounts.json`, the
 entrance's key `gateway.key` (readable by its user only) and everyone's
 folders; keep it on an encrypted disk.
 
-Not in the trial yet: connecting the desktop app, AI connectors, backups and
-deleting an account.
+Not in the trial yet: the desktop app's side of connecting and syncing, AI
+connectors, backups and deleting an account.
