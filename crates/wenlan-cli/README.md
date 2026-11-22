@@ -527,6 +527,22 @@ Arguments:
 
 - `<ID>`: The rule's id, as `wenlan rules` prints it.
 
+#### `wenlan rules on`
+
+Turn on personal tool sync for this data root.
+
+```text
+wenlan rules on [OPTIONS]
+```
+
+#### `wenlan rules off`
+
+Turn off personal tool sync without restoring files.
+
+```text
+wenlan rules off [OPTIONS]
+```
+
 #### `wenlan rules adopt`
 
 Bring in your personal AI-tool setup and preview the changes.

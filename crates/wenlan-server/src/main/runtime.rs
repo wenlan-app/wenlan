@@ -257,7 +257,7 @@ pub(super) async fn register_optional_runtime_workers(
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         let shared_for_outbox = shared.clone();
         let mut outbox_shutdown = { shared.read().await.shutdown.subscribe() };
-        if wenlan_core::rulesync_personal::enabled() {
+        {
             let shutdown = outbox_shutdown.clone();
             // Both directories are siblings under the selected Wenlan data root.
             let rules_data = data_dir.with_file_name("rulesync");

@@ -12,8 +12,8 @@ use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
     PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
-    RulesSetupStatus, RulesSyncReport, RulesToolState, SkillUpdateStatus, SkillUpstream,
-    TO_REVIEW_COMMAND,
+    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SkillUpdateStatus,
+    SkillUpstream, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -25,6 +25,10 @@ use wenlan_types::rulesync_skill::{SavedSkillScope, SkillProposalOrigin};
 
 #[derive(Debug, Subcommand)]
 pub enum RulesSetupCmd {
+    /// Turn on personal tool sync for this data root.
+    On,
+    /// Turn off personal tool sync without restoring files.
+    Off,
     /// Bring in your personal AI-tool setup and preview the changes.
     Adopt {
         /// Preview the changes, or list the installed files while offline.
@@ -117,6 +121,13 @@ async fn run_inner(
     explicit_session: Option<&str>,
 ) -> Result<()> {
     let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
+    if matches!(command, RulesSetupCmd::On | RulesSetupCmd::Off) {
+        ensure!(agent_name.is_none() && session.session.is_none(), "Only you can change your personal tool setup. Run this from your own terminal outside an AI session.");
+        let on = matches!(command, RulesSetupCmd::On);
+        rulesync_personal::set_enabled(on)?;
+        println!("Tool sync is {}.", if on { "on" } else { "off" });
+        return Ok(());
+    }
     if matches!(command, RulesSetupCmd::Adopt { dry_run: true, .. }) {
         if rulesync_personal::enabled() {
             if let Ok(client) =
@@ -171,6 +182,7 @@ async fn run_inner(
 
     let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
     let report = match command {
+        RulesSetupCmd::On | RulesSetupCmd::Off => unreachable!(),
         RulesSetupCmd::Adopt {
             confirm: confirmed, ..
         } => {
@@ -398,6 +410,118 @@ fn review_confirmation(
 
 fn adoption_plan() -> Result<AdoptionPlan> {
     rulesync_personal::plan_adoption_offline(&rulesync_personal::system_home()?)
+}
+
+/// What `wenlan setup` tells the person once their tool setup is in.
+#[derive(Debug, Serialize)]
+struct SetupSync {
+    tools: Vec<String>,
+    rules: usize,
+    skills: usize,
+    following: usize,
+    copied: usize,
+    left_alone: usize,
+}
+
+fn plural(count: usize, word: &str) -> String {
+    format!("{count} {word}{}", if count == 1 { "" } else { "s" })
+}
+
+fn setup_sync_line(sync: &SetupSync) -> String {
+    let tools = match sync.tools.as_slice() {
+        [] => "your AI tools".to_string(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    };
+    let mut line = format!(
+        "Synced {tools}: {}, {} ({} follow their source, {} copied).",
+        plural(sync.rules, "rule"),
+        plural(sync.skills, "skill"),
+        sync.following,
+        sync.copied
+    );
+    if sync.left_alone > 0 {
+        line.push_str(&format!(" {} left as they are.", sync.left_alone));
+    }
+    line
+}
+
+/// Running setup is the person's consent: turn tool sync on, bring the setup
+/// in and sync once, with no question and no terminal needed. A plan that
+/// cannot be adopted safely is left alone with one line saying so; setup
+/// itself still succeeds.
+pub(super) async fn adopt_during_setup(format: ResolvedFormat) {
+    if let Err(error) = try_adopt_during_setup(format).await {
+        println!(
+            "Your tool setup was left as it is: {}. See `wenlan rules adopt --dry-run`.",
+            one_line(&printable(&format!("{error:#}"))).trim_end_matches('.')
+        );
+    }
+}
+
+async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
+    rulesync_personal::set_enabled(true)?;
+    let client = WenlanClient::for_local_rules_with_identity(None, None)?;
+    if client.rules_setup_status().await?.adopted {
+        return Ok(());
+    }
+    let home = rulesync_personal::system_home()?.canonicalize()?;
+    let plan = client
+        .preview_adoption_as_person(&AdoptPreviewRequest { home: home.clone() })
+        .await?;
+    if plan.files.is_empty() && plan.settings.is_none() && plan.skills.is_empty() {
+        return Ok(());
+    }
+    ensure!(
+        !plan.note_codes.iter().any(|note| matches!(
+            note.code,
+            RulesSetupCode::OfflineInventory | RulesSetupCode::SkillPreviewFailed
+        )),
+        "Wenlan could not preview it completely"
+    );
+    let report = client
+        .adopt_rules_as_person(&AdoptRequest {
+            token: plan.token.clone(),
+            confirmed_plan_id: None,
+            home: Some(home),
+        })
+        .await?;
+    ensure!(
+        report.blocked.is_empty(),
+        "{} need your review",
+        plural(report.blocked.len(), "item")
+    );
+    let _ = client.sync_rules_as_person().await;
+    let count = |wanted: fn(&AdoptionSkillOutcome) -> bool| {
+        plan.skills
+            .iter()
+            .filter(|skill| wanted(&skill.outcome))
+            .count()
+    };
+    let following =
+        count(|outcome| matches!(outcome, AdoptionSkillOutcome::TrackedUpstream { .. }));
+    let copied = count(|outcome| matches!(outcome, AdoptionSkillOutcome::PlainCopy));
+    let sync = SetupSync {
+        tools: plan
+            .tools
+            .iter()
+            .filter(|tool| tool.rule_files + tool.skills + tool.other_files > 0)
+            .map(|tool| tool.name.clone())
+            .collect(),
+        rules: plan.tools.iter().map(|tool| tool.rule_files).sum(),
+        skills: following + copied,
+        following,
+        copied,
+        left_alone: count(|outcome| matches!(outcome, AdoptionSkillOutcome::Skipped { .. })),
+    };
+    match format {
+        ResolvedFormat::Json => println!("{}", terminal_json(&sync)?),
+        ResolvedFormat::Table => {
+            println!("{}", printable(&setup_sync_line(&sync)));
+            println!("To undo: wenlan rules restore");
+        }
+    }
+    Ok(())
 }
 
 fn confirm(question: &str) -> Result<bool> {

@@ -1414,6 +1414,24 @@ and wait for evidence that people need them.
   is not shown the line; a command that cannot go on fails and names
   `wenlan init`.
   原文：「怎樣更好的 DX UX」（2026-11-17 05:28Z）；「沒問題，那繼續」（2026-11-17 06:45Z）。
+- **UX-CLI-8** `shipped` One `wenlan setup` run brings everything in. Once
+  Wenlan answers, setup turns tool sync on, previews the person's AI-tool
+  setup, brings it in and syncs once; running setup is the consent, so it asks
+  nothing, needs no terminal and works when an AI tool runs it. It ends with
+  a short report: which tools, how many rules and skills (how many follow
+  their source, how many are copies), how many are left as they are, and
+  `To undo: wenlan rules restore`. No paths or ids. `--format json` carries
+  the same counts. An already-adopted setup is skipped silently. A plan that
+  cannot be previewed completely, or that Wenlan refuses to adopt, is left
+  alone with one line saying so and setup still succeeds. The switch is a
+  `rulesync.on` file in the data root, so the daemon and the CLI agree and a
+  service reinstall keeps it; `wenlan rules on` and `wenlan rules off` change
+  it from the person's own terminal, `wenlan rules restore` does not, and
+  `WENLAN_RULESYNC=1` or `0` overrides it. Outside setup, an AI tool still
+  shows the preview and runs `wenlan rules adopt --confirm <plan id>` only
+  after a yes.
+  原文（2026-11-22）：「第一次用戶體驗就是，只要設置跑一次，就全部都弄好，看到一個同步好的簡短報告。」
+  Tests `setup_turns_sync_on_adopts_and_reports_the_counts`, `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`, `setup_leaves_a_blocked_plan_alone_and_still_succeeds`, `rules_switch_persists_and_environment_overrides_it` and `rules_switch_survives_a_service_reinstall`.
 
 ## Adding to Wenlan
 

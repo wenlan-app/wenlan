@@ -35,6 +35,209 @@ fn personal_rules_cli(state: &Path) -> Command {
 }
 
 #[test]
+fn rules_switch_persists_and_environment_overrides_it() {
+    let state = tempfile::tempdir().unwrap();
+    let home = state.path().join("ai-tools/home");
+    fs::create_dir_all(home.join(".gemini")).unwrap();
+    fs::write(home.join(".gemini/GEMINI.md"), "Gemini rules.\n").unwrap();
+    let marker = state.path().join("unused-data-root/rulesync.on");
+
+    personal_rules_cli(state.path())
+        .args(["rules", "on"])
+        .assert()
+        .success();
+    assert!(marker.is_file());
+    for (override_value, expected) in [(None, true), (Some("0"), false)] {
+        let mut command = personal_rules_cli(state.path());
+        if let Some(value) = override_value {
+            command.env("WENLAN_RULESYNC", value);
+        }
+        let output = command
+            .args(["rules", "adopt", "--dry-run", "--format", "json"])
+            .assert()
+            .success();
+        let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
+        assert_eq!(
+            plan.files
+                .iter()
+                .any(|file| file.path == ".gemini/GEMINI.md"),
+            expected
+        );
+    }
+    personal_rules_cli(state.path())
+        .args(["rules", "off"])
+        .assert()
+        .success();
+    assert!(!marker.exists());
+}
+
+#[cfg(unix)]
+/// A setup run with a stub daemon, a fake home with one rules file and one
+/// skill, and no AI tool on PATH. Returns the command, the plan and the home.
+fn setup_fixture(
+    state: &Path,
+    status_adopted: bool,
+    plan: &AdoptionPlan,
+) -> (Command, std::sync::mpsc::Receiver<(String, String)>) {
+    fs::create_dir_all(state.join("unused-data-root")).unwrap();
+    fs::write(state.join("unused-data-root/person.key"), "a".repeat(64)).unwrap();
+    let status = json!({"enabled":true,"adopted":status_adopted,"can_adopt":true,"can_restore":false,"in_sync":true,"proposals":[],"review_tools":{}});
+    let report = json!({"written":[],"blocked":[],"proposals":[],"message":"done"});
+    // Every request to the daemon first asks for health.
+    let health = json!({"status":"ok","db_initialized":true,"version":"test"}).to_string();
+    let mut routes = vec![("GET /api/health", health); 8];
+    routes.extend([
+        ("GET /api/rules/setup/status", status.to_string()),
+        (
+            "POST /api/rules/setup/adopt/preview",
+            serde_json::to_string(plan).unwrap(),
+        ),
+        ("POST /api/rules/setup/adopt", report.to_string()),
+        ("POST /api/rules/setup/sync", report.to_string()),
+    ]);
+    let (base, requests) = spawn_stub(routes);
+    let empty_path = state.join("no-tools");
+    fs::create_dir_all(&empty_path).unwrap();
+    // The only AI tool on PATH, and it does nothing.
+    let fake_tool = empty_path.join("claude");
+    fs::write(&fake_tool, "#!/bin/sh\nexit 0\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&fake_tool, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut cmd = personal_rules_cli(state);
+    cmd.env("WENLAN_HOST", base)
+        .env("PATH", empty_path)
+        .current_dir(state)
+        .args(["setup", "--finish"]);
+    (cmd, requests)
+}
+
+#[cfg(unix)]
+fn setup_home(state: &Path) -> AdoptionPlan {
+    let home = state.join("ai-tools/home");
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    fs::write(home.join(".codex/AGENTS.md"), "Fixture rules.\n").unwrap();
+    let skill = home.join(".codex/skills/example/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(
+        &skill,
+        "---\nname: example\ndescription: Fixture\n---\nBody.\n",
+    )
+    .unwrap();
+    wenlan_core::rulesync_personal::plan_adoption(&home).unwrap()
+}
+
+#[cfg(unix)]
+fn requested(requests: &std::sync::mpsc::Receiver<(String, String)>) -> Vec<String> {
+    requests.try_iter().map(|(path, _)| path).collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_turns_sync_on_adopts_and_reports_the_counts() {
+    let state = tempfile::tempdir().unwrap();
+    let plan = setup_home(state.path());
+    let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
+    let output = cmd
+        .args(["--format", "table"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).unwrap();
+    let copied = plan
+        .skills
+        .iter()
+        .filter(|skill| matches!(skill.outcome, AdoptionSkillOutcome::PlainCopy))
+        .count();
+    assert!(text.contains(&format!("{copied} copied)")), "{text}");
+    assert!(text.contains("To undo: wenlan rules restore"), "{text}");
+    assert!(!text.contains(state.path().to_str().unwrap()), "{text}");
+    assert!(state.path().join("unused-data-root/rulesync.on").is_file());
+    let seen = requested(&requests);
+    for route in [
+        "POST /api/rules/setup/adopt/preview",
+        "POST /api/rules/setup/adopt",
+        "POST /api/rules/setup/sync",
+    ] {
+        assert!(seen.iter().any(|seen| seen == route), "{route}: {seen:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_json_carries_the_same_counts() {
+    let state = tempfile::tempdir().unwrap();
+    let plan = setup_home(state.path());
+    let (mut cmd, _requests) = setup_fixture(state.path(), false, &plan);
+    let output = cmd.args(["--format", "json"]).assert().success();
+    let text = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let start = text.find("{\n  \"tools\"").expect(&text);
+    let value: serde_json::Value = serde_json::Deserializer::from_str(&text[start..])
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    for field in [
+        "tools",
+        "rules",
+        "skills",
+        "following",
+        "copied",
+        "left_alone",
+    ] {
+        assert!(value.get(field).is_some(), "{field}: {value}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn second_setup_does_not_adopt_again_or_touch_files() {
+    let state = tempfile::tempdir().unwrap();
+    let plan = setup_home(state.path());
+    let rules = state.path().join("ai-tools/home/.codex/AGENTS.md");
+    let before = (
+        fs::read(&rules).unwrap(),
+        fs::metadata(&rules).unwrap().modified().unwrap(),
+    );
+    let (mut cmd, requests) = setup_fixture(state.path(), true, &plan);
+    let output = cmd.assert().success().get_output().stdout.clone();
+    assert!(!String::from_utf8(output).unwrap().contains("To undo"));
+    let seen = requested(&requests);
+    assert!(seen.iter().all(|path| !path.contains("adopt")), "{seen:?}");
+    assert_eq!(
+        before,
+        (
+            fs::read(&rules).unwrap(),
+            fs::metadata(&rules).unwrap().modified().unwrap()
+        )
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_leaves_a_blocked_plan_alone_and_still_succeeds() {
+    let state = tempfile::tempdir().unwrap();
+    let mut plan = setup_home(state.path());
+    plan.note_codes
+        .push(wenlan_types::rulesync::RulesSetupCode::SkillPreviewFailed.into());
+    plan.notes.push("preview failed".into());
+    let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("Your tool setup was left as it is"), "{text}");
+    assert!(!text.contains("To undo"), "{text}");
+    let seen = requested(&requests);
+    assert!(
+        seen.iter()
+            .all(|path| path != "POST /api/rules/setup/adopt"),
+        "{seen:?}"
+    );
+}
+
+#[test]
 fn personal_rules_dry_run_previews_safe_settings_only_with_the_flag() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
