@@ -1841,16 +1841,15 @@ impl Setup {
         manifest.settings_batch = None;
         let mut result = report("Restored the managed files from the local setup backup");
         if !manifest.settings_only {
-            result.extend_blocks(
-                Code::CheckoutNeedsReview,
-                crate::rulesync_checkout::refresh(
-                    self,
-                    &RenderSession::new(&self.binary),
-                    &wenlan_core::shared_space::settings_path(),
-                    None,
-                    &[],
-                ),
+            let (written, blocked) = crate::rulesync_checkout::refresh(
+                self,
+                &RenderSession::new(&self.binary),
+                &wenlan_core::shared_space::settings_path(),
+                None,
+                &[],
             );
+            result.written.extend(written);
+            result.extend_blocks(Code::CheckoutNeedsReview, blocked);
         }
         self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
         for (path, original) in &manifest.backup {
@@ -2337,7 +2336,7 @@ impl Setup {
         let layers = rulesync_team::load_layers(&settings)?;
         self.capture_team_edits(root, manifest, &settings, &layers)?;
         let session = RenderSession::new(&self.binary);
-        let checkout_conflicts = crate::rulesync_checkout::refresh(
+        let (checkout_writes, checkout_conflicts) = crate::rulesync_checkout::refresh(
             self,
             &session,
             &settings,
@@ -2351,6 +2350,7 @@ impl Setup {
             |target, source| self.render_member_rule(&session, target, source, &layers),
             |renderer, skills| self.render_skills(&session, renderer, skills),
         )?;
+        result.written.extend(checkout_writes);
         result.extend_blocks(Code::CheckoutNeedsReview, checkout_conflicts);
         Ok(result)
     }
