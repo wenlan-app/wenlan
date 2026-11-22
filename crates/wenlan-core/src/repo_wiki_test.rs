@@ -4,6 +4,7 @@ use wenlan_types::repo_wiki::RepoWikiAgent;
 
 fn page(id: &str, title: &str, content: &str) -> Page {
     Page {
+        matched_section: None,
         id: id.to_string(),
         title: title.to_string(),
         summary: None,

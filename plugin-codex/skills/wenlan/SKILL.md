@@ -43,6 +43,9 @@ Match the request to one row. Old command words count as their row.
 | Get to know this repository; write docs about it and keep them current; make its docs follow a page | wiki | `$wenlan docs`, `$wenlan 幫這個 repo 寫文件`, `$wenlan wiki` (earlier name), `$wenlan 認識這個倉庫`, `$wenlan 幫這個倉庫建 wiki`, `$wenlan 讓 README 跟著這頁` |
 | List, find, open or print a note | pages | `$wenlan pages release`, `$wenlan 打開那篇筆記` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `$wenlan lint`, `$wenlan lint repair`, `$wenlan 檢查重複` |
+| Sync my rules: 同步我的規則, 同步規則, 同步我的规则, 同步规则, sync my rules | rules sync below | `$wenlan sync my rules` |
+| Check personal rules status: 規則狀態, 规则状态, rules status | rules status below | `$wenlan rules status` |
+| List what needs review: 有什麼要確認, 有什么要确认, what needs review (in the context of rules) | rules review below | `$wenlan what needs review` |
 | Walk pending captures, revisions or refinements | curate | `$wenlan curate revisions`, `$wenlan 看待確認的` |
 | Delete one memory by id | forget | `$wenlan forget mem_123` |
 | Change how the Wenlan app looks: colors, fonts, images, or back to normal | theme | `$wenlan theme 紫色夜晚風格`, `$wenlan theme reset` |
@@ -54,6 +57,8 @@ Match the request to one row. Old command words count as their row.
 | What Wenlan can do, where data lives, how to read notes without the app | answer from "Reference" below | `$wenlan help`, `$wenlan 資料存在哪` |
 
 Rules:
+
+- When a phrase could mean pending captures or revisions or personal rules, prefer `curate` unless the person says "rules" or 「規則」.
 
 - **Legacy `distill`**: route `$wenlan distill ...` to steep with the full
   original request. It is an internal capability, not a separate workflow.
@@ -69,6 +74,16 @@ Rules:
 - **Nothing matches**: say what Wenlan can do in one line and give two examples.
 
 ## 3. Run the chosen workflow
+
+For the three rules workflows, run the matching CLI command directly and return:
+
+- Rules sync: run `wenlan rules status --sync`, then tell the person in plain
+  words what changed and what waits in To review. Also run `wenlan rules review`
+  to list the waiting items.
+- Rules status: run `wenlan rules status` and explain the result.
+- Rules review: run `wenlan rules review` and show each item. Tell the person
+  to answer in the app's To review or run `wenlan rules review <id> <answer>`
+  in their own terminal. The AI never answers a card, adopts, or restores.
 
 Team has no skill of its own: read [references/team.md](references/team.md)
 and follow it instead of the rest of this step.

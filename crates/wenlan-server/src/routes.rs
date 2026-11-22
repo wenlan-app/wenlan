@@ -3160,6 +3160,7 @@ mod context_page_selection_tests {
 
     fn make_page(id: &str, source_ids: &[&str], relevance_score: f32, review_status: &str) -> Page {
         Page {
+            matched_section: None,
             id: id.to_string(),
             title: id.to_string(),
             summary: None,

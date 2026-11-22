@@ -1098,8 +1098,25 @@ async fn ingest_batch_process(
         .collect()
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Debug builds of the daemon need ~0.96 MiB of main-thread stack for a
+    // fresh start (measured 2026-11 on macOS: clap's Command builder 214 KB,
+    // MemoryDB::run_migrations_up_to 475 KB). The Windows main thread has only
+    // 1 MiB, so run on an 8 MiB thread, the macOS/Linux default. This is the
+    // same runtime `#[tokio::main]` builds.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(Box::pin(daemon_main()))
+        })?
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+async fn daemon_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if let Some(bind) = cli.bind_addr {
         anyhow::ensure!(

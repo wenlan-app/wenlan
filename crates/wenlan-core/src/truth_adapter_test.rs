@@ -197,6 +197,7 @@ async fn db_with_truth_rows() -> (MemoryDB, tempfile::TempDir) {
 
 fn page(id: &str) -> Page {
     Page {
+        matched_section: None,
         id: id.to_string(),
         title: format!("Title of {id}"),
         summary: Some("a summary".to_string()),

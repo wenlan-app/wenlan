@@ -476,3 +476,126 @@ async fn rules_delivery_needs_the_person_key() {
         "{answer}"
     );
 }
+
+#[tokio::test]
+async fn rulesync_router_rejects_session_on_person_only_routes() {
+    let app = crate::router::build_router(state());
+    for (path, body) in [
+        ("/api/rules/setup/adopt", r#"{"token":"test"}"#),
+        ("/api/rules/setup/restore", "{}"),
+        (
+            "/api/rules/setup/review",
+            r#"{"id":"test","action":"dismiss"}"#,
+        ),
+    ] {
+        let request = HttpRequest::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+            .header(PERSON_KEY_HEADER, test_key())
+            .header(wenlan_types::SESSION_HEADER, "codex:fixture")
+            .body(Body::from(body))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            refusal(&answer).contains("only the person using the daemon"),
+            "{path}: {answer}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rulesync_router_refuses_session_when_feature_off() {
+    assert!(!wenlan_core::rulesync_personal::enabled());
+    let app = crate::router::build_router(state());
+    for (method, path) in [
+        ("GET", "/api/rules/setup/status"),
+        ("POST", "/api/rules/setup/sync"),
+        ("GET", "/api/rules/setup/review"),
+    ] {
+        let request = HttpRequest::builder()
+            .method(method)
+            .uri(path)
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+            .header(PERSON_KEY_HEADER, test_key())
+            .header(wenlan_types::SESSION_HEADER, "codex:fixture")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            refusal(&answer).contains("WENLAN_RULESYNC is off"),
+            "{path}: {answer}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rulesync_router_session_access_matrix() {
+    if std::env::var_os("WENLAN_RULESYNC_MATRIX_CHILD").is_none() {
+        let scratch = tempfile::tempdir().unwrap();
+        for bind in ["127.0.0.1:17917", "0.0.0.0:17917"] {
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "person_key::person_key_test::rulesync_router_session_access_matrix",
+                    "--nocapture",
+                ])
+                .env("WENLAN_RULESYNC_MATRIX_CHILD", "1")
+                .env("WENLAN_RULESYNC", "1")
+                .env("WENLAN_BIND_ADDR", bind)
+                .env("WENLAN_DEV_STATE_DIR", scratch.path())
+                .output()
+                .unwrap();
+            assert!(
+                child.status.success(),
+                "{bind}: {}",
+                String::from_utf8_lossy(&child.stdout)
+            );
+        }
+        return;
+    }
+    let external = std::env::var("WENLAN_BIND_ADDR")
+        .unwrap()
+        .starts_with("0.0.0.0");
+    let app = crate::router::build_router(state());
+    for (method, path) in [
+        ("GET", "/api/rules/setup/status"),
+        ("POST", "/api/rules/setup/sync"),
+        ("GET", "/api/rules/setup/review"),
+    ] {
+        for key in [Some(test_key()), None, Some("wrong")] {
+            let mut request = HttpRequest::builder()
+                .method(method)
+                .uri(path)
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(wenlan_types::SESSION_HEADER, "codex:fixture");
+            if let Some(key) = key {
+                request = request.header(PERSON_KEY_HEADER, key);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), 65536)
+                .await
+                .unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let refused = refusal(&answer).contains("only the person using the daemon");
+            assert_eq!(
+                refused,
+                external || key != Some(test_key()),
+                "{method} {path} key={key:?}: {answer}"
+            );
+        }
+    }
+}

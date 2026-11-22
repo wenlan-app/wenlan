@@ -789,6 +789,7 @@ impl MemoryDB {
             let id: String = row.get(0).unwrap_or_default();
             let entity_name: String = row.get(2).unwrap_or_default();
             results.push(SearchResult {
+                matched_section: None,
                 basis: Vec::new(),
                 code_basis: Vec::new(),
                 id: id.clone(),

@@ -358,6 +358,84 @@ fn personal_rules_dry_run_leaves_an_oversized_skill_unmanaged() {
     assert!(!state.path().join("unused-data-root").exists());
 }
 
+fn session_rules_read(args: &[&str], sync: bool, named: bool) {
+    let state = tempfile::tempdir().unwrap();
+    let data = state.path().join("unused-data-root");
+    fs::create_dir_all(&data).unwrap();
+    fs::write(data.join("person.key"), "a".repeat(64)).unwrap();
+    let mut routes = vec![("GET /api/health", "{}".to_string())];
+    if sync {
+        routes.push((
+            "POST /api/rules/setup/sync",
+            json!({"written":[],"blocked":[],"proposals":[],"message":"done"}).to_string(),
+        ));
+        routes.push(("GET /api/health", "{}".to_string()));
+    }
+    let (route, payload) = if args.contains(&"review") {
+        (
+            "GET /api/rules/setup/review",
+            serde_json::to_string(&wenlan_types::rulesync::RulesReviewList::default()).unwrap(),
+        )
+    } else {
+        (
+            "GET /api/rules/setup/status",
+            serde_json::to_string(&wenlan_types::rulesync::RulesSetupStatus::default()).unwrap(),
+        )
+    };
+    routes.push((route, payload));
+    let (base, _) = spawn_stub(routes);
+    let mut cmd = personal_rules_cli(state.path());
+    cmd.env("WENLAN_HOST", base)
+        .env("WENLAN_RULESYNC", "1")
+        .args(args);
+    if named {
+        cmd.env("WENLAN_AGENT_NAME", "fixture-agent");
+    } else {
+        for_agent_session(&mut cmd);
+    }
+    let assertion = cmd.assert().success();
+    if sync {
+        assertion.stderr(predicate::str::contains("done"));
+    }
+}
+
+fn for_agent_session(cmd: &mut Command) -> &mut Command {
+    cmd.env("WENLAN_SESSION", "codex:fixture")
+}
+
+#[test]
+fn rules_status_allowed_in_session() {
+    session_rules_read(&["rules", "status"], false, false);
+    session_rules_read(&["rules", "status"], false, true);
+}
+#[test]
+fn rules_status_sync_allowed_in_session() {
+    session_rules_read(&["rules", "status", "--sync"], true, false);
+    session_rules_read(&["rules", "status", "--sync"], true, true);
+}
+#[test]
+fn rules_review_list_allowed_in_session() {
+    session_rules_read(&["rules", "review"], false, false);
+    session_rules_read(&["rules", "review"], false, true);
+}
+
+fn session_rules_refused(args: &[&str]) {
+    let state = tempfile::tempdir().unwrap();
+    for_agent_session(personal_rules_cli(state.path()).args(args)).assert().failure().stderr(predicate::str::contains("Only you can change your personal tool setup. Run this from your own terminal outside an AI session."));
+}
+#[test]
+fn rules_adopt_refused_in_session() {
+    session_rules_refused(&["rules", "adopt"]);
+}
+#[test]
+fn rules_restore_refused_in_session() {
+    session_rules_refused(&["rules", "restore"]);
+}
+#[test]
+fn rules_review_answer_refused_in_session() {
+    session_rules_refused(&["rules", "review", "card-1", "all-tools"]);
+}
+
 #[test]
 fn personal_rules_setup_refuses_the_strict_space_pin() {
     let state = tempfile::tempdir().unwrap();
@@ -756,4 +834,83 @@ fn personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacemen
         .stdout(predicate::str::contains("symlink -> ../../.agents/skills/sample"));
     assert!(codex.join("sample").is_symlink());
     assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
+fn rules_named_agent_refuses_person_changes() {
+    for args in [
+        &["rules", "adopt"][..],
+        &["rules", "restore"][..],
+        &["rules", "review", "card", "dismiss"][..],
+    ] {
+        let state = tempfile::tempdir().unwrap();
+        personal_rules_cli(state.path())
+            .env("WENLAN_AGENT_NAME", "fixture-agent")
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "Only you can change your personal tool setup",
+            ));
+    }
+}
+
+#[test]
+fn rules_status_sends_caller_identity() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    for (name, value, expected) in [
+        (
+            "WENLAN_SESSION",
+            "codex:fixture",
+            "x-wenlan-session: codex:fixture",
+        ),
+        (
+            "WENLAN_AGENT_NAME",
+            "fixture-agent",
+            "x-agent-name: fixture-agent",
+        ),
+    ] {
+        let state = tempfile::tempdir().unwrap();
+        let data = state.path().join("unused-data-root");
+        fs::create_dir_all(&data).unwrap();
+        fs::write(data.join("person.key"), "a".repeat(64)).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming().take(2) {
+                let stream = stream.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut headers = String::new();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    headers.push_str(&line);
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                let payload = if headers.starts_with("GET /api/rules/setup/status ") {
+                    tx.send(headers.to_lowercase()).unwrap();
+                    serde_json::to_string(&wenlan_types::rulesync::RulesSetupStatus::default())
+                        .unwrap()
+                } else {
+                    "{}".to_string()
+                };
+                write!(reader.get_mut(), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", payload.len(), payload).unwrap();
+            }
+        });
+        personal_rules_cli(state.path())
+            .env("WENLAN_HOST", address)
+            .env("WENLAN_RULESYNC", "1")
+            .env(name, value)
+            .args(["rules", "status"])
+            .assert()
+            .success();
+        let headers = rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(headers.contains(expected), "missing {expected}: {headers}");
+    }
 }

@@ -518,6 +518,7 @@ mod tests {
         review_status: &str,
     ) -> Page {
         Page {
+            matched_section: None,
             id: id.to_string(),
             title: id.to_string(),
             summary: None,
