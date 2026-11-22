@@ -981,7 +981,7 @@ impl Adoption {
             for entry in entries {
                 diff.push_str(&format!("+{}\n", entry.preview()?));
             }
-            Ok(AdoptionChange { path, added: entries.len(), removed: 0, diff })
+            Ok(AdoptionChange { path, added: entries.len(), removed: 0, diff, tool: None, notice_codes: Vec::new(), text_diff: None })
         }).collect()
     }
 }

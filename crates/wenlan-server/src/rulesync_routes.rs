@@ -10,13 +10,17 @@ use std::{
 };
 
 use anyhow::{bail, ensure, Context, Result};
-use axum::{extract::State, http::HeaderMap, Json};
+use axum::{
+    extract::{Query, State},
+    http::HeaderMap,
+    Json,
+};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
 use wenlan_core::rulesync_personal::{
-    additional_personal_files, additional_targets, adoption_plan, adoption_token,
+    additional_personal_files, additional_targets, adoption_plan, adoption_token, adoption_tool,
     check_delivery_paths, check_skill_frontmatter, describe_change, discover_additional_adoption,
     discover_adoption, fingerprint, is_harness_path, line_changes, merge_rule_text,
     personal_target, stage_adopted_skill, system_home, verify_adoption_token, write_root_rule,
@@ -28,14 +32,15 @@ use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
-    PullbackCard, PullbackDecision, PullbackPreview, RulesSyncReport,
+    PullbackCard, PullbackDecision, PullbackKind, PullbackPreview, RulesSetupCode as Code,
+    RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
 };
 
 use crate::error::ServerError;
-use crate::route_registry::{post, TrackedRouter};
+use crate::route_registry::{get, post, TrackedRouter};
 use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot};
 use crate::rulesync_layers;
 use crate::rulesync_registry::{
@@ -53,6 +58,7 @@ pub(crate) use settings::SETTINGS_RESUME_NOTICE;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
+        .route("/api/rules/setup/status", get(status))
         .route("/api/rules/setup/adopt", post(adopt))
         .route("/api/rules/setup/adopt/preview", post(adopt_preview))
         .route("/api/rules/setup/restore", post(restore))
@@ -63,8 +69,15 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 }
 
 pub(crate) fn require_local_person(headers: &HeaderMap) -> Result<(), ServerError> {
+    require_local_person_at(headers, crate::security::bind_scope_from_env())
+}
+
+fn require_local_person_at(
+    headers: &HeaderMap,
+    bind: crate::security::BindScope,
+) -> Result<(), ServerError> {
     if !matches!(
-        crate::security::bind_scope_from_env(),
+        bind,
         crate::security::BindScope::Unset | crate::security::BindScope::Loopback
     ) || !crate::memory_routes::caller_is_person(headers)
     {
@@ -73,6 +86,24 @@ pub(crate) fn require_local_person(headers: &HeaderMap) -> Result<(), ServerErro
         ));
     }
     Ok(())
+}
+
+async fn status(headers: HeaderMap) -> Result<Json<RulesSetupStatus>, ServerError> {
+    require_local_person(&headers)?;
+    tokio::task::spawn_blocking(|| {
+        setup_status(wenlan_core::rulesync_personal::enabled(), Setup::system)
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+}
+
+fn setup_status(enabled: bool, setup: impl FnOnce() -> Result<Setup>) -> Result<RulesSetupStatus> {
+    if !enabled {
+        return Ok(RulesSetupStatus::default());
+    }
+    setup()?.status()
 }
 
 fn require_personal_rules_writer(headers: &HeaderMap) -> Result<(), ServerError> {
@@ -108,8 +139,15 @@ async fn adopt(
 async fn restore(
     State(state): State<SharedState>,
     headers: HeaderMap,
+    Query(options): Query<RestoreOptions>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    execute(state, headers, Operation::Restore).await
+    execute(state, headers, Operation::Restore(options)).await
+}
+
+#[derive(Default, Deserialize)]
+struct RestoreOptions {
+    #[serde(default)]
+    rules_and_skills_only: bool,
 }
 
 async fn sync(
@@ -162,7 +200,7 @@ async fn review_preview(
 
 enum Operation {
     Adopt(AdoptRequest),
-    Restore,
+    Restore(RestoreOptions),
     Sync,
     Review(PullbackDecision),
 }
@@ -182,7 +220,7 @@ async fn execute(
         let setup = Setup::system()?;
         match operation {
             Operation::Adopt(request) => setup.adopt(&request),
-            Operation::Restore => setup.restore(),
+            Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync(&generated),
             Operation::Review(request) => setup.review(&request, &generated),
         }
@@ -265,6 +303,72 @@ impl std::fmt::Display for UnsupportedRulesyncState {
 impl std::error::Error for UnsupportedRulesyncState {}
 
 impl Setup {
+    fn status(&self) -> Result<RulesSetupStatus> {
+        let mut status = RulesSetupStatus {
+            enabled: true,
+            can_adopt: true,
+            ..Default::default()
+        };
+        let Some(manifest) = self
+            .load_if_present()?
+            .filter(|manifest| !manifest.settings_only)
+        else {
+            return Ok(status);
+        };
+        status.adopted = manifest.adopted;
+        status.can_adopt = manifest.adopted;
+        status.can_restore = !manifest.includes_tool_settings();
+        let root = FileRoot::open_home(&self.home)?;
+        let Pullback {
+            drafts,
+            cards,
+            blocked,
+        } = inspect(&self.home, &root, &manifest)?;
+        status.in_sync = manifest.adopted
+            && drafts.is_empty()
+            && blocked.is_empty()
+            && manifest.pending.is_empty()
+            && manifest.extension_paths.is_empty()
+            && manifest.delivery_issues.is_empty()
+            && manifest.scope_reviews.is_empty();
+        status
+            .proposals
+            .extend(cards.into_iter().map(|card| card.wire));
+        status.proposals.extend(
+            manifest
+                .scope_reviews
+                .values()
+                .filter(|review| {
+                    manifest.delivered.contains_key(&review.path)
+                        && !blocked.contains_key(&review.path)
+                        && !drafts.iter().any(|draft| draft.path == review.path)
+                })
+                .map(ScopeReview::wire),
+        );
+        for file in status.proposals.iter().flat_map(|card| &card.files) {
+            let path = Path::new(file);
+            let Some(delivery) = manifest.delivered.get(path) else {
+                continue;
+            };
+            let target = match &delivery.kind {
+                Kind::Rule { target, .. } => personal_target(target),
+                Kind::PersonalFile => wenlan_core::rulesync_personal_files::location_of(path)
+                    .and_then(|location| personal_target(location.tool)),
+                _ => None,
+            };
+            if let Some(target) = target {
+                status.review_tools.insert(
+                    file.clone(),
+                    RulesSetupTool {
+                        id: target.agent.into(),
+                        name: target.tool.display_name().into(),
+                    },
+                );
+            }
+        }
+        Ok(status)
+    }
+
     fn delivery_status(&self) -> BTreeMap<String, DeliveryStatus> {
         let Ok(home) = FileRoot::open_home(&self.home) else {
             return BTreeMap::new();
@@ -544,6 +648,19 @@ struct Manifest<Content = Vec<u8>> {
 }
 
 impl Manifest {
+    fn includes_tool_settings(&self) -> bool {
+        self.settings_only
+            || self.settings_batch.is_some()
+            || self
+                .delivered
+                .values()
+                .any(|delivery| matches!(delivery.kind, Kind::Settings))
+            || self
+                .pending
+                .iter()
+                .any(|pending| matches!(pending.kind, Some(Kind::Settings)))
+    }
+
     fn case_alias(&self, root: &FileRoot, path: &Path) -> Result<Option<&Path>> {
         for known in self
             .backup
@@ -618,6 +735,17 @@ struct ScopeReview {
     before: String,
     after: String,
     card: PullbackCard,
+}
+
+impl ScopeReview {
+    fn wire(&self) -> PullbackCard {
+        PullbackCard {
+            // Scope reviews written by older builds have no kind on disk.
+            kind: PullbackKind::Scope,
+            reason_code: self.card.reason_code.or(Some(Code::ScopeEdit)),
+            ..self.card.clone()
+        }
+    }
 }
 
 struct ExpectedRegistrySkill {
@@ -1044,7 +1172,11 @@ impl Setup {
         let extending = extension.is_some();
         let mut skipped = adoption.skipped.into_keys().collect::<BTreeSet<_>>();
         let skipped_skills = !skipped.is_empty();
-        let mut skipped_personal = adoption.skipped_personal_files;
+        let mut skipped_personal: BTreeMap<_, _> = adoption
+            .skipped_personal_files
+            .into_iter()
+            .map(|(path, skipped)| (path, skipped.reason))
+            .collect();
         let skipped_personal_files = !skipped_personal.is_empty();
         let mut worktree_writes = adoption.worktree_writes;
         let mode = if extending {
@@ -1499,10 +1631,19 @@ impl Setup {
         Ok(outcomes)
     }
 
+    #[cfg(test)]
     pub(crate) fn restore(&self) -> Result<RulesSyncReport> {
+        self.restore_with_options(RestoreOptions::default())
+    }
+
+    fn restore_with_options(&self, options: RestoreOptions) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("no local setup backup")?;
+        ensure!(
+            !options.rules_and_skills_only || !manifest.includes_tool_settings(),
+            "This backup includes AI tool settings. Restore it from the terminal to include those settings."
+        );
         if let Some(result) = self.recover(&root, &mut manifest)? {
             return Ok(result);
         }
@@ -1510,13 +1651,16 @@ impl Setup {
         manifest.settings_batch = None;
         let mut result = report("Restored the managed files from the local setup backup");
         if !manifest.settings_only {
-            result.blocked.extend(crate::rulesync_checkout::refresh(
-                self,
-                &RenderSession::new(&self.binary),
-                &wenlan_core::shared_space::settings_path(),
-                None,
-                &[],
-            ));
+            result.extend_blocks(
+                Code::CheckoutNeedsReview,
+                crate::rulesync_checkout::refresh(
+                    self,
+                    &RenderSession::new(&self.binary),
+                    &wenlan_core::shared_space::settings_path(),
+                    None,
+                    &[],
+                ),
+            );
         }
         self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
         for (path, original) in &manifest.backup {
@@ -1533,18 +1677,33 @@ impl Setup {
             };
             match current {
                 Ok(snapshot) if *original == snapshot => (),
-                Ok(Snapshot::Absent) => result.blocked.push(format!(
-                    "{}: The recorded original is missing after restore.",
-                    path.display()
-                )),
-                Ok(_) => result.blocked.push(format!(
-                    "{}: The restored path no longer matches the saved original.",
-                    path.display()
-                )),
-                Err(error) => result.blocked.push(format!(
-                    "{}: Could not verify the recorded original after restore ({error}).",
-                    path.display()
-                )),
+                Ok(Snapshot::Absent) => block_path(
+                    &mut result,
+                    path,
+                    Code::OriginalMissing,
+                    format!(
+                        "{}: The recorded original is missing after restore.",
+                        path.display()
+                    ),
+                ),
+                Ok(_) => block_path(
+                    &mut result,
+                    path,
+                    Code::OriginalChanged,
+                    format!(
+                        "{}: The restored path no longer matches the saved original.",
+                        path.display()
+                    ),
+                ),
+                Err(error) => block_path(
+                    &mut result,
+                    path,
+                    Code::OriginalUnverified,
+                    format!(
+                        "{}: Could not verify the recorded original after restore ({error}).",
+                        path.display()
+                    ),
+                ),
             }
         }
         if manifest.delivered.is_empty() && manifest.pending.is_empty() && result.blocked.is_empty()
@@ -1570,7 +1729,8 @@ impl Setup {
         let selected = |manifest: &Manifest, path: &Path| {
             !extension_only || manifest.extension_paths.contains(path)
         };
-        result.blocked.extend(
+        result.extend_blocks(
+            Code::RecoveryNeeded,
             manifest
                 .recovery_issues
                 .iter()
@@ -1588,7 +1748,7 @@ impl Setup {
                 || wenlan_core::rulesync_settings::personal::is_settings_path(path)
             {
                 if let Some(alias) = manifest.case_alias(root, path)? {
-                    result.blocked.push(format!(
+                    block_path(result, path, Code::NameConflict, format!(
                         "{} aliases {} in the local setup backup. Resolve the conflicting entries before restoring.",
                         path.display(),
                         alias.display()
@@ -1616,10 +1776,15 @@ impl Setup {
                 continue;
             };
             if is_harness_path(&path) {
-                result.blocked.push(format!(
+                block_path(
+                    result,
+                    &path,
+                    Code::SharedReadOnly,
+                    format!(
                     "{}: {HARNESS_READ_ONLY} The retained backup is available for manual recovery.",
                     path.display()
-                ));
+                ),
+                );
                 continue;
             }
             let original = manifest.backup[&path].clone();
@@ -1632,25 +1797,26 @@ impl Setup {
                         if let Err(reason) =
                             check_windows_restore(manifest, &path, &op.seen, &original)
                         {
-                            result.blocked.push(format!(
-                                "{} could not be restored. {reason}",
-                                path.display()
-                            ));
+                            result.block(
+                                Code::RestoreBlocked,
+                                format!("{} could not be restored. {reason}", path.display()),
+                            );
                             continue;
                         }
                         if let Err(reason) = displaced::preflight(root, &self.data_files()?, &op) {
-                            result.blocked.push(format!(
-                                "{} could not be restored. {reason}",
-                                path.display()
-                            ));
+                            result.block(
+                                Code::RestoreBlocked,
+                                format!("{} could not be restored. {reason}", path.display()),
+                            );
                             continue;
                         }
                         operations.push(op);
                     }
                     Ok(None) => personal_settings::forget_restore(manifest, &path),
-                    Err(error) => result
-                        .blocked
-                        .push(format!("{} could not be restored. {error}", path.display())),
+                    Err(error) => result.block(
+                        Code::RestoreBlocked,
+                        format!("{} could not be restored. {error}", path.display()),
+                    ),
                 }
                 continue;
             }
@@ -1687,24 +1853,32 @@ impl Setup {
                 }
                 Ok(current) if *expected == current => current,
                 Err(error) => {
-                    result
-                        .blocked
-                        .push(format!("{} could not be restored. {error}", path.display()));
+                    block_path(
+                        result,
+                        &path,
+                        Code::RestoreBlocked,
+                        format!("{} could not be restored. {error}", path.display()),
+                    );
                     continue;
                 }
                 _ => {
-                    result
-                        .blocked
-                        .push(format!("{} changed since delivery", path.display()));
+                    block_path(
+                        result,
+                        &path,
+                        Code::ChangedSinceDelivery,
+                        format!("{} changed since delivery", path.display()),
+                    );
                     continue;
                 }
             };
             #[cfg(windows)]
             if let Err(reason) = check_windows_restore(manifest, &path, &seen, &original) {
-                result.blocked.push(format!(
-                    "{} could not be restored. {reason}",
-                    path.display()
-                ));
+                block_path(
+                    result,
+                    &path,
+                    Code::RestoreBlocked,
+                    format!("{} could not be restored. {reason}", path.display()),
+                );
                 continue;
             }
             operations.push(Pending {
@@ -1766,11 +1940,16 @@ impl Setup {
         // can be restored under its original spelling.
         let mut blocked = BTreeSet::new();
         let mut moves = plan_case_moves(root, operations.iter(), |path, alias| {
-            result.blocked.push(format!(
-                "{} changed since delivery. The current spelling is {}.",
-                path.display(),
-                alias.display()
-            ));
+            block_path(
+                result,
+                path,
+                Code::ChangedSinceDelivery,
+                format!(
+                    "{} changed since delivery. The current spelling is {}.",
+                    path.display(),
+                    alias.display()
+                ),
+            );
             blocked.insert(path.to_owned());
             Ok(())
         })?;
@@ -1781,9 +1960,12 @@ impl Setup {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
-                result
-                    .blocked
-                    .push(format!("{} changed during restore", path.display()));
+                block_path(
+                    result,
+                    &path,
+                    Code::ChangedDuringRestore,
+                    format!("{} changed during restore", path.display()),
+                );
                 blocked.insert(path);
             }
         }
@@ -1813,9 +1995,12 @@ impl Setup {
                     result.written.push(path.display().to_string());
                 } else if status != ApplyOutcome::Applied {
                     kept_directories.remove(&path);
-                    result
-                        .blocked
-                        .push(format!("{} could not be restored yet", path.display()));
+                    block_path(
+                        result,
+                        &path,
+                        Code::RestoreBlocked,
+                        format!("{} could not be restored yet", path.display()),
+                    );
                 }
             }
         }
@@ -1881,10 +2066,12 @@ impl Setup {
         let mut blocked = BTreeSet::new();
         for (path, status) in self.apply_batch(root, manifest, prepare, BatchMode::Restore)? {
             if status != ApplyOutcome::Applied {
-                result.blocked.push(format!(
-                    "{} changed while preparing restore",
-                    path.display()
-                ));
+                block_path(
+                    result,
+                    &path,
+                    Code::ChangedDuringRestore,
+                    format!("{} changed while preparing restore", path.display()),
+                );
                 blocked.insert(path);
             }
         }
@@ -1915,9 +2102,12 @@ impl Setup {
         for op in operations {
             if op.seen != op.desired {
                 if let Some(reason) = worktrees.unreviewed(&op.path, &manifest.worktree_writes)? {
-                    result
-                        .blocked
-                        .push(format!("{}: {reason}", op.path.display()));
+                    block_path(
+                        result,
+                        &op.path,
+                        Code::GitUnreviewed,
+                        format!("{}: {reason}", op.path.display()),
+                    );
                     continue;
                 }
             }
@@ -1936,9 +2126,12 @@ impl Setup {
         if let Some(recovery) = recovered {
             result.message = format!("{}.\n{}", recovery.message, result.message);
             result.written.extend(recovery.written);
-            result.blocked.extend(recovery.blocked);
-            result.blocked.sort_unstable();
-            result.blocked.dedup();
+            let mut blocked = std::mem::take(&mut result.blocked)
+                .into_iter()
+                .zip(std::mem::take(&mut result.blocked_codes))
+                .collect::<BTreeMap<_, _>>();
+            blocked.extend(recovery.blocked.into_iter().zip(recovery.blocked_codes));
+            (result.blocked, result.blocked_codes) = blocked.into_iter().unzip();
         }
         Ok(result)
     }
@@ -1968,7 +2161,7 @@ impl Setup {
             |target, source| self.render_member_rule(&session, target, source, &layers),
             |renderer, skills| self.render_skills(&session, renderer, skills),
         )?;
-        result.blocked.extend(checkout_conflicts);
+        result.extend_blocks(Code::CheckoutNeedsReview, checkout_conflicts);
         Ok(result)
     }
 
@@ -2133,7 +2326,12 @@ impl Setup {
                     manifest
                         .delivery_issues
                         .insert(path.clone(), RuleDeliveryIssue::MasterConflict);
-                    result.blocked.push(format!("{}: {error}", path.display()));
+                    block_path(
+                        &mut result,
+                        &path,
+                        Code::RuleConflict,
+                        format!("{}: {error}", path.display()),
+                    );
                     continue;
                 }
             };
@@ -2143,9 +2341,12 @@ impl Setup {
                     manifest
                         .delivery_issues
                         .insert(path.clone(), RuleDeliveryIssue::RendererUnavailable);
-                    result
-                        .blocked
-                        .push(format!("{}: {error:#}", path.display()));
+                    block_path(
+                        &mut result,
+                        &path,
+                        Code::RenderUnavailable,
+                        format!("{}: {error:#}", path.display()),
+                    );
                     continue;
                 }
             };
@@ -2153,10 +2354,12 @@ impl Setup {
                 manifest
                     .delivery_issues
                     .insert(path.clone(), RuleDeliveryIssue::MissingOutput);
-                result.blocked.push(format!(
-                    "{}: rulesync did not render this file",
-                    path.display()
-                ));
+                block_path(
+                    &mut result,
+                    &path,
+                    Code::RenderMissing,
+                    format!("{}: rulesync did not render this file", path.display()),
+                );
                 continue;
             };
             let desired = with_bytes(&seen, bytes.clone());
@@ -2182,9 +2385,12 @@ impl Setup {
                 manifest
                     .delivery_issues
                     .insert(path.clone(), RuleDeliveryIssue::ConcurrentEdit);
-                result
-                    .blocked
-                    .push(format!("{} changed during sync", path.display()));
+                block_path(
+                    &mut result,
+                    &path,
+                    Code::ChangedDuringSync,
+                    format!("{} changed during sync", path.display()),
+                );
             }
         }
         if had_issues || !manifest.delivery_issues.is_empty() {
@@ -2259,6 +2465,9 @@ impl Setup {
                         files: vec![draft.path.display().to_string()],
                         diff: draft.diff.clone(),
                         reason: "Kept for this tool. Share across tools?".into(),
+                        kind: PullbackKind::Scope,
+                        reason_code: Some(Code::ScopeEdit),
+                        diff_codes: Vec::new(),
                     },
                 },
             );
@@ -2273,21 +2482,16 @@ impl Setup {
                 } else {
                     "Rule"
                 };
-                blocked.insert(path, format!("{change} changes need your approval. Use `wenlan rules review` with the proposal below."));
+                blocked.insert(path, (Code::ReviewNeeded, format!("{change} changes need your approval. Use `wenlan rules review` with the proposal below.")));
             }
             result.proposals.push(card.wire);
         }
-        result.proposals.extend(
-            manifest
-                .scope_reviews
-                .values()
-                .map(|review| review.card.clone()),
-        );
-        result.blocked.extend(
-            blocked
-                .iter()
-                .map(|(path, reason)| format!("{}: {reason}", path.display())),
-        );
+        result
+            .proposals
+            .extend(manifest.scope_reviews.values().map(ScopeReview::wire));
+        for (path, (code, reason)) in &blocked {
+            block_path(result, path, *code, format!("{}: {reason}", path.display()));
+        }
         Ok(blocked.into_keys().collect())
     }
 
@@ -2320,9 +2524,10 @@ impl Setup {
     ) -> Result<SkillReviewDelivery> {
         let mut report = report("Checked the approved skill's delivery");
         let Some(mut manifest) = self.load()?.filter(|manifest| manifest.adopted) else {
-            report
-                .blocked
-                .push("Run `wenlan rules adopt` before accepting delivery of this skill.".into());
+            report.block(
+                Code::AdoptRequired,
+                "Run `wenlan rules adopt` before accepting delivery of this skill.",
+            );
             return Ok(SkillReviewDelivery {
                 delivery: None,
                 report,
@@ -2341,9 +2546,10 @@ impl Setup {
             .map(|target| target.tool)
             .collect();
         if tools.is_empty() {
-            report
-                .blocked
-                .push("Run `wenlan rules adopt` to enroll a destination for this skill.".into());
+            report.block(
+                Code::AdoptRequired,
+                "Run `wenlan rules adopt` to enroll a destination for this skill.",
+            );
         }
         let root = FileRoot::open_home(&self.home)?;
         let inputs = RegistryInputs::Review {
@@ -2496,17 +2702,21 @@ impl Setup {
                 Ok(Snapshot::Directory { .. }) => {}
                 #[cfg(windows)]
                 Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
-                    result
-                        .blocked
-                        .push(format!("{}: {error}", target.folder().display()));
+                    result.block(
+                        Code::ReadFailed,
+                        format!("{}: {error}", target.folder().display()),
+                    );
                     continue;
                 }
                 _ => {
                     if reviewing {
-                        result.blocked.push(format!(
-                            "{}: The enrolled tool folder is unavailable.",
-                            target.folder().display()
-                        ));
+                        result.block(
+                            Code::ToolMissing,
+                            format!(
+                                "{}: The enrolled tool folder is unavailable.",
+                                target.folder().display()
+                            ),
+                        );
                     }
                     continue;
                 }
@@ -2521,9 +2731,10 @@ impl Setup {
                     return Err(error.context(format!("stage skills for {id}")))
                 }
                 Err(error) => {
-                    result
-                        .blocked
-                        .push(format!("{id} installed skills: {error:#}"));
+                    result.block(
+                        Code::SkillUnreadable,
+                        format!("{id} installed skills: {error:#}"),
+                    );
                     continue;
                 }
             };
@@ -2551,16 +2762,18 @@ impl Setup {
                 }
                 if path_blocked(&manifest.unmanaged_skills, folder) {
                     if reviewing {
-                        result
-                            .blocked
-                            .push(format!("{}: This skill is unmanaged.", folder.display()));
+                        result.block(
+                            Code::SkillUnmanaged,
+                            format!("{}: This skill is unmanaged.", folder.display()),
+                        );
                     }
                     continue;
                 }
                 if let Some(reason) = worktrees.unreviewed(folder, &manifest.worktree_writes)? {
-                    result
-                        .blocked
-                        .push(format!("{}: {reason}", folder.display()));
+                    result.block(
+                        Code::GitUnreviewed,
+                        format!("{}: {reason}", folder.display()),
+                    );
                     manifest
                         .registry_skipped
                         .entry(name.clone())
@@ -2576,7 +2789,7 @@ impl Setup {
                         Ok(Snapshot::Absent)
                     )
                 {
-                    result.blocked.push(format!(
+                    result.block(Code::SkillDuplicate, format!(
                         "{}: Codex can already read a skill at {}. Choose another name to avoid a duplicate.",
                         folder.display(), emitted.display()
                     ));
@@ -2593,9 +2806,7 @@ impl Setup {
                 {
                     Ok(current) => current,
                     Err(error) => {
-                        result
-                            .blocked
-                            .push(format!("{}: {error:#}", folder.display()));
+                        result.block(Code::ReadFailed, format!("{}: {error:#}", folder.display()));
                         continue;
                     }
                 };
@@ -2606,7 +2817,7 @@ impl Setup {
                     && root.read(folder, false)? != Snapshot::Absent
                 {
                     if reviewing {
-                        result.blocked.push(format!("{}: This skill folder already exists. Review its local contents first.", folder.display()));
+                        result.block(Code::SkillDestinationExists, format!("{}: This skill folder already exists. Review its local contents first.", folder.display()));
                     }
                     manifest
                         .registry_skipped
@@ -2642,9 +2853,9 @@ impl Setup {
                             }
                         }
                     }
-                    Err(error) => result
-                        .blocked
-                        .push(format!("{}: {error:#}", folder.display())),
+                    Err(error) => {
+                        result.block(Code::ReadFailed, format!("{}: {error:#}", folder.display()))
+                    }
                 }
             }
         }
@@ -2663,9 +2874,12 @@ impl Setup {
                 .filter(|op| op.seen != op.desired)
             {
                 if let Some(reason) = worktrees.unreviewed(&op.path, &manifest.worktree_writes)? {
-                    result
-                        .blocked
-                        .push(format!("{}: {reason}", op.path.display()));
+                    block_path(
+                        result,
+                        &op.path,
+                        Code::GitUnreviewed,
+                        format!("{}: {reason}", op.path.display()),
+                    );
                 }
             }
         }
@@ -2709,9 +2923,12 @@ impl Setup {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
-                result
-                    .blocked
-                    .push(format!("{} changed during sync", path.display()));
+                block_path(
+                    result,
+                    &path,
+                    Code::ChangedDuringSync,
+                    format!("{} changed during sync", path.display()),
+                );
             }
         }
         let outcomes = self.sync_batch(root, manifest, plan.writes, result)?;
@@ -2729,17 +2946,23 @@ impl Setup {
                         .find(|folder| plan.packages.contains(*folder))
                         .map(Path::to_owned),
                 );
-                result
-                    .blocked
-                    .push(format!("{} changed during sync", path.display()));
+                block_path(
+                    result,
+                    &path,
+                    Code::ChangedDuringSync,
+                    format!("{} changed during sync", path.display()),
+                );
             }
         }
         plan.removals.retain(|op| !path_blocked(&failed, &op.path));
         for (path, status) in self.sync_batch(root, manifest, plan.removals, result)? {
             if status != ApplyOutcome::Applied {
-                result
-                    .blocked
-                    .push(format!("{} changed since delivery", path.display()));
+                block_path(
+                    result,
+                    &path,
+                    Code::ChangedSinceDelivery,
+                    format!("{} changed since delivery", path.display()),
+                );
             }
         }
         if manifest.registry_skipped != plan.previous_skips {
@@ -2768,9 +2991,12 @@ impl Setup {
                 continue;
             }
             let Some(spec) = skill_path(&manifest.master.skills, path) else {
-                result
-                    .blocked
-                    .push(format!("{} is missing from the master", path.display()));
+                block_path(
+                    result,
+                    path,
+                    Code::SkillMasterMissing,
+                    format!("{} is missing from the master", path.display()),
+                );
                 continue;
             };
             let tool = personal_target(&spec.target)
@@ -2792,7 +3018,7 @@ impl Setup {
             let deliveries = match render_personal_skills(target, skills, render) {
                 Ok(deliveries) => deliveries,
                 Err(error) => {
-                    result.blocked.push(format!("{id} skills: {error:#}"));
+                    result.block(Code::RenderUnavailable, format!("{id} skills: {error:#}"));
                     continue;
                 }
             };
@@ -2820,9 +3046,12 @@ impl Setup {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
-                result
-                    .blocked
-                    .push(format!("{} changed during sync", path.display()));
+                block_path(
+                    result,
+                    &path,
+                    Code::ChangedDuringSync,
+                    format!("{} changed during sync", path.display()),
+                );
             }
         }
         Ok(())
@@ -2895,6 +3124,8 @@ impl Setup {
             return Ok(PullbackPreview {
                 diff: scope.card.diff.clone(),
                 plan: scope.card.reason.clone(),
+                plan_codes: vec![rule_review_code(request.action).into()],
+                diff_codes: scope.card.diff_codes.clone(),
             });
         }
         let Pullback { drafts, cards, .. } = inspect(&self.home, &root, &manifest)?;
@@ -2903,13 +3134,23 @@ impl Setup {
             .find(|card| card.wire.id == request.id)
             .context("the proposal is no longer current. Run rules sync")?;
         let path = card.review_path(request)?;
-        let (diff, plan) = if !card.share_plans.is_empty() {
+        let (diff, plan, plan_codes, diff_codes) = if !card.share_plans.is_empty() {
             let worktrees = DeliveryWorktrees::new(&self.home)?;
             card.describe_personal_review(&drafts, path, request.action, &worktrees)?
         } else {
-            (card.wire.diff.clone(), card.wire.reason.clone())
+            (
+                card.wire.diff.clone(),
+                card.wire.reason.clone(),
+                vec![rule_review_code(request.action).into()],
+                card.wire.diff_codes.clone(),
+            )
         };
-        Ok(PullbackPreview { diff, plan })
+        Ok(PullbackPreview {
+            diff,
+            plan,
+            plan_codes,
+            diff_codes,
+        })
     }
 
     fn review_using(
@@ -2924,7 +3165,7 @@ impl Setup {
         self.recover(&root, &mut manifest)?;
         if let Some(blocked) = self.review_personal_settings(&root, &mut manifest, request)? {
             let mut result = sync(&root, &mut manifest)?;
-            result.blocked.extend(blocked);
+            result.extend_blocks(Code::ReviewNeeded, blocked);
             return Ok(result);
         }
         if let Some(scope) = manifest.scope_reviews.remove(&request.id) {
@@ -3341,7 +3582,7 @@ fn plan_registry_entries(
         let seen = package_entry(root, folder, &path, snapshot)?;
         if let (Snapshot::Directory { mode: current }, Some(mode)) = (&seen, mode) {
             if !reviewing && *current != mode {
-                result.blocked.push(format!(
+                block_path(result, &path, Code::DestinationPermissions, format!(
                     "{}: Destination permissions are {current}, but the approved copy uses {mode}. The existing directory was kept.",
                     path.display()
                 ));
@@ -3454,19 +3695,32 @@ fn registry_removals(
                 match read_planned_path(root, path, true, record.delivered == Snapshot::Absent) {
                     Ok(seen) => seen,
                     Err(error) => {
-                        result.blocked.push(format!("{}: {error}", path.display()));
+                        block_path(
+                            result,
+                            path,
+                            Code::ReadFailed,
+                            format!("{}: {error}", path.display()),
+                        );
                         continue;
                     }
                 };
             if record.delivered != seen {
-                result
-                    .blocked
-                    .push(format!("{} changed since delivery", path.display()));
+                block_path(
+                    result,
+                    path,
+                    Code::ChangedSinceDelivery,
+                    format!("{} changed since delivery", path.display()),
+                );
                 continue;
             }
             #[cfg(windows)]
             if let Err(reason) = check_windows_restore(manifest, path, &seen, &desired) {
-                result.blocked.push(format!("{}: {reason}", path.display()));
+                block_path(
+                    result,
+                    path,
+                    Code::RestoreBlocked,
+                    format!("{}: {reason}", path.display()),
+                );
                 continue;
             }
             (seen, desired, None)
@@ -3485,9 +3739,12 @@ fn registry_removals(
             let seen = match package_entry(root, folder, path, package.snapshot.as_ref()) {
                 Ok(seen) => seen,
                 Err(error) => {
-                    result
-                        .blocked
-                        .push(format!("{}: {error:#}", path.display()));
+                    block_path(
+                        result,
+                        path,
+                        Code::ReadFailed,
+                        format!("{}: {error:#}", path.display()),
+                    );
                     continue;
                 }
             };
@@ -4072,6 +4329,7 @@ struct Draft {
     current: Snapshot,
     scope: DraftScope,
     diff: String,
+    diff_codes: Vec<Code>,
     needs_review: bool,
 }
 
@@ -4104,19 +4362,26 @@ impl Card {
 struct Pullback {
     drafts: Vec<Draft>,
     cards: Vec<Card>,
-    blocked: BTreeMap<PathBuf, String>,
+    blocked: BTreeMap<PathBuf, (Code, String)>,
 }
 
 fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
     let mut drafts = Vec::new();
-    let mut blocked = manifest.recovery_issues.clone();
+    let mut blocked: BTreeMap<_, _> = manifest
+        .recovery_issues
+        .iter()
+        .map(|(path, reason)| (path.clone(), (Code::RecoveryNeeded, reason.clone())))
+        .collect();
     let mut worktrees = DeliveryWorktrees::new(home)?;
     for (path, delivery) in manifest.active_deliveries() {
         if blocked.contains_key(path) {
             continue;
         }
         if is_harness_path(path) {
-            blocked.insert(path.clone(), HARNESS_READ_ONLY.into());
+            blocked.insert(
+                path.clone(),
+                (Code::SharedReadOnly, HARNESS_READ_ONLY.into()),
+            );
             continue;
         }
         if !matches!(delivery.kind, Kind::Rule { .. } | Kind::PersonalFile) {
@@ -4135,7 +4400,7 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                 } else {
                     format!("Cannot read this file ({error:#}). Check that it is a readable regular file and sync again.")
                 };
-                blocked.insert(path.clone(), message);
+                blocked.insert(path.clone(), (Code::ReadFailed, message));
                 continue;
             }
         };
@@ -4155,18 +4420,21 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                 Err(error) => {
                     blocked.insert(
                         path.clone(),
-                        format!("Cannot preview this command or subagent edit ({error:#})."),
+                        (
+                            Code::PersonalPreviewFailed,
+                            format!("Cannot preview this command or subagent edit ({error:#})."),
+                        ),
                     );
                 }
             }
             continue;
         }
         let (Ok(before), Ok(after)) = (text(baseline), text(&current)) else {
-            blocked.insert(path.clone(), "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into());
+            blocked.insert(path.clone(), (Code::RuleEncoding, "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into()));
             continue;
         };
         if !rulesync_layers::edits(before, after).is_ok_and(|edits| edits.is_empty()) {
-            blocked.insert(path.clone(), "A shared section or its markers changed. Restore that section from the shared Rules page and sync again.".into());
+            blocked.insert(path.clone(), (Code::SharedRuleChanged, "A shared section or its markers changed. Restore that section from the shared Rules page and sync again.".into()));
             continue;
         }
         let before = rulesync_layers::only_personal(before)?;
@@ -4174,12 +4442,12 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
         let changes = match line_changes(&before, &after) {
             Ok(changes) => changes,
             Err(error) => {
-                blocked.insert(path.clone(), format!("Cannot compare the rules edits ({error:#}). Split large changes into smaller edits and sync again."));
+                blocked.insert(path.clone(), (Code::RuleCompareFailed, format!("Cannot compare the rules edits ({error:#}). Split large changes into smaller edits and sync again.")));
                 continue;
             }
         };
         if changes.is_empty() {
-            blocked.insert(path.clone(), "The file metadata changed without a rules edit. Check its permissions and sync again.".into());
+            blocked.insert(path.clone(), (Code::MetadataChanged, "The file metadata changed without a rules edit. Check its permissions and sync again.".into()));
             continue;
         }
         let needs_review =
@@ -4190,6 +4458,7 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
             current,
             scope: DraftScope::Rule(changes),
             diff,
+            diff_codes: Vec::new(),
             needs_review,
         });
     }
@@ -4221,35 +4490,57 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
             .collect::<Vec<_>>();
         entries.sort_by_key(|(path, _, _)| *path);
         let mut share_plans = BTreeMap::new();
-        let (id, reason) = if matches!(drafts[group[0]].scope, DraftScope::PersonalFile(_)) {
-            let reviewed = entries
-                .iter()
-                .map(|(path, current, _)| (path.as_path(), *current))
-                .collect();
-            let mut descriptions = Vec::new();
-            if paths.len() > 1 {
-                descriptions.push(
+        let diff_codes = group
+            .iter()
+            .flat_map(|&index| drafts[index].diff_codes.iter().copied())
+            .collect();
+        let (id, reason, reason_code) =
+            if matches!(drafts[group[0]].scope, DraftScope::PersonalFile(_)) {
+                let reviewed = entries
+                    .iter()
+                    .map(|(path, current, _)| (path.as_path(), *current))
+                    .collect();
+                let mut descriptions = Vec::new();
+                if paths.len() > 1 {
+                    descriptions.push(
                     "Several tools edited the same command or subagent. Choose the source file."
                         .into(),
                 );
-            }
-            for index in group {
-                let draft = &drafts[index];
-                let plan =
-                    personal_files::plan_shares(root, manifest, draft, &reviewed, &mut worktrees)?;
-                descriptions.push(plan.describe(draft, &worktrees));
-                share_plans.insert(draft.path.clone(), plan);
-            }
-            let reason = descriptions.join("\n");
-            (fingerprint(&(&entries, &share_plans, &reason))?, reason)
-        } else {
-            let reason = if paths.len() > 1 {
-                "Several tools changed the same lines"
+                }
+                for index in group {
+                    let draft = &drafts[index];
+                    let plan = personal_files::plan_shares(
+                        root,
+                        manifest,
+                        draft,
+                        &reviewed,
+                        &mut worktrees,
+                    )?;
+                    descriptions.push(plan.describe(draft, &worktrees));
+                    share_plans.insert(draft.path.clone(), plan);
+                }
+                let reason = descriptions.join("\n");
+                let code = if paths.len() > 1 {
+                    Code::CompetingPersonalFiles
+                } else {
+                    Code::PersonalFileEdit
+                };
+                (
+                    fingerprint(&(&entries, &share_plans, &reason))?,
+                    reason,
+                    code,
+                )
             } else {
-                "These changes do not have a verified author"
+                let (reason, code) = if paths.len() > 1 {
+                    ("Several tools changed the same lines", Code::CompetingRules)
+                } else {
+                    (
+                        "These changes do not have a verified author",
+                        Code::UnverifiedRule,
+                    )
+                };
+                (fingerprint(&entries)?, reason.into(), code)
             };
-            (fingerprint(&entries)?, reason.into())
-        };
         cards.push(Card {
             wire: PullbackCard {
                 id,
@@ -4259,6 +4550,9 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                     .collect(),
                 diff: entries.iter().map(|(_, _, diff)| diff.as_str()).collect(),
                 reason,
+                reason_code: Some(reason_code),
+                diff_codes,
+                kind: PullbackKind::Conflict,
             },
             paths,
             share_plans,
@@ -4269,6 +4563,14 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
         cards,
         blocked,
     })
+}
+
+fn rule_review_code(action: PullbackAction) -> Code {
+    match action {
+        PullbackAction::AllTools => Code::ShareRule,
+        PullbackAction::ToolOnly => Code::KeepRule,
+        PullbackAction::Dismiss => Code::RestoreReview,
+    }
 }
 
 fn competing_edits(first: &Draft, second: &Draft) -> bool {
@@ -4342,9 +4644,20 @@ pub(crate) fn report(message: &str) -> RulesSyncReport {
     RulesSyncReport {
         written: Vec::new(),
         blocked: Vec::new(),
+        blocked_codes: Vec::new(),
         proposals: Vec::new(),
         message: message.into(),
     }
+}
+
+pub(crate) fn block_path(result: &mut RulesSyncReport, path: &Path, code: Code, message: String) {
+    result.block(
+        adoption_tool(path).map_or_else(
+            || code.into(),
+            |tool| RulesSetupNotice::for_tool(code, &tool.name),
+        ),
+        message,
+    );
 }
 
 fn append_skipped_tools(report: &mut RulesSyncReport, skipped: &[String]) {
@@ -4361,6 +4674,47 @@ mod tests {
     const SHARED: &str = "# Shared\n\nOne rule.\nSecond rule.\n";
     const CLAUDE: &str = ".claude/CLAUDE.md";
     const CODEX: &str = ".codex/AGENTS.md";
+
+    fn assert_block(report: &RulesSyncReport, legacy_text: &str, code: Code) {
+        assert_eq!(
+            report.blocked.len(),
+            report.blocked_codes.len(),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .blocked
+                .iter()
+                .zip(&report.blocked_codes)
+                .any(|(line, notice)| line.contains(legacy_text) && notice.code == code),
+            "{report:?}"
+        );
+    }
+
+    fn preview_choice(
+        f: &Fixture,
+        card: &PullbackCard,
+        action: PullbackAction,
+        file: Option<&str>,
+    ) -> PullbackPreview {
+        f.setup
+            .preview_review(&PullbackDecision {
+                id: card.id.clone(),
+                action,
+                file: file.map(str::to_owned),
+            })
+            .unwrap()
+    }
+
+    fn assert_plan_code(preview: &PullbackPreview, code: Code, tool: Option<&str>) {
+        assert!(
+            preview.plan_codes.iter().any(|notice| {
+                notice.code == code
+                    && tool.is_none_or(|tool| notice.tools.iter().any(|name| name == tool))
+            }),
+            "{preview:?}"
+        );
+    }
 
     struct Fixture {
         _temp: tempfile::TempDir,
@@ -6371,6 +6725,7 @@ mod tests {
         fs::remove_file(f.setup.home.join(original)).unwrap();
 
         let result = f.setup.restore().unwrap();
+        assert_block(&result, "original is missing", Code::OriginalMissing);
         assert!(
             result.blocked.iter().any(|reason| {
                 reason.contains("original is missing")
@@ -6403,6 +6758,11 @@ mod tests {
         f.write(second, "Unapproved edit.\n");
 
         let result = f.setup.restore().unwrap();
+        assert_block(
+            &result,
+            "changed since delivery",
+            Code::ChangedSinceDelivery,
+        );
         assert!(result.blocked.iter().any(|reason| reason.contains(second)));
         assert_eq!(f.text(first), "Original command.\n");
         assert!(!f
@@ -6418,6 +6778,11 @@ mod tests {
         fs::create_dir(&path).unwrap();
         f.write(second, "Original command.\n");
         let retry = f.setup.restore().unwrap();
+        assert_block(
+            &retry,
+            "no longer matches the saved original",
+            Code::OriginalChanged,
+        );
         assert!(
             retry.blocked.iter().any(|reason| reason.contains(first)),
             "{retry:?}"
@@ -7052,6 +7417,11 @@ mod tests {
         f.adopt_from_plan();
         f.write(path, &edited);
         let card = pullback_file(&f.sync_with(""), path);
+        assert_eq!(card.diff_codes, [Code::LineEndingsChanged]);
+        assert_eq!(
+            preview_choice(&f, &card, PullbackAction::ToolOnly, None).diff_codes,
+            card.diff_codes
+        );
         assert!(
             card.diff.contains("CRLF") && card.diff.contains("LF"),
             "{card:?}"
@@ -7290,6 +7660,10 @@ mod tests {
                 .unwrap()
         };
         let plan = preview();
+        assert!(plan
+            .note_codes
+            .iter()
+            .any(|notice| notice.code == Code::AddTools && notice.tools == ["Cursor"]));
         for path in [new_agent, new_tool] {
             assert!(plan.files.iter().any(|change| change.path == path));
         }
@@ -7402,7 +7776,21 @@ mod tests {
         f.adopt_from_plan();
         f.write(CLAUDE_COMMAND, "Claude edit.\n");
         let card = pullback_file(&f.sync_with(""), CLAUDE_COMMAND);
+        assert_eq!(card.reason_code, Some(Code::PersonalFileEdit));
+        let preview = preview_choice(&f, &card, PullbackAction::AllTools, None);
+        for (code, tool) in [
+            (Code::PersonalShare, None),
+            (Code::KeepEdit, Some("Claude Code")),
+            (Code::CreateCopy, Some("Codex")),
+            (Code::SkipDestination, Some("Cursor")),
+        ] {
+            assert_plan_code(&preview, code, tool);
+        }
+        let preview = preview_choice(&f, &card, PullbackAction::ToolOnly, None);
+        assert_plan_code(&preview, Code::PersonalOnly, None);
+        assert_plan_code(&preview, Code::SkipToolOnly, Some("Cursor"));
         let approved = review_file(&f, &card, PullbackAction::AllTools, None).unwrap();
+        assert_block(&approved, "has its own version", Code::SkipDestination);
         assert!(approved
             .blocked
             .iter()
@@ -7418,6 +7806,10 @@ mod tests {
         assert!(review_file(&f, &card, PullbackAction::AllTools, Some(CLAUDE_COMMAND)).is_err());
         let card = pullback_file(&f.sync_with(""), CLAUDE_COMMAND);
         assert!(card.reason.contains("Git checkout") && card.reason.contains("~/.codex"));
+        assert_eq!(card.reason_code, Some(Code::CompetingPersonalFiles));
+        let preview = preview_choice(&f, &card, PullbackAction::AllTools, Some(CLAUDE_COMMAND));
+        assert_plan_code(&preview, Code::GitDelivery, None);
+        assert_plan_code(&preview, Code::ReplaceCopy, Some("Codex"));
         f.write(CURSOR_COMMAND, "Cursor edit saved after preview.\n");
         assert!(review_file(&f, &card, PullbackAction::AllTools, Some(CLAUDE_COMMAND)).is_err());
         assert_eq!(f.text(CURSOR_COMMAND), "Cursor edit saved after preview.\n");
@@ -7913,6 +8305,8 @@ mod tests {
             .map(|skill| skill.path.as_str())
             .collect();
         assert_eq!(copies, [".cursor/skills/rejected"]);
+        assert!(plan.skills.iter().any(|skill| skill.path == copies[0]
+            && skill.byte_copy_reason_code == Some(Code::SkillByteCopy)));
         f.setup
             .adopt_using(&plan.token, fixture_rule_renderer, renderer)
             .unwrap();
@@ -9956,7 +10350,21 @@ mod tests {
         fs::create_dir_all(f.setup.home.join(skill).parent().unwrap()).unwrap();
         f.write(skill, "New instructions.\n");
 
-        let json = serde_json::to_value(f.sync_with("")).unwrap();
+        let report = f.sync_with("");
+        assert_block(
+            &report,
+            "Skill changes need your approval",
+            Code::ReviewNeeded,
+        );
+        assert_block(
+            &report,
+            "Rule changes need your approval",
+            Code::ReviewNeeded,
+        );
+        assert_eq!(report.blocked_codes[0].tools, ["Claude Code"]);
+        assert_eq!(report.blocked_codes[1].tools, ["Codex"]);
+        let json = serde_json::to_value(report).unwrap();
+        assert_eq!(json["blocked_codes"][0]["code"], "review_needed");
         assert_eq!(
             json["blocked"],
             serde_json::json!([
@@ -9982,6 +10390,7 @@ mod tests {
         let sync = f.sync_with("New render\n");
         assert_eq!(sync.written, [CODEX]);
         assert_eq!(sync.blocked.len(), 1, "{sync:?}");
+        assert_block(&sync, "Git worktree", Code::GitUnreviewed);
         assert!(sync.blocked[0].contains("inside the Git worktree at ~/.claude"));
         assert_eq!(f.text(CLAUDE), old);
     }
@@ -11234,7 +11643,8 @@ mod tests {
             let root = FileRoot::open_home(&f.setup.home).unwrap();
             let _lock = f.setup.lock().unwrap();
             let mut manifest = f.setup.load().unwrap().unwrap();
-            f.setup
+            let report = f
+                .setup
                 .sync_locked(
                     &root,
                     &mut manifest,
@@ -11251,6 +11661,7 @@ mod tests {
                     fixture_skill_renderer,
                 )
                 .unwrap();
+            assert_block(&report, "failed to render Codex", Code::RenderUnavailable);
         }
         let status = f.setup.delivery_status();
         assert_eq!(status["codex"].blocked, Some("renderer_unavailable"));
@@ -11326,6 +11737,7 @@ mod tests {
         let result = f.sync_with("");
         assert_eq!(result.proposals.len(), 1, "{result:?}");
         assert_eq!(result.proposals[0].files, [CLAUDE, CODEX]);
+        assert_eq!(result.proposals[0].reason_code, Some(Code::CompetingRules));
         assert!(f.text(CODEX).contains("Codex's wording."));
         assert!(f.text(CLAUDE).contains("Claude's wording."));
     }
@@ -11514,5 +11926,271 @@ mod tests {
     #[test]
     fn rulesync_setup_rejects_unauthenticated_callers() {
         assert!(require_local_person(&HeaderMap::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn rulesync_setup_status_requires_a_local_person() {
+        use crate::security::BindScope;
+        use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
+
+        assert!(status(HeaderMap::new()).await.is_err());
+        let mut person = HeaderMap::new();
+        person.insert(CALLER_HEADER, PERSON_CALLER_VALUE.parse().unwrap());
+        assert!(require_local_person_at(&person, BindScope::Loopback).is_ok());
+        assert!(require_local_person_at(&person, BindScope::External).is_err());
+        assert!(require_local_person_at(&person, BindScope::Unparseable).is_err());
+        person.insert("x-agent-name", "cursor".parse().unwrap());
+        assert!(require_local_person_at(&person, BindScope::Loopback).is_err());
+    }
+
+    #[test]
+    fn rulesync_setup_wire_codes_have_producers_and_three_translations() {
+        // The behavioral cases pin diagnoses against their CLI sentences.
+        // Also catch any orphaned code, including platform-specific producers.
+        let wire = include_str!("../../wenlan-types/src/rulesync.rs");
+        let producers = [
+            include_str!("rulesync_routes.rs")
+                .split("#[cfg(test)]\nmod tests")
+                .next()
+                .unwrap(),
+            include_str!("rulesync_routes/personal_files.rs"),
+            include_str!("rulesync_routes/settings.rs"),
+            include_str!("rulesync_checkout.rs"),
+            include_str!("rulesync_skill_routes.rs"),
+            include_str!("../../wenlan-core/src/rulesync_adopt.rs"),
+            include_str!("../../wenlan-core/src/rulesync_personal.rs"),
+            include_str!("../../wenlan-core/src/rulesync_delivery_worktrees.rs"),
+        ];
+        let messages: Vec<_> = include_str!("../../../src/i18n/resources.ts")
+            .split("  rulesSetup: {\n")
+            .skip(1)
+            .map(|section| {
+                section
+                    .split_once("    messages: {\n")
+                    .unwrap()
+                    .1
+                    .split_once("\n    },")
+                    .unwrap()
+                    .0
+            })
+            .collect();
+        assert_eq!(messages.len(), 3);
+        let variants = wire
+            .split_once("pub enum RulesSetupCode {")
+            .unwrap()
+            .1
+            .split_once('}')
+            .unwrap()
+            .0;
+        for variant in variants
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| line.strip_suffix(','))
+        {
+            // The formatter recognizes the standard diff marker in the app.
+            if !matches!(variant, "Unknown" | "NoFinalNewline") {
+                let reference = format!("Code::{variant}");
+                assert!(
+                    producers.iter().any(|source| source
+                        .match_indices(&reference)
+                        .any(|(index, _)| !source[index + reference.len()..]
+                            .starts_with(|c: char| c.is_ascii_alphanumeric()))),
+                    "missing setup producer for {variant}"
+                );
+            }
+            let mut key = String::new();
+            for (index, c) in variant.chars().enumerate() {
+                if index > 0 && c.is_ascii_uppercase() {
+                    key.push('_');
+                }
+                key.push(c.to_ascii_lowercase());
+            }
+            let entry = format!("      {key}: ");
+            assert!(
+                messages
+                    .iter()
+                    .all(|locale| locale.matches(&entry).count() == 1),
+                "{key}"
+            );
+            let parsed: Code = serde_json::from_value(serde_json::json!(key)).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), key);
+        }
+        let earlier: PullbackCard = serde_json::from_value(serde_json::json!({
+            "id": "earlier", "files": [".cursor/AGENTS.md"], "diff": "", "reason": "Legacy sentence"
+        }))
+        .unwrap();
+        assert_eq!(earlier.reason_code, None);
+        let future: Code = serde_json::from_value(serde_json::json!("future_code")).unwrap();
+        assert_eq!(future, Code::Unknown);
+    }
+
+    #[test]
+    fn rulesync_setup_review_localizes_empty_files_and_skip_reasons() {
+        let f = Fixture::new();
+        let command = ".claude/commands/check.md";
+        fs::create_dir(f.setup.home.join(".claude/commands")).unwrap();
+        f.write(command, "");
+        f.adopt_from_plan();
+
+        fs::remove_file(f.setup.home.join(command)).unwrap();
+        let card = pullback_file(&f.sync_with(""), command);
+        assert_eq!(card.diff, "Remove the empty file.");
+        assert_eq!(card.diff_codes, [Code::RemoveEmpty]);
+        let preview = preview_choice(&f, &card, PullbackAction::AllTools, None);
+        assert_plan_code(&preview, Code::KeepRemoval, Some("Claude Code"));
+        assert_plan_code(&preview, Code::SkipNoCopy, Some("Codex"));
+        assert_plan_code(&preview, Code::PersonalOnly, None);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+
+        f.write(command, "");
+        let card = pullback_file(&f.sync_with(""), command);
+        assert_eq!(card.diff, "Create an empty file.");
+        assert_eq!(card.diff_codes, [Code::CreateEmpty]);
+    }
+
+    #[test]
+    fn rulesync_setup_refusals_identify_the_failing_rule_delivery_step() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let _lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let report = f
+            .setup
+            .sync_locked(
+                &root,
+                &mut manifest,
+                &[],
+                |_, _| Ok(BTreeMap::new()),
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert_block(&report, "did not render this file", Code::RenderMissing);
+        fs::write(f.setup.home.join(CODEX), [0xff]).unwrap();
+        let report = f
+            .setup
+            .sync_locked(
+                &root,
+                &mut manifest,
+                &[],
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert_block(&report, "not UTF-8", Code::RuleEncoding);
+    }
+
+    #[test]
+    fn rulesync_setup_status_is_read_only_and_reports_both_review_kinds() {
+        let off = setup_status(false, || {
+            panic!("disabled status must never locate the home")
+        })
+        .unwrap();
+        assert_eq!(off, RulesSetupStatus::default());
+        let f = Fixture::new();
+        let initial = f.setup.status().unwrap();
+        assert!(initial.enabled);
+        assert!(!initial.adopted && !initial.can_restore);
+        assert!(fs::read_dir(&f.setup.data).unwrap().next().is_none());
+
+        let command = ".claude/commands/check.md";
+        fs::create_dir(f.setup.home.join(".claude/commands")).unwrap();
+        f.write(command, "Check the result.\n");
+        f.adopt_from_plan();
+        assert!(f.setup.status().unwrap().in_sync);
+        let local_rule = f.text(CODEX).replace("Second rule.\n", "");
+        f.write(CODEX, &local_rule);
+        let unsynced = f.setup.status().unwrap();
+        assert!(!unsynced.in_sync && unsynced.proposals.is_empty());
+        let report = f.sync_with("");
+        assert_eq!(report.proposals[0].kind, PullbackKind::Scope);
+        assert_eq!(report.proposals[0].reason_code, Some(Code::ScopeEdit));
+        for (action, code) in [
+            (PullbackAction::ToolOnly, Code::KeepRule),
+            (PullbackAction::AllTools, Code::ShareRule),
+        ] {
+            assert_plan_code(
+                &preview_choice(&f, &report.proposals[0], action, None),
+                code,
+                None,
+            );
+        }
+
+        // Emulate a scope card saved before the wire field existed.
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        for scope in manifest.scope_reviews.values_mut() {
+            scope.card.kind = PullbackKind::default();
+            scope.card.reason_code = None;
+        }
+        f.setup.save(&manifest).unwrap();
+        f.write(command, "Double-check the result.\n");
+        let stored = fs::read(f.setup.data.join("personal.json")).unwrap();
+        let saves = MANIFEST_SAVES.with(std::cell::Cell::get);
+        let status = f.setup.status().unwrap();
+        assert!(status.enabled && status.adopted && status.can_restore && !status.in_sync);
+        assert_eq!(status.proposals.len(), 2);
+        let scope = pullback_file(&report, CODEX);
+        assert!(status.proposals.contains(&scope));
+        let conflict = status
+            .proposals
+            .iter()
+            .find(|card| card.kind == PullbackKind::Conflict)
+            .unwrap();
+        assert_eq!(conflict.files.len(), 1);
+        assert_eq!(conflict.reason_code, Some(Code::PersonalFileEdit));
+        assert_plan_code(
+            &preview_choice(&f, conflict, PullbackAction::Dismiss, None),
+            Code::RestoreReview,
+            None,
+        );
+        assert_eq!(Path::new(&conflict.files[0]), Path::new(command));
+        assert!(conflict.diff.contains("+Double-check the result."));
+        assert_eq!(status.review_tools[&scope.files[0]].id, "codex");
+        assert_eq!(status.review_tools[&conflict.files[0]].id, "claude-code");
+        assert_eq!(MANIFEST_SAVES.with(std::cell::Cell::get), saves);
+        assert_eq!(
+            fs::read(f.setup.data.join("personal.json")).unwrap(),
+            stored
+        );
+        assert_eq!(f.text(CODEX), local_rule);
+        assert_eq!(f.text(command), "Double-check the result.\n");
+        assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
+    }
+
+    #[test]
+    fn rulesync_setup_app_restore_leaves_mixed_backups_untouched() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let path = PathBuf::from(".claude/settings.json");
+        let settings = r#"{"mcpServers":{}}"#;
+        f.write(path.to_str().unwrap(), settings);
+        manifest.backup.insert(path.clone(), Snapshot::Absent);
+        manifest.delivered.insert(
+            path.clone(),
+            Delivery {
+                kind: Kind::Settings,
+                delivered: Snapshot::file(settings.as_bytes().to_vec()),
+                observed: None,
+                reviewed: false,
+                at: 1,
+            },
+        );
+        f.setup.save(&manifest).unwrap();
+        let before = fs::read(f.setup.data.join("personal.json")).unwrap();
+        let status = f.setup.status().unwrap();
+        assert!(status.adopted && !status.can_restore);
+        let result = f.setup.restore_with_options(RestoreOptions {
+            rules_and_skills_only: true,
+        });
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("backup includes AI tool settings"));
+        assert_eq!(
+            fs::read(f.setup.data.join("personal.json")).unwrap(),
+            before
+        );
+        assert_eq!(f.text(path.to_str().unwrap()), settings);
     }
 }

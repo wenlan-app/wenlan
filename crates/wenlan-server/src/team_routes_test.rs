@@ -99,6 +99,7 @@ fn fixture_in_profile(dir: tempfile::TempDir, profile: &str) -> Fixture {
             sessions: Arc::default(),
             auth: Arc::default(),
             device: Arc::default(),
+            cloud: None,
         },
         _dir: dir,
         folder,
@@ -2721,4 +2722,69 @@ async fn local_only_team_binds_loopback_socket() {
     let local = listener.local_addr().unwrap();
     assert!(local.ip().is_loopback(), "bound {local}");
     assert!(!local.ip().is_unspecified());
+}
+
+/// A person's Wenlan in the personal cloud takes the entrance's pass for
+/// its own account and nothing else: no member key, no other account's
+/// pass, no pass signed with another key or out of date.
+#[tokio::test]
+async fn a_cloud_wenlan_opens_only_to_its_own_accounts_pass() {
+    use crate::cloud_locator::AccountId;
+    use crate::cloud_pass::{PassKey, PASS_HEADER, PASS_TTL};
+    let mut f = fixture();
+    let (_, owner_key) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let entrance = PassKey::random().unwrap();
+    let (alice, bob) = (AccountId::new(), AccountId::new());
+    f.state.cloud = Some(Arc::new(CloudTenant {
+        account: alice.clone(),
+        key: entrance.for_account(&alice),
+    }));
+    let me = |headers: Vec<(&'static str, String)>| {
+        let state = f.state.clone();
+        async move {
+            let mut req = Request::builder().method(Method::GET).uri("/team/v1/me");
+            for (name, value) in headers {
+                req = req.header(name, value);
+            }
+            let response = team_router(state)
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            (status, response_text(response).await)
+        }
+    };
+
+    let (status, body) = me(vec![(
+        PASS_HEADER,
+        entrance.for_account(&alice).sign(&alice),
+    )])
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("\"Owner\""), "{body}");
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for refused in [
+        vec![],
+        vec![("authorization", format!("Bearer {owner_key}"))],
+        vec![(PASS_HEADER, entrance.for_account(&bob).sign(&bob))],
+        vec![(PASS_HEADER, entrance.for_account(&bob).sign(&alice))],
+        vec![(PASS_HEADER, entrance.sign(&alice))],
+        vec![(
+            PASS_HEADER,
+            entrance.for_account(&alice).sign_until(&alice, now - 1),
+        )],
+        vec![(
+            PASS_HEADER,
+            entrance
+                .for_account(&alice)
+                .sign_until(&alice, now + PASS_TTL.as_secs() * 10),
+        )],
+    ] {
+        let (status, _) = me(refused.clone()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused:?}");
+    }
 }

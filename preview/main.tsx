@@ -29,6 +29,7 @@ import SettingsSidebar, {
 import { i18n, initializeI18n } from "../src/i18n";
 import { isStoredLocale } from "../src/i18n/locales";
 import { resetReviewFixtures, REVIEW_FAIL } from "./fixtures";
+import { rulesSetupStates } from "./rulesSetupFixture";
 import "../src/index.css";
 
 // Lazy so sigma lands in its own vite chunk.
@@ -163,6 +164,35 @@ function Harness() {
   if (params.get("mode") === "home") return <Main initialView={{ kind: "home" }} />;
   if (params.get("mode") === "spaces") return <Main initialView={{kind:"space",spaceId:null,spaceName:params.get("space") ?? "Wenlan"}} />;
   if (params.get("mode") === "sources") return <Main initialView={{ kind: "sources" }} />;
+  if (params.get("mode") === "rules-setup") {
+    const state = param("state", rulesSetupStates.map(({ id }) => id), "synced");
+    const pick = (key: string, value: string) => {
+      const next = new URL(window.location.href);
+      next.searchParams.set("theme", theme);
+      next.searchParams.set(key, value);
+      window.location.assign(next);
+    };
+    return (
+      <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
+        {SHOW_BAR && <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 12px", color: "var(--mem-text)", background: "var(--mem-surface)" }}>
+          <label>State <select value={state} onChange={(event) => pick("state", event.target.value)}>
+            {rulesSetupStates.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+          </select></label>
+          <label>Language <select value={LOCALE_OVERRIDE ?? "en"} onChange={(event) => pick("lang", event.target.value)}>
+            <option value="en">English</option><option value="zh-Hant">繁中</option><option value="zh-Hans">简中</option>
+          </select></label>
+          <button type="button" style={tab(false)} onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}>
+            {theme === "dark" ? "Light theme" : "Dark theme"}
+          </button>
+        </div>}
+        <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+          <Main initialView={state === "adopt" || state === "restore"
+            ? { kind: "settings", section: "agents" }
+            : { kind: "pages", section: state === "skill" ? "skills" : "rules" }} />
+        </div>
+      </div>
+    );
+  }
   // `?mode=sections&section=docs|skills|rules[&folder=Work][&page=<id>][&demo=empty]`:
   // the fixed left side with a section's list page, or one of its pages.
   if (params.get("mode") === "sections") {

@@ -106,3 +106,12 @@ request per two seconds after): behind a reverse proxy all clients share the
 proxy's bucket, and there is no trusted-proxy list yet. Re-signing-in
 ("reauth") needs the provider to return `auth_time`; a provider that never
 does cannot complete it.
+
+## Personal cloud (`cloud_gateway.rs`, `cloud_locator.rs`, `cloud_pass.rs`)
+
+`wenlan-server gateway` is the entrance; `docs/personal-cloud.md` says how it
+runs. It starts each person's Wenlan with this flag:
+
+| Flag | Effect |
+|---|---|
+| `WENLAN_CLOUD_ACCOUNT` | This Wenlan is that account's in the personal cloud: the team listener takes only the entrance's pass for it (checked with `cloud-pass.key` in the data folder) and no member key or cookie, and the daemon starts no background work. Set by the entrance, never by hand. |
