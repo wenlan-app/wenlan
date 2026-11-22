@@ -13,7 +13,10 @@ use wenlan_core::rulesync_settings::personal::{
     enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Key, Location,
     RecordedEntry,
 };
-use wenlan_types::rulesync::{PullbackAction, PullbackCard, PullbackDecision, RulesSyncReport};
+use wenlan_types::rulesync::{
+    PullbackAction, PullbackCard, PullbackDecision, PullbackKind, RulesSetupCode as Code,
+    RulesSyncReport,
+};
 
 use super::{with_bytes, Kind, Manifest, Pending, Setup};
 use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
@@ -511,6 +514,9 @@ fn proposal(
             files: vec![location.display()],
             diff,
             reason: "A managed personal setting changed. Use wenlan rules review to keep it or share it.".into(),
+            reason_code: Some(Code::PersonalFileEdit),
+            diff_codes: Vec::new(),
+            kind: PullbackKind::Conflict,
         },
         observed: observed.cloned(),
         destinations,
@@ -536,19 +542,20 @@ impl Setup {
                 Ok(file) => file,
                 Err(reason) => {
                     if manifest.personal_settings.contains_key(path) {
-                        result.blocked.push(format!("{display}: {reason}."));
+                        result.block(Code::ReviewNeeded, format!("{display}: {reason}."));
                     }
                     continue;
                 }
             };
-            result.blocked.extend(file.doc.refusal_notices(location));
+            result.extend_blocks(Code::ReviewNeeded, file.doc.refusal_notices(location));
             let Some(managed) = manifest.personal_settings.get(path) else {
                 continue;
             };
             if reserved(manifest, path) {
-                result.blocked.push(format!(
-                    "{display}: an earlier settings write needs review."
-                ));
+                result.block(
+                    Code::ReviewNeeded,
+                    format!("{display}: an earlier settings write needs review."),
+                );
                 continue;
             }
             let mut next = None;
@@ -566,13 +573,17 @@ impl Setup {
                         .chain(state.wanted.iter())
                         .any(|entry| !reviewable(location.tool, entry))
                 {
-                    result.blocked.push(format!(
+                    result.block(
+                        Code::ReviewNeeded,
+                        format!(
                         "{display}: a recorded entry is ambiguous or contains possible credentials."
-                    ));
+                    ),
+                    );
                 } else if current.is_some() && state.waiting_for_absent_entry() {
-                    result.blocked.push(format!(
-                        "{display}: {label} conflicts with a new, unowned entry."
-                    ));
+                    result.block(
+                        Code::ReviewNeeded,
+                        format!("{display}: {label} conflicts with a new, unowned entry."),
+                    );
                 } else if current == state.wanted.as_ref() {
                     if state.before != state.wanted {
                         advanced.push((path.clone(), state.key.clone()));
@@ -585,13 +596,14 @@ impl Setup {
                         continue;
                     }
                     if state.before.is_some() && state.receipt.is_none() {
-                        result.blocked.push(format!(
-                            "{display}: {label} has no exact native restore fragment."
-                        ));
+                        result.block(
+                            Code::ReviewNeeded,
+                            format!("{display}: {label} has no exact native restore fragment."),
+                        );
                         continue;
                     }
                     if !file.safe {
-                        result.blocked.push(format!("{display}: {label} stayed in place because this file cannot be backed up without copying possible credentials."));
+                        result.block(Code::ReviewNeeded, format!("{display}: {label} stayed in place because this file cannot be backed up without copying possible credentials."));
                         continue;
                     }
                     let previous = next.as_deref().or_else(|| snapshot_bytes(&file.snapshot));
@@ -611,9 +623,12 @@ impl Setup {
                                 receipt,
                             });
                         }
-                        Err(_) => result.blocked.push(format!(
+                        Err(_) => result.block(
+                            Code::ReviewNeeded,
+                            format!(
                             "{display}: {label} conflicts with a native entry or settings shape."
-                        )),
+                        ),
+                        ),
                     }
                 } else {
                     let proposal =
@@ -628,9 +643,10 @@ impl Setup {
                     .document(Some(&bytes))
                     .is_ok_and(|doc| location.snapshot_safe(&bytes, &doc))
                 {
-                    result.blocked.push(format!(
-                        "{display}: the merged file could contain credentials."
-                    ));
+                    result.block(
+                        Code::ReviewNeeded,
+                        format!("{display}: the merged file could contain credentials."),
+                    );
                     continue;
                 }
                 let op = Pending {
@@ -641,7 +657,7 @@ impl Setup {
                     allow_link: false,
                 };
                 if let Err(reason) = super::displaced::preflight(root, &self.data_files()?, &op) {
-                    result.blocked.push(format!("{display}: {reason}."));
+                    result.block(Code::ReviewNeeded, format!("{display}: {reason}."));
                     continue;
                 }
                 operations.push(op);
@@ -664,10 +680,13 @@ impl Setup {
             if outcome == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
-                result.blocked.push(format!(
-                    "{} changed while applying a personal setting.",
-                    path.display()
-                ));
+                result.block(
+                    Code::ReviewNeeded,
+                    format!(
+                        "{} changed while applying a personal setting.",
+                        path.display()
+                    ),
+                );
             }
         }
         let additions = view.additions(&manifest.personal_settings);

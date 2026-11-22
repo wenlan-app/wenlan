@@ -18,6 +18,7 @@ use wenlan_core::rulesync_personal::{self, fingerprint};
 use wenlan_core::rulesync_renderer::RenderSession;
 use wenlan_core::rulesync_skill::{self as skills, SkillFiles};
 use wenlan_core::skill_registry;
+use wenlan_types::rulesync::RulesSetupCode as Code;
 use wenlan_types::rulesync::RulesSyncReport;
 use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillScope, SavedSkillTool, SkillDeliveryPreview,
@@ -389,6 +390,7 @@ fn saved_with_delivery(name: String, delivery: Result<RulesSyncReport>) -> SaveS
         Err(error) => RulesSyncReport {
             written: Vec::new(),
             blocked: Vec::new(),
+            blocked_codes: Vec::new(),
             proposals: Vec::new(),
             message: format!(
                 "The skill is saved. Run `wenlan rules sync` to retry delivery. {error:#}"
@@ -765,7 +767,7 @@ impl SkillState<Vec<u8>> {
     fn queue_new_tool_deliveries(
         &mut self,
         enrolled: &BTreeSet<SavedSkillTool>,
-        blocked: &mut BTreeMap<PathBuf, String>,
+        blocked: &mut BTreeMap<PathBuf, (Code, String)>,
     ) -> Result<()> {
         for (name, variants) in &self.kept {
             if self.review_holds.contains_key(name) {
@@ -790,7 +792,7 @@ impl SkillState<Vec<u8>> {
                     .find(|target| target.tool == tool)
                     .context("unknown personal skill tool")?;
                 blocked.entry(Path::new(target.skills.destination).join(name)).or_insert_with(|| {
-                    format!("A saved skill is ready to review for this tool. Run `{PENDING_SKILLS_COMMAND}`.")
+                    (Code::ReviewNeeded, format!("A saved skill is ready to review for this tool. Run `{PENDING_SKILLS_COMMAND}`."))
                 });
             }
         }
@@ -1590,7 +1592,7 @@ pub(crate) fn collect_tool_proposals(
     managed: &BTreeMap<PathBuf, ManagedSkill>,
     unmanaged: &BTreeSet<PathBuf>,
     enrolled: &BTreeSet<SavedSkillTool>,
-) -> Result<BTreeMap<PathBuf, String>> {
+) -> Result<BTreeMap<PathBuf, (Code, String)>> {
     let home = SkillHome::open(home)?;
     let mut candidates = home.candidates();
     candidates.extend(
@@ -1623,7 +1625,7 @@ pub(crate) fn collect_tool_proposals(
                         .downcast_ref::<std::io::Error>()
                         .is_some_and(|error| error.kind() == ErrorKind::Unsupported)
                     {
-                        blocked.insert(folder, format!("{error:#}"));
+                        blocked.insert(folder, (Code::SkillUnreadable, format!("{error:#}")));
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1631,10 +1633,10 @@ pub(crate) fn collect_tool_proposals(
                 }
                 if baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))) {
                     let reason = match problem {
-                        Err(error) => format!(
+                        Err(error) => (Code::SkillUnreadable, format!(
                             "Cannot read this managed skill ({error:#}). Fix the folder and run `wenlan rules sync`."
-                        ),
-                        _ => "The managed SKILL.md is missing. Put it back and run `wenlan rules sync`.".into(),
+                        )),
+                        _ => (Code::SkillEntryMissing, "The managed SKILL.md is missing. Put it back and run `wenlan rules sync`.".into()),
                     };
                     blocked.insert(folder, reason);
                 }
@@ -1648,8 +1650,11 @@ pub(crate) fn collect_tool_proposals(
         if store.state.ignored.get(&folder) == Some(&fingerprint(&current)?) {
             blocked.insert(
                 folder,
-                "You dismissed these skill changes. Edit the skill to propose a new version."
-                    .into(),
+                (
+                    Code::SkillDismissed,
+                    "You dismissed these skill changes. Edit the skill to propose a new version."
+                        .into(),
+                ),
             );
             continue;
         }
@@ -1658,13 +1663,13 @@ pub(crate) fn collect_tool_proposals(
             .and_then(|name| name.to_str())
             .filter(|name| skills::skill_name(name))
         else {
-            blocked.insert(folder, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into());
+            blocked.insert(folder, (Code::SkillNameInvalid, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into()));
             continue;
         };
         if holds.contains_key(name) {
-            blocked.insert(folder, format!(
+            blocked.insert(folder, (Code::SkillReviewInterrupted, format!(
                 "This skill has an interrupted review. Run `{PENDING_SKILLS_COMMAND}` to review it again."
-            ));
+            )));
             continue;
         }
         let changes = baseline.and_then(|baseline| ToolSkillChanges::between(baseline, &current));
@@ -1680,17 +1685,20 @@ pub(crate) fn collect_tool_proposals(
             None => skills::preview(name, &files).map(|_| ()),
         };
         if let Err(error) = validation {
-            blocked.insert(folder, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules sync`."));
+            blocked.insert(folder, (Code::SkillProposalFailed, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules sync`.")));
             continue;
         }
         if store.state.proposals.len() >= MAX_AGENT_PROPOSALS * 2 {
-            blocked.insert(folder, format!("The skill review queue is full. Review some entries with `{PENDING_SKILLS_COMMAND}`, then sync again."));
+            blocked.insert(folder, (Code::SkillQueueFull, format!("The skill review queue is full. Review some entries with `{PENDING_SKILLS_COMMAND}`, then sync again.")));
             continue;
         }
         blocked.insert(
             folder.clone(),
-            format!(
+            (
+                Code::ReviewNeeded,
+                format!(
                 "Skill changes need your approval. Run `{PENDING_SKILLS_COMMAND}` to review them."
+            ),
             ),
         );
         let draft = Draft {

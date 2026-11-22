@@ -472,6 +472,7 @@ mod tests {
         let report = RulesSyncReport {
             written: Vec::new(),
             blocked: vec![".codex/AGENTS.md: Review your changes before syncing.".into()],
+            blocked_codes: Vec::new(),
             proposals: Vec::new(),
             message: "Checked the local tool setup".into(),
         };
@@ -488,9 +489,17 @@ mod tests {
                 added: 2,
                 removed: 1,
                 diff: "-old\n+\u{1b}[2J\n+🐈\u{202e}\u{7f}".into(),
+                tool: None,
+                notice_codes: Vec::new(),
+                text_diff: None,
             }],
             skills: Vec::new(),
             notes: Vec::new(),
+            tools: Vec::new(),
+            skipped_files: Vec::new(),
+            skipped_tools: Vec::new(),
+            skipped_tool_codes: Vec::new(),
+            note_codes: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));
