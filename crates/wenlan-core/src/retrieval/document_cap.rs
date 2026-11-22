@@ -43,6 +43,7 @@ mod tests {
 
     fn sr(id: &str, content_hash: Option<&str>) -> SearchResult {
         SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: id.to_string(),

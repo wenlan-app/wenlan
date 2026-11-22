@@ -6144,6 +6144,7 @@ async fn max_source_tier_returns_most_sensitive_source_tier() {
 /// given workspace + source memory ids.
 fn confirmed_page(id: &str, workspace: Option<&str>, sources: &[&str]) -> Page {
     Page {
+        matched_section: None,
         id: id.to_string(),
         title: id.to_string(),
         summary: None,
@@ -18801,6 +18802,7 @@ async fn test_augment_with_graph_merges_observations() {
 /// Minimal base SearchResult for graph-stream tests (source="memory").
 fn mk_result(source_id: &str, content: &str, score: f32) -> SearchResult {
     SearchResult {
+        matched_section: None,
         basis: Vec::new(),
         code_basis: Vec::new(),
         id: format!("id_{source_id}"),
@@ -39087,6 +39089,7 @@ async fn test_entity_enrichment_slice_abandons_after_attempt_cap() {
 #[test]
 fn from_page_tags_source_and_zeroes_score() {
     let page = Page {
+        matched_section: None,
         id: "page_x".into(),
         title: "T".into(),
         summary: Some("s".into()),

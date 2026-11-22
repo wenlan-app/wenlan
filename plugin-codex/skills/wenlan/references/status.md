@@ -50,8 +50,7 @@ lines such as "Runtime:" or "Project:", nothing about a check that was
 skipped or could not run, and no internal words such as runtime, daemon,
 Space, MCP, tool names or HTTP status codes. Then give two concrete examples of what to type
 next, one of them about notes or waiting items, for example
-`$wenlan open my note on the release plan` and `$wenlan review what's
-waiting`. Do not print the Brief body here; that is `/brief`.
+`$wenlan open my note on the release plan` and `$wenlan curate revisions`. Do not print the Brief body here; that is `/brief`.
 
 Import progress only when the user asks about an import: call
 `list_pending_imports`. Never call it during plain status.

@@ -56,6 +56,7 @@ fn text_of(result: &rmcp::model::CallToolResult) -> String {
 
 fn alpha_search_result() -> SearchResult {
     SearchResult {
+        matched_section: None,
         basis: Vec::new(),
         code_basis: Vec::new(),
         id: "1".into(),

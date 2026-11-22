@@ -6495,6 +6495,7 @@ mod search_response_type_tests {
         SearchResult {
             basis: Vec::new(),
             code_basis: Vec::new(),
+            matched_section: None,
             id: format!("{source_id}-hit"),
             content: format!("{source} content"),
             source: source.to_string(),

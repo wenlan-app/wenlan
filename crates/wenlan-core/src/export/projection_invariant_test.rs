@@ -116,6 +116,7 @@ async fn set_truth(conn: &TestDbSession, page_id: &str, status: &str) {
 
 fn page(id: &str) -> Page {
     Page {
+        matched_section: None,
         id: id.to_string(),
         title: id.to_string(),
         summary: None,

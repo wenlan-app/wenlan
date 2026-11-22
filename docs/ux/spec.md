@@ -667,6 +667,12 @@ and wait for evidence that people need them.
   read, does not come along. The AI tool reads the rest of a page when it
   needs it.
   原文：「自己 get page links 區別在哪」「可以做些量測，能確認方向對就行」（2026-11-09 03:48）「以上三點都同意」「為什麼不現在做？」（2026-11-09 03:55）
+- **UX-FIND-7** `shipped` When an AI tool's lookup finds a page, the answer
+  says which section of it matched best, so the AI tool can read that part
+  first. When the lookup finds a memory that a page is built from, that page
+  comes along too, after the real page hits and under the same Space and
+  permission rules.
+  原文：「所以我們切段的，不是也會在向量用上？這樣可以不只找頁，一次也能先找到段？」（2026-11-22 01:30Z）「那繼續」（2026-11-22 02:31Z）
 - **UX-FIND-6** `shipped` Any page of your own can be pinned to the left
   side from its More menu, or by right-clicking it in a section's list
   ("Pin", 釘選, 固定). Pinned
@@ -1161,6 +1167,12 @@ and wait for evidence that people need them.
   `~/.cursor/AGENTS.md`. Automatic loading by Cursor is unverified.
   A skill that exceeds 32 MiB total or 2048 files and directories stays
   where it is, unmanaged. The preview states the limit it exceeded.
+  An AI session or named agent may run `wenlan rules status`, `wenlan rules
+  status --sync`, and the `wenlan rules review` list. Only the person may
+  adopt, restore, or answer a review card. Tests `rules_status_allowed_in_session`,
+  `rules_status_sync_allowed_in_session`, `rules_review_list_allowed_in_session`,
+  `rules_adopt_refused_in_session`, `rules_restore_refused_in_session`, and
+  `rules_review_answer_refused_in_session`.
   `wenlan rules restore` asks the person again and uses that backup to
   restore the original bytes and link targets. It keeps any destination
   that has changed since delivery available for review.
