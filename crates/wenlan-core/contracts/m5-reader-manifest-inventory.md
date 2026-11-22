@@ -1285,6 +1285,7 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::list_basis_context` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::list_basis_pending` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::load_facts` | `private` | no | no | — | — |
+| `core/db/page_chunks.rs::refresh_page_chunks_batch` | `pub` | no | **yes** | `server/main/runtime.rs::refresh_page_chunks_in_background` | — |
 | `core/db/page_drafts.rs::publish_page_draft_in` | `private` | no | no | — | — |
 | `core/db/page_export.rs::state_on` | `private` | no | no | — | — |
 | `core/db/page_map_independent.rs::migrate_134_page_map_ideas` | `pub(crate)` | no | no | — | — |
@@ -1514,6 +1515,7 @@ carrying the authority of agreement.
 | `server/entity_graph_routes.rs::handle_query_entities` | `pub` | no | no | — | `core/db/scoped_entities.rs::query_entities_scoped` |
 | `server/entity_graph_routes.rs::handle_search_entities` | `pub` | no | no | — | `core/db/scoped_entities.rs::search_entities_by_vector_scoped` |
 | `server/main/runtime.rs::load_embedding_model_in_background` | `private` | no | no | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db.rs::backfill_page_embeddings` |
+| `server/main/runtime.rs::refresh_page_chunks_in_background` | `private` | no | no | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/page_chunks.rs::refresh_page_chunks_batch` |
 | `server/main/startup.rs::prepare_startup_state` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/page_summary_backfill.rs::backfill_page_summaries` |
 | `server/memory_revision_routes.rs::handle_list_pending_revisions` | `pub` | no | no | — | `core/db.rs::list_pending_revisions_scoped` |
 | `server/memory_routes.rs::plan_capture_entity` | `private` | no | no | `server/memory_routes.rs::handle_store_memory_inner` | `core/db.rs::entity_name_candidates` |
@@ -1717,7 +1719,7 @@ carrying the authority of agreement.
 | `server/entity_graph_routes.rs::handle_add_entity_alias` | `pub` | no | no | — | `core/db.rs::add_entity_alias_in_scope` |
 | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_knowledge_graph_scoped`, `core/db/scoped_entities.rs::get_page_graph_scoped` |
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |
-| `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages`, `server/main/runtime.rs::load_embedding_model_in_background` |
+| `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages`, `server/main/runtime.rs::load_embedding_model_in_background`, `server/main/runtime.rs::refresh_page_chunks_in_background` |
 | `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory`, `core/db/linked_pages.rs::linked_pages_for_hits` |
 | `server/memory_routes.rs::handle_store_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_store_memory` | `server/memory_routes.rs::plan_capture_entity` |
 | `server/original_routes.rs::handle_get_page_original` | `pub` | no | no | — | `core/chat_import/originals.rs::page_original` |

@@ -132,6 +132,10 @@ pub struct SeedContractReport {
     /// `0` means the page channel has nothing to surface. Tolerant of the table
     /// being absent on pre-pages seeds (reported as `0`).
     pub pages: i64,
+    /// Active pages with no section chunks at their current version
+    /// (`page_chunks`, db/page_chunks.rs). Page search finds a page by its
+    /// sections only once they exist; a missing table counts every page.
+    pub pages_unchunked: i64,
     /// Recorded manifest fixture sha256, if the seed stamped one.
     pub manifest_fixture_sha256: Option<String>,
     /// One human-readable string per failed expectation. Empty = contract holds.
@@ -214,6 +218,7 @@ pub async fn check_seed_contract(
     let event_date_nonempty = count(conn, " AND event_date IS NOT NULL").await?;
     let graph_links = count_memory_entities(conn).await?;
     let pages = count_active_pages(conn).await?;
+    let pages_unchunked = count_unchunked_pages(conn, pages).await?;
 
     let manifest_fixture_sha256 = read_manifest_value(conn, "seed_fixture_sha256").await?;
 
@@ -278,6 +283,12 @@ pub async fn check_seed_contract(
                 .to_string(),
         );
     }
+    if expect.require_pages && pages > 0 && pages_unchunked > 0 {
+        violations.push(format!(
+            "page chunk substrate stale: {pages_unchunked}/{pages} active pages have no \
+             chunks at their current version (run the page chunk seed step)"
+        ));
+    }
     if let Some(want) = &expect.expect_fixture_sha256 {
         match &manifest_fixture_sha256 {
             Some(got) if got == want => {}
@@ -298,9 +309,39 @@ pub async fn check_seed_contract(
         event_date_nonempty,
         graph_links,
         pages,
+        pages_unchunked,
         manifest_fixture_sha256,
         violations,
     })
+}
+
+/// Active, non-entity pages with no `page_chunks` row at their current
+/// version. A missing `page_chunks` table (a seed made before migration 171)
+/// counts every active page, `active_pages`.
+async fn count_unchunked_pages(
+    conn: &libsql::Connection,
+    active_pages: i64,
+) -> Result<i64, WenlanError> {
+    let mut rows = match conn
+        .query(
+            "SELECT COUNT(*) FROM pages p \
+              WHERE p.status = 'active' AND COALESCE(p.kind, 'concept') != 'entity' \
+                AND NOT EXISTS (SELECT 1 FROM page_chunks pc \
+                                 WHERE pc.page_id = p.id AND pc.page_version = p.version)",
+            (),
+        )
+        .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return Ok(active_pages),
+    };
+    rows.next()
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("unchunked pages next: {e}")))?
+        .map(|row| row.get::<i64>(0))
+        .transpose()
+        .map_err(|e| WenlanError::VectorDb(format!("unchunked pages get: {e}")))
+        .map(|count| count.unwrap_or(0))
 }
 
 /// Count `memory_entities` link rows. Tolerant of the table being absent
@@ -413,6 +454,17 @@ pub async fn assert_feature_substrate_live(
              seed_scenario_dbs_complete (with a persisting distill step) before measuring."
         )));
     }
+    if f.contains("page") {
+        let active = count_active_pages(conn).await?;
+        let unchunked = count_unchunked_pages(conn, active).await?;
+        if unchunked > 0 {
+            return Err(WenlanError::Generic(format!(
+                "EVAL REFUSED [{feature}]: page chunk substrate stale ({unchunked}/{active} \
+                 active pages have no chunks at their current version). Page search would \
+                 see only the start of those pages. Re-seed via seed_scenario_dbs_complete."
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -465,7 +517,8 @@ mod tests {
              -- and a fixture table without the column makes that query fail to
              -- compile, which the counter's table-missing tolerance then
              -- reports as zero active pages.
-             CREATE TABLE pages (id TEXT, status TEXT, kind TEXT);
+             CREATE TABLE pages (id TEXT, status TEXT, kind TEXT, version INTEGER DEFAULT 1);
+             CREATE TABLE page_chunks (page_id TEXT, page_version INTEGER);
              CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT);",
         )
         .await
@@ -512,7 +565,18 @@ mod tests {
     /// A distilled page, the substrate the page channel is measured over.
     /// `kind` is left NULL, which is what a page predating the column carries;
     /// `count_active_pages` folds that to `'concept'`.
+    /// Chunked at its version, as the seed's chunk step leaves it.
     async fn insert_page(conn: &libsql::Connection, pid: &str, status: &str) {
+        insert_unchunked_page(conn, pid, status).await;
+        conn.execute(
+            "INSERT INTO page_chunks (page_id, page_version) VALUES (?1, 1)",
+            libsql::params![pid],
+        )
+        .await
+        .expect("insert page chunk");
+    }
+
+    async fn insert_unchunked_page(conn: &libsql::Connection, pid: &str, status: &str) {
         conn.execute(
             "INSERT INTO pages (id, status) VALUES (?1, ?2)",
             libsql::params![pid, status],
@@ -689,6 +753,54 @@ mod tests {
             "expected page-substrate violation, got {:?}",
             r.violations
         );
+    }
+
+    /// Page search finds a page by its sections only once they exist. A page
+    /// with no chunks, or chunks of an older version, leaves that part of the
+    /// page channel dead; the seed fails and a page eval is refused.
+    #[tokio::test]
+    async fn unchunked_or_stale_pages_fail_the_page_chunk_floor() {
+        let conn = mem_conn().await;
+        insert(&conn, "a", Some(0.5), Some("cue")).await;
+        set_event_date(&conn, "a", 1_700_000_000).await;
+        link_entity(&conn, "a", "ent_1").await;
+        insert_page(&conn, "p1", "active").await;
+        insert_unchunked_page(&conn, "p2", "active").await;
+        let r = check_seed_contract(&conn, &SeedExpectations::complete("test"))
+            .await
+            .unwrap();
+        assert_eq!(r.pages_unchunked, 1);
+        assert!(r
+            .violations
+            .iter()
+            .any(|v| v.contains("page chunk substrate stale")));
+        let err = assert_feature_substrate_live(&conn, "page_channel")
+            .await
+            .expect_err("unchunked pages must refuse a page eval");
+        assert!(format!("{err}").contains("page chunk substrate stale"));
+
+        conn.execute("DELETE FROM pages WHERE id = 'p2'", ())
+            .await
+            .unwrap();
+        conn.execute("UPDATE pages SET version = 2 WHERE id = 'p1'", ())
+            .await
+            .unwrap();
+        let r = check_seed_contract(&conn, &SeedExpectations::complete("test"))
+            .await
+            .unwrap();
+        assert_eq!(
+            r.pages_unchunked, 1,
+            "chunks of an older version do not count"
+        );
+
+        conn.execute("UPDATE page_chunks SET page_version = 2", ())
+            .await
+            .unwrap();
+        let r = check_seed_contract(&conn, &SeedExpectations::complete("test"))
+            .await
+            .unwrap();
+        assert_eq!(r.pages_unchunked, 0);
+        assert!(r.holds(), "{:?}", r.violations);
     }
 
     #[tokio::test]
