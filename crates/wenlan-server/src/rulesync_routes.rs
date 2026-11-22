@@ -2325,12 +2325,16 @@ impl Setup {
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         rulesync_registry::check_skill_format(&self.data)?;
-        if ai_caller && !manifest.extension_paths.is_empty() {
-            return Ok(report(
-                "A tool addition was interrupted. Open Wenlan to finish or undo it.",
-            ));
-        }
-        let recovered = self.recover(&root, &mut manifest)?;
+        let recovered = if ai_caller {
+            if !manifest.extension_paths.is_empty() || !manifest.pending.is_empty() {
+                return Ok(report(
+                    "A tool update was interrupted. Open Wenlan to finish or undo it.",
+                ));
+            }
+            None
+        } else {
+            self.recover(&root, &mut manifest)?
+        };
         let mut result = self.sync_member(&root, &mut manifest, generated)?;
         if let Some(recovery) = recovered {
             result.message = format!("{}.\n{}", recovery.message, result.message);
@@ -11597,6 +11601,27 @@ mod tests {
         assert_eq!(f.text(CLAUDE), claude);
         assert_eq!(f.text(CODEX), codex);
         assert!(!f.setup.data.join("personal.json").exists());
+    }
+
+    #[test]
+    fn rulesync_ai_leaves_pending_journal_for_person() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let path = PathBuf::from(CODEX);
+        let seen = root.read(&path, false).unwrap();
+        manifest.pending.push(Pending {
+            path,
+            seen: seen.clone(),
+            desired: with_bytes(&seen, b"unfinished delivery".to_vec()),
+            kind: None,
+            allow_link: false,
+        });
+        f.setup.save(&manifest).unwrap();
+        let receipt = f.setup.sync_for_caller(&[], true).unwrap();
+        assert!(receipt.message.contains("interrupted"), "{receipt:?}");
+        assert_eq!(f.setup.load().unwrap().unwrap().pending.len(), 1);
     }
 
     #[test]
