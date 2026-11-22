@@ -168,6 +168,25 @@ fn setup_turns_sync_on_adopts_and_reports_the_counts() {
 
 #[cfg(unix)]
 #[test]
+fn setup_in_an_ai_session_adopts_only_the_plan_it_previewed() {
+    let state = tempfile::tempdir().unwrap();
+    let mut plan = setup_home(state.path());
+    plan.plan_id = "0123456789ab".into();
+    let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
+    for_agent_session(cmd.args(["--format", "table"]))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("To undo: wenlan rules restore"));
+    let adopt = requests
+        .try_iter()
+        .find(|(path, _)| path == "POST /api/rules/setup/adopt")
+        .expect("setup adopts");
+    let request: wenlan_types::rulesync::AdoptRequest = serde_json::from_str(&adopt.1).unwrap();
+    assert_eq!(request.confirmed_plan_id.as_deref(), Some("0123456789ab"));
+}
+
+#[cfg(unix)]
+#[test]
 fn setup_json_carries_the_same_counts() {
     let state = tempfile::tempdir().unwrap();
     let plan = setup_home(state.path());

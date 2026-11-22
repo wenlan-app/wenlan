@@ -461,7 +461,10 @@ pub(super) async fn adopt_during_setup(format: ResolvedFormat) {
 
 async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
     rulesync_personal::set_enabled(true)?;
-    let client = WenlanClient::for_local_rules_with_identity(None, None)?;
+    // An AI tool running setup says who it is; the daemon then adopts only
+    // the plan it just previewed (the same check as `rules adopt --confirm`).
+    let session = wenlan_types::session_context::resolve_session_from_env(None);
+    let client = WenlanClient::for_local_rules_with_identity(None, session.session.as_ref())?;
     if client.rules_setup_status().await?.adopted {
         return Ok(());
     }
@@ -482,7 +485,7 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
     let report = client
         .adopt_rules_as_person(&AdoptRequest {
             token: plan.token.clone(),
-            confirmed_plan_id: None,
+            confirmed_plan_id: Some(plan.plan_id.clone()).filter(|id| !id.is_empty()),
             home: Some(home),
         })
         .await?;
