@@ -1516,15 +1516,30 @@ async fn handle_search_memory_inner(
                     )
                     .await
                     .unwrap_or_default();
-                // UX-FIND-7: the pages built from the top memory hits come
-                // along, ranked after real page hits and through the same
-                // gate below. Any error means no extra pages.
-                let raw = add_pages_citing_top_memories(&db, &results, raw).await;
                 let ids: std::collections::HashSet<String> =
                     results.iter().map(|r| r.source_id.clone()).collect();
-                let visible = db
+                let mut visible = db
                     .select_visible_pages_scoped(raw, &scope, &ids, &trust_level, 3)
                     .await;
+                // UX-FIND-7: the pages built from the top memory hits fill
+                // the slots real page hits left, through the same gate. A
+                // real hit that scored too low to show may come back this
+                // way. Any error means no extra pages.
+                if visible.len() < 3 {
+                    let shown: std::collections::HashSet<String> =
+                        visible.iter().map(|page| page.id.clone()).collect();
+                    let citing = pages_citing_top_memories(&db, &results, &scope, &shown).await;
+                    let more = db
+                        .select_visible_pages_scoped(
+                            citing,
+                            &scope,
+                            &ids,
+                            &trust_level,
+                            3 - visible.len(),
+                        )
+                        .await;
+                    visible.extend(more);
+                }
                 if visible.is_empty() {
                     None
                 } else {
@@ -1642,15 +1657,16 @@ async fn handle_search_memory_inner(
 /// How many of the best memory hits bring the pages that cite them (UX-FIND-7).
 const CITING_PAGE_MEMORY_HITS: usize = 3;
 
-/// `raw` plus the pages citing the top memory rows of `results`, each at
-/// [`PAGE_RELEVANCE_FLOOR`](wenlan_core::pages::PAGE_RELEVANCE_FLOOR) so it is
-/// eligible but ranks after a real search hit. A page already in `raw` is not
-/// added again. The caller still runs the result through the Space, tier and
-/// grant gates; a lookup error adds nothing.
-async fn add_pages_citing_top_memories(
+/// The pages citing the top memory rows of `results`, in `scope`, other than
+/// those in `shown`, each at
+/// [`PAGE_RELEVANCE_FLOOR`](wenlan_core::pages::PAGE_RELEVANCE_FLOOR) so the
+/// page gate keeps them. The caller still runs them through the Space, tier
+/// and grant gates; a lookup error adds nothing.
+async fn pages_citing_top_memories(
     db: &wenlan_core::db::MemoryDB,
     results: &[wenlan_types::SearchResult],
-    mut raw: Vec<wenlan_types::Page>,
+    scope: &wenlan_core::read_scope::ReadScope,
+    shown: &std::collections::HashSet<String>,
 ) -> Vec<wenlan_types::Page> {
     let memory_ids: Vec<String> = results
         .iter()
@@ -1659,18 +1675,19 @@ async fn add_pages_citing_top_memories(
         .map(|row| row.source_id.clone())
         .collect();
     let Ok(citing) = db
-        .pages_citing_memories(&memory_ids, wenlan_core::pages::PAGE_CANDIDATE_POOL)
+        .pages_citing_memories(&memory_ids, scope, wenlan_core::pages::PAGE_CANDIDATE_POOL)
         .await
     else {
-        return raw;
+        return Vec::new();
     };
-    for mut page in citing {
-        if raw.iter().all(|existing| existing.id != page.id) {
+    citing
+        .into_iter()
+        .filter(|page| !shown.contains(&page.id))
+        .map(|mut page| {
             page.relevance_score = wenlan_core::pages::PAGE_RELEVANCE_FLOOR;
-            raw.push(page);
-        }
-    }
-    raw
+            page
+        })
+        .collect()
 }
 
 /// The caller's trust level from its `x-agent-name` header, "unknown" when it
@@ -5465,6 +5482,11 @@ mod search_quick_path_page_tests {
                 .collect::<Vec<_>>()
         );
         assert!(!pages.iter().any(|p| p.source_id == page_cross_id));
+        assert_eq!(
+            pages.last().map(|p| p.source_id.as_str()),
+            Some(citing_id.as_str()),
+            "a page that only comes along ranks after the real page hits"
+        );
 
         // The same gate applies: a caller that may not read pages gets none.
         let app = crate::router::build_router(state);
