@@ -412,7 +412,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             command,
             cli.format.resolve(),
             cli.quiet,
-            agent_name.is_some(),
+            agent_name.as_deref(),
             cli.session.as_deref(),
         )
         .await?;
