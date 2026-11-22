@@ -1207,7 +1207,7 @@ export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
   return response?.tools ?? [];
 }
 
-export type PullbackAction = "tool_only" | "all_tools" | "dismiss";
+export type PullbackAction = "tool_only" | "all_tools" | "dismiss" | "revert";
 
 export interface RulesSetupNotice {
   // The daemon can add codes before the app learns their localized copy.
@@ -1251,15 +1251,35 @@ export interface RulesSetupStatus {
   in_sync: boolean;
   proposals: PullbackCard[];
   review_tools: Record<string, RulesSetupTool>;
+  last_checked_at?: number;
+  tools?: RulesToolStatus[];
+}
+
+export interface RulesToolStatus extends RulesSetupTool {
+  state: "up_to_date" | "needs_review" | "not_managed";
+  counts: Record<"rules" | "skills" | "commands" | "subagents" | "mcp", number>;
+}
+
+export interface RulesSetupChange {
+  path: string;
+  added: number;
+  removed: number;
+  diff: string;
+  tool?: RulesSetupTool;
+  notice_codes?: string[];
+  text_diff?: { kind: "file_text" } | { kind: "extracted"; diff: string };
+}
+
+export interface RulesSettingsPlan {
+  token: string;
+  files: RulesSetupChange[];
+  notice?: string;
 }
 
 export interface RulesAdoptionPlan {
   token: string;
-  files: {
-    path: string; added: number; removed: number; diff: string;
-    tool?: RulesSetupTool; notice_codes?: string[];
-    text_diff?: { kind: "file_text" } | { kind: "extracted"; diff: string };
-  }[];
+  files: RulesSetupChange[];
+  settings?: RulesSettingsPlan;
   notes?: string[];
   note_codes?: RulesSetupNotice[];
   tools?: { name: string; rule_files: number; skills: number; other_files: number }[];
@@ -1289,6 +1309,44 @@ export interface AdoptedSkillUpdate {
   status: { state: "current" } | { state: "available"; revision: string } | { state: "unavailable"; reason: string };
 }
 
+export type SavedSkillScope = { kind: "shared" } | { kind: "tool"; tool: string };
+export interface RulesSkillProposal {
+  id: string;
+  name: string;
+  origin: { kind: "agent"; agent: string } | { kind: "tool" | "delivery"; tool: string };
+  scope: SavedSkillScope;
+  files: { path: string; text: string | null; cut?: boolean }[];
+  changes?: { removed: string[]; oversized?: unknown[]; permissions?: unknown[] };
+}
+
+export type RulesReviewItem = { id: string; answers: PullbackAction[] } & (
+  | { kind: "tool_edit"; card: PullbackCard }
+  | { kind: "skill_proposal"; proposal: RulesSkillProposal }
+  | { kind: "skill_update"; update: AdoptedSkillUpdate }
+  | { kind: "settings"; plan: RulesSettingsPlan }
+);
+
+export interface RulesReviewList {
+  items: RulesReviewItem[];
+  review_tools: Record<string, RulesSetupTool>;
+}
+
+export interface RulesSkillReviewRequest {
+  id: string;
+  action: "preview" | "accept" | "dismiss";
+  scope?: SavedSkillScope;
+  token?: string;
+}
+
+type RulesSkillReviewResult =
+  | { status: "review_preview"; proposal: RulesSkillProposal; delivery: {
+      token: string; blocked: string[];
+      files: { before?: { permissions: string }; after?: { permissions: string } }[];
+      cleared_overrides?: string[];
+    } }
+  | { status: "saved"; delivery?: RulesSyncReport }
+  | { status: "dismissed" };
+
 export interface RulesSyncReport {
   written: string[];
   blocked: string[];
@@ -1298,6 +1356,10 @@ export interface RulesSyncReport {
 }
 
 export const getRulesSetupStatus = () => invoke<RulesSetupStatus>("rules_setup_status");
+export const getRulesSetupReview = () => invoke<RulesReviewList>("rules_setup_review_list");
+export const reviewRulesSkill = (request: RulesSkillReviewRequest) => invoke<RulesSkillReviewResult>("rules_setup_skill_review", { request });
+export const applyRulesSettings = (token: string) => invoke<RulesSyncReport>("rules_setup_settings_apply", { token });
+export const dismissRulesSkillUpdate = (id: string) => invoke<void>("rules_setup_dismiss_update", { id });
 export const previewRulesAdoption = () => invoke<RulesAdoptionPlan>("rules_setup_adopt_preview");
 export const adoptRulesSetup = (token: string) => invoke<RulesSyncReport>("rules_setup_adopt", { token });
 export const restoreRulesSetup = () => invoke<RulesSyncReport>("rules_setup_restore");

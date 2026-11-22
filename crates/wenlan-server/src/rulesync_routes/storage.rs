@@ -269,6 +269,7 @@ fn map_contents<From, To>(
         worktree_writes: manifest.worktree_writes.clone(),
         scope_reviews: manifest.scope_reviews.clone(),
         scope_review_heads: manifest.scope_review_heads.clone(),
+        dismissed_skill_updates: manifest.dismissed_skill_updates.clone(),
         delivery_issues: manifest.delivery_issues.clone(),
     })
 }

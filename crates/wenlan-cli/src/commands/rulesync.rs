@@ -5,34 +5,59 @@ use std::fmt::Write;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Context, Result};
 use clap::{Subcommand, ValueEnum};
 use serde::Serialize;
 use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
-    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, AdoptionSkillOutcome,
-    PullbackAction, PullbackDecision, RulesSyncReport, SkillUpdateStatus, SkillUpstream,
+    AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
+    PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
+    RulesSetupStatus, RulesSyncReport, RulesToolState, SkillUpdateStatus, SkillUpstream,
+    TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
-use super::skills::{one_line, person_says_yes};
+use super::skills::{
+    one_line, person_says_yes, review_saved_skill, skill_proposal_summary, SkillReviewChoice,
+};
 use crate::{client::WenlanClient, output::ResolvedFormat};
+use wenlan_types::rulesync_skill::{SavedSkillScope, SkillProposalOrigin};
 
 #[derive(Debug, Subcommand)]
 pub enum RulesSetupCmd {
-    /// Adopt personal rules, skills, commands, subagents and settings.
+    /// Bring in your personal AI-tool setup and preview the changes.
     Adopt {
         /// Preview the changes, or list the installed files while offline.
         #[arg(long)]
         dry_run: bool,
     },
+    /// Status of the personal setup in each tool.
+    #[command(hide = !rulesync_personal::enabled())]
+    Status {
+        /// Check for edits and sync approved content now.
+        #[arg(long)]
+        sync: bool,
+    },
+    /// To review: list changes, or answer one item.
+    ///
+    /// Skill proposals and updates also accept `dismiss`.
+    Review {
+        /// The ID shown by `wenlan rules review`.
+        #[arg(requires = "answer")]
+        id: Option<String>,
+        #[arg(value_enum, requires = "id")]
+        answer: Option<ReviewAction>,
+        /// Choose the source file when a proposal contains competing edits.
+        #[arg(long, value_name = "PATH", requires = "id")]
+        file: Option<String>,
+    },
     /// Restore the original files and links from the local setup backup.
     Restore,
-    /// Merge personal settings and check the local tool setup for changes to review.
+    #[command(hide = true)]
     Sync,
-    /// Check adopted skills for upstream releases and list offers for review.
+    #[command(hide = true)]
     SkillUpdates,
-    /// Preview and approve an explicit local rulesync settings source.
+    #[command(hide = true)]
     Settings {
         /// A local rulesync source folder.
         source: PathBuf,
@@ -40,26 +65,29 @@ pub enum RulesSetupCmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Answer a proposal shown by `wenlan rules sync`.
-    Review {
-        /// The proposal ID shown by `wenlan rules sync`.
-        id: String,
-        #[arg(value_enum)]
-        action: ReviewAction,
-        /// Choose the source file when a proposal contains competing edits.
-        #[arg(long, value_name = "PATH")]
-        file: Option<String>,
-    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ReviewAction {
-    /// Keep the change for the tool that made it.
+    /// Keep the change in that tool only.
     ToolOnly,
-    /// Share the change with all compatible tools.
+    /// Use the change in all tools.
     AllTools,
-    /// Discard the proposal.
+    #[value(hide = true)]
     Dismiss,
+    /// Put the tool back to the earlier version.
+    Revert,
+}
+
+impl From<ReviewAction> for PullbackAction {
+    fn from(action: ReviewAction) -> Self {
+        match action {
+            ReviewAction::ToolOnly => Self::ToolOnly,
+            ReviewAction::AllTools => Self::AllTools,
+            ReviewAction::Dismiss => Self::Dismiss,
+            ReviewAction::Revert => Self::Revert,
+        }
+    }
 }
 
 pub async fn run(
@@ -113,6 +141,8 @@ async fn run_inner(
         matches!(
             command,
             RulesSetupCmd::Sync
+                | RulesSetupCmd::Status { .. }
+                | RulesSetupCmd::Review { id: None, .. }
                 | RulesSetupCmd::SkillUpdates
                 | RulesSetupCmd::Settings { dry_run: true, .. }
         ) || (io::stdin().is_terminal() && io::stdout().is_terminal()),
@@ -128,9 +158,12 @@ async fn run_inner(
             let plan = client.preview_adoption_as_person(&expected).await?;
             // The person must see the same plan even with --quiet or --format json.
             println!("{}", plan_for_a_person(&plan));
-            if plan.files.is_empty()
-                || !confirm("Back up these files and links and let Wenlan manage them?")?
-            {
+            let question = if plan.settings.is_some() {
+                "Back up this setup, let Wenlan manage it and apply the shown settings?"
+            } else {
+                "Back up these files and links and let Wenlan manage them?"
+            };
+            if (plan.files.is_empty() && plan.settings.is_none()) || !confirm(question)? {
                 return Ok(());
             }
             client
@@ -146,12 +179,20 @@ async fn run_inner(
             }
             client.restore_rules_as_person().await?
         }
+        RulesSetupCmd::Status { sync } => {
+            if *sync {
+                client.sync_rules_as_person().await?;
+            }
+            let status = client.rules_setup_status().await?;
+            return show(format, quiet, &status, status_for_a_person);
+        }
         RulesSetupCmd::Sync => client.sync_rules_as_person().await?,
         RulesSetupCmd::SkillUpdates => {
-            let updates = client.adopted_skill_updates_as_person().await?;
-            return show(format, quiet, &updates, |updates| {
-                updates_for_a_person(updates)
-            });
+            let mut review = client.rules_setup_review().await?;
+            review
+                .items
+                .retain(|item| matches!(item.content, RulesReviewContent::SkillUpdate { .. }));
+            return show(format, quiet, &review, review_for_a_person);
         }
         RulesSetupCmd::Settings { source, dry_run } => {
             let source = std::path::absolute(source)?;
@@ -171,20 +212,71 @@ async fn run_inner(
             }
             client
                 .apply_settings_as_person(&SettingsApplyRequest {
-                    source,
+                    source: Some(source),
                     token: plan.token,
                 })
                 .await?
         }
-        RulesSetupCmd::Review { id, action, file } => {
+        RulesSetupCmd::Review { id, answer, file } => {
+            let review = client.rules_setup_review().await?;
+            let (Some(id), Some(answer)) = (id, answer) else {
+                return show(format, quiet, &review, review_for_a_person);
+            };
+            let item = review
+                .items
+                .into_iter()
+                .find(|item| &item.id == id)
+                .context("This item is no longer waiting for review. Run wenlan rules review.")?;
+            return answer_item(&client, format, quiet, item, (*answer).into(), file.clone()).await;
+        }
+    };
+    show(format, quiet, &report, report_for_a_person)
+}
+
+async fn answer_item(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    item: RulesReviewItem,
+    action: PullbackAction,
+    file: Option<String>,
+) -> Result<()> {
+    let action = match (&item.content, action) {
+        (RulesReviewContent::ToolEdit { card }, PullbackAction::Dismiss) => match card.kind {
+            PullbackKind::Scope => PullbackAction::ToolOnly,
+            PullbackKind::Conflict => {
+                bail!("This review puts the tool back to the earlier version. Use `revert`.");
+            }
+        },
+        (RulesReviewContent::ToolEdit { card }, PullbackAction::Revert)
+            if card.kind == PullbackKind::Scope =>
+        {
+            bail!("This rule-line review has nothing to put back. Use `tool-only`.");
+        }
+        (_, action) => action,
+    };
+    if !item.answers.contains(&action) {
+        let tool_edit = matches!(item.content, RulesReviewContent::ToolEdit { .. });
+        bail!(
+            "Available answers: {}",
+            item.answers
+                .iter()
+                .filter(|&&answer| !tool_edit || answer != PullbackAction::Dismiss)
+                .map(|&answer| answer_word(answer))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    ensure!(
+        file.is_none() || matches!(item.content, RulesReviewContent::ToolEdit { .. }),
+        "--file only selects a tool edit."
+    );
+    let report = match item.content {
+        RulesReviewContent::ToolEdit { .. } => {
             let decision = PullbackDecision {
-                id: id.clone(),
-                action: match action {
-                    ReviewAction::ToolOnly => PullbackAction::ToolOnly,
-                    ReviewAction::AllTools => PullbackAction::AllTools,
-                    ReviewAction::Dismiss => PullbackAction::Dismiss,
-                },
-                file: file.clone(),
+                id: item.id,
+                action,
+                file,
             };
             let preview = client.preview_rules_review_as_person(&decision).await?;
             let mut text = printable(&preview.plan);
@@ -196,8 +288,59 @@ async fn run_inner(
             }
             client.review_rules_as_person(&decision).await?
         }
+        RulesReviewContent::SkillProposal { proposal } => {
+            let (choice, scope) = match action {
+                PullbackAction::AllTools => {
+                    (SkillReviewChoice::Accept, Some(SavedSkillScope::Shared))
+                }
+                PullbackAction::ToolOnly => {
+                    let scope = match proposal.origin {
+                        SkillProposalOrigin::Agent { .. } => proposal.scope,
+                        SkillProposalOrigin::Tool { tool }
+                        | SkillProposalOrigin::Delivery { tool } => SavedSkillScope::Tool { tool },
+                    };
+                    (SkillReviewChoice::Accept, Some(scope))
+                }
+                PullbackAction::Dismiss => (SkillReviewChoice::Dismiss, None),
+                PullbackAction::Revert => unreachable!("checked answers"),
+            };
+            return review_saved_skill(client, format, quiet, &proposal.id, choice, scope).await;
+        }
+        RulesReviewContent::SkillUpdate { update } => {
+            if confirm(&format!(
+                "Dismiss the update for {}?",
+                one_line(&update.name)
+            ))? {
+                client.dismiss_rules_skill_update(&item.id).await?;
+                return show(format, quiet, &item.id, |_| {
+                    "Dismissed the skill update.\n".into()
+                });
+            }
+            return Ok(());
+        }
+        RulesReviewContent::Settings { plan } => {
+            println!("{}", settings_plan_for_a_person(&plan));
+            if !confirm("Apply these settings to your AI tools on this computer?")? {
+                return Ok(());
+            }
+            client
+                .apply_settings_as_person(&SettingsApplyRequest {
+                    source: None,
+                    token: plan.token,
+                })
+                .await?
+        }
     };
     show(format, quiet, &report, report_for_a_person)
+}
+
+fn answer_word(answer: PullbackAction) -> &'static str {
+    match answer {
+        PullbackAction::AllTools => "all-tools",
+        PullbackAction::ToolOnly => "tool-only",
+        PullbackAction::Dismiss => "dismiss",
+        PullbackAction::Revert => "revert",
+    }
 }
 
 fn review_confirmation(
@@ -212,9 +355,13 @@ fn review_confirmation(
         proposal.push_str(&format!(" from {}", file_label(file)));
     }
     let question = match decision.action {
-        PullbackAction::ToolOnly => format!("Keep proposal {proposal} for this tool only?"),
+        PullbackAction::ToolOnly | PullbackAction::Dismiss => {
+            format!("Keep proposal {proposal} for this tool only?")
+        }
         PullbackAction::AllTools => format!("Use proposal {proposal} in all compatible tools?"),
-        PullbackAction::Dismiss => format!("Dismiss proposal {proposal}?"),
+        PullbackAction::Revert => {
+            format!("Put the tool back to the earlier version for proposal {proposal}?")
+        }
     };
     person_says_yes(input, output, &question)
 }
@@ -268,7 +415,7 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
 }
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
-    let mut out = String::from("Personal tool setup adoption plan\n");
+    let mut out = String::from("Bring in\n");
     for note in &plan.notes {
         writeln!(&mut out, "\n{}", one_line(note)).unwrap();
     }
@@ -303,6 +450,10 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
         "No existing files to adopt.",
         &plan.files,
     ));
+    if let Some(settings) = &plan.settings {
+        out.push('\n');
+        out.push_str(&settings_plan_for_a_person(settings));
+    }
     out
 }
 
@@ -326,26 +477,93 @@ fn upstream_label(upstream: &SkillUpstream) -> String {
     }
 }
 
-fn updates_for_a_person(updates: &[AdoptedSkillUpdate]) -> String {
-    if updates.is_empty() {
-        return "No adopted skills track an upstream.\n".into();
+fn review_for_a_person(review: &RulesReviewList) -> String {
+    if review.items.is_empty() {
+        return "Nothing to review.\n".into();
     }
-    let mut out = String::new();
-    for update in updates {
-        let status = match &update.status {
-            SkillUpdateStatus::Current => "current".into(),
-            SkillUpdateStatus::Available { revision } => {
-                format!("{} available to review", one_line(revision))
+    let mut out = String::from("To review\n");
+    for item in &review.items {
+        match &item.content {
+            RulesReviewContent::ToolEdit { card } => {
+                writeln!(out, "\n{}  {}", one_line(&item.id), one_line(&card.reason)).unwrap();
+                append_diff(&mut out, &card.diff);
             }
-            SkillUpdateStatus::Unavailable { reason } => {
-                format!("check unavailable ({})", one_line(reason))
+            RulesReviewContent::SkillProposal { proposal } => {
+                out.push_str(&format!("\n{}", skill_proposal_summary(proposal)))
             }
-        };
+            RulesReviewContent::SkillUpdate { update } => {
+                if let SkillUpdateStatus::Available { revision } = &update.status {
+                    writeln!(
+                        out,
+                        "\n{}  New version of {} ({})",
+                        one_line(&item.id),
+                        one_line(&update.name),
+                        one_line(revision)
+                    )
+                    .unwrap();
+                }
+            }
+            RulesReviewContent::Settings { plan } => {
+                writeln!(
+                    out,
+                    "\n{}  MCP servers, hooks and permissions",
+                    one_line(&item.id)
+                )
+                .unwrap();
+                if let Some(notice) = &plan.notice {
+                    writeln!(out, "  {}", one_line(notice)).unwrap();
+                }
+            }
+        }
         writeln!(
-            &mut out,
-            "{} — {} — {status}",
-            one_line(&update.name),
-            upstream_label(&update.upstream)
+            out,
+            "  {}",
+            item.answers
+                .iter()
+                .map(|&answer| answer_word(answer))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )
+        .unwrap();
+    }
+    writeln!(out, "\nAnswer with `{TO_REVIEW_COMMAND} <id> <answer>`.").unwrap();
+    out
+}
+
+fn status_for_a_person(status: &RulesSetupStatus) -> String {
+    if !status.enabled {
+        return "WENLAN_RULESYNC is off.\n".into();
+    }
+    let mut out = String::from("Status\n");
+    if let Some(at) = status
+        .last_checked_at
+        .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
+    {
+        writeln!(
+            out,
+            "Last background check {}",
+            at.format("%Y-%m-%d %H:%M:%S UTC")
+        )
+        .unwrap();
+    } else {
+        out.push_str("No background check yet.\n");
+    }
+    for row in &status.tools {
+        let state = match row.state {
+            RulesToolState::UpToDate => "up to date",
+            RulesToolState::NeedsReview => "needs review",
+            RulesToolState::NotManaged => "not managed",
+        };
+        let counts = &row.counts;
+        writeln!(
+            out,
+            "{} — {state} — {} rules, {} skills, {} commands, {} subagents, {} MCP",
+            one_line(&row.tool.name),
+            counts.rules,
+            counts.skills,
+            counts.commands,
+            counts.subagents,
+            counts.mcp
         )
         .unwrap();
     }
@@ -354,7 +572,7 @@ fn updates_for_a_person(updates: &[AdoptedSkillUpdate]) -> String {
 
 fn settings_plan_for_a_person(plan: &SettingsPlan) -> String {
     let mut output = render_plan(
-        "Personal settings plan",
+        "MCP servers, hooks and permissions",
         "No settings changes.",
         &plan.files,
     );
@@ -406,7 +624,7 @@ fn report_for_a_person(report: &RulesSyncReport) -> String {
         append_diff(&mut out, &card.diff);
     }
     if !report.proposals.is_empty() {
-        out.push_str("\nAnswer with `wenlan rules review <id> <tool-only|all-tools|dismiss>`.\n");
+        writeln!(out, "\nSee answers with `{TO_REVIEW_COMMAND}`.").unwrap();
     }
     if report.proposals.iter().any(|card| card.files.len() > 1) {
         out.push_str("Use `--file <path>` to choose a file when tools changed the same rule.\n");
@@ -484,6 +702,7 @@ mod tests {
     fn personal_preview_neutralizes_terminal_controls() {
         let plan = AdoptionPlan {
             token: "test".into(),
+            settings: None,
             files: vec![AdoptionChange {
                 path: "tool\nsettings.md".into(),
                 added: 2,

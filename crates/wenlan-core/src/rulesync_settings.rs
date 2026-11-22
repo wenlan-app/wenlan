@@ -47,7 +47,49 @@ pub fn render_source(
     stage_parent: &Path,
     source: &Path,
 ) -> Result<RenderedSettings> {
-    let inputs = read_sources(source)?;
+    let inputs = read_sources(open_source(source)?, source)?;
+    ensure!(!inputs.is_empty(), "no rulesync settings sources found");
+    render_inputs(binary, stage_parent, inputs)
+}
+
+/// The private Wenlan source is optional. An invalid source remains an error.
+pub fn render_local_source(binary: &Path, source: &Path) -> Result<Option<RenderedSettings>> {
+    ensure!(
+        source.is_absolute(),
+        "settings source must be an absolute local directory"
+    );
+    let name = source
+        .file_name()
+        .context("missing settings source directory")?;
+    let parent = source.parent().context("missing Wenlan data root")?;
+    // The configured data root may be reached through links. The rulesync
+    // source and the recognized settings inputs inside it must be link-free.
+    let parent = match parent.canonicalize() {
+        Ok(parent) => parent,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("resolve Wenlan data root"),
+    };
+    let root = Dir::open_ambient_dir(&parent, cap_std::ambient_authority())?;
+    match root.symlink_metadata(name) {
+        Ok(_) => (),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    let root = root
+        .open_dir_nofollow(name)
+        .context("settings source must have regular directory components")?;
+    let inputs = read_sources(root, source)?;
+    if inputs.is_empty() {
+        return Ok(None);
+    }
+    render_inputs(binary, &parent.join(name), inputs).map(Some)
+}
+
+fn render_inputs(
+    binary: &Path,
+    stage_parent: &Path,
+    inputs: BTreeMap<&'static str, Vec<u8>>,
+) -> Result<RenderedSettings> {
     let source_digest = fingerprint(&inputs)?;
     let stage = rulesync_renderer::new_stage(stage_parent)?;
     let input = stage.path().join("input");
@@ -67,8 +109,7 @@ pub fn render_source(
     })
 }
 
-fn read_sources(path: &Path) -> Result<BTreeMap<&'static str, Vec<u8>>> {
-    let mut root = open_source(path)?;
+fn read_sources(mut root: Dir, path: &Path) -> Result<BTreeMap<&'static str, Vec<u8>>> {
     if path.file_name().is_some_and(|name| name != ".rulesync") {
         match root.open_dir_nofollow(".rulesync") {
             Ok(nested) => root = nested,
@@ -105,7 +146,6 @@ fn read_sources(path: &Path) -> Result<BTreeMap<&'static str, Vec<u8>>> {
             break;
         }
     }
-    ensure!(!sources.is_empty(), "no rulesync settings sources found");
     Ok(sources)
 }
 
@@ -188,6 +228,32 @@ pub fn confirmation_token(value: &impl Serialize) -> Result<String> {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("valid HMAC key");
     mac.update(fingerprint(value)?.as_bytes());
     Ok(format!("{:x}", mac.finalize().into_bytes()))
+}
+
+/// Count only MCP server entries and never return their configuration.
+pub fn mcp_server_count(path: &Path, bytes: &[u8]) -> usize {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("json") => without_jsonc(bytes)
+            .ok()
+            .and_then(|bytes| parse_json(&bytes).ok())
+            .and_then(|doc| {
+                doc.get("mcpServers")
+                    .or_else(|| doc.get("mcp"))
+                    .and_then(Value::as_object)
+                    .map(Map::len)
+            })
+            .unwrap_or_default(),
+        Some("toml") => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| toml::from_str::<toml::Table>(text).ok())
+            .and_then(|doc| {
+                doc.get("mcp_servers")
+                    .and_then(toml::Value::as_table)
+                    .map(toml::Table::len)
+            })
+            .unwrap_or_default(),
+        _ => 0,
+    }
 }
 
 pub struct SettingsChange {
@@ -1243,13 +1309,16 @@ mod tests {
         }"#,
         )
         .unwrap();
-        let actual = read_sources(&temp).unwrap();
+        let actual = read_sources(open_source(&temp).unwrap(), &temp).unwrap();
         assert_eq!(actual.len(), 1);
         assert_eq!(
             serde_json::from_slice::<Value>(&actual["mcp"]).unwrap()["mcpServers"]["new"]["url"],
             "http://localhost/api/*"
         );
-        assert_eq!(actual, read_sources(&source).unwrap());
+        assert_eq!(
+            actual,
+            read_sources(open_source(&source).unwrap(), &source).unwrap()
+        );
         assert!(parse_json(&without_jsonc(br#"{"a":{,}}"#).unwrap()).is_err());
     }
 
@@ -1282,8 +1351,34 @@ mod tests {
         fs::write(nested.join("mcp.jsonc"), "{}").unwrap();
         let symlink_parent = temp.join("alias");
         symlink(&source, &symlink_parent).unwrap();
-        assert!(read_sources(&symlink_parent.join("nested")).is_err());
+        assert!(open_source(&symlink_parent.join("nested")).is_err());
+        assert!(open_source(&symlink_parent).is_err());
+        let binary = Path::new("unused");
+        assert_eq!(
+            render_local_source(binary, &symlink_parent)
+                .err()
+                .unwrap()
+                .to_string(),
+            "settings source must have regular directory components"
+        );
+        let nested_link = source.join(".rulesync");
+        symlink(&nested, &nested_link).unwrap();
+        assert_eq!(
+            render_local_source(binary, &source)
+                .err()
+                .unwrap()
+                .to_string(),
+            "the .rulesync source must be a regular directory"
+        );
+        fs::remove_file(nested_link).unwrap();
         symlink(nested.join("mcp.jsonc"), source.join("mcp.jsonc")).unwrap();
-        assert!(read_sources(&source).is_err());
+        assert!(read_sources(open_source(&source).unwrap(), &source).is_err());
+        assert_eq!(
+            render_local_source(binary, &source)
+                .err()
+                .unwrap()
+                .to_string(),
+            "mcp.jsonc must be a regular file"
+        );
     }
 }

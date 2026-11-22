@@ -27,13 +27,15 @@ use wenlan_core::rulesync_personal::{
     DeliveryWorktrees, GlobalOutput, HarnessGuard, LineChange, LocalText, PersonalMaster,
     PersonalTarget, PERSONAL_TARGETS,
 };
+use wenlan_core::rulesync_personal_files::{location_of, PersonalFeature};
 use wenlan_core::rulesync_renderer::{self, RenderSession};
 use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
     PullbackCard, PullbackDecision, PullbackKind, PullbackPreview, RulesSetupCode as Code,
-    RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport,
+    RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport, RulesToolCounts,
+    RulesToolState, RulesToolStatus, SYNC_COMMAND, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -51,6 +53,7 @@ use crate::state::SharedState;
 mod displaced;
 mod personal_files;
 mod personal_settings;
+mod review_list;
 mod settings;
 mod storage;
 pub(super) mod watch;
@@ -65,7 +68,14 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/setup/restore", post(restore))
         .route("/api/rules/setup/sync", post(sync))
         .route("/api/rules/setup/skill-updates", post(skill_updates))
-        .route("/api/rules/setup/review", post(review))
+        .route(
+            "/api/rules/setup/review",
+            get(review_list::list).post(review),
+        )
+        .route(
+            "/api/rules/setup/review/dismiss-update",
+            post(review_list::dismiss_update),
+        )
         .route("/api/rules/setup/review/preview", post(review_preview))
 }
 
@@ -159,24 +169,8 @@ async fn sync(
 }
 
 async fn skill_updates(headers: HeaderMap) -> Result<Json<Vec<AdoptedSkillUpdate>>, ServerError> {
-    use wenlan_core::skill_registry::{self, Endpoints, ReqwestFetch};
-
     require_personal_rules_writer(&headers)?;
-    let (home, skills) = tokio::task::spawn_blocking(|| {
-        let setup = Setup::system()?;
-        let manifest = setup
-            .load()?
-            .filter(|manifest| manifest.adopted)
-            .context("run wenlan rules adopt first")?;
-        Ok::<_, anyhow::Error>((setup.home, manifest.master.skills))
-    })
-    .await
-    .map_err(|error| ServerError::Internal(error.to_string()))?
-    .map_err(|error| ServerError::Conflict(error.to_string()))?;
-    let http = ReqwestFetch::new().map_err(ServerError::Internal)?;
-    Ok(Json(
-        skill_registry::adopted_updates(&http, &Endpoints::default(), &home, &skills).await,
-    ))
+    Ok(Json(review_list::existing_update_check().await?))
 }
 
 async fn review(
@@ -278,6 +272,26 @@ fn recorded_delivery(
     }
 }
 
+pub(crate) fn tool_label(target: &PersonalTarget) -> RulesSetupTool {
+    RulesSetupTool {
+        id: target.agent.into(),
+        name: target.tool.display_name().into(),
+    }
+}
+
+pub(crate) fn tool_for_path(path: &Path) -> Option<&'static PersonalTarget> {
+    if path == Path::new(".claude.json") || path == Path::new(".mcp.json") {
+        return personal_target("claudecode");
+    }
+    PERSONAL_TARGETS
+        .iter()
+        .find(|target| path.starts_with(target.folder()))
+}
+
+fn adoption_with_settings_token(adoption: &str, settings: &str) -> Result<String> {
+    fingerprint(&(adoption, settings))
+}
+
 fn agent_for_target(target: &str) -> &str {
     personal_target(target).map_or(target, |tool| tool.agent)
 }
@@ -308,17 +322,25 @@ impl Setup {
         let mut status = RulesSetupStatus {
             enabled: true,
             can_adopt: true,
+            tools: PERSONAL_TARGETS
+                .iter()
+                .map(|target| RulesToolStatus {
+                    tool: tool_label(target),
+                    state: RulesToolState::NotManaged,
+                    counts: RulesToolCounts::default(),
+                })
+                .collect(),
             ..Default::default()
         };
-        let Some(manifest) = self
-            .load_if_present()?
-            .filter(|manifest| !manifest.settings_only)
-        else {
+        let Some(manifest) = self.load_if_present()? else {
             return Ok(status);
         };
         status.adopted = manifest.adopted;
-        status.can_adopt = manifest.adopted;
-        status.can_restore = !manifest.includes_tool_settings();
+        status.can_adopt = manifest.adopted || manifest.settings_only;
+        status.can_restore = true;
+        if manifest.adopted {
+            status.last_checked_at = watch::last_checked_at();
+        }
         let root = FileRoot::open_home(&self.home)?;
         let Pullback {
             drafts,
@@ -345,25 +367,105 @@ impl Setup {
                 })
                 .map(ScopeReview::wire),
         );
-        for file in status.proposals.iter().flat_map(|card| &card.files) {
-            let path = Path::new(file);
-            let Some(delivery) = manifest.delivered.get(path) else {
+        let settings = self.personal_setting_proposals(&root, &manifest)?;
+        status.in_sync &= settings.is_empty();
+        status.proposals.extend(settings);
+        let skill_reviews = rulesync_registry::pending_skill_reviews(&self.data)?;
+        let mut affected = BTreeSet::new();
+        for proposal in &skill_reviews {
+            if let Some(tool) = review_list::proposal_tool(proposal) {
+                affected.insert(tool);
+            } else {
+                affected.extend(
+                    PERSONAL_TARGETS
+                        .iter()
+                        .filter(|target| manifest.master.enrolls_target(target.id))
+                        .map(|target| target.tool),
+                );
+            }
+        }
+        status.in_sync &= skill_reviews.is_empty()
+            && manifest.stages.is_empty()
+            && manifest.settings_batch.is_none();
+        let mut skills = BTreeMap::<&str, BTreeSet<&Path>>::new();
+        for (path, delivery) in manifest.active_deliveries() {
+            let Some(target) = tool_for_path(path) else {
                 continue;
             };
-            let target = match &delivery.kind {
-                Kind::Rule { target, .. } => personal_target(target),
-                Kind::PersonalFile => wenlan_core::rulesync_personal_files::location_of(path)
-                    .and_then(|location| personal_target(location.tool)),
-                _ => None,
-            };
-            if let Some(target) = target {
-                status.review_tools.insert(
-                    file.clone(),
-                    RulesSetupTool {
-                        id: target.agent.into(),
-                        name: target.tool.display_name().into(),
-                    },
-                );
+            let row = status
+                .tools
+                .iter_mut()
+                .find(|row| row.tool.id == target.agent)
+                .expect("tool catalog");
+            match &delivery.kind {
+                Kind::Rule { source, .. } => {
+                    row.counts.rules += source
+                        .lines()
+                        .filter(|line| {
+                            !line.trim().is_empty() && !line.trim_start().starts_with(['#', '<'])
+                        })
+                        .count()
+                }
+                Kind::PersonalFile => match location_of(path).map(|location| location.feature) {
+                    Some(PersonalFeature::Commands) => row.counts.commands += 1,
+                    Some(PersonalFeature::Subagents) => row.counts.subagents += 1,
+                    None => (),
+                },
+                Kind::Skill | Kind::RegistrySkill { .. } => {
+                    let folder = Path::new(target.skills.destination);
+                    if let Some(package) = path
+                        .ancestors()
+                        .find(|ancestor| ancestor.parent() == Some(folder))
+                    {
+                        skills.entry(target.agent).or_default().insert(package);
+                    }
+                }
+                Kind::Settings => {
+                    let current = root.read(path, false)?;
+                    if current != delivery.delivered {
+                        affected.insert(target.tool);
+                        status.in_sync = false;
+                    }
+                    if let Snapshot::File { bytes, .. } = current {
+                        row.counts.mcp +=
+                            wenlan_core::rulesync_settings::mcp_server_count(path, &bytes);
+                    }
+                }
+                _ => continue,
+            }
+            if row.state == RulesToolState::NotManaged {
+                row.state = RulesToolState::UpToDate;
+            }
+        }
+        for row in &mut status.tools {
+            row.counts.skills = skills.get(row.tool.id.as_str()).map_or(0, BTreeSet::len);
+        }
+        affected.extend(
+            blocked
+                .keys()
+                .chain(manifest.pending.iter().map(|entry| &entry.path))
+                .chain(manifest.stages.keys())
+                .chain(manifest.delivery_issues.keys())
+                .chain(drafts.iter().map(|draft| &draft.path))
+                .filter_map(|path| tool_for_path(path).map(|target| target.tool)),
+        );
+        for file in status.proposals.iter().flat_map(|card| &card.files) {
+            let path = Path::new(file);
+            if let Some(target) = tool_for_path(path) {
+                affected.insert(target.tool);
+                status.review_tools.insert(file.clone(), tool_label(target));
+            }
+        }
+        for target in PERSONAL_TARGETS
+            .iter()
+            .filter(|target| affected.contains(&target.tool))
+        {
+            if let Some(row) = status
+                .tools
+                .iter_mut()
+                .find(|row| row.tool.id == target.agent)
+            {
+                row.state = RulesToolState::NeedsReview;
             }
         }
         Ok(status)
@@ -649,6 +751,8 @@ struct Manifest<Content = Vec<u8>> {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     scope_review_heads: BTreeMap<PathBuf, String>,
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    dismissed_skill_updates: BTreeMap<String, String>,
 }
 
 impl Manifest {
@@ -712,6 +816,7 @@ impl Manifest {
             scope_reviews: BTreeMap::new(),
             scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
+            dismissed_skill_updates: BTreeMap::new(),
         }
     }
 }
@@ -886,12 +991,16 @@ impl Setup {
     pub(crate) fn system() -> Result<Self> {
         let home = Self::tool_home()?;
         let data = wenlan_core::config::data_root().join("rulesync");
+        Ok(Self::new(home, data))
+    }
+
+    fn new(home: PathBuf, data: PathBuf) -> Self {
         let binary = std::env::var_os("WENLAN_RULESYNC_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 data.join(rulesync_renderer::pinned_binary_name().unwrap_or("rulesync"))
             });
-        Ok(Self { home, data, binary })
+        Self { home, data, binary }
     }
 
     fn tool_home() -> Result<PathBuf> {
@@ -959,7 +1068,7 @@ impl Setup {
             );
             ensure!(
                 manifest.pending.is_empty() && manifest.extension_paths.is_empty(),
-                "A setup write is pending. Run `wenlan rules sync` before adopting another tool."
+                "A setup write is pending. Run `{SYNC_COMMAND}` before adopting another tool."
             );
         }
         Ok(manifest)
@@ -1004,6 +1113,11 @@ impl Setup {
             plan.notes
                 .push("No additional tools, commands, subagents or settings found.".into());
         }
+        let root = FileRoot::open_home(&self.home)?;
+        if let Some(settings) = crate::rulesync_settings_routes::plan_local(self, &root)? {
+            plan.token = adoption_with_settings_token(&plan.token, &settings.response.token)?;
+            plan.settings = Some(settings.response);
+        }
         Ok(plan)
     }
 
@@ -1030,9 +1144,21 @@ impl Setup {
         let mut adoption = self.discover_for_adoption(manifest.as_ref())?;
         let sources = adoption_token(&adoption)?;
         self.stage_adoption(&mut adoption, render_rule, render_skills)?;
-        verify_adoption_token(&adoption, token)?;
+        let root = FileRoot::open_home(&self.home)?;
+        let settings = crate::rulesync_settings_routes::plan_local(self, &root)?;
+        if let Some(settings) = &settings {
+            ensure!(
+                adoption_with_settings_token(
+                    &adoption_token(&adoption)?,
+                    &settings.response.token
+                )? == token,
+                "The setup changed since preview. Run Bring in again."
+            );
+        } else {
+            verify_adoption_token(&adoption, token)?;
+        }
         let already_adopted = manifest.as_ref().is_some_and(|manifest| manifest.adopted);
-        if adoption.files.is_empty()
+        let mut result = if adoption.files.is_empty()
             && adoption.overlays.is_empty()
             && adoption.settings.sources.is_empty()
             && (!already_adopted || adoption.skipped_personal_files.is_empty())
@@ -1043,13 +1169,29 @@ impl Setup {
                 "No installed tool files to adopt"
             });
             append_skipped_tools(&mut result, &adoption.skipped_tools);
-            return Ok(result);
+            result
+        } else {
+            verify_adoption_token(&self.discover_for_adoption(manifest.as_ref())?, &sources)
+                .context("the source changed during rendering")?;
+            let master = PersonalMaster::new(&adoption);
+            self.apply_adoption(&root, adoption, master)?
+        };
+        if let Some(settings) = settings.filter(|_| result.blocked.is_empty()) {
+            let token = settings.response.token.clone();
+            match crate::rulesync_settings_routes::apply_plan(self, &root, settings, &token) {
+                Ok(settings) => {
+                    result.message.push_str(&format!("\n{}", settings.message));
+                    result.written.extend(settings.written);
+                    result.blocked.extend(settings.blocked);
+                    result.blocked_codes.extend(settings.blocked_codes);
+                }
+                Err(error) => result.block(
+                    Code::ReviewNeeded,
+                    format!("{error:#}. Run `{TO_REVIEW_COMMAND}` to review the settings again."),
+                ),
+            }
         }
-        verify_adoption_token(&self.discover_for_adoption(manifest.as_ref())?, &sources)
-            .context("the source changed during rendering")?;
-        let master = PersonalMaster::new(&adoption);
-        let root = FileRoot::open_home(&self.home)?;
-        self.apply_adoption(&root, adoption, master)
+        Ok(result)
     }
 
     fn stage_adoption(
@@ -1241,7 +1383,7 @@ impl Setup {
             .run_batch(root, &mut manifest, operations, mode, Some(&links))
             .with_context(|| {
                 if extending {
-                    "The tool addition stopped. Run `wenlan rules sync` to recover the addition"
+                    "The tool addition stopped. Run `{SYNC_COMMAND}` to recover the addition"
                 } else {
                     "Adoption stopped. Run `wenlan rules restore` to recover the setup"
                 }
@@ -1250,7 +1392,7 @@ impl Setup {
             if status != ApplyOutcome::Applied {
                 if extending {
                     bail!(
-                        "{} changed during the tool addition. Run rules sync to recover the addition",
+                        "{} changed during the tool addition. Run {SYNC_COMMAND} to recover the addition",
                         path.display()
                     );
                 }
@@ -1502,7 +1644,7 @@ impl Setup {
             if personal_file && op.kind.is_some() {
                 ensure!(
                     manifest.case_alias(root, &op.path)?.is_none(),
-                    "{} aliases a path already recorded in the local setup. Run rules sync",
+                    "{} aliases a path already recorded in the local setup. Run {SYNC_COMMAND}",
                     op.path.display()
                 );
                 for prior in &ready {
@@ -2352,6 +2494,71 @@ impl Setup {
             ));
         }
         let blocked = self.pull_back(root, manifest, &mut result)?;
+        self.deliver_locked(
+            root,
+            manifest,
+            generated,
+            (&render_rule, &render_skills),
+            &blocked,
+            &mut result,
+        )?;
+        Ok(result)
+    }
+
+    /// Background delivery shares the same receipt checks and writer as Sync.
+    /// The watcher owns the lock and leaves recovery and review to the person.
+    fn watch_delivery(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        generated: &[String],
+        render_rule: impl Fn(&str, &str) -> Result<SkillFiles>,
+        render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    ) -> Result<()> {
+        let mut result = report("Checked the local tool setup");
+        let blocked = self.pull_back(root, manifest, &mut result)?;
+        if !blocked.is_empty()
+            || !result.proposals.is_empty()
+            || rulesync_registry::has_pending_skill_reviews(&self.data)?
+            || Self::has_settings_receipt_mismatch(root, manifest)?
+            || crate::rulesync_settings_routes::has_settings_review(self, root)?
+        {
+            return Ok(());
+        }
+        self.deliver_locked(
+            root,
+            manifest,
+            generated,
+            (&render_rule, &render_skills),
+            &blocked,
+            &mut result,
+        )
+    }
+
+    fn has_settings_receipt_mismatch(root: &FileRoot, manifest: &Manifest) -> Result<bool> {
+        for (path, delivery) in manifest.active_deliveries() {
+            if matches!(delivery.kind, Kind::Settings)
+                && root.read(path, false)? != delivery.delivered
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn deliver_locked<R, S>(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        generated: &[String],
+        (render_rule, render_skills): (&R, &S),
+        blocked: &BTreeSet<PathBuf>,
+        result: &mut RulesSyncReport,
+    ) -> Result<()>
+    where
+        R: Fn(&str, &str) -> Result<SkillFiles>,
+        S: Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    {
         let had_issues = !std::mem::take(&mut manifest.delivery_issues).is_empty();
         let paths: Vec<_> = manifest
             .active_deliveries()
@@ -2378,7 +2585,7 @@ impl Setup {
                         .delivery_issues
                         .insert(path.clone(), RuleDeliveryIssue::MasterConflict);
                     block_path(
-                        &mut result,
+                        result,
                         &path,
                         Code::RuleConflict,
                         format!("{}: {error}", path.display()),
@@ -2393,7 +2600,7 @@ impl Setup {
                         .delivery_issues
                         .insert(path.clone(), RuleDeliveryIssue::RendererUnavailable);
                     block_path(
-                        &mut result,
+                        result,
                         &path,
                         Code::RenderUnavailable,
                         format!("{}: {error:#}", path.display()),
@@ -2406,7 +2613,7 @@ impl Setup {
                     .delivery_issues
                     .insert(path.clone(), RuleDeliveryIssue::MissingOutput);
                 block_path(
-                    &mut result,
+                    result,
                     &path,
                     Code::RenderMissing,
                     format!("{}: rulesync did not render this file", path.display()),
@@ -2429,7 +2636,7 @@ impl Setup {
                 allow_link: false,
             });
         }
-        for (path, status) in self.sync_batch(root, manifest, operations, &mut result)? {
+        for (path, status) in self.sync_batch(root, manifest, operations, result)? {
             if status == ApplyOutcome::Applied {
                 result.written.push(path.display().to_string());
             } else {
@@ -2437,7 +2644,7 @@ impl Setup {
                     .delivery_issues
                     .insert(path.clone(), RuleDeliveryIssue::ConcurrentEdit);
                 block_path(
-                    &mut result,
+                    result,
                     &path,
                     Code::ChangedDuringSync,
                     format!("{} changed during sync", path.display()),
@@ -2448,17 +2655,10 @@ impl Setup {
             self.save(manifest)?;
         }
         let saved = rulesync_registry::saved_skill_deliveries(&self.data)?;
-        self.sync_skills(
-            root,
-            manifest,
-            &blocked,
-            &mut result,
-            &saved,
-            &render_skills,
-        )?;
-        self.sync_personal_settings(root, manifest, &mut result)?;
-        self.sync_registry(root, manifest, &blocked, &mut result, &saved, render_skills)?;
-        Ok(result)
+        self.sync_skills(root, manifest, blocked, result, &saved, render_skills)?;
+        self.sync_personal_settings(root, manifest, result)?;
+        self.sync_registry(root, manifest, blocked, result, &saved, render_skills)?;
+        Ok(())
     }
 
     fn pull_back(
@@ -2489,6 +2689,10 @@ impl Setup {
             mut blocked,
         } = inspect(&self.home, root, manifest)?;
         blocked.extend(pending_skills);
+        let previous = (
+            manifest.scope_reviews.len(),
+            manifest.scope_review_heads.len(),
+        );
         if !drafts.is_empty() {
             let unchanged = |path: &Path| !drafts.iter().any(|draft| draft.path == path);
             manifest
@@ -2498,13 +2702,19 @@ impl Setup {
                 .scope_review_heads
                 .retain(|path, _| unchanged(path));
         }
+        let mut changed = previous
+            != (
+                manifest.scope_reviews.len(),
+                manifest.scope_review_heads.len(),
+            );
         for draft in drafts
             .iter()
             .filter(|draft| !cards.iter().any(|card| card.paths.contains(&draft.path)))
         {
             record_scope_review(manifest, draft)?;
+            changed = true;
         }
-        if !drafts.is_empty() {
+        if changed {
             self.save(manifest)?;
         }
         for card in cards {
@@ -2568,7 +2778,7 @@ impl Setup {
         };
         ensure!(
             manifest.pending.is_empty() && manifest.extension_paths.is_empty(),
-            "Run `wenlan rules sync` to recover the pending tool setup before reviewing this skill"
+            "Run `{SYNC_COMMAND}` to recover the pending tool setup before reviewing this skill"
         );
         let tools: BTreeSet<_> = PERSONAL_TARGETS
             .iter()
@@ -2644,7 +2854,7 @@ impl Setup {
             {
                 ensure!(
                     status == ApplyOutcome::Applied,
-                    "{} changed during skill delivery. Run `wenlan rules sync` and review a fresh plan.",
+                    "{} changed during skill delivery. Run `{SYNC_COMMAND}` and review a fresh plan.",
                     path.display()
                 );
                 if changed.contains(&path) {
@@ -3152,7 +3362,28 @@ impl Setup {
         let manifest = self
             .load_if_present()?
             .context("run wenlan rules adopt first")?;
+        if personal_settings::is_proposal(&request.id) {
+            // Dismiss is a hidden alias of revert on a settings card.
+            let action = match request.action {
+                PullbackAction::Dismiss => PullbackAction::Revert,
+                action => action,
+            };
+            let card = self
+                .personal_setting_proposals(&root, &manifest)?
+                .into_iter()
+                .find(|card| card.id == request.id)
+                .with_context(|| {
+                    format!("the proposal is no longer current. Run `{SYNC_COMMAND}`")
+                })?;
+            return Ok(PullbackPreview {
+                diff: card.diff,
+                plan: card.reason,
+                plan_codes: vec![rule_review_code(action).into()],
+                diff_codes: card.diff_codes,
+            });
+        }
         if let Some(scope) = manifest.scope_reviews.get(&request.id) {
+            let action = rule_answer(PullbackKind::Scope, request.action)?;
             ensure!(
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
@@ -3160,7 +3391,7 @@ impl Setup {
             return Ok(PullbackPreview {
                 diff: scope.card.diff.clone(),
                 plan: scope.card.reason.clone(),
-                plan_codes: vec![rule_review_code(request.action).into()],
+                plan_codes: vec![rule_review_code(action).into()],
                 diff_codes: scope.card.diff_codes.clone(),
             });
         }
@@ -3168,16 +3399,17 @@ impl Setup {
         let card = cards
             .iter()
             .find(|card| card.wire.id == request.id)
-            .context("the proposal is no longer current. Run rules sync")?;
+            .with_context(|| format!("the proposal is no longer current. Run `{SYNC_COMMAND}`"))?;
+        let action = rule_answer(card.wire.kind, request.action)?;
         let path = card.review_path(request)?;
         let (diff, plan, plan_codes, diff_codes) = if !card.share_plans.is_empty() {
             let worktrees = DeliveryWorktrees::new(&self.home)?;
-            card.describe_personal_review(&drafts, path, request.action, &worktrees)?
+            card.describe_personal_review(&drafts, path, action, &worktrees)?
         } else {
             (
                 card.wire.diff.clone(),
                 card.wire.reason.clone(),
-                vec![rule_review_code(request.action).into()],
+                vec![rule_review_code(action).into()],
                 card.wire.diff_codes.clone(),
             )
         };
@@ -3198,6 +3430,14 @@ impl Setup {
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         rulesync_registry::check_skill_format(&self.data)?;
+        let action = if manifest.scope_reviews.contains_key(&request.id) {
+            rule_answer(PullbackKind::Scope, request.action)?
+        } else {
+            request.action
+        };
+        if matches!(action, PullbackAction::Dismiss | PullbackAction::Revert) {
+            self.preview_review(request)?;
+        }
         self.recover(&root, &mut manifest)?;
         if let Some(blocked) = self.review_personal_settings(&root, &mut manifest, request)? {
             let mut result = sync(&root, &mut manifest)?;
@@ -3210,7 +3450,7 @@ impl Setup {
                 "the proposal is no longer current"
             );
             let scope = scope.clone();
-            if matches!(request.action, PullbackAction::AllTools) {
+            if action == PullbackAction::AllTools {
                 let delivery = manifest
                     .delivered
                     .get_mut(&scope.path)
@@ -3218,7 +3458,7 @@ impl Setup {
                 let expected = delivery.observed.as_ref().unwrap_or(&delivery.delivered);
                 ensure!(
                     root.read(&scope.path, false)? == *expected,
-                    "the tool edited this file again. Run rules sync"
+                    "the tool edited this file again. Run {SYNC_COMMAND}"
                 );
                 let Kind::Rule {
                     target,
@@ -3262,7 +3502,8 @@ impl Setup {
         let card = cards
             .iter()
             .find(|card| card.wire.id == request.id)
-            .context("the proposal is no longer current. Run rules sync")?;
+            .with_context(|| format!("the proposal is no longer current. Run `{SYNC_COMMAND}`"))?;
+        let action = rule_answer(card.wire.kind, action)?;
         let path = card.review_path(request)?;
         let reviewed = || {
             drafts
@@ -3276,22 +3517,22 @@ impl Setup {
                 card,
                 reviewed(),
                 path,
-                &request.action,
+                &action,
             );
         }
-        let all_tools = request.action == PullbackAction::AllTools;
+        let all_tools = action == PullbackAction::AllTools;
         if all_tools {
             for draft in reviewed() {
                 ensure!(
                     root.read(&draft.path, false)? == draft.current,
-                    "the tool edited {} again. Run rules sync",
+                    "the tool edited {} again. Run {SYNC_COMMAND}",
                     draft.path.display()
                 );
             }
         }
         for draft in reviewed() {
             let selected = path == Some(draft.path.as_path());
-            match request.action {
+            match action {
                 PullbackAction::ToolOnly => {
                     if selected {
                         accept_tool_edit(&mut manifest, draft)?;
@@ -3311,7 +3552,7 @@ impl Setup {
                         _ => bail!("the proposal no longer belongs to a managed file"),
                     }
                 }
-                PullbackAction::AllTools | PullbackAction::Dismiss => {}
+                PullbackAction::AllTools | PullbackAction::Revert | PullbackAction::Dismiss => {}
             }
             // Use the exact reviewed version as the expected input for each
             // delivery, including the alternatives the person did not choose.
@@ -4392,7 +4633,7 @@ struct Card {
 impl Card {
     fn review_path(&self, request: &PullbackDecision) -> Result<Option<&Path>> {
         match (&request.file, self.paths.len(), request.action) {
-            (_, _, PullbackAction::Dismiss) => Ok(None),
+            (_, _, PullbackAction::Revert | PullbackAction::Dismiss) => Ok(None),
             (Some(file), _, _) => Ok(Some(
                 self.paths
                     .get(Path::new(file))
@@ -4626,11 +4867,24 @@ fn needs_conflict_card(drafts: &[Draft], group: &[usize]) -> bool {
     group.len() > 1 || drafts[group[0]].needs_review
 }
 
+fn rule_answer(kind: PullbackKind, action: PullbackAction) -> Result<PullbackAction> {
+    match (kind, action) {
+        (PullbackKind::Scope, PullbackAction::Dismiss) => Ok(PullbackAction::ToolOnly),
+        (PullbackKind::Scope, PullbackAction::Revert) => {
+            bail!("This rule-line review has nothing to put back. Use `tool-only`.")
+        }
+        (PullbackKind::Conflict, PullbackAction::Dismiss) => {
+            bail!("This review puts the tool back to the earlier version. Use `revert`.")
+        }
+        _ => Ok(action),
+    }
+}
+
 fn rule_review_code(action: PullbackAction) -> Code {
     match action {
         PullbackAction::AllTools => Code::ShareRule,
-        PullbackAction::ToolOnly => Code::KeepRule,
-        PullbackAction::Dismiss => Code::RestoreReview,
+        PullbackAction::ToolOnly | PullbackAction::Dismiss => Code::KeepRule,
+        PullbackAction::Revert => Code::RestoreReview,
     }
 }
 
@@ -4890,12 +5144,15 @@ mod tests {
         }
     }
 
-    fn fixture_rule_renderer(target: &str, source: &str) -> Result<SkillFiles> {
+    pub(super) fn fixture_rule_renderer(target: &str, source: &str) -> Result<SkillFiles> {
         let path = personal_target(target).unwrap().rules.destination;
         Ok(BTreeMap::from([(path.into(), source.as_bytes().to_vec())]))
     }
 
-    fn fixture_skill_renderer(renderer: &str, skills: &SkillPackages) -> Result<SkillFiles> {
+    pub(super) fn fixture_skill_renderer(
+        renderer: &str,
+        skills: &SkillPackages,
+    ) -> Result<SkillFiles> {
         let output = PERSONAL_TARGETS
             .iter()
             .find(|target| target.skills.renderer == renderer)
@@ -5741,7 +5998,7 @@ mod tests {
             .replace("after", "dismissed")
             .replace("'unowned'", "'newest'");
         f.write(codex, &edited);
-        review("dismissed", PullbackAction::Dismiss);
+        review("dismissed", PullbackAction::Revert);
         let dismissed = f.text(codex);
         assert!(dismissed.contains("after") && dismissed.contains("'newest'"));
 
@@ -6137,6 +6394,75 @@ mod tests {
             );
         }
         assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
+    }
+
+    #[test]
+    fn rulesync_conflict_review_refuses_dismiss_and_suggests_revert() {
+        let f = Fixture::new();
+        let command = ".claude/commands/private.md";
+        fs::create_dir_all(f.setup.home.join(command).parent().unwrap()).unwrap();
+        f.write(command, "Before.\n");
+        f.adopt_from_plan();
+        f.write(command, "After.\n");
+        let card = pullback_file(&f.sync_with(""), command);
+        assert_eq!(card.kind, PullbackKind::Conflict);
+        let decision = PullbackDecision {
+            id: card.id,
+            action: PullbackAction::Dismiss,
+            file: None,
+        };
+        let manifest = fs::read(f.setup.data.join(storage::MANIFEST)).unwrap();
+        assert!(f
+            .setup
+            .preview_review(&decision)
+            .unwrap_err()
+            .to_string()
+            .contains("`revert`"));
+        assert!(f
+            .setup
+            .review_using(&decision, |_, _| panic!("dismiss called Sync"))
+            .unwrap_err()
+            .to_string()
+            .contains("`revert`"));
+        assert_eq!(f.text(command), "After.\n");
+        assert_eq!(
+            fs::read(f.setup.data.join(storage::MANIFEST)).unwrap(),
+            manifest
+        );
+    }
+
+    #[test]
+    fn rulesync_scope_review_refuses_revert_and_suggests_tool_only() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let changed = f.text(CODEX).replace("Codex only.", "Edited in Codex.");
+        f.write(CODEX, &changed);
+        let card = pullback_file(&f.sync_with(""), CODEX);
+        assert_eq!(card.kind, PullbackKind::Scope);
+        let decision = PullbackDecision {
+            id: card.id,
+            action: PullbackAction::Revert,
+            file: None,
+        };
+        let manifest = fs::read(f.setup.data.join(storage::MANIFEST)).unwrap();
+        assert!(f
+            .setup
+            .preview_review(&decision)
+            .unwrap_err()
+            .to_string()
+            .contains("`tool-only`"));
+        assert!(f
+            .setup
+            .review_using(&decision, |_, _| panic!("revert called Sync"))
+            .unwrap_err()
+            .to_string()
+            .contains("`tool-only`"));
+        assert_eq!(f.text(CODEX), changed);
+        assert_eq!(
+            fs::read(f.setup.data.join(storage::MANIFEST)).unwrap(),
+            manifest
+        );
+        assert_eq!(f.setup.status().unwrap().proposals.len(), 1);
     }
 
     #[test]
@@ -7287,7 +7613,7 @@ mod tests {
 
         f.write(command, "Edited command.\n");
         let card = pullback_file(&f.sync_with(""), command);
-        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        review_file(&f, &card, PullbackAction::Revert, None).unwrap();
         assert_eq!(f.text(command), "Original command.\n");
         assert!(
             has_deny(&path),
@@ -7309,7 +7635,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn rulesync_round2_dismiss_restores_private_bytes_and_permissions() {
+    fn rulesync_round2_revert_restores_private_bytes_and_permissions() {
         use std::os::unix::fs::PermissionsExt as _;
 
         let f = Fixture::new();
@@ -7323,7 +7649,7 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         let card = pullback_file(&f.sync_with(""), command);
         assert!(card.diff.contains("0600 to 0644"));
-        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        review_file(&f, &card, PullbackAction::Revert, None).unwrap();
         assert_eq!(f.text(command), "Private original.\n");
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
@@ -7524,7 +7850,7 @@ mod tests {
             card.diff.contains("CRLF") && card.diff.contains("LF"),
             "{card:?}"
         );
-        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        review_file(&f, &card, PullbackAction::Revert, None).unwrap();
         assert_eq!(f.text(path), original);
         f.write(path, &edited);
         let card = pullback_file(&f.sync_with(""), path);
@@ -7783,7 +8109,7 @@ mod tests {
 
         f.write(new_agent, body);
         let card = pullback_file(&f.sync_with(""), new_agent);
-        review_file(&f, &card, PullbackAction::Dismiss, None).unwrap();
+        review_file(&f, &card, PullbackAction::Revert, None).unwrap();
         assert_eq!(f.text(new_agent), changed);
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
@@ -9235,7 +9561,7 @@ mod tests {
         );
         assert!(
             sync.blocked.iter().any(|message| {
-                message.contains(".cursor") && message.contains("wenlan skills pending")
+                message.contains(".cursor") && message.contains(TO_REVIEW_COMMAND)
             }),
             "The saved skill must be offered to Cursor again: {sync:?}"
         );
@@ -9564,7 +9890,7 @@ mod tests {
             synced
                 .blocked
                 .iter()
-                .any(|line| line.contains("wenlan skills pending")),
+                .any(|line| line.contains(TO_REVIEW_COMMAND)),
             "{synced:?}"
         );
         assert_eq!(
@@ -10545,7 +10871,7 @@ mod tests {
         assert_eq!(
             json["blocked"],
             serde_json::json!([
-                ".claude/skills/new-skill: Skill changes need your approval. Run `wenlan skills pending` to review them.",
+                &format!(".claude/skills/new-skill: Skill changes need your approval. Run `{TO_REVIEW_COMMAND}` to review them."),
                 ".codex/AGENTS.md: Rule changes need your approval. Use `wenlan rules review` with the proposal below."
             ])
         );
@@ -12001,7 +12327,7 @@ mod tests {
         assert_eq!(f.text(CODEX), newer);
         let dismiss = PullbackDecision {
             id: next.proposals[0].id.clone(),
-            action: PullbackAction::Dismiss,
+            action: PullbackAction::Revert,
             file: None,
         };
         let dismissed = f
@@ -12316,7 +12642,7 @@ mod tests {
         assert_eq!(conflict.files.len(), 1);
         assert_eq!(conflict.reason_code, Some(Code::PersonalFileEdit));
         assert_plan_code(
-            &preview_choice(&f, conflict, PullbackAction::Dismiss, None),
+            &preview_choice(&f, conflict, PullbackAction::Revert, None),
             Code::RestoreReview,
             None,
         );
@@ -12335,7 +12661,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_setup_app_restore_leaves_mixed_backups_untouched() {
+    fn rulesync_setup_rules_only_restore_leaves_mixed_backups_untouched() {
         let f = Fixture::new();
         f.adopt_from_plan();
         let mut manifest = f.setup.load().unwrap().unwrap();
@@ -12356,7 +12682,7 @@ mod tests {
         f.setup.save(&manifest).unwrap();
         let before = fs::read(f.setup.data.join("personal.json")).unwrap();
         let status = f.setup.status().unwrap();
-        assert!(status.adopted && !status.can_restore);
+        assert!(status.adopted && status.can_restore);
         let result = f.setup.restore_with_options(RestoreOptions {
             rules_and_skills_only: true,
         });

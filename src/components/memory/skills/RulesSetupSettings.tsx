@@ -8,10 +8,12 @@ import {
   type RulesAdoptionPlan, type RulesSetupNotice, type RulesSetupStatus, type RulesSyncReport,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
-import { Button, Card, SectionHeader, SettingRow } from "../settings/primitives";
+import { Button, Card } from "../settings/primitives";
+import { RulesSetupReviews, SettingsChanges } from "./RulesSetupReviews";
+import { RulesToolsHeader } from "./RulesToolsHeader";
 import { RulesSetupDiff } from "./RulesSetupDiff";
 import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice, rulesSetupSkillSource } from "./rulesSetupText";
-import { refreshRulesSetup, useRulesSetup } from "./useRulesSetup";
+import { refreshRulesSetup, useRulesSetup, useRulesSetupReview } from "./useRulesSetup";
 import "./rulesSetup.css";
 
 export function RulesSetupSettings() {
@@ -22,6 +24,8 @@ export function RulesSetupSettings() {
 function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStatus }) {
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
+  const [panel, setPanel] = useState<"status" | "review">("status");
+  const review = useRulesSetupReview(true);
   const [dialog, setDialog] = useState<RulesAdoptionPlan | "restore" | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ failed: boolean; message: string; remaining?: (RulesSetupNotice | undefined)[] } | null>(null);
@@ -57,36 +61,63 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
     }
   }
 
-  const canConfirmAdoption = dialog !== null && dialog !== "restore" && dialog.files.some((file) => !dialog.skipped_files?.includes(file.path));
+  const canConfirmAdoption = dialog !== null && dialog !== "restore" && (
+    dialog.files.some((file) => !dialog.skipped_files?.includes(file.path)) ||
+    !!dialog.settings?.files.length || !!dialog.settings?.notice
+  );
+  const count = review.data?.items.length ?? null;
+  const tools = status.tools ?? [];
+  const lastCheck = status.last_checked_at ? new Date(status.last_checked_at * 1000) : null;
+  const list = new Intl.ListFormat(i18n.resolvedLanguage, { type: "unit" });
   return (
-    <section className="rules-setup-settings">
-      <SectionHeader label={t("rulesSetup.settingsTitle")} />
-      <Card>
-        {status.can_adopt && <SettingRow
-          title={t("rulesSetup.adoptTitle")}
-          description={t("rulesSetup.adoptHint")}
-          control={<Button type="button" disabled={busy} onClick={() => void preview()}>{t("rulesSetup.adoptOpen")}</Button>}
-        />}
-        {status.adopted && <SettingRow
-          title={t("rulesSetup.syncTitle")}
-          description={t("rulesSetup.syncHint")}
-          control={<Button type="button" disabled={busy}
-            onClick={() => void run(syncRulesSetup, t("rulesSetup.syncDone"))}>{t("rulesSetup.sync")}</Button>}
-        />}
-        {status.can_restore && <SettingRow
-          title={t("rulesSetup.restore")}
-          description={t("rulesSetup.restoreHint")}
-          control={<Button type="button" disabled={busy} onClick={() => setDialog("restore")}>{t("rulesSetup.restoreOpen")}</Button>}
-        />}
+    <section className="rules-setup-settings" aria-label={t("rulesSetup.settingsTitle")}>
+      <header className="rules-setup-actions">
+        {!status.adopted && status.can_adopt && <Button type="button" disabled={busy} onClick={() => void preview()}>{t("rulesSetup.adoptOpen")}</Button>}
+        <Button type="button" variant={panel === "status" ? "primary" : "secondary"}
+          aria-pressed={panel === "status"} onClick={() => setPanel("status")}>{t("rulesSetup.statusTitle")}</Button>
+        <Button type="button" variant={panel === "review" ? "primary" : "secondary"}
+          aria-pressed={panel === "review"} onClick={() => setPanel("review")}>
+          {t("rulesSetup.reviewAction")}{!!count && <> <span className="rules-setup-count">{count}</span></>}
+        </Button>
+        {status.can_restore && <Button type="button" disabled={busy} onClick={() => setDialog("restore")}>{t("rulesSetup.restoreOpen")}</Button>}
+      </header>
+      <RulesToolsHeader delivers setupOnly reviewCount={count} onReview={() => setPanel("review")} />
+      {panel === "status" ? <Card>
+        <div className="rules-setup-status-panel">
+          {lastCheck && <p>{t("rulesSetup.lastCheck", { date: new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+            dateStyle: "medium", timeStyle: "short",
+          }).format(lastCheck) })}</p>}
+          {tools.length > 0 && <ul className="rules-setup-plan-list">{tools.map((tool) => (
+            <li key={tool.id}>
+              <strong>{rulesSetupName(tool.name) || t("rulesSetup.thisTool")}</strong>
+              <span>{t(`rulesSetup.toolStatus.${tool.state}`)}</span>
+              {tool.state !== "not_managed" && <span>{list.format([
+                t("rulesSetup.ruleCount", { count: tool.counts.rules }),
+                t("rulesSetup.skills", { count: tool.counts.skills }),
+                t("rulesSetup.commandCount", { count: tool.counts.commands }),
+                t("rulesSetup.agentCount", { count: tool.counts.subagents }),
+                t("rulesSetup.mcpCount", { count: tool.counts.mcp }),
+              ])}</span>}
+            </li>
+          ))}</ul>}
+          {status.adopted && <div className="rules-setup-actions">
+            <Button type="button" disabled={busy}
+              onClick={() => void run(syncRulesSetup, t("rulesSetup.syncDone"))}>{t("rulesSetup.sync")}</Button>
+          </div>}
+        </div>
+      </Card> : <>
+        {review.isError && <p role="alert">{t("rulesSetup.reviewLoadFailed")}</p>}
+        {review.isSuccess && (review.data.items.length ? <RulesSetupReviews review={review.data} />
+          : <p className="rules-setup-note">{t("rulesSetup.reviewEmpty")}</p>)}
+      </>}
         {feedback && (
-          <div className="rules-setup-feedback" role={feedback.failed ? "alert" : "status"}>
+          <div className="rules-setup-feedback" role={feedback.failed ? "alert" : "status"} aria-label={feedback.message}>
             <p>{feedback.message}</p>
             {feedback.remaining && <ul className="rules-setup-files">
               {feedback.remaining.map((notice, index) => <li key={index}>{rulesSetupNotice(t, i18n.language, notice)}</li>)}
             </ul>}
           </div>
         )}
-      </Card>
       {dialog && createPortal(dialog === "restore" ? (
         <ConfirmDialog
           message={t("rulesSetup.restoreQuestion")}
@@ -148,7 +179,7 @@ function AdoptionDetails({ plan }: { readonly plan: RulesAdoptionPlan }) {
               </li>
             ))}</ul>
         </section>}
-      {planned.length === 0 && <p>{t("rulesSetup.nothingToAdopt")}</p>}
+      {planned.length === 0 && !plan.settings?.files.length && <p>{t("rulesSetup.nothingToAdopt")}</p>}
       <p>{t("rulesSetup.sharedUntouched")}</p>
       {planned.length > 0 && <details>
         <summary>{t("rulesSetup.fileChanges")}</summary>
@@ -160,6 +191,10 @@ function AdoptionDetails({ plan }: { readonly plan: RulesAdoptionPlan }) {
                 codes={file.notice_codes} />}
           </section>
         ))}
+      </details>}
+      {plan.settings && <details open>
+        <summary>{t("rulesSetup.settingsChanges")}</summary>
+        <SettingsChanges plan={plan.settings} />
       </details>}
       {plan.skills.length > 0 && <details>
         <summary>{t("rulesSetup.skillSources")}</summary>

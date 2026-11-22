@@ -261,6 +261,7 @@ pub(super) async fn register_optional_runtime_workers(
             let shutdown = outbox_shutdown.clone();
             // Both directories are siblings under the selected Wenlan data root.
             let rules_data = data_dir.with_file_name("rulesync");
+            let rules_state = shared.clone();
             tokio::spawn(async move {
                 let mut watch = wenlan_server::RulesWatch::default();
                 let first = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -271,7 +272,7 @@ pub(super) async fn register_optional_runtime_workers(
                         biased;
                         _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
                         _ = interval.tick() => {
-                            watch = watch.check(rules_data.clone()).await;
+                            watch = watch.check(rules_data.clone(), &rules_state).await;
                         }
                     }
                 }
