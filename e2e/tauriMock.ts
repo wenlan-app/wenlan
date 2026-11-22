@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Page } from "@playwright/test";
+import { createRulesSetupFixture } from "../preview/rulesSetupFixture";
 import { APP_LOCALE_STORAGE_KEY } from "../src/i18n/locales";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { TauriMockRuntime } from "./tauriMock/runtime";
@@ -39,7 +40,11 @@ export async function installTauriMock(
     options.delays,
     options.agents,
   );
-  await page.exposeBinding("__wenlanTauriInvoke", (_source, command: string, args?: unknown) => runtime.invoke(command, args));
+  const rulesSetup = options.rulesSetup && createRulesSetupFixture();
+  await page.exposeBinding("__wenlanTauriInvoke", (_source, command: string, args?: unknown) => {
+    const response = rulesSetup && rulesSetup(command, args as Record<string, unknown> | undefined, options.rulesSetup ?? null);
+    return response !== undefined ? response : runtime.invoke(command, args);
+  });
   await page.addInitScript(({ locale, localeStorageKey, storageEntries, preserveLocalStorage, showGettingStarted }) => {
     if (!preserveLocalStorage) window.localStorage.clear();
     const initializePreference = (key: string, value: string) => {

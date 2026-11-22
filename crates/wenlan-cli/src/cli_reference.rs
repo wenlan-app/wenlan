@@ -102,7 +102,12 @@ fn render_command(out: &mut String, cmd: &mut Command, path: &str, level: usize)
 
     let children: Vec<String> = cmd
         .get_subcommands()
-        .filter(|sub| !sub.is_hide_set() && sub.get_name() != "help")
+        // The reference describes the opted-in setup too. Live help hides
+        // Status until the rulesync flag is present.
+        .filter(|sub| {
+            sub.get_name() != "help"
+                && (!sub.is_hide_set() || (path == "wenlan rules" && sub.get_name() == "status"))
+        })
         .map(|sub| sub.get_name().to_string())
         .collect();
     for child in children {

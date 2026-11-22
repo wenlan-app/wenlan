@@ -147,27 +147,28 @@ async fn proposals(headers: HeaderMap) -> Result<Json<SkillProposalsResponse>, S
     require_local_person(&headers)?;
     work_on_disk(move || {
         let setup = Setup::system().map_err(validation)?;
-        if !setup
-            .data
-            .try_exists()
-            .map_err(|error| failed_store(error.into()))?
-        {
-            return Ok(SkillProposalsResponse {
-                proposals: Vec::new(),
-            });
-        }
-        let _lock = setup.lock().map_err(failed_store)?;
-        let store = SkillStore::open(&setup.data).map_err(failed_store)?;
-        let proposals = store
-            .state
-            .proposals
-            .iter()
-            .map(|(id, draft)| draft.preview(id.clone()))
-            .collect::<Result<_>>()
-            .map_err(failed_store)?;
-        Ok(SkillProposalsResponse { proposals })
+        Ok(SkillProposalsResponse {
+            proposals: pending_skill_reviews(&setup.data).map_err(failed_store)?,
+        })
     })
     .await
+}
+
+pub(crate) fn pending_skill_reviews(data: &Path) -> Result<Vec<SkillProposal>> {
+    if !data.try_exists()? {
+        return Ok(Vec::new());
+    }
+    SkillStore::open(data)?
+        .state
+        .proposals
+        .iter()
+        .map(|(id, draft)| draft.preview(id.clone()))
+        .collect()
+}
+
+pub(crate) fn has_pending_skill_reviews(data: &Path) -> Result<bool> {
+    let store = SkillStore::open(data)?;
+    Ok(!store.state.proposals.is_empty() || !store.state.review_holds.is_empty())
 }
 
 async fn review_skill(
@@ -393,7 +394,7 @@ fn saved_with_delivery(name: String, delivery: Result<RulesSyncReport>) -> SaveS
             blocked_codes: Vec::new(),
             proposals: Vec::new(),
             message: format!(
-                "The skill is saved. Run `wenlan rules sync` to retry delivery. {error:#}"
+                "The skill is saved. Run `wenlan rules status --sync` to retry delivery. {error:#}"
             ),
         },
     };
@@ -895,7 +896,7 @@ impl SkillState<Vec<u8>> {
                     let current = scanning_root.package(folder, snapshot.tool)?;
                     ensure!(
                         current.as_ref().is_some_and(|current| snapshot == current),
-                        "the tool edited this skill again. Run `wenlan rules sync` to review the current files"
+                        "the tool edited this skill again. Run `wenlan rules status --sync` to review the current files"
                     );
                 }
                 self.approved_local.insert(folder.clone(), snapshot.clone());
@@ -1495,7 +1496,7 @@ impl SkillHome {
         };
         ensure!(
             unchanged,
-            "This skill has local edits. Run `wenlan rules sync` to review them."
+            "This skill has local edits. Run `wenlan rules status --sync` to review them."
         );
         Ok(current)
     }
@@ -1634,9 +1635,9 @@ pub(crate) fn collect_tool_proposals(
                 if baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))) {
                     let reason = match problem {
                         Err(error) => (Code::SkillUnreadable, format!(
-                            "Cannot read this managed skill ({error:#}). Fix the folder and run `wenlan rules sync`."
+                            "Cannot read this managed skill ({error:#}). Fix the folder and run `wenlan rules status --sync`."
                         )),
-                        _ => (Code::SkillEntryMissing, "The managed SKILL.md is missing. Put it back and run `wenlan rules sync`.".into()),
+                        _ => (Code::SkillEntryMissing, "The managed SKILL.md is missing. Put it back and run `wenlan rules status --sync`.".into()),
                     };
                     blocked.insert(folder, reason);
                 }
@@ -1663,7 +1664,7 @@ pub(crate) fn collect_tool_proposals(
             .and_then(|name| name.to_str())
             .filter(|name| skills::skill_name(name))
         else {
-            blocked.insert(folder, (Code::SkillNameInvalid, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules sync`.".into()));
+            blocked.insert(folder, (Code::SkillNameInvalid, "Rename the skill folder to use lowercase letters, digits, and hyphens, then run `wenlan rules status --sync`.".into()));
             continue;
         };
         if holds.contains_key(name) {
@@ -1685,7 +1686,7 @@ pub(crate) fn collect_tool_proposals(
             None => skills::preview(name, &files).map(|_| ()),
         };
         if let Err(error) = validation {
-            blocked.insert(folder, (Code::SkillProposalFailed, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules sync`.")));
+            blocked.insert(folder, (Code::SkillProposalFailed, format!("Cannot propose this skill ({error:#}). Fix the files and run `wenlan rules status --sync`.")));
             continue;
         }
         if store.state.proposals.len() >= MAX_AGENT_PROPOSALS * 2 {

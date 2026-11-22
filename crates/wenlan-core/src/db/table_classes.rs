@@ -126,6 +126,8 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("summary_nodes_fts_docsize", Cache),
         ("summary_nodes_fts_idx", Cache),
         ("child_vectors", Cache),
+        // Page sections with one vector each, rebuilt from the page.
+        ("page_chunks", Cache),
         ("child_vectors_vec_idx_shadow", Cache),
         ("idx_pages_embedding_shadow", Cache),
         ("idx_summary_nodes_embedding_shadow", Cache),

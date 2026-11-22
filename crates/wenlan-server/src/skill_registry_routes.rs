@@ -446,7 +446,7 @@ async fn remove_in(
                     if !remaining.is_empty() {
                         return Err(removed_skill_error(
                             &name,
-                            "Run `wenlan rules sync` to review the remaining copies.",
+                            "Run `wenlan rules status --sync` to review the remaining copies.",
                         ));
                     }
                 }

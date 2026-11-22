@@ -14,7 +14,8 @@ pub struct SettingsPreviewRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsApplyRequest {
-    pub source: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PathBuf>,
     pub token: String,
 }
 

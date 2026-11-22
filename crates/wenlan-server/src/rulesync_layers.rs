@@ -18,6 +18,8 @@ const END: &str = "<!-- END WENLAN SHARED RULES -->";
 pub(crate) struct Block<'a> {
     pub(crate) revision: &'a str,
     pub(crate) body: &'a str,
+    header: &'a str,
+    footer: &'a str,
     range: std::ops::Range<usize>,
 }
 
@@ -118,7 +120,8 @@ pub(crate) fn blocks(text: &str) -> Result<BTreeMap<&str, Block<'_>>> {
             body_start.get_or_insert(position);
         }
         let (body_end, end) = end.context("missing shared rules end marker")?;
-        let body = &text[body_start.unwrap_or(body_end)..body_end];
+        let body_start = body_start.unwrap_or(body_end);
+        let body = &text[body_start..body_end];
         ensure!(
             result
                 .insert(
@@ -126,6 +129,8 @@ pub(crate) fn blocks(text: &str) -> Result<BTreeMap<&str, Block<'_>>> {
                     Block {
                         revision,
                         body,
+                        header: &text[begin..body_start],
+                        footer: &text[body_end..end],
                         range: begin..end
                     }
                 )
@@ -134,6 +139,47 @@ pub(crate) fn blocks(text: &str) -> Result<BTreeMap<&str, Block<'_>>> {
         );
     }
     Ok(result)
+}
+
+/// Collect only new lines whose origin inside a revoked section is unambiguous.
+pub(crate) fn revoked_additions(
+    before: &str,
+    delivered: &str,
+    after: &str,
+    accessible: &BTreeSet<String>,
+) -> Result<String> {
+    let old = blocks(before)?;
+    let delivered = blocks(delivered)?;
+    let current = blocks(after)?;
+    let mut additions = String::new();
+    for (key, new) in current
+        .iter()
+        .filter(|(key, _)| !accessible.contains(**key))
+    {
+        if delivered.get(key).is_some_and(|block| {
+            block.header == new.header && block.body == new.body && block.footer == new.footer
+        }) {
+            continue;
+        }
+        let old = old
+            .get(key)
+            .or_else(|| delivered.get(key))
+            .context("revoked shared section has no matching delivery")?;
+        ensure!(
+            old.header == new.header && old.footer == new.footer,
+            "revoked shared section markers or heading changed"
+        );
+        for change in line_changes(old.body, new.body)? {
+            ensure!(
+                change.removed.is_empty(),
+                "revoked shared section has changes that cannot be separated safely"
+            );
+            for line in change.added {
+                additions.push_str(&line);
+            }
+        }
+    }
+    Ok(additions)
 }
 
 pub(crate) fn only_personal(text: &str) -> Result<String> {
@@ -177,6 +223,10 @@ pub(crate) fn edits<'a>(before: &'a str, after: &'a str) -> Result<Vec<(&'a str,
         if old.revision != new.revision {
             bail!("a shared rules revision marker changed");
         }
+        ensure!(
+            old.header == new.header && old.footer == new.footer,
+            "a shared rules heading or marker changed"
+        );
         if old.body != new.body {
             edits.push((key, new));
         }

@@ -70,7 +70,7 @@ describe("personal rules setup in the section lists", () => {
   };
 
   it("UX-SKILL-19: keeps a quiet synced line and checks status without running sync", async () => {
-    vi.mocked(invoke).mockImplementation(async (command) => command === "rules_setup_status" ? synced : undefined);
+    vi.mocked(invoke).mockImplementation(async (command) => command === "rules_setup_status" ? synced : command === "rules_setup_review_list" ? { items: [], review_tools: {} } : undefined);
     setup({ section: "rules" });
     expect(await screen.findByText("Rules setup is in sync.")).toHaveAttribute("role", "status");
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
@@ -86,6 +86,10 @@ describe("personal rules setup in the section lists", () => {
     };
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "rules_setup_status") return pending;
+      if (command === "rules_setup_review_list") return {
+        items: [{ id: "1", kind: "tool_edit", card: pending.proposals[0], answers: ["tool_only", "all_tools"] }],
+        review_tools: pending.review_tools,
+      };
       if (command === "rules_setup_skill_updates") return [];
       if (command === "get_rules_delivery") return { tools: [
         { id: "cursor", display_name: "Cursor", connected: true, method: "file", state: "delivered", rule_count: 1 },
@@ -94,13 +98,18 @@ describe("personal rules setup in the section lists", () => {
       return undefined;
     });
     setup({ section: "rules" });
+    const user = userEvent.setup();
+    const chip = await screen.findByRole("button", { name: "Cursor needs review" });
+    expect(chip.querySelector('[data-dot="problem"]')).toBeVisible();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    await user.click(chip);
     expect(await screen.findByRole("article", { name: "Cursor changed a rule" })).toBeInTheDocument();
-    expect(screen.getByText("Cursor changed one thing. Your call.")).toBeInTheDocument();
-    expect((await screen.findByRole("button", { name: "Cursor needs review" })).querySelector('[data-dot="problem"]')).toBeVisible();
+    expect(screen.getByText("1 change to review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "To review 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Codex" }).querySelector('[data-dot="delivered"]')).toBeVisible();
     cleanup();
     setup({ section: "skills" });
-    expect(await screen.findByText("Cursor changed one thing. Your call.")).toBeInTheDocument();
+    expect(await screen.findByText("1 change to review")).toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 
