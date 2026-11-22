@@ -1345,6 +1345,7 @@ mod tests {
     fn sample_page(id: &str, title: &str, content: &str) -> Page {
         let now = chrono::Utc::now().to_rfc3339();
         Page {
+            matched_section: None,
             id: id.to_string(),
             title: title.to_string(),
             summary: None,

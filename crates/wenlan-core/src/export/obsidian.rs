@@ -106,7 +106,7 @@ mod tests {
     use crate::pages::Page;
 
     fn test_concept() -> Page {
-        Page {
+        Page { matched_section: None,
             id: "concept_abc".to_string(),
             title: "libSQL Architecture".to_string(),
             summary: Some("Core database layer".to_string()),

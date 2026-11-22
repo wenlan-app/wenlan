@@ -84,6 +84,9 @@ pub struct SearchResult {
     /// For a note hit: its code bases that are not `ok`. Empty otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
+    /// For a page hit: the section of the page that matched best.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_section: Option<crate::pages::PageSectionHit>,
 }
 
 /// A full memory item with all metadata.

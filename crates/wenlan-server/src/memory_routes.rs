@@ -5099,6 +5099,7 @@ mod partition_pages_tests {
 
     fn make_result(source: &str, id: &str) -> SearchResult {
         SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: id.to_string(),

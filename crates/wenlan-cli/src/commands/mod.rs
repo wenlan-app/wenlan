@@ -83,6 +83,7 @@ mod tests {
 
     pub(super) fn page(title: &str, source_id: &str) -> SearchResult {
         SearchResult {
+            matched_section: None,
             basis: Vec::new(),
             code_basis: Vec::new(),
             id: "p1".to_string(),

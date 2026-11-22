@@ -467,6 +467,7 @@ fn confirm_and_observation_request_freeze() {
 
 fn sample_page(entity_id: Option<String>) -> Page {
     Page {
+        matched_section: None,
         id: "page_1".into(),
         title: "Title".into(),
         summary: Some("Summary".into()),
@@ -543,6 +544,7 @@ fn page_entity_id_freeze() {
 #[allow(clippy::too_many_arguments)]
 fn sample_search_result(entity_id: Option<String>, entity_name: Option<String>) -> SearchResult {
     SearchResult {
+        matched_section: None,
         basis: Vec::new(),
         code_basis: Vec::new(),
         id: "sr_1".into(),

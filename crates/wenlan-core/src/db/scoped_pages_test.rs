@@ -29,6 +29,7 @@ fn memory_doc(source_id: &str, space: &str) -> RawDocument {
 
 fn page(id: &str, workspace: Option<&str>) -> Page {
     Page {
+        matched_section: None,
         id: id.to_string(),
         title: id.to_string(),
         summary: None,
