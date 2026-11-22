@@ -565,6 +565,7 @@ pub(super) async fn create_page_impl(
         .unwrap_or_else(crate::pages::new_page_id);
     let now = chrono::Utc::now().to_rfc3339();
     let page = crate::pages::Page {
+        matched_section: None,
         id: id.clone(),
         title: req.title.clone(),
         summary: req.summary.clone(),

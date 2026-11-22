@@ -3958,7 +3958,10 @@ impl WenlanMcpServer {
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             output.push_str(&format!(
                 "\n\nCompiled pages:\n`confirmed: false` marks an AI-written page the user has \
-                 not confirmed or edited; `raw_score` is its relevance.\n{}",
+                 not confirmed or edited; `raw_score` is its relevance. `matched_section` is the \
+                 section of the page that matched best: `byte_start..byte_end` index into \
+                 `content`, and it is out of date when `page_version` differs from `version`. \
+                 A page can also come along because a memory above is one of its sources.\n{}",
                 pages_json
             ));
         }
