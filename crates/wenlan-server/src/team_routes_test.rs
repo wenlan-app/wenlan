@@ -2738,3 +2738,90 @@ async fn a_cloud_wenlan_opens_only_to_its_own_accounts_pass() {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused:?}");
     }
 }
+
+#[tokio::test]
+async fn a_cloud_wenlan_keeps_its_persons_library_files_and_no_other_server_has_them() {
+    use crate::cloud_locator::AccountId;
+    use crate::cloud_pass::{PassKey, PASS_HEADER};
+    let mut f = fixture();
+    team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let entrance = PassKey::random().unwrap();
+    let alice = AccountId::new();
+    let call = |state: TeamState, method: Method, uri: String, body: Vec<u8>| {
+        let pass = entrance
+            .for_account(&alice)
+            .sign_via(&alice, crate::cloud_pass::Via::Computer);
+        async move {
+            let response = team_router(state)
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header(PASS_HEADER, pass)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            (status, response_text(response).await)
+        }
+    };
+    let page = b"a page version".to_vec();
+    let path = format!(
+        "members/m1/pages/page_1/{}.wlv",
+        wenlan_core::shared_space::version::sha256_hex(&page)
+    );
+    let put = format!("/team/v1/library/file?path={path}");
+
+    // A team server has no library.
+    let (status, _) = call(
+        f.state.clone(),
+        Method::GET,
+        "/team/v1/library/files".into(),
+        vec![],
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK);
+
+    f.state.cloud = Some(Arc::new(CloudTenant {
+        account: alice.clone(),
+        key: entrance.for_account(&alice),
+    }));
+    let (status, _) = call(f.state.clone(), Method::PUT, put.clone(), page.clone()).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(
+        f.state.clone(),
+        Method::PUT,
+        put.clone(),
+        b"other bytes".to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, body) = call(
+        f.state.clone(),
+        Method::GET,
+        "/team/v1/library/files".into(),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["files"],
+        serde_json::json!([path])
+    );
+    let (status, body) = call(f.state.clone(), Method::GET, put.clone(), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_bytes(), page.as_slice());
+    let (status, _) = call(
+        f.state.clone(),
+        Method::GET,
+        "/team/v1/library/file?path=../team.json".into(),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // A computer does not reach the AI connectors yet.
+    let (status, _) = call(f.state.clone(), Method::POST, "/mcp".into(), vec![]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

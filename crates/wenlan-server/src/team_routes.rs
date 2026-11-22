@@ -1201,6 +1201,76 @@ pub async fn serve_team_listener(shared: SharedState, shutdown: ShutdownHandle) 
     }
 }
 
+/// The library copy of a person's Wenlan in the personal cloud; `None` on
+/// any other server, where the library routes are not there.
+fn cloud_library(state: &TeamState) -> Option<PathBuf> {
+    state.cloud.as_ref()?;
+    Some(
+        state
+            .team_path
+            .with_file_name(crate::cloud_library::LIBRARY_DIR),
+    )
+}
+
+/// `GET /team/v1/library/files`: `{"files": [...]}`, every file of the
+/// person's library copy.
+async fn library_files(State(state): State<TeamState>) -> Response {
+    let Some(root) = cloud_library(&state) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::task::spawn_blocking(move || crate::cloud_library::list(&root)).await {
+        Ok(Ok(files)) => Json(serde_json::json!({ "files": files })).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// `GET /team/v1/library/file?path=…`: one file of the library copy.
+async fn library_file(
+    State(state): State<TeamState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(root) = cloud_library(&state) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(local) = query
+        .get("path")
+        .and_then(|path| crate::cloud_library::local_path(&root, path))
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match tokio::fs::read(&local).await {
+        Ok(bytes) => ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// `PUT /team/v1/library/file?path=…`: keeps one file of the library. 422
+/// for a path a library does not hold or bytes that do not match the name.
+async fn library_put(
+    State(state): State<TeamState>,
+    Query(query): Query<HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Some(root) = cloud_library(&state) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(path) = query.get("path").cloned() else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match tokio::task::spawn_blocking(move || crate::cloud_library::put(&root, &path, &body)).await
+    {
+        Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(Err(refused))) => {
+            tracing::info!("[cloud] a library file was not kept: {refused:?}");
+            StatusCode::UNPROCESSABLE_ENTITY.into_response()
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 /// A person's Wenlan in the personal cloud has one member, its owner, who
 /// only ever comes in with the entrance's pass: made on the first start,
 /// with a key nobody keeps.
@@ -1419,6 +1489,8 @@ fn team_router(state: TeamState) -> axum::Router {
             axum::routing::delete(device::revoke),
         )
         .route("/team/v1/account/desktop-link", post(device::desktop_link))
+        .route("/team/v1/library/files", get(library_files))
+        .route("/team/v1/library/file", get(library_file).put(library_put))
         .route(
             "/team/v1/account/accounts/{provider}",
             axum::routing::delete(device::unlink),
@@ -2084,7 +2156,7 @@ pub(crate) fn member_app_calls() -> impl Iterator<Item = (&'static str, &'static
 pub(crate) mod auth;
 
 #[path = "team_device.rs"]
-mod device;
+pub(crate) mod device;
 
 /// Origins of web AI apps whose connectors may call `/mcp` from a browser.
 const ALLOWED_ORIGINS: &[&str] = &["https://claude.ai", "https://chatgpt.com"];
@@ -2180,8 +2252,14 @@ async fn require_member(State(state): State<TeamState>, mut req: Request, next: 
 
 /// A person's Wenlan in the personal cloud: the only way in is a pass the
 /// entrance signed for this account; no key or cookie is taken. The pass
-/// names the owner, the one person this Wenlan is for.
-async fn require_pass(state: TeamState, cloud: &CloudTenant, req: Request, next: Next) -> Response {
+/// names the owner, the one person this Wenlan is for, and whether their
+/// browser or one of their computers sent the request.
+async fn require_pass(
+    state: TeamState,
+    cloud: &CloudTenant,
+    mut req: Request,
+    next: Next,
+) -> Response {
     let refused = |status: StatusCode, text: &'static str| {
         let mut response = crate::member_view::MemberResponse::text(status, text).into_response();
         response
@@ -2194,9 +2272,10 @@ async fn require_pass(state: TeamState, cloud: &CloudTenant, req: Request, next:
         .get(crate::cloud_pass::PASS_HEADER)
         .and_then(|value| value.to_str().ok())
         .and_then(|pass| cloud.key.verify(pass));
-    if passed.as_ref() != Some(&cloud.account) {
-        return refused(StatusCode::UNAUTHORIZED, "sign in again");
-    }
+    let via = match passed {
+        Some((account, via)) if account == cloud.account => via,
+        _ => return refused(StatusCode::UNAUTHORIZED, "sign in again"),
+    };
     let path = state.team_path.clone();
     let owner = tokio::task::spawn_blocking(move || {
         team::read_team(&path).map(|file| {
@@ -2214,7 +2293,24 @@ async fn require_pass(state: TeamState, cloud: &CloudTenant, req: Request, next:
                 .into_response()
         }
     };
-    admit_browser(&state, member, req, next).await
+    match via {
+        crate::cloud_pass::Via::Browser => admit_browser(&state, member, req, next).await,
+        // One of the owner's computers, with the key the entrance gave it:
+        // what the owner's own key reaches, except AI connectors (not in
+        // the trial yet). No page sent it.
+        crate::cloud_pass::Via::Computer => {
+            let credential = team::Credential::LegacyKey;
+            if !credential_may_reach(credential.kind(), req.uri().path())
+                || route_class(req.uri().path()) == RouteClass::Mcp
+                || req.headers().contains_key(header::ORIGIN)
+            {
+                return refused(StatusCode::FORBIDDEN, "this computer does not open that");
+            }
+            req.extensions_mut().insert(member);
+            req.extensions_mut().insert(credential);
+            next.run(req).await
+        }
+    }
 }
 
 /// A browser's request, by its session cookie. Every answer, refusals

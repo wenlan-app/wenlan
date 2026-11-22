@@ -19,6 +19,9 @@ vi.mock("../../lib/tauri", () => ({
   shareLibrary: vi.fn(),
   stopSharingLibrary: vi.fn(),
   setLibraryMainDevice: vi.fn(),
+  cloudStatus: vi.fn(() => Promise.resolve({ state: "off", url: "https://wenlan.app" })),
+  connectCloud: vi.fn(),
+  disconnectCloud: vi.fn(),
 }));
 
 function renderPage() {
@@ -39,6 +42,7 @@ describe("Settings > Sync tab", () => {
     renderPage();
     expect(within(screen.getByRole("banner")).getByRole("heading", { name: "Sync" })).toBeInTheDocument();
     expect(await screen.findByText("Sync to other computers and phone")).toBeInTheDocument();
+    expect(await screen.findByText("Wenlan cloud")).toBeInTheDocument();
   });
 
   it("sits right after Connections in the sidebar", () => {

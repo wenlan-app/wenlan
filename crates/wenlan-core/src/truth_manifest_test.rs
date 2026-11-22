@@ -361,9 +361,11 @@ fn manifest_counts_match_the_spec() {
     // Then 416 after POST `/api/handoff` (the canonical Brief write contract).
     // Then 417 after POST `/api/rules/setup/review/preview` (personal command
     // and subagent review preview; no page text). GET setup status adds one.
+    // Then 421 after connecting this computer to its Wenlan cloud (GET and
+    // DELETE `/api/cloud`, POST `/api/cloud/connect`): status, no key.
     assert_eq!(
         HTTP_READERS.len(),
-        418,
+        421,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -377,7 +379,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        430,
+        433,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -385,7 +387,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        413,
+        416,
         "main builder entries"
     );
     assert_eq!(
@@ -592,7 +594,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        408 // 21 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes and POST /api/handoff, all with no page markers.
+        411 // 3 cloud connect routes, 21 personal setup, checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes and POST /api/handoff, all with no page markers.
     );
 }
 

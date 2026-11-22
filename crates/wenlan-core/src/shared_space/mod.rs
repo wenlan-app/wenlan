@@ -85,6 +85,7 @@
 //! are kept in `shared-spaces.json` under the data root, outside the
 //! database, so a rebuilt database stays the same member.
 
+pub mod cloud;
 mod follow;
 pub mod library;
 mod member_import;
@@ -1711,6 +1712,13 @@ async fn run_pass(
 ) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
     if matches!(scope, Scope::Library) {
+        // The cloud's files first, so this pass sees what other computers
+        // sent there.
+        if let Some(Err(reason)) = cloud::mirror_library(settings_path, &folder).await {
+            log::warn!("[shared_space] library: Wenlan cloud: {reason}");
+        }
+    }
+    if matches!(scope, Scope::Library) {
         // Two computers that each started a library in the same folder
         // (the second one before its cloud drive had downloaded the first
         // one's) come together in one: the library of the smallest member
@@ -1799,6 +1807,12 @@ async fn run_pass(
         if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
             clear_rule_layer_if_refused(settings_path, &host, &reason)?;
             return Ok(Err(reason.to_string()));
+        }
+    }
+    if matches!(scope, Scope::Library) {
+        // And this pass's new versions to the cloud.
+        if let Some(Err(reason)) = cloud::mirror_library(settings_path, &folder).await {
+            log::warn!("[shared_space] library: Wenlan cloud: {reason}");
         }
     }
     Ok(Ok(counts))

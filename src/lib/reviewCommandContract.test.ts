@@ -84,6 +84,11 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "share_library",
   "stop_sharing_library",
   "set_library_main_device",
+  // Wenlan cloud needs a real cloud and a browser sign-in; the fixture has
+  // neither and must not pretend this computer connected.
+  "cloud_status",
+  "connect_cloud",
+  "disconnect_cloud",
   "stop_sharing_space",
   "stop_sharing_page",
   "look_in_shared_folder",

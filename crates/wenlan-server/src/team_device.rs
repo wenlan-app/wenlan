@@ -140,6 +140,11 @@ impl DeviceStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// How long both codes work.
+    pub(crate) fn ttl(&self) -> Duration {
+        self.ttl
+    }
+
     /// Test knobs.
     #[cfg(test)]
     pub(crate) fn tuned(mut self, ttl: Duration, interval: Duration) -> Self {
@@ -192,7 +197,7 @@ impl DeviceStore {
 
     /// Marks a live, undecided short code as being allowed, so nobody else
     /// allows it too. Returns the tool and the grant's id for [`Self::ready`].
-    fn begin_issue(&self, user_code: &str) -> Option<(Hash, String)> {
+    pub(crate) fn begin_issue(&self, user_code: &str) -> Option<(Hash, String)> {
         let mut grants = self.grants();
         let ttl = self.ttl;
         let (id, grant) = grants.iter_mut().find(|(_, grant)| {
@@ -204,7 +209,7 @@ impl DeviceStore {
         Some((*id, grant.tool.clone()))
     }
 
-    fn ready(&self, id: &Hash, outcome: Option<TeamDeviceGrant>) {
+    pub(crate) fn ready(&self, id: &Hash, outcome: Option<TeamDeviceGrant>) {
         if let Some(grant) = self.grants().get_mut(id) {
             grant.status = match outcome {
                 Some(ready) => Status::Ready(ready),
@@ -262,7 +267,7 @@ impl DeviceStore {
     }
 
     /// Whether this member may still type a short code.
-    fn may_try(&self, member_id: &str) -> bool {
+    pub(crate) fn may_try(&self, member_id: &str) -> bool {
         let mut misses = self
             .misses
             .lock()
@@ -274,7 +279,7 @@ impl DeviceStore {
             .is_none_or(|(count, _)| *count < MISSES_ALLOWED)
     }
 
-    fn missed(&self, member_id: &str) {
+    pub(crate) fn missed(&self, member_id: &str) {
         let mut misses = self
             .misses
             .lock()
@@ -292,7 +297,7 @@ fn error(status: StatusCode, code: &'static str) -> Response {
 
 /// A tool name worth showing: trimmed, no control characters, not empty,
 /// at most [`TOOL_NAME_MAX`] characters.
-fn clean_tool(name: &str) -> Option<String> {
+pub(crate) fn clean_tool(name: &str) -> Option<String> {
     let name = name.trim();
     if name.is_empty() || name.chars().any(char::is_control) {
         return None;
@@ -300,7 +305,7 @@ fn clean_tool(name: &str) -> Option<String> {
     Some(name.chars().take(TOOL_NAME_MAX).collect())
 }
 
-async fn read_json<T: serde::de::DeserializeOwned>(req: Request) -> Option<T> {
+pub(crate) async fn read_json<T: serde::de::DeserializeOwned>(req: Request) -> Option<T> {
     let bytes = axum::body::to_bytes(req.into_body(), 4 * 1024).await.ok()?;
     serde_json::from_slice(&bytes).ok()
 }

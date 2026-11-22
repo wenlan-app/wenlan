@@ -312,7 +312,7 @@ fn shared_folder_path(folder: &str) -> Result<std::path::PathBuf, ServerError> {
     Ok(path)
 }
 
-async fn shared_sync(
+pub(crate) async fn shared_sync(
     state: &Arc<RwLock<ServerState>>,
     scope: wenlan_core::shared_space::Scope,
     req: wenlan_types::shared_space::SharedSyncRequest,

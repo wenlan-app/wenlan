@@ -711,6 +711,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       member_id: a.memberId ?? null,
     }),
   stop_sharing_library: () => del("/api/library/shared"),
+  cloud_status: () => get("/api/cloud"),
+  connect_cloud: () => post("/api/cloud/connect", {}),
+  disconnect_cloud: () => del("/api/cloud"),
   set_library_main_device: (a) =>
     post("/api/library/shared/main", { device_id: String(a.deviceId) }),
   stop_sharing_page: (a) => del(`/api/pages/${enc(String(a.id))}/shared`),

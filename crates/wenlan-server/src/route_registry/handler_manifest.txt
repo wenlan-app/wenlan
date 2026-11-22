@@ -366,6 +366,9 @@ main|post|/api/library/shared/sync|wenlan_server::spaces_routes::handle_library_
 main|post|/api/library/shared/main|wenlan_server::spaces_routes::handle_library_shared_main
 main|get|/api/library/shared|wenlan_server::spaces_routes::handle_library_shared_status
 main|delete|/api/library/shared|wenlan_server::spaces_routes::handle_library_shared_leave
+main|get|/api/cloud|wenlan_server::cloud_connect::handle_cloud_status
+main|delete|/api/cloud|wenlan_server::cloud_connect::handle_cloud_disconnect
+main|post|/api/cloud/connect|wenlan_server::cloud_connect::handle_cloud_connect
 main|get|/api/team|wenlan_server::team_routes::handle_team_status
 main|put|/api/team|wenlan_server::team_routes::handle_rename_team
 main|post|/api/team/members|wenlan_server::team_routes::handle_add_member

@@ -1640,6 +1640,37 @@ export async function stopSharingLibrary(): Promise<void> {
   await invoke("stop_sharing_library");
 }
 
+/** The short code the person allows in the browser to connect this
+ *  computer to their Wenlan cloud. */
+export interface CloudConnectStart {
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+}
+
+/** Where this computer is with its Wenlan cloud. */
+export interface CloudStatus {
+  state: "off" | "waiting" | "connected";
+  url: string;
+  /** While waiting: the code and the page it is typed at. */
+  start?: CloudConnectStart;
+  /** When the library and the cloud were last the same (RFC 3339). */
+  last_ok_at?: string;
+  error?: string;
+}
+
+export async function cloudStatus(): Promise<CloudStatus> {
+  return invoke("cloud_status");
+}
+
+export async function connectCloud(): Promise<CloudConnectStart> {
+  return invoke("connect_cloud");
+}
+
+export async function disconnectCloud(): Promise<CloudStatus> {
+  return invoke("disconnect_cloud");
+}
+
 export async function setLibraryMainDevice(deviceId: string): Promise<SharedStatus> {
   return invoke("set_library_main_device", { deviceId });
 }
