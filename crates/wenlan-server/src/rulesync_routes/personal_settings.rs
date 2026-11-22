@@ -23,6 +23,11 @@ use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 
 const PROPOSAL_PREFIX: &str = "setting-";
 
+/// Whether a review id names a personal-settings proposal.
+pub(super) fn is_proposal(id: &str) -> bool {
+    id.starts_with(PROPOSAL_PREFIX)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Managed {
     key: Key,
@@ -524,7 +529,55 @@ fn proposal(
     })
 }
 
+/// Whether a managed entry was edited by hand and waits for a review card,
+/// the same test sync uses before it offers a settings proposal.
+fn awaits_review(
+    location: &Location,
+    file: &LiveFile,
+    state: &Managed,
+    current: Option<&Entry>,
+) -> bool {
+    !(current == state.before.as_ref()
+        || current == state.wanted.as_ref()
+        || (current.is_none() && file.doc.has(&state.key))
+        || state.waiting_for_absent_entry()
+        || current
+            .into_iter()
+            .chain(state.before.iter())
+            .chain(state.wanted.iter())
+            .any(|entry| !reviewable(location.tool, entry)))
+}
+
 impl Setup {
+    /// Settings proposals waiting in To review, read without writing.
+    pub(super) fn personal_setting_proposals(
+        &self,
+        root: &FileRoot,
+        manifest: &Manifest,
+    ) -> Result<Vec<PullbackCard>> {
+        let view = View::read(&self.home, root, manifest)?;
+        let mut worktrees = DeliveryWorktrees::new(&self.home)?;
+        let mut cards = Vec::new();
+        for (location, file) in &view.files {
+            let path = &location.path;
+            let (Ok(file), Some(managed)) = (file, manifest.personal_settings.get(path)) else {
+                continue;
+            };
+            if reserved(manifest, path) {
+                continue;
+            }
+            for state in managed {
+                let current = file.doc.entry(&state.key);
+                if awaits_review(location, file, state, current) {
+                    cards.push(
+                        proposal(&view, manifest, &mut worktrees, location, state, current)?.card,
+                    );
+                }
+            }
+        }
+        Ok(cards)
+    }
+
     pub(super) fn sync_personal_settings(
         &self,
         root: &FileRoot,
@@ -719,16 +772,7 @@ impl Setup {
             }
             for state in managed {
                 let current = file.doc.entry(&state.key);
-                if current == state.before.as_ref()
-                    || current == state.wanted.as_ref()
-                    || (current.is_none() && file.doc.has(&state.key))
-                    || state.waiting_for_absent_entry()
-                    || current
-                        .into_iter()
-                        .chain(state.before.iter())
-                        .chain(state.wanted.iter())
-                        .any(|entry| !reviewable(location.tool, entry))
-                {
+                if !awaits_review(location, file, state, current) {
                     continue;
                 }
                 let proposed = proposal(&view, manifest, &mut worktrees, location, state, current)?;
@@ -747,8 +791,10 @@ impl Setup {
                     "the tool edited this settings file again. Run rules sync."
                 );
                 let key = state.key.clone();
-                let dismiss_write = request.action == PullbackAction::Dismiss
-                    && state.wanted.as_ref().is_some_and(Entry::can_reapply);
+                let dismiss_write = matches!(
+                    request.action,
+                    PullbackAction::Dismiss | PullbackAction::Revert
+                ) && state.wanted.as_ref().is_some_and(Entry::can_reapply);
                 let wanted = if dismiss_write {
                     state.wanted.clone()
                 } else {

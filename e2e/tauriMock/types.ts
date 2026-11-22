@@ -71,6 +71,7 @@ export type InstallTauriMockOptions = {
   readonly delays?: Readonly<Record<string, number>>;
   readonly localStorage?: Readonly<Record<string, string>>;
   readonly pageScenario?: TauriMockPageScenario;
+  readonly rulesSetup?: import("../../preview/rulesSetupFixture").RulesSetupState;
 };
 
 export type BrowserErrorCapture = {

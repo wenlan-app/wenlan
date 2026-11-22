@@ -9,6 +9,7 @@ use super::*;
 const EMBEDDING_MODEL_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
 /// Longest wait between retries.
 const EMBEDDING_MODEL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const RULES_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 /// Publish the bound port for whoever is polling `WENLAN_PORT_FILE`.
 ///
@@ -91,6 +92,56 @@ async fn recover_null_memory_embeddings_in_background(
             biased;
             _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
             _ = wenlan_server::embedding_backfill::requested() => {}
+        }
+    }
+}
+
+/// How often the page chunk worker looks for pages whose sections are missing
+/// or of an older version.
+const PAGE_CHUNK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Keep `page_chunks` (page sections with one vector each, used by page
+/// search) in step with pages: every minute, chunk the pages that are new or
+/// changed, one bounded batch per background maintenance lease. Covers the
+/// first fill after migration 171 the same way. Idle while the embedding
+/// model is not loaded or `WENLAN_ENABLE_PAGE_CHUNK_VECTORS` is off.
+async fn refresh_page_chunks_in_background(
+    db: Arc<wenlan_core::db::MemoryDB>,
+    maintenance: wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    use wenlan_core::db::page_chunks::{page_chunk_vectors_enabled, PAGE_CHUNK_BATCH};
+    loop {
+        if lifecycle::sleep_or_shutdown(&mut shutdown, PAGE_CHUNK_INTERVAL).await {
+            return;
+        }
+        if !page_chunk_vectors_enabled() || !db.embedder_ready() {
+            continue;
+        }
+        let mut written = 0usize;
+        loop {
+            let guard = tokio::select! {
+                biased;
+                _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+                guard = maintenance.begin_background() => guard,
+            };
+            let batch = db.refresh_page_chunks_batch(PAGE_CHUNK_BATCH).await;
+            drop(guard);
+            match batch {
+                // Stop when nothing is left, or when a batch only skipped
+                // pages (changed meanwhile, or no vector): the next minute
+                // tries them again.
+                Ok(batch) if batch.pages == 0 => break,
+                Ok(batch) => written += batch.pages,
+                Err(error) => {
+                    tracing::warn!("[page_chunks] background chunking stopped: {error}");
+                    break;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        if written > 0 {
+            tracing::info!("[page_chunks] chunked {written} new or changed pages");
         }
     }
 }
@@ -206,6 +257,27 @@ pub(super) async fn register_optional_runtime_workers(
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         let shared_for_outbox = shared.clone();
         let mut outbox_shutdown = { shared.read().await.shutdown.subscribe() };
+        if wenlan_core::rulesync_personal::enabled() {
+            let shutdown = outbox_shutdown.clone();
+            // Both directories are siblings under the selected Wenlan data root.
+            let rules_data = data_dir.with_file_name("rulesync");
+            let rules_state = shared.clone();
+            tokio::spawn(async move {
+                let mut watch = wenlan_server::RulesWatch::default();
+                let first = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut interval = tokio::time::interval_at(first, RULES_WATCH_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+                        _ = interval.tick() => {
+                            watch = watch.check(rules_data.clone(), &rules_state).await;
+                        }
+                    }
+                }
+            });
+        }
         // Things (一件事): sort new conversations into things every minute,
         // so one written through any route lands in a thing without anyone
         // asking.
@@ -418,6 +490,11 @@ pub(super) async fn register_optional_runtime_workers(
         // (`MemoryEmbeddingRecovery::Deferred` in startup.rs) are recovered
         // here, after the daemon serves, by one worker.
         tokio::spawn(recover_null_memory_embeddings_in_background(
+            db_arc.clone(),
+            maintenance_for_ready.clone(),
+            shutdown_for_reconcile.subscribe(),
+        ));
+        tokio::spawn(refresh_page_chunks_in_background(
             db_arc.clone(),
             maintenance_for_ready.clone(),
             shutdown_for_reconcile.subscribe(),

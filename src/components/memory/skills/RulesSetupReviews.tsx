@@ -4,8 +4,9 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-  applyRulesReview, previewRulesReview, type PullbackAction, type PullbackCard,
-  type PullbackDecision, type PullbackPreview, type RulesSetupStatus,
+  applyRulesReview, applyRulesSettings, dismissRulesSkillUpdate, previewRulesReview, reviewRulesSkill,
+  type PullbackAction, type PullbackCard, type PullbackDecision, type PullbackPreview, type RulesSettingsPlan,
+  type RulesReviewItem, type RulesReviewList, type RulesSetupStatus, type RulesSkillReviewRequest,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { Button } from "../settings/primitives";
@@ -14,12 +15,77 @@ import { RulesSetupDiff } from "./RulesSetupDiff";
 import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice } from "./rulesSetupText";
 import "./rulesSetup.css";
 
-export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatus }) {
+export function RulesSetupReviews({ review }: { readonly review: RulesReviewList }) {
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ decision: PullbackDecision; result: PullbackPreview; label: string } | null>(null);
   const [feedback, setFeedback] = useState<{ failed: boolean; message: string } | null>(null);
+
+  const [otherPreview, setOtherPreview] = useState<{
+    id: string; label: string; details?: React.ReactNode; apply: () => Promise<unknown>;
+  } | null>(null);
+
+  async function prepareOther(item: Exclude<RulesReviewItem, { kind: "tool_edit" }>, action: PullbackAction, label: string) {
+    setBusy(item.id);
+    setFeedback(null);
+    try {
+      if (item.kind === "settings") {
+        setOtherPreview({ id: item.id, label, details: <SettingsChanges plan={item.plan} />,
+          apply: () => applyRulesSettings(item.plan.token) });
+      } else if (item.kind === "skill_update") {
+        setOtherPreview({ id: item.id, label, apply: () => dismissRulesSkillUpdate(item.id) });
+      } else {
+        const proposal = item.proposal;
+        const scope = action === "all_tools" ? { kind: "shared" as const }
+          : proposal.origin.kind !== "agent" ? { kind: "tool" as const, tool: proposal.origin.tool }
+          : proposal.scope;
+        const request: RulesSkillReviewRequest = { id: proposal.id, action: "dismiss" };
+        let details: React.ReactNode;
+        if (action !== "dismiss") {
+          const result = await reviewRulesSkill({ id: proposal.id, action: "preview", scope });
+          if (result.status !== "review_preview" || result.delivery.blocked.length) throw new Error("Skill review is blocked");
+          const changed = result.delivery.files;
+          details = <ul className="rules-setup-files">
+            {changed.map(({ before, after }, index) => (
+              <li key={index}>{rulesSetupMessage(t, !before ? "create_copy" : !after ? "remove_copy" : "replace_copy")}
+                {before?.permissions !== after?.permissions && <> · {[before?.permissions, after?.permissions].filter(Boolean).join(" → ")}</>}
+              </li>
+            ))}
+            {result.delivery.cleared_overrides?.map((tool) => <li key={tool}>{rulesSetupName(tool)}</li>)}
+          </ul>;
+          Object.assign(request, { action: "accept", scope, token: result.delivery.token });
+        }
+        setOtherPreview({ id: item.id, label, details, apply: () => reviewRulesSkill(request) });
+      }
+    } catch {
+      setFeedback({ failed: true, message: t("rulesSetup.previewFailed") });
+      await refreshRulesSetup(client, true);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function confirmOther() {
+    if (!otherPreview) return;
+    setBusy(otherPreview.id);
+    setOtherPreview(null);
+    try {
+      const result = await otherPreview.apply();
+      if (result && typeof result === "object") {
+        const report = "delivery" in result ? result.delivery : result;
+        if (report && typeof report === "object" && "blocked" in report &&
+            Array.isArray(report.blocked) && report.blocked.length) {
+          setFeedback({ failed: false, message: t("rulesSetup.reviewRemaining") });
+        }
+      }
+    } catch {
+      setFeedback({ failed: true, message: t("rulesSetup.changeFailed") });
+    } finally {
+      await refreshRulesSetup(client, true);
+      setBusy(null);
+    }
+  }
 
   async function prepare(decision: PullbackDecision, label: string) {
     setBusy(decision.id);
@@ -50,13 +116,23 @@ export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatu
     }
   }
 
-  const currentReview = preview && status.proposals.find((card) => card.id === preview.decision.id);
+  const currentItem = preview && review.items.find((item) => item.id === preview.decision.id);
+  const currentReview = currentItem?.kind === "tool_edit" ? currentItem.card : null;
+  const currentOther = otherPreview && review.items.some((item) => item.id === otherPreview.id);
   return (
     <>
-      {status.proposals.map((card) => (
-        <ReviewCard key={card.id} card={card} tools={status.review_tools}
-          busy={busy !== null || !!currentReview} onChoice={(decision, label) => void prepare(decision, label)} />
+      {review.items.map((item) => item.kind === "tool_edit" ? (
+        <ReviewCard key={item.id} card={item.card} answers={item.answers} tools={review.review_tools}
+          busy={busy !== null || !!currentReview || !!currentOther} onChoice={(decision, label) => void prepare(decision, label)} />
+      ) : (
+        <OtherReviewCard key={item.id} item={item} toolName={review.review_tools[item.id]?.name} busy={busy !== null || !!currentReview || !!currentOther}
+          onChoice={(action, label) => void prepareOther(item, action, label)} />
       ))}
+      {currentOther && otherPreview && createPortal(
+        <ConfirmDialog tone="neutral" message={t("rulesSetup.reviewTitle")} details={otherPreview.details}
+          confirmLabel={otherPreview.label} cancelLabel={t("rulesSetup.cancel")}
+          onAnswer={(yes) => { if (yes) void confirmOther(); else setOtherPreview(null); }} />, document.body,
+      )}
       {feedback && <p className="rules-setup-note" role={feedback.failed ? "alert" : "status"}>{feedback.message}</p>}
       {preview && currentReview && createPortal(
         <ConfirmDialog
@@ -69,11 +145,11 @@ export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatu
               ))}</ul>
             ) : <p className="rules-setup-reason">{rulesSetupMessage(t)}</p>}
             <ul className="rules-setup-files">{(preview.decision.file ? [preview.decision.file] : currentReview.files).map((file) => (
-              <li key={file}>{rulesSetupFileLabel(t, status.review_tools[file], file)}</li>
+              <li key={file}>{rulesSetupFileLabel(t, review.review_tools[file], file)}</li>
             ))}</ul>
             <RulesSetupDiff diff={preview.result.diff} codes={preview.result.diff_codes} />
           </>}
-          confirmLabel={preview.decision.action === "dismiss" ? t("rulesSetup.restore") : preview.label}
+          confirmLabel={preview.decision.action === "revert" ? t("rulesSetup.restore") : preview.label}
           cancelLabel={t("rulesSetup.cancel")}
           onAnswer={(yes) => { if (yes) void confirm(); else setPreview(null); }}
         />, document.body,
@@ -82,8 +158,9 @@ export function RulesSetupReviews({ status }: { readonly status: RulesSetupStatu
   );
 }
 
-function ReviewCard({ card, tools, busy, onChoice }: {
+function ReviewCard({ card, answers, tools, busy, onChoice }: {
   readonly card: PullbackCard;
+  readonly answers: PullbackAction[];
   readonly tools: RulesSetupStatus["review_tools"];
   readonly busy: boolean;
   readonly onChoice: (decision: PullbackDecision, label: string) => void;
@@ -93,12 +170,14 @@ function ReviewCard({ card, tools, busy, onChoice }: {
   const [source, setSource] = useState(card.files[0]);
   const tool = rulesSetupName(tools[source]?.name) || t("rulesSetup.thisTool");
   const names = [...new Set(card.files.map((file) => rulesSetupName(tools[file]?.name)).filter(Boolean))];
+  const [file] = card.files;
+  const fileLabel = card.files.length === 1 ? rulesSetupFileLabel(t, tools[file], file) : undefined;
   const scope = card.kind === "scope";
   const all = t("rulesSetup.allTools");
   const only = t("rulesSetup.toolOnly", { tool });
   const no = t("rulesSetup.no");
   const choice = (action: PullbackAction, label: string) =>
-    onChoice({ id: card.id, action, ...(action !== "dismiss" && card.files.length > 1 ? { file: source } : {}) }, label);
+    onChoice({ id: card.id, action, ...((action === "tool_only" || action === "all_tools") && card.files.length > 1 ? { file: source } : {}) }, label);
 
   return (
     <article className="rules-setup-review" aria-labelledby={headingId}>
@@ -106,7 +185,8 @@ function ReviewCard({ card, tools, busy, onChoice }: {
         ? t(scope ? "rulesSetup.ruleChanged" : "rulesSetup.toolChanged", { tool: names[0] })
         : t("rulesSetup.reviewTitle")}</h2>
       {scope && <p>{t("rulesSetup.alreadyApplies", { tool })}</p>}
-      <p className="rules-setup-reason">{rulesSetupMessage(t, card.reason_code)}</p>
+      {(!scope || card.reason_code !== "scope_edit") &&
+        <p className="rules-setup-reason">{rulesSetupMessage(t, card.reason_code)}</p>}
       {card.files.length > 1 ? (
         <label className="rules-setup-source">
           {t("rulesSetup.chooseSource")}
@@ -114,21 +194,72 @@ function ReviewCard({ card, tools, busy, onChoice }: {
             {card.files.map((file) => <option key={file} value={file}>{rulesSetupFileLabel(t, tools[file], file)}</option>)}
           </select>
         </label>
-      ) : (
-        <ul className="rules-setup-files">{card.files.map((file) => <li key={file}>{rulesSetupFileLabel(t, tools[file], file)}</li>)}</ul>
-      )}
+      ) : fileLabel && fileLabel !== names[0] && <p className="rules-setup-files">{fileLabel}</p>}
       <RulesSetupDiff diff={card.diff} codes={card.diff_codes} />
       <div className="rules-setup-actions">
-        {scope && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
-        <Button type="button" disabled={busy} onClick={() => choice("tool_only", only)}>{only}</Button>
-        {!scope && <>
-          <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>
-          <Button type="button" variant="ghost" disabled={busy} onClick={() => choice("dismiss", no)}>{no}</Button>
-        </>}
+        {answers.includes("all_tools") && <Button type="button" variant="primary" disabled={busy} onClick={() => choice("all_tools", all)}>{all}</Button>}
+        {answers.includes("tool_only") && <Button type="button" disabled={busy} onClick={() => choice("tool_only", only)}>{only}</Button>}
+        {!scope && answers.includes("revert") && <Button type="button" variant="ghost" disabled={busy} onClick={() => choice("revert", no)}>{no}</Button>}
       </div>
       {!scope && <p className="rules-setup-note">{names.length > 1
         ? t("rulesSetup.noEffectMany", { tools: new Intl.ListFormat(i18n.resolvedLanguage).format(names) })
         : t("rulesSetup.noEffect", { tool })}</p>}
     </article>
   );
+}
+
+
+export function SettingsChanges({ plan }: { readonly plan: RulesSettingsPlan }) {
+  const { t } = useTranslation();
+  return <>
+    {plan.notice && <p>{rulesSetupMessage(t, "recovery_needed")}</p>}
+    {plan.files.map((file) => (
+      <section key={file.path}>
+        <h3>{rulesSetupName(file.tool?.name) || t("rulesSetup.thisTool")}</h3>
+        <RulesSetupDiff diff={addedTextDiff(file.diff.split("\n").slice(1).filter((line) => line.startsWith("+")).map((line) => line.slice(1)))} />
+      </section>
+    ))}
+  </>;
+}
+
+function OtherReviewCard({ item, toolName, busy, onChoice }: {
+  readonly item: Exclude<RulesReviewItem, { kind: "tool_edit" }>;
+  readonly toolName?: string;
+  readonly busy: boolean;
+  readonly onChoice: (action: PullbackAction, label: string) => void;
+}) {
+  const { t } = useTranslation();
+  const heading = useId();
+  const proposal = item.kind === "skill_proposal" ? item.proposal : null;
+  const tool = rulesSetupName(toolName) || t("rulesSetup.thisTool");
+  const label = (action: PullbackAction) => {
+    if (action === "tool_only") return t("rulesSetup.toolOnly", { tool });
+    if (action === "all_tools") return t("rulesSetup.allTools");
+    return t("rulesSetup.dismiss");
+  };
+  return (
+    <article className="rules-setup-review" aria-labelledby={heading}>
+      <h2 id={heading}>{item.kind === "settings" ? t("rulesSetup.settingsChanges")
+        : item.kind === "skill_update" ? t("rulesSetup.updateFor", { name: item.update.name })
+        : t("rulesSetup.proposalFor", { name: item.proposal.name })}</h2>
+      {item.kind === "settings" && (item.answers.length ? <SettingsChanges plan={item.plan} />
+        : <p>{t("rulesSetup.previewFailed")}</p>)}
+      {item.kind === "skill_update" && item.update.status.state === "available" && <p>{item.update.status.revision}</p>}
+      {proposal?.files.map((file) => file.text !== null && (
+        <RulesSetupDiff key={file.path} diff={addedTextDiff(file.text.trimEnd().split("\n"))} />
+      ))}
+      {proposal?.changes?.removed.map((path) => <p key={path}>{rulesSetupMessage(t, "remove_copy")}</p>)}
+      {!!proposal?.changes?.oversized?.length && <p>{rulesSetupMessage(t)}</p>}
+      <div className="rules-setup-actions">
+        {item.answers.map((action) => (
+          <Button key={action} type="button" disabled={busy} onClick={() => onChoice(action, label(action))}>{label(action)}</Button>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function addedTextDiff(lines: string[]): string {
+  if (!lines.length) return "";
+  return ["--- ", "+++ ", `@@ -0,0 +1,${lines.length} @@`, ...lines.map((line) => "+" + line)].join("\n");
 }

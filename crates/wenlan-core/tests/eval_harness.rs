@@ -2260,6 +2260,7 @@ async fn seed_backfill_episodes() {
 ///   3. entity + memory_entities sweep (GPU)   → graph substrate
 ///   4. episode backfill (GPU-free embed)      → episode substrate
 ///   5. distill pages (GPU)                    → page substrate
+///   5b. chunk pages (GPU-free embed)          → page chunk substrate
 ///   6. assert SeedExpectations::complete()    → fail loud on any starved channel
 ///
 /// Adding a write-time channel? Add its step here AND its floor to
@@ -2438,6 +2439,21 @@ async fn seed_scenario_dbs_complete() {
              = LLM lane skipped.",
             r.pending.len()
         );
+
+        // 5b. page chunks (GPU-free embed): the same batch the daemon's
+        // background worker runs, until every active page is chunked.
+        let mut chunked = 0usize;
+        loop {
+            let batch = db
+                .refresh_page_chunks_batch(wenlan_core::db::page_chunks::PAGE_CHUNK_BATCH)
+                .await
+                .expect("chunk pages");
+            if batch.pages == 0 {
+                break;
+            }
+            chunked += batch.pages;
+        }
+        eprintln!("[seed_complete] 5b pages chunked: {chunked}");
 
         // 6. completeness gate. Drop the MemoryDB lock first, open a fresh conn.
         drop(db);

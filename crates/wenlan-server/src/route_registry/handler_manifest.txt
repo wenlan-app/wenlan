@@ -400,6 +400,8 @@ main|post|/api/rules/setup/adopt/preview|wenlan_server::rulesync_routes::adopt_p
 main|post|/api/rules/setup/restore|wenlan_server::rulesync_routes::restore
 main|post|/api/rules/setup/skill-updates|wenlan_server::rulesync_routes::skill_updates
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
+main|get|/api/rules/setup/review|wenlan_server::rulesync_routes::review_list::list
+main|post|/api/rules/setup/review/dismiss-update|wenlan_server::rulesync_routes::review_list::dismiss_update
 main|post|/api/rules/setup/review|wenlan_server::rulesync_routes::review
 main|post|/api/rules/setup/review/preview|wenlan_server::rulesync_routes::review_preview
 main|post|/api/rules/setup/settings/preview|wenlan_server::rulesync_settings_routes::preview
