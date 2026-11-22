@@ -67,6 +67,7 @@ mod okf_concepts;
 mod onboarding_milestones;
 pub mod originals;
 mod page_basis;
+pub mod page_chunks;
 mod page_drafts;
 pub mod page_export;
 pub mod page_history_actor;
@@ -1635,7 +1636,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 170;
+pub const SCHEMA_VERSION: u32 = 171;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -11233,6 +11234,15 @@ impl MemoryDB {
             }
             if version < 170 {
                 self.migrate_170_recall_page_reads(version).await?;
+            }
+
+            // Migration 171: `page_chunks`, page sections with one vector
+            // each. See db/page_chunks.rs.
+            if ceiling < 171 {
+                return Ok(());
+            }
+            if version < 171 {
+                self.migrate_171_page_chunks(version).await?;
             }
         }
 
@@ -59788,7 +59798,7 @@ impl MemoryDB {
             concept_select,
         );
         // Skipped while no model is loaded; the FTS channel below still runs.
-        if let Some(vec_str) = query_vector {
+        if let Some(vec_str) = query_vector.clone() {
             let vec_result = if let Some(pt) = page_type {
                 conn.query(
                     &vec_sql,
@@ -59842,6 +59852,31 @@ impl MemoryDB {
                     log::warn!("[search_pages] vector search failed: {e}");
                 }
             }
+        }
+
+        // A page is also found by its closest section (db/page_chunks.rs).
+        if let Some(vec_str) = query_vector
+            .clone()
+            .filter(|_| page_chunks::page_chunk_vectors_enabled())
+        {
+            let chunk_sql = page_chunks::page_chunk_vector_sql(
+                &concept_select,
+                &format!("c.status = 'active'{type_clause}{entity_clause}"),
+            );
+            let mut chunk_params = vec![
+                libsql::Value::Text(vec_str),
+                libsql::Value::Integer(fetch_limit),
+            ];
+            if let Some(pt) = page_type {
+                chunk_params.push(libsql::Value::Text(pt.to_string()));
+            }
+            let chunk_hits =
+                page_chunks::page_chunk_vector_hits(&conn, &chunk_sql, chunk_params).await;
+            page_chunks::merge_page_chunk_hits(
+                &mut vector_results,
+                chunk_hits,
+                fetch_limit as usize,
+            );
         }
 
         // --- FTS search with AND-then-OR fallback ---
