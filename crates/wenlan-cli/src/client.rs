@@ -116,6 +116,26 @@ impl WenlanClient {
         Self::from_env_with_options(None, None, true)
     }
 
+    pub fn for_local_rules_with_identity(
+        agent_name: Option<&str>,
+        session: Option<&SessionRef>,
+    ) -> Result<Self> {
+        let mut client = Self::from_env_with_options(agent_name, None, true)?;
+        if let Some(session) = session {
+            client.headers.insert(
+                SESSION_HEADER,
+                HeaderValue::from_str(&session.to_string()).context("invalid session value")?,
+            );
+            client.http = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .default_headers(client.headers.clone())
+                .build()
+                .context("building Wenlan HTTP client")?;
+        }
+        Ok(client)
+    }
+
     fn from_env_with_options(
         agent_name: Option<&str>,
         space: Option<&str>,
@@ -869,20 +889,46 @@ impl WenlanClient {
     }
 
     pub(crate) async fn sync_rules_as_person(&self) -> Result<RulesSyncReport> {
-        self.post_json_as_person("/api/rules/setup/sync", &serde_json::json!({}), None, true)
-            .await
+        self.rules_request("/api/rules/setup/sync", true).await
     }
 
     pub(crate) async fn rules_setup_status(
         &self,
     ) -> Result<wenlan_types::rulesync::RulesSetupStatus> {
-        self.get_local_as_person("/api/rules/setup/status").await
+        self.rules_request("/api/rules/setup/status", false).await
     }
 
     pub(crate) async fn rules_setup_review(
         &self,
     ) -> Result<wenlan_types::rulesync::RulesReviewList> {
-        self.get_local_as_person("/api/rules/setup/review").await
+        self.rules_request("/api/rules/setup/review", false).await
+    }
+
+    async fn rules_request<R: DeserializeOwned>(&self, path: &str, post: bool) -> Result<R> {
+        anyhow::ensure!(
+            self.is_local(),
+            "Use the Wenlan daemon on this computer for this rules command."
+        );
+        let key = self.person_key().await.context("Wenlan could not read the person key. Run this from your own account with the local daemon running.")?;
+        let url = format!("{}{path}", self.base_url);
+        let request = if post {
+            self.http.post(&url).json(&serde_json::json!({}))
+        } else {
+            self.http.get(&url)
+        }
+        .header(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE,
+        )
+        .header(wenlan_types::requests::PERSON_KEY_HEADER, key);
+        let response = self
+            .send(request, &format!("rules request {url} failed"))
+            .await?;
+        ensure_ok(response, &url)
+            .await?
+            .json()
+            .await
+            .with_context(|| format!("parsing {path} response"))
     }
 
     pub(crate) async fn dismiss_rules_skill_update(&self, id: &str) -> Result<()> {

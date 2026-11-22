@@ -94,10 +94,10 @@ pub async fn run(
     command: &RulesSetupCmd,
     format: ResolvedFormat,
     quiet: bool,
-    names_an_agent: bool,
+    agent_name: Option<&str>,
     explicit_session: Option<&str>,
 ) -> Result<()> {
-    run_inner(command, format, quiet, names_an_agent, explicit_session)
+    run_inner(command, format, quiet, agent_name, explicit_session)
         .await
         .map_err(terminal_error)
 }
@@ -110,12 +110,12 @@ async fn run_inner(
     command: &RulesSetupCmd,
     format: ResolvedFormat,
     quiet: bool,
-    names_an_agent: bool,
+    agent_name: Option<&str>,
     explicit_session: Option<&str>,
 ) -> Result<()> {
     let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
     if matches!(command, RulesSetupCmd::Adopt { dry_run: true }) {
-        if rulesync_personal::enabled() && !names_an_agent && session.session.is_none() {
+        if rulesync_personal::enabled() && agent_name.is_none() && session.session.is_none() {
             if let Ok(client) = WenlanClient::for_local_rules() {
                 let request = AdoptPreviewRequest {
                     home: rulesync_personal::system_home()?.canonicalize()?,
@@ -135,7 +135,7 @@ async fn run_inner(
     }
     ensure!(
         matches!(command, RulesSetupCmd::Status { .. } | RulesSetupCmd::Review { id: None, .. })
-            || (!names_an_agent && session.session.is_none()),
+            || (agent_name.is_none() && session.session.is_none()),
         "Only you can change your personal tool setup. Run this from your own terminal outside an AI session."
     );
     ensure!(
@@ -150,7 +150,7 @@ async fn run_inner(
         "Run this command from your own terminal and type yes when asked."
     );
 
-    let client = WenlanClient::for_local_rules()?;
+    let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
     let report = match command {
         RulesSetupCmd::Adopt { .. } => {
             let expected = AdoptPreviewRequest {

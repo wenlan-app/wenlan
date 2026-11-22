@@ -91,6 +91,8 @@ fn require_local_person_at(
         bind,
         crate::security::BindScope::Unset | crate::security::BindScope::Loopback
     ) || !crate::memory_routes::caller_is_person(headers)
+        || headers.contains_key(wenlan_types::SESSION_HEADER)
+        || headers.contains_key("x-agent-name")
     {
         return Err(ServerError::ValidationError(
             "only the person using the daemon on this computer can change the tool setup".into(),
@@ -113,6 +115,13 @@ fn require_local_rules_access(headers: &HeaderMap) -> Result<(), ServerError> {
     if !local || !authenticated {
         return Err(ServerError::ValidationError(
             "only the person using the daemon on this computer can change the tool setup".into(),
+        ));
+    }
+    if (headers.contains_key(wenlan_types::SESSION_HEADER) || headers.contains_key("x-agent-name"))
+        && !wenlan_core::rulesync_personal::enabled()
+    {
+        return Err(ServerError::ValidationError(
+            "WENLAN_RULESYNC is off".into(),
         ));
     }
     Ok(())
@@ -234,6 +243,8 @@ async fn execute(
     } else {
         require_personal_rules_writer(&headers)?;
     }
+    let ai_caller =
+        headers.contains_key(wenlan_types::SESSION_HEADER) || headers.contains_key("x-agent-name");
     let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
@@ -244,7 +255,7 @@ async fn execute(
         match operation {
             Operation::Adopt(request) => setup.adopt(&request),
             Operation::Restore(options) => setup.restore_with_options(options),
-            Operation::Sync => setup.sync(&generated),
+            Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
             Operation::Review(request) => setup.review(&request, &generated),
         }
     })
@@ -2306,10 +2317,19 @@ impl Setup {
     }
 
     fn sync(&self, generated: &[String]) -> Result<RulesSyncReport> {
+        self.sync_for_caller(generated, false)
+    }
+
+    fn sync_for_caller(&self, generated: &[String], ai_caller: bool) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let root = FileRoot::open_home(&self.home)?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         rulesync_registry::check_skill_format(&self.data)?;
+        if ai_caller && !manifest.extension_paths.is_empty() {
+            return Ok(report(
+                "A tool addition was interrupted. Open Wenlan to finish or undo it.",
+            ));
+        }
         let recovered = self.recover(&root, &mut manifest)?;
         let mut result = self.sync_member(&root, &mut manifest, generated)?;
         if let Some(recovery) = recovered {
@@ -11624,6 +11644,11 @@ mod tests {
         assert_eq!(f.text(cursor), "Adopted rules.\n");
         assert_eq!(f.text(gemini), "Adopted rules.\n");
         f.write(gemini, "Original overlay.\n");
+        drop(_lock);
+        let ai_receipt = f.setup.sync_for_caller(&[], true).unwrap();
+        assert!(ai_receipt.message.contains("interrupted"), "{ai_receipt:?}");
+        assert_eq!(f.text(cursor), "Adopted rules.\n");
+        let _lock = f.setup.lock().unwrap();
 
         let mut manifest = f.setup.load().unwrap().unwrap();
         let recovery = f.setup.recover(&root, &mut manifest).unwrap().unwrap();
