@@ -11,7 +11,7 @@ use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, Metadata, OpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wenlan_types::rulesync::SkillUpstream;
+use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSetupNotice, SkillUpstream};
 
 use crate::rulesync_personal_files::{
     directory_entry_identity, location_of, require_ascii_entry_name,
@@ -55,6 +55,24 @@ pub struct AdoptionTarget {
     pub skills_path: Option<PathBuf>,
 }
 
+/// Keep the legacy reason in the approval fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct AdoptionSkip {
+    pub reason: String,
+    #[serde(skip)]
+    pub code: Code,
+}
+
+impl AdoptionSkip {
+    pub(crate) fn new(code: Code, reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            code,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Adoption {
     pub shared: String,
@@ -69,17 +87,23 @@ pub struct Adoption {
     pub skill_byte_copies: BTreeMap<PathBuf, String>,
     pub personal_files: BTreeMap<PathBuf, Vec<u8>>,
     pub personal_file_notes: BTreeMap<PathBuf, String>,
-    pub skipped_personal_files: BTreeMap<PathBuf, String>,
+    pub skipped_personal_files: BTreeMap<PathBuf, AdoptionSkip>,
     pub includes_personal_files: bool,
     pub settings: crate::rulesync_settings::personal::Adoption,
     /// Existing skill locations that will stay in place outside delivery.
-    pub skipped: BTreeMap<PathBuf, String>,
+    pub skipped: BTreeMap<PathBuf, AdoptionSkip>,
     /// Linked rule files that stay in place outside delivery.
-    pub skipped_rules: BTreeMap<PathBuf, String>,
+    pub skipped_rules: BTreeMap<PathBuf, AdoptionSkip>,
     pub skipped_tools: Vec<String>,
+    #[serde(skip)]
+    pub skipped_tool_codes: Vec<RulesSetupNotice>,
     pub added_tools: Vec<String>,
     pub worktree_writes: BTreeMap<PathBuf, PathBuf>,
     pub worktree_notes: Vec<String>,
+    #[serde(skip)]
+    pub worktree_note_codes: Vec<RulesSetupNotice>,
+    #[serde(skip)]
+    pub personal_file_codes: BTreeMap<PathBuf, Code>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,15 +324,18 @@ fn discover_with_platform(
         skill_byte_copies: BTreeMap::new(),
         personal_files: BTreeMap::new(),
         personal_file_notes: BTreeMap::new(),
+        personal_file_codes: Default::default(),
         skipped_personal_files: BTreeMap::new(),
         includes_personal_files: false,
         settings: Default::default(),
         skipped,
         skipped_rules,
         skipped_tools: Vec::new(),
+        skipped_tool_codes: Default::default(),
         added_tools: Vec::new(),
         worktree_writes: BTreeMap::new(),
         worktree_notes: Vec::new(),
+        worktree_note_codes: Default::default(),
     })
 }
 
@@ -727,7 +754,7 @@ pub(super) struct PersonalFileDiscovery {
     pub files: BTreeMap<PathBuf, AdoptionFile>,
     links: BTreeMap<PathBuf, AdoptionLink>,
     sources: BTreeSet<PathBuf>,
-    skipped: BTreeMap<PathBuf, String>,
+    skipped: BTreeMap<PathBuf, AdoptionSkip>,
 }
 
 struct KnownPersonalFiles<'a> {
@@ -804,7 +831,7 @@ impl PersonalFileDiscovery {
             if !name.is_ascii() {
                 self.skipped.insert(
                     PathBuf::from(path.to_string_lossy().into_owned()),
-                    NON_ASCII_PERSONAL_NAME.into(),
+                    AdoptionSkip::new(Code::PersonalName, NON_ASCII_PERSONAL_NAME),
                 );
                 continue;
             }
@@ -828,7 +855,10 @@ impl PersonalFileDiscovery {
                 continue;
             };
             if let Err(error) = result {
-                self.skipped.insert(path, format!("{error:#}"));
+                self.skipped.insert(
+                    path,
+                    AdoptionSkip::new(Code::PersonalUnreadable, format!("{error:#}")),
+                );
             }
         }
         Ok(())
@@ -892,9 +922,10 @@ fn discover_personal_files_with_platform<'a>(
     {
         let path = Path::new(spec.directory);
         if let Err(error) = discovery.scan(&home, spec, path, &known) {
-            discovery
-                .skipped
-                .insert(path.to_owned(), format!("{error:#}"));
+            discovery.skipped.insert(
+                path.to_owned(),
+                AdoptionSkip::new(Code::PersonalUnreadable, format!("{error:#}")),
+            );
         }
     }
     if tools.contains("antigravity-ide") {
@@ -904,7 +935,7 @@ fn discover_personal_files_with_platform<'a>(
         ] {
             let path = Path::new(folder);
             if optional(home.dir.symlink_metadata(path))?.is_some() {
-                discovery.skipped.insert(path.to_owned(), "Antigravity generates commands as skills. Legacy workflows can collide with existing skill folders.".into());
+                discovery.skipped.insert(path.to_owned(), AdoptionSkip::new(Code::LegacyWorkflow, "Antigravity generates commands as skills. Legacy workflows can collide with existing skill folders."));
             }
         }
     }
@@ -1038,7 +1069,7 @@ type RuleDiscovery = (
     BTreeMap<PathBuf, AdoptionFile>,
     BTreeMap<PathBuf, AdoptionLink>,
     bool,
-    BTreeMap<PathBuf, String>,
+    BTreeMap<PathBuf, AdoptionSkip>,
 );
 
 fn discover_rules(
@@ -1065,7 +1096,10 @@ fn discover_rules(
             if error.kind() != ErrorKind::Unsupported {
                 return Err(error.into());
             }
-            skipped_rules.insert(path.clone(), error.to_string());
+            skipped_rules.insert(
+                path.clone(),
+                AdoptionSkip::new(Code::RuleUnavailable, error.to_string()),
+            );
             overlays.entry(target.tool.clone()).or_default();
             continue;
         }
@@ -1085,7 +1119,10 @@ fn discover_rules(
         {
             skipped_rules.insert(
                 path.clone(),
-                "Windows cannot replace a linked rule file; this rule stays in place".into(),
+                AdoptionSkip::new(
+                    Code::LinkedRule,
+                    "Windows cannot replace a linked rule file; this rule stays in place",
+                ),
             );
             overlays.entry(target.tool.clone()).or_default();
             continue;
@@ -1097,7 +1134,10 @@ fn discover_rules(
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|error| error.kind() == ErrorKind::Unsupported)
             {
-                skipped_rules.insert(path.clone(), format!("{error:#}"));
+                skipped_rules.insert(
+                    path.clone(),
+                    AdoptionSkip::new(Code::RuleUnavailable, format!("{error:#}")),
+                );
                 overlays.entry(target.tool.clone()).or_default();
                 continue;
             }
@@ -1466,7 +1506,7 @@ struct SkillDiscovery<'a> {
     is_windows: bool,
     skills: BTreeMap<(String, PathBuf), SkillTree>,
     locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
-    skipped: BTreeMap<PathBuf, String>,
+    skipped: BTreeMap<PathBuf, AdoptionSkip>,
 }
 
 impl<'a> SkillDiscovery<'a> {
@@ -1493,7 +1533,10 @@ impl<'a> SkillDiscovery<'a> {
         #[cfg(windows)]
         if tool.is_some() {
             if let Err(error) = self.home.windows_tool_directory(path) {
-                self.skipped.insert(path.to_owned(), error.to_string());
+                self.skipped.insert(
+                    path.to_owned(),
+                    AdoptionSkip::new(Code::SkillUnreadable, error.to_string()),
+                );
                 return Ok(());
             }
         }
@@ -1503,12 +1546,18 @@ impl<'a> SkillDiscovery<'a> {
             Ok(Some(_)) => {
                 self.skipped.insert(
                     path.to_owned(),
-                    "the skills directory is reached through a symlink".into(),
+                    AdoptionSkip::new(
+                        Code::LinkedSkillsRoot,
+                        "the skills directory is reached through a symlink",
+                    ),
                 );
                 return Ok(());
             }
             Err(error) => {
-                self.skipped.insert(path.to_owned(), format!("{error:#}"));
+                self.skipped.insert(
+                    path.to_owned(),
+                    AdoptionSkip::new(Code::SkillUnreadable, format!("{error:#}")),
+                );
                 return Ok(());
             }
         };
@@ -1521,7 +1570,10 @@ impl<'a> SkillDiscovery<'a> {
             let Some(name) = name.to_str() else {
                 self.skipped.insert(
                     PathBuf::from(skill_path.to_string_lossy().into_owned()),
-                    "the skill folder name is not UTF-8".into(),
+                    AdoptionSkip::new(
+                        Code::SkillNameEncoding,
+                        "the skill folder name is not UTF-8",
+                    ),
                 );
                 continue;
             };
@@ -1529,7 +1581,10 @@ impl<'a> SkillDiscovery<'a> {
                 continue;
             }
             if let Err(error) = self.scan_one(&skill_path, name, tool) {
-                self.skipped.insert(skill_path, format!("{error:#}"));
+                self.skipped.insert(
+                    skill_path,
+                    AdoptionSkip::new(Code::SkillUnreadable, format!("{error:#}")),
+                );
             }
         }
         Ok(())
@@ -1543,7 +1598,10 @@ impl<'a> SkillDiscovery<'a> {
         {
             self.skipped.insert(
                 path.to_owned(),
-                "Windows cannot replace a linked skill directory; this skill stays in place".into(),
+                AdoptionSkip::new(
+                    Code::LinkedSkill,
+                    "Windows cannot replace a linked skill directory; this skill stays in place",
+                ),
             );
             return Ok(());
         }
@@ -1556,7 +1614,10 @@ impl<'a> SkillDiscovery<'a> {
             if tool.is_some() {
                 self.skipped.insert(
                     path.to_owned(),
-                    "This directory existed before adoption without a SKILL.md".into(),
+                    AdoptionSkip::new(
+                        Code::SkillEntryMissing,
+                        "This directory existed before adoption without a SKILL.md",
+                    ),
                 );
             }
             return Ok(());
@@ -1586,7 +1647,7 @@ impl<'a> SkillDiscovery<'a> {
             tree.skill.shared = true;
             self.skipped.insert(
                 path.to_owned(),
-                "Wenlan reads this shared source for the personal master and manages tool copies separately".into(),
+                AdoptionSkip::new(Code::SharedSkill, "Wenlan reads this shared source for the personal master and manages tool copies separately"),
             );
             return Ok(());
         };
@@ -1659,7 +1720,7 @@ impl<'a> SkillDiscovery<'a> {
         Ok(())
     }
 
-    fn finish(self) -> (Vec<AdoptedSkill>, BTreeMap<PathBuf, String>) {
+    fn finish(self) -> (Vec<AdoptedSkill>, BTreeMap<PathBuf, AdoptionSkip>) {
         let mut skills = self
             .skills
             .into_values()
@@ -1845,12 +1906,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(adoption
-            .skipped_rules
-            .contains_key(Path::new(".claude/AGENTS.md")));
-        assert!(adoption
-            .skipped
-            .contains_key(Path::new(".claude/skills/linked")));
+        assert_eq!(
+            adoption.skipped_rules[Path::new(".claude/AGENTS.md")].code,
+            Code::LinkedRule
+        );
+        assert_eq!(
+            adoption.skipped[Path::new(".claude/skills/linked")].code,
+            Code::LinkedSkill
+        );
         assert!(!adoption.files.contains_key(Path::new(".claude/AGENTS.md")));
         assert!(!adoption
             .files
@@ -1940,7 +2003,9 @@ mod tests {
         let windows =
             discover_personal_files_with_platform(home, ["claudecode"], &BTreeSet::new(), true)
                 .unwrap();
-        assert!(windows.skipped[path].contains("Windows cannot replace"));
+        assert!(windows.skipped[path]
+            .reason
+            .contains("Windows cannot replace"));
         assert!(!windows.files.contains_key(path));
         assert!(!windows.links.contains_key(path));
 
@@ -1964,7 +2029,7 @@ mod tests {
         let windows =
             discover_personal_files_with_platform(home, ["claudecode"], &BTreeSet::new(), true)
                 .unwrap();
-        assert!(windows.skipped[path].contains("read-only"));
+        assert!(windows.skipped[path].reason.contains("read-only"));
         assert!(!windows.files.contains_key(path));
     }
 
@@ -2574,9 +2639,15 @@ mod tests {
         assert!(adoption.skills.is_empty());
         assert!(adoption.files.is_empty());
         assert!(adoption.sources.is_empty());
+        assert_eq!(
+            adoption.skipped[Path::new(".claude/skills/local")].code,
+            Code::SkillUnreadable
+        );
         assert!(adoption.skipped[Path::new(".claude/skills/local")]
+            .reason
             .contains("outside its skill folder"));
         assert!(adoption.skipped[Path::new(".claude/skills/off-home")]
+            .reason
             .contains("outside the adoption home"));
 
         link(&home, ".codex/AGENTS.md", "../../outside.md");

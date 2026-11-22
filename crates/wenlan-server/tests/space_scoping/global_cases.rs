@@ -318,6 +318,7 @@ pub async fn global_routes_enforce_scope_contracts() {
     // folders, never on a Space. Without the local person key they refuse
     // before reading anything, and a Space header cannot change that answer.
     for (method, uri) in [
+        (Method::Get, "/api/rules/setup/status"),
         (Method::Post, "/api/rules/setup/adopt"),
         (Method::Post, "/api/rules/setup/adopt/preview"),
         (Method::Post, "/api/rules/setup/restore"),

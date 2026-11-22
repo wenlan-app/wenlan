@@ -1207,6 +1207,105 @@ export async function getRulesDelivery(): Promise<ToolRulesDelivery[]> {
   return response?.tools ?? [];
 }
 
+export type PullbackAction = "tool_only" | "all_tools" | "dismiss";
+
+export interface RulesSetupNotice {
+  // The daemon can add codes before the app learns their localized copy.
+  code: string;
+  tools?: string[];
+}
+
+export interface PullbackCard {
+  id: string;
+  kind: "scope" | "conflict";
+  files: string[];
+  diff: string;
+  reason: string;
+  reason_code?: string;
+  diff_codes?: string[];
+}
+
+export interface PullbackDecision {
+  id: string;
+  action: PullbackAction;
+  file?: string;
+}
+
+export interface PullbackPreview {
+  diff: string;
+  plan: string;
+  plan_codes?: RulesSetupNotice[];
+  diff_codes?: string[];
+}
+
+export interface RulesSetupTool {
+  id: string;
+  name: string;
+}
+
+export interface RulesSetupStatus {
+  enabled: boolean;
+  adopted: boolean;
+  can_adopt: boolean;
+  can_restore: boolean;
+  in_sync: boolean;
+  proposals: PullbackCard[];
+  review_tools: Record<string, RulesSetupTool>;
+}
+
+export interface RulesAdoptionPlan {
+  token: string;
+  files: {
+    path: string; added: number; removed: number; diff: string;
+    tool?: RulesSetupTool; notice_codes?: string[];
+    text_diff?: { kind: "file_text" } | { kind: "extracted"; diff: string };
+  }[];
+  notes?: string[];
+  note_codes?: RulesSetupNotice[];
+  tools?: { name: string; rule_files: number; skills: number; other_files: number }[];
+  skipped_files?: string[];
+  skipped_tools?: string[];
+  skipped_tool_codes?: RulesSetupNotice[];
+  skills: ({
+    path: string;
+    tool?: RulesSetupTool;
+    reason_code?: string;
+    byte_copy_reason?: string;
+    byte_copy_reason_code?: string;
+  } & (
+    | { outcome: "tracked_upstream"; upstream: SkillUpstream }
+    | { outcome: "plain_copy" }
+    | { outcome: "skipped"; reason: string }
+  ))[];
+}
+
+type SkillUpstream =
+  | { kind: "github"; repository: string; directory: string; revision?: string; checkout?: string }
+  | { kind: "npm"; package: string; version: string; directory: string };
+
+export interface AdoptedSkillUpdate {
+  name: string;
+  upstream: SkillUpstream;
+  status: { state: "current" } | { state: "available"; revision: string } | { state: "unavailable"; reason: string };
+}
+
+export interface RulesSyncReport {
+  written: string[];
+  blocked: string[];
+  blocked_codes?: RulesSetupNotice[];
+  proposals: PullbackCard[];
+  message: string;
+}
+
+export const getRulesSetupStatus = () => invoke<RulesSetupStatus>("rules_setup_status");
+export const previewRulesAdoption = () => invoke<RulesAdoptionPlan>("rules_setup_adopt_preview");
+export const adoptRulesSetup = (token: string) => invoke<RulesSyncReport>("rules_setup_adopt", { token });
+export const restoreRulesSetup = () => invoke<RulesSyncReport>("rules_setup_restore");
+export const syncRulesSetup = () => invoke<RulesSyncReport>("rules_setup_sync");
+export const getRulesSkillUpdates = () => invoke<AdoptedSkillUpdate[]>("rules_setup_skill_updates");
+export const previewRulesReview = (decision: PullbackDecision) => invoke<PullbackPreview>("rules_setup_review_preview", { decision });
+export const applyRulesReview = (decision: PullbackDecision) => invoke<RulesSyncReport>("rules_setup_review", { decision });
+
 export async function listSkillSuggestions(): Promise<SkillSuggestion[]> {
   return invoke("list_skill_suggestions");
 }

@@ -2,10 +2,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { invoke } from "@tauri-apps/api/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
 import { toast } from "sonner";
-import { getSpaceFolders, knowledgeFolderCreate, knowledgeFoldersList, listSpaceRulesSuggestions, skillsFromLibraryEnabled, type Page } from "../../../lib/tauri";
+import { getSpaceFolders, knowledgeFolderCreate, knowledgeFoldersList, listSpaceRulesSuggestions, skillsFromLibraryEnabled, type Page, type RulesSetupStatus } from "../../../lib/tauri";
 import { readPinnedPages } from "../navigation/pinnedPages";
 import { SectionListPage, type SectionListPageProps } from "./SectionListPage";
 import { TeamAccessProvider, teamAccessFor } from "../../../web/teamAccess";
@@ -40,6 +41,7 @@ function setup(props: Partial<SectionListPageProps> = {}) {
 }
 
 beforeEach(async () => {
+  vi.mocked(invoke).mockReset();
   localStorage.clear();
   await i18n.changeLanguage("en");
   active.mockReset().mockResolvedValue([
@@ -60,6 +62,88 @@ beforeEach(async () => {
   vi.mocked(toast).mockReset();
   vi.mocked(skillsFromLibraryEnabled).mockReset().mockResolvedValue(false);
   vi.mocked(listSpaceRulesSuggestions).mockReset().mockResolvedValue([]);
+});
+
+describe("personal rules setup in the section lists", () => {
+  const synced: RulesSetupStatus = {
+    enabled: true, adopted: true, can_adopt: true, can_restore: true, in_sync: true, proposals: [], review_tools: {},
+  };
+
+  it("UX-SKILL-19: keeps a quiet synced line and checks status without running sync", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => command === "rules_setup_status" ? synced : undefined);
+    setup({ section: "rules" });
+    expect(await screen.findByText("Rules setup is in sync.")).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("rules_setup_sync");
+  });
+
+  it("UX-SKILL-19: puts pending cards only on Rules and marks their tool chip", async () => {
+    const file = ".cursor/AGENTS.md";
+    const pending: RulesSetupStatus = {
+      ...synced, in_sync: false,
+      proposals: [{ id: "1", kind: "scope", files: [file], reason: "Kept for this tool. Share across tools?", diff: "-Old\n+New" }],
+      review_tools: { [file]: { id: "cursor", name: "Cursor" } },
+    };
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return pending;
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "get_rules_delivery") return { tools: [
+        { id: "cursor", display_name: "Cursor", connected: true, method: "file", state: "delivered", rule_count: 1 },
+        { id: "codex", display_name: "Codex", connected: true, method: "file", state: "delivered", rule_count: 1 },
+      ] };
+      return undefined;
+    });
+    setup({ section: "rules" });
+    expect(await screen.findByRole("article", { name: "Cursor changed a rule" })).toBeInTheDocument();
+    expect(screen.getByText("Cursor changed one thing. Your call.")).toBeInTheDocument();
+    expect((await screen.findByRole("button", { name: "Cursor needs review" })).querySelector('[data-dot="problem"]')).toBeVisible();
+    expect(screen.getByRole("button", { name: "Codex" }).querySelector('[data-dot="delivered"]')).toBeVisible();
+    cleanup();
+    setup({ section: "skills" });
+    expect(await screen.findByText("Cursor changed one thing. Your call.")).toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  it("UX-SKILL-19: hides setup when the daemon reports it off", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => command === "rules_setup_status" ? { ...synced, enabled: false } : undefined);
+    setup({ section: "skills" });
+    expect(await screen.findByRole("button", { name: "Open Release notes" })).toBeInTheDocument();
+    expect(screen.queryByTestId("rules-tools")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("rules_setup_skill_updates");
+  });
+
+  it("UX-SKILL-21: shows a badge on the skill row and a quiet count with no update action", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return synced;
+      if (command === "rules_setup_skill_updates") return [
+        { name: "Release notes", status: { state: "available", revision: "2" } },
+        { name: "still-current", status: { state: "current" } },
+      ];
+      return undefined;
+    });
+    setup({ section: "skills" });
+    const row = await screen.findByRole("button", { name: "Open Release notes. New version available." });
+    expect(within(row).getByText("New version")).toBeInTheDocument();
+    expect(screen.getByText("1 skill has a new version")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("still-current")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use new version" })).not.toBeInTheDocument();
+  });
+
+  it("UX-SKILL-21: keeps the update visible for a local skill with no library page", async () => {
+    active.mockResolvedValue([]);
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return synced;
+      if (command === "rules_setup_skill_updates") return [{ name: "local-skill", status: { state: "available", revision: "2" } }];
+      return undefined;
+    });
+    setup({ section: "skills" });
+    const row = (await screen.findByText("local-skill")).closest("li")!;
+    expect(within(row).getByText("New version")).toBeInTheDocument();
+    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText("No skills yet")).not.toBeInTheDocument();
+  });
 });
 
 describe("section list page", () => {

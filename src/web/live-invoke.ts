@@ -1448,6 +1448,15 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     return http("POST", `/api/skills/suggestions/${enc(String(a.suggestionId))}/undo`, undefined, AS_PERSON);
   },
   get_rules_delivery: () => get("/api/skills/delivery", AS_PERSON),
+  rules_setup_status: () => get("/api/rules/setup/status", AS_PERSON),
+  // Adoption verifies the desktop's canonical local tool home against the daemon.
+  rules_setup_adopt_preview: async () => { throw unsupportedWebCommand("rules_setup_adopt_preview"); },
+  rules_setup_adopt: async () => { throw unsupportedWebCommand("rules_setup_adopt"); },
+  rules_setup_restore: () => post("/api/rules/setup/restore?rules_and_skills_only=true", {}, AS_PERSON),
+  rules_setup_sync: () => post("/api/rules/setup/sync", {}, AS_PERSON),
+  rules_setup_skill_updates: () => post("/api/rules/setup/skill-updates", {}, AS_PERSON),
+  rules_setup_review_preview: (a) => post("/api/rules/setup/review/preview", a.decision, AS_PERSON),
+  rules_setup_review: (a) => post("/api/rules/setup/review", a.decision, AS_PERSON),
   get_space_rules: (a) => get(`/api/skills/rules${qs({ space: a.space })}`, AS_PERSON),
   list_skill_borrow_records: (a) =>
     get(`/api/skills/record${qs({ space: a.space })}`),
