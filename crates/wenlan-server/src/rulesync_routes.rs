@@ -32,10 +32,10 @@ use wenlan_core::rulesync_renderer::{self, RenderSession};
 use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
-    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
-    PullbackCard, PullbackDecision, PullbackKind, PullbackPreview, RulesSetupCode as Code,
-    RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport, RulesToolCounts,
-    RulesToolState, RulesToolStatus, SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
+    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, KeptInPlace,
+    PullbackAction, PullbackCard, PullbackDecision, PullbackKind, PullbackPreview,
+    RulesSetupCode as Code, RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport,
+    RulesToolCounts, RulesToolState, RulesToolStatus, SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -1329,6 +1329,15 @@ impl Setup {
             verify_adoption_token(&adoption, token)?;
         }
         let already_adopted = manifest.as_ref().is_some_and(|manifest| manifest.adopted);
+        let kept_in_place = adoption
+            .settings
+            .kept_in_place
+            .iter()
+            .map(|(tool, count)| KeptInPlace {
+                tool: tool.clone(),
+                count: *count,
+            })
+            .collect();
         let mut result = if adoption.files.is_empty()
             && adoption.overlays.is_empty()
             && adoption.settings.sources.is_empty()
@@ -1347,6 +1356,7 @@ impl Setup {
             let master = PersonalMaster::new(&adoption);
             self.apply_adoption(&root, adoption, master)?
         };
+        result.kept_in_place = kept_in_place;
         if let Some(settings) = settings.filter(|_| result.blocked.is_empty()) {
             let token = settings.response.token.clone();
             match crate::rulesync_settings_routes::apply_plan(self, &root, settings, &token) {
@@ -5184,6 +5194,7 @@ pub(crate) fn report(message: &str) -> RulesSyncReport {
         written: Vec::new(),
         blocked: Vec::new(),
         blocked_codes: Vec::new(),
+        kept_in_place: Vec::new(),
         proposals: Vec::new(),
         message: message.into(),
     }
@@ -5651,6 +5662,60 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_personal_settings_summarizes_refused_hooks_and_permissions_without_review() {
+        let f = Fixture::new();
+        let settings = f.setup.home.join(".claude/settings.json");
+        let original = r#"{"hooks":{"SessionStart":[
+            {"hooks":[{"type":"command","command":"curl --user person:pass"}]},
+            {"hooks":[{"type":"command","command":"mysql -p hunter2"}]},
+            {"hooks":[{"type":"command","command":"curl --password=fixture-secret"}]}
+        ]},"permissions":{"allow":[
+            "Bash(mysql -p hunter2)",
+            "Bash(curl -u person:pass)"
+        ]}}"#;
+        fs::write(&settings, original).unwrap();
+
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(preview.kept_in_place.len(), 1, "{preview:?}");
+        assert_eq!(preview.kept_in_place[0].tool, "claudecode");
+        assert_eq!(preview.kept_in_place[0].count, 5);
+        assert!(!preview
+            .notes
+            .iter()
+            .any(|note| note.contains("skipped hook") || note.contains("skipped permission")));
+
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        let report = f.sync_with("");
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert_eq!(report.kept_in_place.len(), 1, "{report:?}");
+        assert_eq!(report.kept_in_place[0].tool, "claudecode");
+        assert_eq!(report.kept_in_place[0].count, 5);
+        assert_eq!(fs::read_to_string(&settings).unwrap(), original);
+
+        let status = f.setup.status().unwrap();
+        assert!(status.in_sync, "{status:?}");
+        assert_eq!(
+            status
+                .tools
+                .iter()
+                .find(|tool| tool.tool.id == "claude-code")
+                .unwrap()
+                .state,
+            RulesToolState::UpToDate,
+            "{status:?}"
+        );
+    }
+
+    #[test]
     fn rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback() {
         fn contains_sentinel(dir: &Path) -> bool {
             fs::read_dir(dir).unwrap().any(|entry| {
@@ -5692,6 +5757,9 @@ mod tests {
             {"matcher":"two","hooks":[{"type":"command","command":"curl -uu:q4"}]},
             {"matcher":"three","hooks":[{"type":"command","command":"curl --password=synthetic-sentinel-hook"}]},
             {"matcher":"four","hooks":[{"type":"command","command":"curl --oauth2-bearer ${SYNTHETIC_TOKEN}"}]}
+        ]},"permissions":{"allow":[
+            "Bash(mysql -p synthetic-sentinel-permission)",
+            "Bash(curl -u user:password)"
         ]}}"#).unwrap();
         fs::write(&claude, original).unwrap();
         fs::write(&codex, b"# safe fixture\n").unwrap();
@@ -5703,24 +5771,17 @@ mod tests {
             .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         let shown = serde_json::to_string(&preview).unwrap();
-        assert_eq!(
-            preview
-                .notes
-                .iter()
-                .filter(|note| note.contains("skipped MCP server"))
-                .count(),
-            // header-reference and env-reference name a variable rather than hold a
-            // key, so they are no longer skipped.
-            9
-        );
-        assert_eq!(
-            preview
-                .notes
-                .iter()
-                .filter(|note| note.contains("skipped hook"))
-                .count(),
-            4
-        );
+        assert_eq!(preview.kept_in_place.len(), 1);
+        assert_eq!(preview.kept_in_place[0].tool, "claudecode");
+        assert_eq!(preview.kept_in_place[0].count, 15);
+        assert!(!preview
+            .notes
+            .iter()
+            .any(|note| note.contains("skipped hook")));
+        assert!(!preview
+            .notes
+            .iter()
+            .any(|note| note.contains("skipped MCP server")));
         assert!(shown.contains("cannot write or back up"));
         assert!(!shown.contains("synthetic-sentinel"));
         assert!(!shown.contains("u:q4") && !shown.contains("SYNTHETIC_TOKEN"));
@@ -5746,20 +5807,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fs::read_to_string(&claude).unwrap(), original);
+        let status = f.setup.status().unwrap();
+        assert!(status.in_sync, "{status:?}");
+        assert_eq!(
+            status
+                .tools
+                .iter()
+                .find(|tool| tool.tool.id == "claude-code")
+                .unwrap()
+                .state,
+            RulesToolState::UpToDate,
+            "{status:?}"
+        );
 
         let risky = original.replace("\"before\"", "\"fixture --token synthetic-sentinel-edit\"");
         fs::write(&claude, &risky).unwrap();
         let result = f.sync_with("");
         assert!(result.proposals.is_empty());
         let report = serde_json::to_string(&result).unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
         assert_eq!(
             result
-                .blocked
+                .kept_in_place
                 .iter()
-                .filter(|note| note.contains("possible credentials or unsafe text"))
-                .count(),
-            // header-reference and env-reference name a variable, so they pass.
-            14
+                .map(|kept| kept.count)
+                .sum::<usize>(),
+            // The risky edit adds one refused Claude entry.
+            16
+        );
+        assert_eq!(
+            result
+                .kept_in_place
+                .iter()
+                .find(|kept| kept.tool == "claudecode")
+                .unwrap()
+                .count,
+            16
         );
         assert!(!report.contains("synthetic-sentinel"));
         assert!(!report.contains("u:q4") && !report.contains("SYNTHETIC_TOKEN"));

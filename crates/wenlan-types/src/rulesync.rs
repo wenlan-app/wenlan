@@ -148,6 +148,9 @@ pub struct AdoptionPlan {
     pub skills: Vec<AdoptionSkill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// Settings intentionally left in their native tool during adoption.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_in_place: Vec<KeptInPlace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub note_codes: Vec<RulesSetupNotice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -328,8 +331,17 @@ pub struct RulesSyncReport {
     pub blocked: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_codes: Vec<RulesSetupNotice>,
+    /// Settings intentionally left in their native tool during sync.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_in_place: Vec<KeptInPlace>,
     pub proposals: Vec<PullbackCard>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptInPlace {
+    pub tool: String,
+    pub count: usize,
 }
 
 impl RulesSyncReport {

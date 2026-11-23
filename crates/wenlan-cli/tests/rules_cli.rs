@@ -330,10 +330,15 @@ fn personal_rules_dry_run_previews_safe_settings_only_with_the_flag() {
             enabled
         );
         assert_eq!(
-            plan.notes
-                .iter()
-                .any(|note| note.contains("skipped MCP server (entry")),
-            enabled
+            plan.kept_in_place,
+            if enabled {
+                vec![wenlan_types::rulesync::KeptInPlace {
+                    tool: "claudecode".into(),
+                    count: 1,
+                }]
+            } else {
+                Vec::new()
+            }
         );
         assert!(!stdout.contains("synthetic-only-sentinel"));
         assert!(!stdout.contains("fixture-hidden"));

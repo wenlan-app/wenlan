@@ -392,6 +392,7 @@ fn saved_with_delivery(name: String, delivery: Result<RulesSyncReport>) -> SaveS
             written: Vec::new(),
             blocked: Vec::new(),
             blocked_codes: Vec::new(),
+            kept_in_place: Vec::new(),
             proposals: Vec::new(),
             message: format!(
                 "The skill is saved. Run `wenlan rules status --sync` to retry delivery. {error:#}"

@@ -1477,13 +1477,14 @@ mod tests {
                 |root, manifest| f.sync_review(root, manifest),
             )
             .unwrap();
-        // Only the standing notice about Claude Code's own server remains.
+        // The refused server stays in place and no longer blocks review.
         assert!(
             reviewed.written.iter().any(|path| path == ".claude.json")
+                && reviewed.blocked.is_empty()
                 && reviewed
-                    .blocked
+                    .kept_in_place
                     .iter()
-                    .all(|line| line.contains("skipped MCP server (entry 1)")),
+                    .any(|kept| { kept.tool == "claudecode" && kept.count == 1 }),
             "{reviewed:?}"
         );
         let text = fs::read_to_string(&claude).unwrap();

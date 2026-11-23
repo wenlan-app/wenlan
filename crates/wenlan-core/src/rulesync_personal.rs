@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{
     AdoptionChange, AdoptionNewFiles, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome,
-    AdoptionTextDiff, AdoptionTool, RulesSetupCode as Code, RulesSetupNotice, RulesSetupTool,
+    AdoptionTextDiff, AdoptionTool, KeptInPlace, RulesSetupCode as Code, RulesSetupNotice,
+    RulesSetupTool,
 };
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
@@ -1537,6 +1538,15 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         files,
         skills,
         notes,
+        kept_in_place: adoption
+            .settings
+            .kept_in_place
+            .iter()
+            .map(|(tool, count)| KeptInPlace {
+                tool: tool.clone(),
+                count: *count,
+            })
+            .collect(),
         note_codes,
         skipped_files,
         skipped_tools: adoption.skipped_tools.clone(),

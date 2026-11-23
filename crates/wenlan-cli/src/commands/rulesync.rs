@@ -297,7 +297,7 @@ async fn run_inner(
             if *sync {
                 let sync_report = client.sync_rules_as_person().await?;
                 if !quiet {
-                    eprint!("{}", report_for_a_person(&sync_report));
+                    eprint!("{}", report_for_a_person(&sync_report, false));
                 }
             }
             let status = client.rules_setup_status().await?;
@@ -347,7 +347,18 @@ async fn run_inner(
             return answer_item(&client, format, quiet, item, (*answer).into(), file.clone()).await;
         }
     };
-    show(format, quiet, &report, report_for_a_person)
+    let show_kept_in_place = matches!(
+        command,
+        RulesSetupCmd::Share { .. }
+            | RulesSetupCmd::Sync
+            | RulesSetupCmd::Adopt {
+                confirm: Some(_),
+                ..
+            }
+    );
+    show(format, quiet, &report, |report| {
+        report_for_a_person(report, show_kept_in_place)
+    })
 }
 
 async fn answer_item(
@@ -448,7 +459,9 @@ async fn answer_item(
                 .await?
         }
     };
-    show(format, quiet, &report, report_for_a_person)
+    show(format, quiet, &report, |report| {
+        report_for_a_person(report, false)
+    })
 }
 
 fn answer_word(answer: PullbackAction) -> &'static str {
@@ -804,6 +817,7 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
         out.push('\n');
         out.push_str(&settings_plan_for_a_person(settings));
     }
+    append_kept_in_place_summary(&mut out, &plan.kept_in_place);
     if !plan.plan_id.is_empty() {
         writeln!(
             &mut out,
@@ -965,7 +979,7 @@ fn render_plan(
     out
 }
 
-fn report_for_a_person(report: &RulesSyncReport) -> String {
+fn report_for_a_person(report: &RulesSyncReport, show_kept_in_place: bool) -> String {
     let mut out = format!("{}\n", printable(&report.message));
     for path in &report.written {
         out.push_str(&format!("Wrote {}\n", file_label(path)));
@@ -990,7 +1004,27 @@ fn report_for_a_person(report: &RulesSyncReport) -> String {
     if report.proposals.iter().any(|card| card.files.len() > 1) {
         out.push_str("Use `--file <path>` to choose a file when tools changed the same rule.\n");
     }
+    if show_kept_in_place {
+        append_kept_in_place_summary(&mut out, &report.kept_in_place);
+    }
     out
+}
+
+fn append_kept_in_place_summary(
+    out: &mut String,
+    kept_in_place: &[wenlan_types::rulesync::KeptInPlace],
+) {
+    let count = kept_in_place
+        .iter()
+        .map(|entry| entry.count)
+        .fold(0usize, usize::saturating_add);
+    if count > 0 {
+        writeln!(
+            out,
+            "Kept {count} settings in place in their own tools because they may hold keys or cannot be copied."
+        )
+        .unwrap();
+    }
 }
 
 fn append_diff(out: &mut String, diff: &str) {
@@ -1054,9 +1088,37 @@ mod tests {
             blocked_codes: Vec::new(),
             proposals: Vec::new(),
             message: "Checked the local tool setup".into(),
+            kept_in_place: Vec::new(),
         };
-        assert!(report_for_a_person(&report)
+        assert!(report_for_a_person(&report, false)
             .contains("Blocked .codex/AGENTS.md: Review your changes before syncing.\n"));
+    }
+
+    #[test]
+    fn rulesync_report_summarizes_kept_in_place_entries_once_when_enabled() {
+        let report = RulesSyncReport {
+            written: Vec::new(),
+            blocked: Vec::new(),
+            blocked_codes: Vec::new(),
+            proposals: Vec::new(),
+            message: "Synced settings".into(),
+            kept_in_place: vec![
+                wenlan_types::rulesync::KeptInPlace {
+                    tool: "Claude Code".into(),
+                    count: 2,
+                },
+                wenlan_types::rulesync::KeptInPlace {
+                    tool: "Codex CLI".into(),
+                    count: 3,
+                },
+            ],
+        };
+        let summary = "Kept 5 settings in place in their own tools because they may hold keys or cannot be copied.\n";
+        assert_eq!(
+            report_for_a_person(&report, true).matches(summary).count(),
+            1
+        );
+        assert!(!report_for_a_person(&report, false).contains("Kept "));
     }
 
     #[test]
@@ -1074,8 +1136,10 @@ mod tests {
             skipped_tool_codes: Vec::new(),
             note_codes: Vec::new(),
             new_files: Vec::new(),
+            kept_in_place: Vec::new(),
         };
         assert!(!plan_for_a_person(&plan).contains("Will also write to"));
+        assert!(!plan_for_a_person(&plan).contains("Kept "));
         plan.new_files = vec![
             wenlan_types::rulesync::AdoptionNewFiles {
                 tool: "Cursor".into(),
@@ -1088,6 +1152,18 @@ mod tests {
         ];
         assert!(plan_for_a_person(&plan)
             .contains("Will also write to: Cursor, Gemini CLI (3 files).\n"));
+        plan.kept_in_place = vec![wenlan_types::rulesync::KeptInPlace {
+            tool: "Claude Code".into(),
+            count: 4,
+        }];
+        assert_eq!(
+            plan_for_a_person(&plan)
+                .matches(
+                    "Kept 4 settings in place in their own tools because they may hold keys or cannot be copied.\n"
+                )
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1113,6 +1189,7 @@ mod tests {
             skipped_tool_codes: Vec::new(),
             note_codes: Vec::new(),
             new_files: Vec::new(),
+            kept_in_place: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));

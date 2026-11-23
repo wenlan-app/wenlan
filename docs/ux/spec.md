@@ -1226,8 +1226,12 @@ and wait for evidence that people need them.
 - **UX-SKILL-17** `shipped` With `WENLAN_RULESYNC=1`, `wenlan rules adopt`
   previews existing personal MCP servers, hooks and permissions in the tools'
   default home directories. The person types `yes` to import the listed entries
-  into the local settings source. The preview gives the reason for each skipped
-  entry or file. It keeps supported native environment references, also
+  into the local settings source. Refused entries stay in their own tool; the
+  adoption preview and the adopt, share and person sync outputs show at most
+  one summary line with their total. JSON reports counts per tool. Review,
+  restore and status do not print this summary. A kept entry alone does not
+  block a file or make a tool need review. The preview explains skipped files.
+  It keeps supported native environment references, also
   under names such as `API_KEY` or `Authorization`, because the entry then
   holds only the variable's name. It checks commands and arguments, and skips
   credential options and literal values in environment and header maps. A
@@ -1362,6 +1366,8 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
+  `rulesync_personal_settings_summarizes_refused_hooks_and_permissions_without_review`,
+  `rulesync_report_summarizes_kept_in_place_entries_once_when_enabled`,
   `rulesync_personal_settings_review_preserves_native_approval_and_mode`,
   `rulesync_personal_settings_restore_owns_only_recorded_entries`,
   `rulesync_personal_settings_journal_keeps_the_prior_setup_recoverable`,

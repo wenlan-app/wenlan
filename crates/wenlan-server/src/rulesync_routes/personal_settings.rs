@@ -15,8 +15,8 @@ use wenlan_core::rulesync_settings::personal::{
     Location, RecordedEntry, Refusal,
 };
 use wenlan_types::rulesync::{
-    PullbackAction, PullbackCard, PullbackDecision, PullbackKind, RulesSetupCode as Code,
-    RulesSyncReport,
+    KeptInPlace, PullbackAction, PullbackCard, PullbackDecision, PullbackKind,
+    RulesSetupCode as Code, RulesSyncReport,
 };
 
 use super::{with_bytes, Kind, Manifest, Pending, Setup};
@@ -855,6 +855,7 @@ impl Setup {
         let mut operations = Vec::new();
         let mut direct = Vec::new();
         let mut advanced = Vec::new();
+        let mut kept_in_place = BTreeMap::<String, usize>::new();
         for (location, file) in &view.files {
             let path = &location.path;
             let display = location.display();
@@ -874,14 +875,14 @@ impl Setup {
                 .filter(|(_, entry, _)| manifest.keys.covers(path, &entry.key))
                 .map(|(number, ..)| number)
                 .collect();
-            result.extend_blocks(
-                Code::ReviewNeeded,
-                file.doc
-                    .refused_entries(location.tool)
-                    .zip(file.doc.refusal_notices(location))
-                    .filter(|((number, ..), _)| !shared.contains(number))
-                    .map(|(_, notice)| notice),
-            );
+            let refused = file
+                .doc
+                .refused_entries(location.tool)
+                .filter(|(number, ..)| !shared.contains(number))
+                .count();
+            if refused > 0 {
+                *kept_in_place.entry(location.tool.to_owned()).or_default() += refused;
+            }
             // A file that holds, or will hold, a key is never copied whole:
             // each entry is written in place with its own receipt.
             let in_place = !file.safe || manifest.keys.targets(path);
@@ -1064,6 +1065,10 @@ impl Setup {
                 "\nFound {additions} additional personal setting(s). Run `wenlan rules adopt` to review and add them."
             ));
         }
+        result.kept_in_place = kept_in_place
+            .into_iter()
+            .map(|(tool, count)| KeptInPlace { tool, count })
+            .collect();
         Ok(())
     }
 

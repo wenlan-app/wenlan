@@ -864,18 +864,6 @@ impl Document {
             })
     }
 
-    pub fn refusal_notices<'a>(
-        &'a self,
-        location: &'a Location,
-    ) -> impl Iterator<Item = String> + 'a {
-        let path = location.display();
-        self.refused_entries(location.tool)
-            .map(move |(number, feature, _)| format!(
-                "{path}: skipped {} (entry {number}) because it contains possible credentials or unsafe text.",
-                feature.label()
-            ))
-    }
-
     /// The servers that stay in their own tool, by 1-based position as in
     /// `refused_entries`, with the reason.
     pub fn refused_servers<'a>(
@@ -1088,6 +1076,8 @@ fn hook_identity(value: &Value, siblings: &[Value]) -> String {
 pub struct Adoption {
     pub sources: BTreeMap<PathBuf, Vec<Entry>>,
     pub notes: Vec<String>,
+    /// Refused settings remain in their native tools; counts are keyed by tool.
+    pub kept_in_place: BTreeMap<String, usize>,
 }
 
 impl Adoption {
@@ -1097,6 +1087,7 @@ impl Adoption {
         let mut adoption = Self {
             sources: BTreeMap::new(),
             notes: catalog.notes,
+            kept_in_place: BTreeMap::new(),
         };
         for location in catalog.locations {
             let path = location.display();
@@ -1127,7 +1118,13 @@ impl Adoption {
             };
             let mut accepted = Vec::new();
             let snapshot_safe = location.snapshot_safe(&bytes, &doc);
-            adoption.notes.extend(doc.refusal_notices(&location));
+            let refused = doc.refused_entries(location.tool).count();
+            if refused > 0 {
+                *adoption
+                    .kept_in_place
+                    .entry(location.tool.to_owned())
+                    .or_default() += refused;
+            }
             for entries in doc.entries.into_values() {
                 for (entry, _) in &entries {
                     if !reviewable(location.tool, entry) {
@@ -3281,14 +3278,8 @@ mod tests {
         assert!(
             preview.contains("${env:EXAMPLE_TOKEN}") && preview.contains("{env:EXAMPLE_TOKEN}")
         );
-        assert_eq!(
-            adoption
-                .notes
-                .iter()
-                .filter(|note| note.contains("skipped MCP server (entry"))
-                .count(),
-            7
-        );
+        assert_eq!(adoption.kept_in_place.get("cursor"), Some(&6));
+        assert_eq!(adoption.kept_in_place.get("opencode"), Some(&1));
         for serialized in [preview, notes, source] {
             assert!(!serialized.contains("-marker"));
         }
