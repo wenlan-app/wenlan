@@ -5650,12 +5650,12 @@ mod tests {
             "password":{"command":"example","args":["--password=synthetic-sentinel-pass"]},
             "bare":{"command":"example","args":["synthetic-sentinel-bare"]},
             "header":{"url":"https://example.invalid/mcp","headers":{"X-Custom":"synthetic-sentinel-header"}},
-            "auth-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SHARED_API_TOKEN}"}},
+            "header-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SHARED_API_TOKEN}"}},
             "userinfo":{"url":"https://u:q4@example.invalid/mcp"},
             "key-field":{"command":"example","key":"synthetic-sentinel-key"},
             "direct-auth":{"command":"example","bearer":"u:q4"},
             "unverified-field":{"command":"example","opaque":"synthetic-sentinel-opaque"},
-            "env-auth":{"command":"example","env":{"API_KEY":"${SHARED_API_TOKEN}"}},
+            "env-reference":{"command":"example","env":{"API_KEY":"${SHARED_API_TOKEN}"}},
             "good":{"command":"before"}
         }, "sessionToken":"synthetic-sentinel-unrelated" }"#;
         let claude = home.join(".claude.json");
@@ -5682,7 +5682,7 @@ mod tests {
                 .iter()
                 .filter(|note| note.contains("skipped MCP server"))
                 .count(),
-            // auth-reference and env-auth name a variable rather than hold a
+            // header-reference and env-reference name a variable rather than hold a
             // key, so they are no longer skipped.
             9
         );
@@ -5731,7 +5731,7 @@ mod tests {
                 .iter()
                 .filter(|note| note.contains("possible credentials or unsafe text"))
                 .count(),
-            // auth-reference and env-auth name a variable, so they pass.
+            // header-reference and env-reference name a variable, so they pass.
             14
         );
         assert!(!report.contains("synthetic-sentinel"));

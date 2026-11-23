@@ -665,18 +665,22 @@ impl Location {
             Regex::new(r#"(?s)"(?:[^"\\]|\\.)*"|//[^\r\n]*|/\*.*?\*/"#)
                 .expect("JSON strings and comments")
         });
+        // The raw text, comments included, is checked for key-looking parts
+        // as well as the parsed values, and comments also for a credential
+        // word followed by a value (`text_risky`).
         std::str::from_utf8(bytes).is_ok_and(|text| {
-            if self.format == Format::Json {
-                JSON_TEXT
-                    .find_iter(text)
-                    .map(|item| item.as_str())
-                    .filter(|item| item.starts_with('/'))
-                    .all(|comment| !text_risky(self.tool, comment))
-            } else {
-                text.lines()
-                    .filter_map(|line| line.split_once('#').map(|(_, comment)| comment))
-                    .all(|comment| !text_risky(self.tool, comment))
-            }
+            leaf_safe(&without_catalog_names(text))
+                && if self.format == Format::Json {
+                    JSON_TEXT
+                        .find_iter(text)
+                        .map(|item| item.as_str())
+                        .filter(|item| item.starts_with('/'))
+                        .all(|comment| !text_risky(self.tool, comment))
+                } else {
+                    text.lines()
+                        .filter_map(|line| line.split_once('#').map(|(_, comment)| comment))
+                        .all(|comment| !text_risky(self.tool, comment))
+                }
         }) && material_safe(self.tool, &self.generic_part(doc))
             && doc.sections.iter().all(|&Section(feature, path, shape)| {
                 let Some(value) = lookup(&doc.raw, path.iter().copied()) else {
@@ -1072,8 +1076,11 @@ fn variable_name(name: &str) -> bool {
         && !secret_looking(name)
 }
 
-/// Text that looks like a key whatever its context: a known token prefix, a
-/// long run of hex digits, or a long run of letters mixed with digits.
+/// Text with a part that looks like a key whatever its context: a known
+/// token prefix, a Slack webhook path, a run of 16 or more hex digits (a
+/// UUID with its hyphens taken out counts), a run of 16 or more letters and
+/// digits with any digit in it (a base32 key such as `JBSWY3DPEHPK3PXP`
+/// included), or a run of 20 or more letters in mixed case.
 fn secret_looking(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let prefix = [
@@ -1085,8 +1092,12 @@ fn secret_looking(text: &str) -> bool {
         "github_pat_",
         "sk-",
         "sk_",
+        "sk-ant-",
+        "rk_live_",
+        "sk_live_",
         "xoxa-",
         "xoxb-",
+        "xoxe-",
         "xoxp-",
         "xoxr-",
         "xoxs-",
@@ -1096,89 +1107,175 @@ fn secret_looking(text: &str) -> bool {
         "glpat-",
         "npm_",
     ];
-    let long_run = |run: &str| {
-        run.len() >= 16
-            && (run.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || run.bytes().any(|byte| byte.is_ascii_digit()))
+    let hex = |run: &str| run.len() >= 16 && run.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let mixed = |run: &str| {
+        (run.len() >= 16 && run.bytes().any(|byte| byte.is_ascii_digit()))
+            || (run.len() >= 20
+                && run.bytes().any(|byte| byte.is_ascii_uppercase())
+                && run.bytes().any(|byte| byte.is_ascii_lowercase()))
     };
-    lower
-        .split(|ch: char| !(ch.is_ascii_alphanumeric() || "_-".contains(ch)))
-        .any(|word| prefix.iter().any(|prefix| word.starts_with(prefix)))
+    lower.contains("hooks.slack.com/services")
         || lower
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || "_-".contains(ch)))
+            .any(|word| {
+                prefix.iter().any(|prefix| word.starts_with(prefix))
+                    || hex(&word.replace(['-', '_'], ""))
+            })
+        || text
             .split(|ch: char| !ch.is_ascii_alphanumeric())
-            .any(long_run)
-        || lower
-            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-'))
-            .map(|word| word.replace('-', ""))
-            .any(|run| run.len() >= 16 && run.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        || high_entropy(text)
+            .any(|run| hex(run) || mixed(run))
 }
 
-/// A number or an on/off switch in Claude Code's `env`, under a name that
-/// cannot hold a key, or a number under a name that only counts or times
-/// something, such as `..._MAX_TOKENS` or `..._TIMEOUT_MS`.
+/// Whether no part of `text` looks like a key. Every string in a setting,
+/// its names included, goes through this check, through `text_risky`.
+fn leaf_safe(text: &str) -> bool {
+    !secret_looking(text)
+}
+
+/// A setting name this catalog itself declares (`defaultPermissionMode`).
+/// Its spelling is fixed in this file, so it holds no value of the person's
+/// and is left out of the key-looking check; any other name is still checked.
+fn catalog_name(name: &str) -> bool {
+    DEFAULTS
+        .iter()
+        .map(|location| location.sections)
+        .chain([HOOKS, OPENCODE_V1, OPENCODE_V2, POLICIES, COMMAND_RULES])
+        .flatten()
+        .any(|Section(_, path, _)| path.contains(&name))
+}
+
+/// `text` with every word that is a catalog-declared name taken out, for the
+/// raw-file check.
+fn without_catalog_names(text: &str) -> std::borrow::Cow<'_, str> {
+    static WORD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"[A-Za-z0-9_-]+").expect("setting words"));
+    WORD.replace_all(text, |word: &regex::Captures| {
+        let word = &word[0];
+        if catalog_name(word) {
+            String::new()
+        } else {
+            word.to_owned()
+        }
+    })
+}
+
+/// The lowercase words of a name, split at separators and at a capital
+/// after a lowercase letter or digit, so `doorCode` and `DOOR_CODE` both
+/// give `door` and `code`.
+fn name_words(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut after_lower = false;
+    for ch in name.chars() {
+        if !ch.is_ascii_alphanumeric() {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            after_lower = false;
+            continue;
+        }
+        if ch.is_ascii_uppercase() && after_lower {
+            words.push(std::mem::take(&mut word));
+        }
+        after_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        word.push(ch.to_ascii_lowercase());
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// Whether a name, flag or word names a credential. This one list serves
+/// setting names, environment names, flags and free text. It matches inside
+/// longer words, so `MYPIN` and `TOTP` count, and so do some words that name
+/// no credential, such as `spinner` or `author`; those are refused too.
+fn credential_word(name: &str) -> bool {
+    let joined = name
+        .to_ascii_lowercase()
+        .replace(|ch: char| !ch.is_ascii_alphanumeric(), "");
+    // `code` counts when it ends a name joined by `_` or a capital, as in
+    // `DOOR_CODE` or `authCode`, but not a dashed name such as `claude-code`.
+    let last = name
+        .rsplit(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .next()
+        .map(name_words)
+        .unwrap_or_default();
+    [
+        "pass",
+        "pwd",
+        "pin",
+        "otp",
+        "mfa",
+        "cvc",
+        "cvv",
+        "puk",
+        "ssn",
+        "secret",
+        "token",
+        "key",
+        "auth",
+        "cred",
+        "cookie",
+        "sessionid",
+        "accountnumber",
+        "backupcode",
+    ]
+    .iter()
+    .any(|word| joined.contains(word))
+        || name_words(name).iter().any(|word| word == "pw")
+        || (last.len() > 1 && last.last().is_some_and(|word| word == "code"))
+}
+
+/// A setting in Claude Code's `env` that names no key: a number, an on/off
+/// switch or a plain string under a name with no credential word, or a number
+/// under a name whose only credential word is `TOKEN(S)` and which counts or
+/// times something, such as `..._MAX_OUTPUT_TOKENS`.
 fn plain_setting(name: &str, value: &Value) -> bool {
     let digits = |text: &str| {
         !text.is_empty() && text.len() <= 10 && text.bytes().all(|byte| byte.is_ascii_digit())
     };
-    let (number, switch) = match value {
-        Value::String(text) => (digits(text), matches!(text.as_str(), "true" | "false")),
+    let (number, switch, text) = match value {
+        Value::String(text) => (
+            digits(text),
+            matches!(text.as_str(), "true" | "false"),
+            Some(text.as_str()),
+        ),
         Value::Number(number) => (
             number.as_u64().is_some_and(|n| digits(&n.to_string())),
             false,
+            None,
         ),
-        Value::Bool(_) => (false, true),
-        _ => (false, false),
+        Value::Bool(_) => (false, true, None),
+        _ => (false, false, None),
     };
     let measure = [
         "_TOKENS", "_LIMIT", "_TIMEOUT", "_MS", "_SECONDS", "_PORT", "_SIZE", "_COUNT", "_RETRIES",
     ]
     .iter()
     .any(|suffix| name.ends_with(suffix));
-    let secret_word = name.split(['_', '-', '.']).any(|word| {
-        matches!(
-            word.to_ascii_uppercase().as_str(),
-            "PIN" | "PINCODE" | "PASSCODE" | "PASS" | "PW" | "PWD" | "OTP" | "CVV" | "SSN"
-        )
-    });
-    if credential_key(name) || secret_word {
-        number && measure
+    let without_tokens = name_words(name)
+        .into_iter()
+        .filter(|word| !matches!(word.as_str(), "token" | "tokens"))
+        .collect::<Vec<_>>()
+        .join("_");
+    if text_risky("", name) {
+        false
+    } else if credential_key(name) {
+        number && measure && !credential_key(&without_tokens)
     } else {
-        number || switch
+        number || switch || text.is_some_and(|text| !text_risky("claudecode", text))
     }
 }
 
 fn credential_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase().replace(['-', '_', '.', ' '], "");
-    matches!(
-        key.as_str(),
-        "key"
-            | "auth"
-            | "authentication"
-            | "bearer"
-            | "oauth"
-            | "oauth2"
-            | "signature"
-            | "session"
-            | "userinfo"
-            | "username"
-    ) || [
-        "apikey",
-        "password",
-        "passwd",
-        "passphrase",
-        "secret",
-        "privatekey",
-        "accesskey",
-        "token",
-        "authorization",
-        "cookie",
-        "credential",
-        "clientsecret",
-        "sessionid",
-    ]
-    .iter()
-    .any(|word| key.contains(word))
+    credential_word(key)
+        || matches!(
+            key.to_ascii_lowercase()
+                .replace(['-', '_', '.', ' '], "")
+                .as_str(),
+            "bearer" | "signature" | "session" | "userinfo" | "username"
+        )
 }
 
 fn exact_reference(tool: &str, value: &str) -> bool {
@@ -1202,54 +1299,147 @@ fn exact_reference(tool: &str, value: &str) -> bool {
     }
 }
 
+/// Whether a string in a setting may hold a key. Every string leaf and name
+/// goes through this: a token-looking part (`leaf_safe`), a flag or
+/// assignment that carries a value (`command_risky`), a credential word
+/// followed by a value (`near_credential`), and the older patterns below.
 fn text_risky(tool: &str, value: &str) -> bool {
     static RISK: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
         r"(?i)(?:[a-z][a-z0-9+.-]*://[^/\s?#]*@|[a-z][a-z0-9+.-]*://[^\s]*[?#]|\b(?:sk[-_]|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|eyJ[a-zA-Z0-9_-]+\.)[a-z0-9_./+=-]{6,}|(?:^|\s)-(?:u|H)(?:\s+|=)[^\s]+|(?:^|\s)--(?:key|auth|header|env|client[-_]?secret)(?:\s+|=)[^\s]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\$\{[^}\n]+:-[^}\n]+|\b(?:api[-_]?key|client[-_]?secret|password|passwd|secret|token)\s*[:=]\s*[^\s]+)",
     ).expect("settings credential indicators")
     });
-    // `-p`, `-P`, `-e` and `-E` with a value are risky, as for `-u` and
-    // `-H`, except in three named commands where they take a public name:
-    // `cargo -p <crate>`, `grep`/`rg`/`egrep -e|-E <pattern>` and
-    // `sed -e|-E <script>`.
-    static SHORT_FLAG: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(?:^|\s)(-[pe])(?:\s+|=)([^\s]+)").expect("short flag values")
-    });
     if exact_reference(tool, value) {
         return false;
     }
     RISK.is_match(value)
-        || SHORT_FLAG.captures_iter(value).any(|captures| {
-            let start = captures.get(0).map_or(0, |found| found.start());
-            let program = value[..start]
-                .rsplit(['(', '"', '\'', ';', '&', '|', '[', ',', '\n'])
-                .next()
-                .unwrap_or_default()
-                .split_ascii_whitespace()
-                .next()
-                .unwrap_or_default();
-            let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
-            let flagged = captures[2].trim_end_matches([')', '"', '\'', ',', ']']);
-            let flagged = flagged.strip_suffix(":*").unwrap_or(flagged);
-            let named = match (program, &captures[1]) {
-                ("cargo", "-p") => safe_identifier(flagged),
-                ("grep" | "rg" | "egrep" | "sed", "-e" | "-E") => true,
-                _ => false,
-            };
-            !named || secret_looking(flagged)
-        })
+        || !leaf_safe(value)
+        || command_risky(value)
+        || near_credential(value)
         || validate_text(value).is_err()
-        || high_entropy(value)
 }
 
-fn high_entropy(text: &str) -> bool {
-    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || "-_".contains(ch)))
-        .any(|word| {
-            word.len() >= 24
-                && word.bytes().any(|b| b.is_ascii_uppercase())
-                && word.bytes().any(|b| b.is_ascii_lowercase())
-                && word.bytes().filter(u8::is_ascii_digit).count() >= 3
-        })
+/// `NAME=value`, split at the first `=`, when NAME is a variable name.
+fn assignment(word: &str) -> Option<(&str, &str)> {
+    let (name, value) = word.split_once('=')?;
+    let mut bytes = name.bytes();
+    (bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+    .then_some((name, value))
+}
+
+/// `$NAME` or `${NAME}`.
+fn variable_reference(value: &str) -> bool {
+    let name = value
+        .strip_prefix("${")
+        .and_then(|value| value.strip_suffix('}'))
+        .or_else(|| value.strip_prefix('$'));
+    name.is_some_and(|name| assignment(&format!("{name}=")).is_some())
+}
+
+/// Command-like text that passes a value in a flag or an assignment. In each
+/// part of the text (split at brackets, quotes and shell operators):
+/// - `NAME=value` is refused unless the value is `$NAME`/`${NAME}`, or the
+///   name has no credential word and the value looks like no key;
+/// - a credential flag (`-u`, `-a`, `-k`, `-H`, `--pass`, `--user`, any flag
+///   with a credential word) is refused, with or without a value;
+/// - any other flag with a value attached (`-pX`, `--x=V`) or after it is
+///   refused, except a few flags whose value is public in a named command:
+///   `cargo -p`, `grep`/`egrep`/`rg -e|-E`, `sed -e|-E`, `pytest -p`,
+///   `echo -e` and `claude -p`. Their value still goes through `leaf_safe`.
+///
+/// Up to four letters after one dash (`-la`) are separate switches, unless
+/// the first is a credential or password letter, as in `-phunter`.
+fn command_risky(text: &str) -> bool {
+    text.split([
+        '(', ')', ';', '&', '|', '\n', '\r', ',', '[', ']', '"', '\'', '`',
+    ])
+    .any(|part| {
+        let words = part
+            .split_ascii_whitespace()
+            .map(|word| {
+                word.strip_suffix(":*")
+                    .or_else(|| word.strip_suffix('*'))
+                    .unwrap_or(word)
+            })
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>();
+        let program = words
+            .iter()
+            .find(|word| !word.starts_with('-') && assignment(word).is_none())
+            .map_or("", |word| word.rsplit(['/', '\\']).next().unwrap_or(word));
+        words
+            .iter()
+            .enumerate()
+            .any(|(index, word)| match assignment(word) {
+                Some((name, value)) => {
+                    !(variable_reference(value) || (!credential_key(name) && leaf_safe(value)))
+                }
+                None => flag_risky(program, word, words.get(index + 1).copied()),
+            })
+    })
+}
+
+fn flag_risky(program: &str, word: &str, next: Option<&str>) -> bool {
+    let Some(body) = word.strip_prefix('-') else {
+        return false;
+    };
+    let letter = |text: &str| text.starts_with(|ch: char| ch.is_ascii_alphabetic());
+    let (flag, attached) = match body.strip_prefix('-') {
+        Some(long) if letter(long) => match long.split_once('=') {
+            Some((name, value)) => (&word[..name.len() + 2], Some(value)),
+            None => (word, None),
+        },
+        None if letter(body) => {
+            let rest = &body[1..];
+            let switches = body.len() <= 4
+                && rest.bytes().all(|byte| byte.is_ascii_alphabetic())
+                && !"pPakuUH".contains(&body[..1]);
+            (&word[..2], (!rest.is_empty() && !switches).then_some(rest))
+        }
+        _ => return false,
+    };
+    let named = matches!(
+        (program, flag),
+        ("cargo", "-p" | "--package")
+            | ("grep" | "egrep" | "rg", "-e" | "-E" | "--regexp")
+            | ("sed", "-e" | "-E" | "--expression")
+            | ("pytest", "-p")
+            | ("echo", "-e" | "-E")
+            | ("claude", "-p" | "--print")
+    );
+    let valued = attached.is_some() || next.is_some_and(|next| !next.starts_with('-'));
+    credential_flag(flag) || (valued && !named)
+}
+
+/// A credential word followed within three words by a literal value, as in
+/// `vpn password hunter2`, `pw hunter2` or `add-authtoken 2abc`. A reference
+/// to the environment right after the word, as in `TOKEN=${TOKEN}`, is the
+/// word's value, so the text is not refused for it.
+fn near_credential(text: &str) -> bool {
+    static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|\{env:[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*",
+        )
+        .expect("environment references")
+    });
+    const MARK: &str = "\u{1}";
+    let marked = REFERENCE.replace_all(text, " \u{1} ");
+    let words = marked
+        .split(|ch: char| ch.is_whitespace() || "(),;\"'[]=:<>|{}`".contains(ch))
+        .filter(|word| *word == MARK || word.bytes().any(|byte| byte.is_ascii_alphanumeric()))
+        .collect::<Vec<_>>();
+    words.iter().enumerate().any(|(index, word)| {
+        credential_word(word)
+            && words[index + 1..]
+                .iter()
+                .take(3)
+                .take_while(|word| **word != MARK)
+                .next()
+                .is_some()
+    })
 }
 
 // Free-form argv and shell text can contain even very short credentials.
@@ -1309,24 +1499,25 @@ fn command_safe(tool: &str, command: &Value) -> bool {
     })
 }
 
-/// A flag that can carry a user name, password, header, cookie or other key
-/// in the argument after it.
+/// A flag that can carry a user name, password, header, cookie or other key,
+/// in the argument after it or attached to it. Refused with or without a
+/// value.
 fn credential_flag(flag: &str) -> bool {
     let name = flag.trim_start_matches('-').to_ascii_lowercase();
-    matches!(flag, "-u" | "-U" | "-h" | "-H")
+    matches!(flag, "-u" | "-U" | "-H" | "-a" | "-k")
         || credential_key(&name)
-        || [
-            "auth", "bearer", "oauth", "user", "pass", "header", "cookie", "key", "cred", "login",
-            "env",
-        ]
-        .iter()
-        .any(|word| name.contains(word))
+        || ["bearer", "user", "header", "login", "env"]
+            .iter()
+            .any(|word| name.contains(word))
 }
 
 /// A hook or status line command: a simple executable, then exact
-/// references, plain flags and short plain words such as `session-start`.
-/// A word after a flag counts as that flag's value, which is public only for
-/// a few named flags such as `--agent`; after any other flag it may be a key.
+/// references, plain flags and positional words. A word after a flag counts
+/// as that flag's value, which is public only for a few named flags such as
+/// `--agent`; after any other flag it may be a key. Other positional words
+/// are only a path, a lowercase word without digits, or a number of up to
+/// four digits after a word that names no credential. A password made only
+/// of lowercase letters and dashes cannot be told from a word (UX-SKILL-17).
 fn shell_command_safe(tool: &str, command: &Value) -> bool {
     const VALUE_FLAGS: &[&str] = &[
         "--agent",
@@ -1347,37 +1538,87 @@ fn shell_command_safe(tool: &str, command: &Value) -> bool {
                 && name
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        }) && !credential_flag(arg)
+        }) && (VALUE_FLAGS.contains(&arg) || !credential_flag(arg))
     };
-    let plain_word = |arg: &str| arg.len() <= 64 && safe_identifier(arg) && !secret_looking(arg);
-    argv(command).is_some_and(|parts| {
-        parts.split_first().is_some_and(|(name, args)| {
-            executable(tool, name)
-                && args.iter().enumerate().all(|(index, arg)| {
-                    if safe_argument(tool, arg) {
-                        return true;
-                    }
-                    if arg.starts_with('-') {
-                        return plain_flag(arg);
-                    }
-                    let after = index.checked_sub(1).map(|before| args[before]);
-                    plain_word(arg)
-                        && after.is_none_or(|flag| {
-                            !flag.starts_with('-') || VALUE_FLAGS.contains(&flag)
-                        })
-                })
+    let flag_value = |arg: &str| arg.len() <= 64 && safe_identifier(arg) && !secret_looking(arg);
+    let path = |arg: &str| {
+        (arg.contains('/') || arg.starts_with('~'))
+            && arg.len() <= 200
+            && arg
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"/\\._-~".contains(&byte))
+    };
+    let word = |arg: &str| {
+        arg.len() <= 64
+            && arg.starts_with(|ch: char| ch.is_ascii_lowercase())
+            && arg
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || b"-_".contains(&byte))
+    };
+    let number = |arg: &str, before: &str| {
+        !arg.is_empty()
+            && arg.len() <= 4
+            && arg.bytes().all(|byte| byte.is_ascii_digit())
+            && !credential_word(before)
+            && !matches!(
+                before.to_ascii_lowercase().as_str(),
+                "lock" | "unlock" | "code"
+            )
+    };
+    let text = match command {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return false,
+    };
+    leaf_safe(&text)
+        && !near_credential(&text)
+        && argv(command).is_some_and(|parts| {
+            parts.split_first().is_some_and(|(name, args)| {
+                executable(tool, name)
+                    && args.iter().enumerate().all(|(index, arg)| {
+                        let before = index.checked_sub(1).map_or(*name, |before| args[before]);
+                        if safe_argument(tool, arg) {
+                            true
+                        } else if arg.starts_with('-') {
+                            plain_flag(arg)
+                        } else if before.starts_with('-') {
+                            VALUE_FLAGS.contains(&before) && flag_value(arg)
+                        } else {
+                            path(arg) || word(arg) || number(arg, before)
+                        }
+                    })
+            })
         })
-    })
 }
 
 /// A package name for `npx`, `bunx`, `uvx` or `pnpm dlx`: lowercase, with an
-/// optional `@scope/` and `@version`.
+/// optional `@scope/` and `@version`. Each part of a name between `-`, `.`
+/// and `_` is letters only, digits only or `v` and digits, since a part
+/// mixing letters and digits, such as `hunter2`, may be a password. A version
+/// is a version number or a usual release tag.
 fn package_spec(spec: &str) -> bool {
+    static VERSION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"^(?:latest|next|beta|alpha|canary|rc|stable|[~^]?\d+(?:\.\d+){0,2}(?:-(?:alpha|beta|rc|next|canary|preview)(?:\.\d+)*)?)$",
+        )
+        .expect("package versions")
+    });
     let name_part = |part: &str| {
         !part.is_empty()
             && !part.starts_with(['.', '_', '-'])
             && part.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+            })
+            && part.split(['.', '_', '-']).all(|word| {
+                word.bytes().all(|byte| byte.is_ascii_lowercase())
+                    || word.bytes().all(|byte| byte.is_ascii_digit())
+                    || word.strip_prefix('v').is_some_and(|number| {
+                        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                    })
             })
     };
     let (scope, rest) = match spec.strip_prefix('@') {
@@ -1394,14 +1635,8 @@ fn package_spec(spec: &str) -> bool {
     spec.len() <= 214
         && scope.is_none_or(name_part)
         && name_part(name)
-        && version.is_none_or(|version| {
-            !version.is_empty()
-                && version
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b".+_-".contains(&byte))
-        })
+        && version.is_none_or(|version| VERSION.is_match(version))
         && !text_risky("", spec)
-        && !secret_looking(spec)
 }
 
 /// An MCP server run through a package launcher, with exactly one package
@@ -1443,7 +1678,9 @@ fn launcher_safe(tool: &str, fields: &serde_json::Map<String, Value>) -> bool {
         && packages == 1
 }
 
-/// A literal header value that names a client or a format, never a key.
+/// A literal header value that names a client or a format, never a key: a
+/// `x-<label>-source` label, or a MIME type or product token in `Accept`,
+/// `Content-Type` or `User-Agent`.
 fn public_header(name: &str, value: &Value) -> bool {
     let name = name.to_ascii_lowercase();
     let source_label = name
@@ -1456,17 +1693,32 @@ fn public_header(name: &str, value: &Value) -> bool {
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
                 && !credential_flag(label)
         });
-    (source_label || matches!(name.as_str(), "accept" | "content-type" | "user-agent"))
-        && value
-            .as_str()
-            .is_some_and(|value| safe_identifier(value) && !secret_looking(value))
+    let format = matches!(name.as_str(), "accept" | "content-type" | "user-agent");
+    value.as_str().is_some_and(|value| {
+        if source_label {
+            safe_identifier(value) && !secret_looking(value)
+        } else {
+            format
+                && !value.is_empty()
+                && value.len() <= 200
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"/.+;=-_ ,*".contains(&byte))
+                // A space only after a separator, as in `text/html, */*`.
+                && value
+                    .match_indices(' ')
+                    .all(|(index, _)| index > 0 && b";, ".contains(&value.as_bytes()[index - 1]))
+                && leaf_safe(value)
+                && !near_credential(value)
+        }
+    })
 }
 
 fn material_safe(tool: &str, value: &Value) -> bool {
     match value {
-        Value::Object(map) => map
-            .iter()
-            .all(|(name, value)| !text_risky(tool, name) && safe_field(tool, name, value)),
+        Value::Object(map) => map.iter().all(|(name, value)| {
+            (catalog_name(name) || !text_risky(tool, name)) && safe_field(tool, name, value)
+        }),
         Value::Array(items) => items.iter().all(|item| material_safe(tool, item)),
         Value::String(value) => !text_risky(tool, value),
         _ => true,
@@ -1538,8 +1790,12 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
                 })
         }
         "url" | "serverurl" | "httpurl" => value.as_str().is_some_and(|url| {
+            // Path segments, host labels and matrix parameters go through
+            // the same leaf check as any other text; `;` and `=` in the path
+            // can only carry a parameter, so they are refused.
             exact_reference(tool, url)
                 || (!text_risky(tool, url)
+                    && !url.contains([';', '='])
                     && reqwest::Url::parse(url).is_ok_and(|url| {
                         matches!(url.scheme(), "http" | "https")
                             && url.username().is_empty()
@@ -1565,8 +1821,37 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
                 })
             })
         }
-        _ => !credential_key(name) && material_safe(tool, value),
+        _ => {
+            !credential_key(name)
+                && material_safe(tool, value)
+                && (!argv_field(&normalized) || !text_risky(tool, &joined(value)))
+        }
     }
+}
+
+/// A field that holds a command line as a list, such as a Codex rule's
+/// `pattern` or a Gemini policy's `commandPrefix`. Besides each part alone,
+/// the parts joined with spaces are checked, so `["sshpass", "-p", "x"]`
+/// counts as `sshpass -p x`.
+fn argv_field(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "pattern" | "commandprefix" | "prefix" | "argv" | "cmd" | "notify"
+    )
+}
+
+/// The strings in a value, nested lists included, joined with spaces.
+fn joined(value: &Value) -> String {
+    fn collect<'a>(value: &'a Value, parts: &mut Vec<&'a str>) {
+        match value {
+            Value::String(text) => parts.push(text),
+            Value::Array(items) => items.iter().for_each(|item| collect(item, parts)),
+            _ => {}
+        }
+    }
+    let mut parts = Vec::new();
+    collect(value, &mut parts);
+    parts.join(" ")
 }
 
 fn mcp_payload_safe(tool: &str, value: &Value) -> bool {
@@ -1670,7 +1955,7 @@ pub fn reviewable(tool: &str, entry: &Entry) -> bool {
     entry
         .container
         .iter()
-        .all(|name| !text_risky(tool, name) && !credential_key(name))
+        .all(|name| (catalog_name(name) || !text_risky(tool, name)) && !credential_key(name))
         && entry
             .key
             .member
@@ -2087,7 +2372,20 @@ mod tests {
             .iter()
             .find(|location| location.path == Path::new(path))
             .cloned()
-            .unwrap()
+            .unwrap_or_else(|| {
+                if path.starts_with(".codex/rules/") {
+                    Location {
+                        tool: "codexcli",
+                        path: path.into(),
+                        format: Format::CommandRules,
+                        sections: COMMAND_RULES,
+                        initial: "",
+                    }
+                } else {
+                    assert!(path.starts_with(".gemini/policies/"), "{path}");
+                    toml_file("geminicli", path, POLICIES)
+                }
+            })
     }
 
     #[test]
@@ -2612,13 +2910,11 @@ mod tests {
     #[test]
     fn rulesync_personal_settings_claude_plain_number_and_switch_settings_are_not_credentials() {
         let plain = r#"{"env":{"CLAUDE_CODE_MAX_OUTPUT_TOKENS":"64000","DISABLE_TELEMETRY":"1",
-            "USE_FIXTURE":"true","SHARED":"${SHARED_TOKEN}"}}"#;
+            "USE_FIXTURE":"true","SHARED":"${SHARED_TOKEN}","ANTHROPIC_MODEL":"claude-opus"}}"#;
         assert!(checked(".claude/settings.json", plain).0);
         for env in [
             r#"{"ANTHROPIC_AUTH_TOKEN":"fixture-marker"}"#,
             r#"{"ANTHROPIC_AUTH_TOKEN":"true"}"#,
-            r#"{"FIXTURE_SETTING":"fixture-marker"}"#,
-            r#"{"FIXTURE_SETTING":"12345678901"}"#,
             r#"{"DB_PASSWORD":"73920184"}"#,
             r#"{"VAULT_PIN":"4821"}"#,
             r#"{"API_TOKEN_LIMIT":"true"}"#,
@@ -2702,17 +2998,21 @@ mod tests {
                 "{hook}"
             );
         }
-        // A path is not a plain word, so a status line script by path stays
-        // with the person.
-        for status in [
-            "fixture --token fixture-marker",
-            "bash ~/.claude/statusline.sh",
-        ] {
-            assert!(
-                !checked(".claude/settings.json", &settings("fixture", status)).0,
-                "{status}"
-            );
-        }
+        // A status line script by path is public; a credential flag is not.
+        assert!(
+            checked(
+                ".claude/settings.json",
+                &settings("fixture", "bash ~/.claude/statusline.sh")
+            )
+            .0
+        );
+        assert!(
+            !checked(
+                ".claude/settings.json",
+                &settings("fixture", "fixture --token fixture-marker")
+            )
+            .0
+        );
     }
 
     #[test]
@@ -2775,5 +3075,229 @@ mod tests {
                 "{command} {name}"
             );
         }
+    }
+
+    /// Every input from the two independent reviews of this check
+    /// (sol-reviews/followups/brief-send-to-all-r3-cases.md). Each one must
+    /// keep its file from a whole-file backup and offer no entry.
+    #[test]
+    fn rulesync_personal_settings_review_inputs_are_refused() {
+        let server =
+            |url: &str| format!(r#"{{"mcpServers":{{"remote":{{"type":"http","url":"{url}"}}}}}}"#);
+        let allow = |rule: &str| format!(r#"{{"permissions":{{"allow":{}}}}}"#, json!([rule]));
+        let hook = |command: &str| {
+            format!(
+                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":{}}}]}}]}}}}"#,
+                json!(command)
+            )
+        };
+        let launcher = |args: &str| {
+            format!(r#"{{"mcpServers":{{"local":{{"command":"npx","args":{args}}}}}}}"#)
+        };
+        let mut entries: Vec<(&str, String)> = Vec::new();
+        for url in [
+            "https://mcp.example.invalid/s/3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c/mcp",
+            "https://mcp.example.invalid/k/hunter2secretvalue",
+            "https://mcp.example.invalid/123e4567-e89b-12d3-a456-426614174000/mcp",
+            "https://mcp.example.invalid/mcp;key=hunter2",
+            "https://mcp.example.invalid/key=hunter2/mcp",
+            "https://3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c.example.invalid/mcp",
+            "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+        ] {
+            entries.push((".claude.json", server(url)));
+            entries.push((
+                ".codex/config.toml",
+                format!("[mcp_servers.remote]\nurl = '{url}'\n"),
+            ));
+        }
+        for rule in [
+            "Bash(mysql -uroot -phunter2permpw db)",
+            "Bash(mysql -uroot -pS3cretPassw0rd)",
+            "Bash(7z x -phunter2)",
+            "Bash(curl --user admin:hunter2 https://example.invalid)",
+            "Bash(redis-cli -a hunter2)",
+            "Bash(openssl enc -k hunter2)",
+            "Bash(fixture --pass hunter2)",
+            "Bash(fixture --pin 4821)",
+            "Bash(fixture --otp 123456)",
+            "Bash(ngrok config add-authtoken 2abcDEF3ghiJKL)",
+            "Bash(PGPASSWORD=hunter2 psql)",
+            "Bash(MYSQL_PWD=hunter2 mysql)",
+            "Bash(curl -d key=0123456789abcdef0123456789abcdef https://example.invalid)",
+            "Bash(fixture 0123456789abcdef0123456789abcdef)",
+            "Bash(fixture 0123456789abcdef0123456789abcdef01234567)",
+            "Bash(fixture JBSWY3DPEHPK3PXP)",
+            "Bash(fixture glpat-AbCdEfGhIjKlMnOpQr12)",
+            "Bash(aws configure set aws_secret_access_key wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY)",
+            "Bash(sshpass -p hunter2 ssh fixture)",
+            "Bash(zip -P hunter2 fixture.zip)",
+            "Bash(mysql -p hunter2)",
+            "Bash(fixture -e script-name)",
+            "Bash(cargo test -P hunter2)",
+            "Bash(mysql -p user=fixture)",
+            "Bash(fixture -p u:q4)",
+            "Bash(fixture -E Fixture4Marker9Value8Abc7Def)",
+            "Bash(curl -H fixture)",
+            "Bash(curl -u fixture)",
+        ] {
+            entries.push((".claude/settings.json", allow(rule)));
+        }
+        entries.extend([
+            (
+                ".cursor/permissions.json",
+                r#"{"terminalAllowlist":["mysql -uroot -phunter2"]}"#.into(),
+            ),
+            (
+                ".gemini/settings.json",
+                r#"{"tools":{"allowed":["run_shell_command(mysql -phunter2)"]}}"#.into(),
+            ),
+            (
+                ".config/opencode/opencode.json",
+                r#"{"permission":{"bash":{"redis-cli -a hunter2 *":"allow"}}}"#.into(),
+            ),
+        ]);
+        for rule in [
+            r#"pattern = ["sshpass", "-p", "hunter2rulepw"], decision = "allow""#,
+            r#"pattern = ["mysql", "--password", "hunter2"], decision = "allow""#,
+            r#"pattern = ["curl", "-u", "admin:hunter2"], decision = "allow""#,
+            r#"pattern = ["git"], decision = "allow", justification = "pw hunter2""#,
+        ] {
+            entries.push((
+                ".codex/rules/default.rules",
+                format!("prefix_rule({rule})\n"),
+            ));
+        }
+        entries.push((
+            ".gemini/policies/user.toml",
+            "[[rule]]\ntoolName = 'run_shell_command'\ncommandPrefix = ['curl', '-u', 'admin:hunter2']\ndecision = 'allow'\n".into(),
+        ));
+        for command in [
+            "notify hunter2",
+            "unlock 4821",
+            "notify a1b2c3d4e5f6g7h",
+            "redis-cli -a fixture",
+            "sshpass -p hunter2 ssh fixture",
+            "deploy --pw hunter2",
+            "fixture -k 123e4567-e89b-12d3-a456-426614174000",
+            "notify-hook 0123456789abcdef0123456789abcdef",
+            "fixture --verbose hunter2",
+            "fixture ghp_fixturemarker",
+        ] {
+            entries.push((".claude/settings.json", hook(command)));
+        }
+        for args in [r#"["-y","hunter2"]"#, r#"["-y","some-mcp@hunter2pass"]"#] {
+            entries.push((".claude.json", launcher(args)));
+        }
+        for (path, bytes) in &entries {
+            assert_eq!(checked(path, bytes), (false, 0), "{path}: {bytes}");
+        }
+
+        // Inputs that are not entries keep the whole file from a backup.
+        let mut files: Vec<(&str, String)> = Vec::new();
+        for setting in [
+            "[shell_environment_policy]\nset = { DB_PASS = 'hunter2codexpw' }",
+            "[shell_environment_policy]\nset = { MYSQL_PWD = \"hunter2\" }",
+            "[shell_environment_policy]\nset = { ADMIN_PIN = \"4821\" }",
+            "proxy_pass = \"hunter2\"",
+            "[mcp_servers.remote]\nurl = 'https://mcp.example.invalid/mcp'\nquery_params = { code = '4/0AfJohXnFixtureMarker' }",
+            "model = 'fixture' # vpn password hunter2",
+            "# vpn password hunter2\nmodel = 'fixture'",
+        ] {
+            files.push((".codex/config.toml", format!("{setting}\n")));
+        }
+        files.push((
+            ".claude/settings.json",
+            r#"{"companyAnnouncements":["vpn pass is hunter2"]}"#.into(),
+        ));
+        for env in [
+            r#""MFA_BACKUP_CODE":"84736251""#,
+            r#""CARD_CVC":"123""#,
+            r#""MYPIN":"4821""#,
+            r#""SIM_PUK":"12345678""#,
+            r#""ACCOUNT_NUMBER":"0123456789""#,
+            r#""TOTP":"123456""#,
+            r#""DOOR_CODE":4821"#,
+            r#""API_SECRET_MS":"84736251""#,
+            r#""DB_PASSWORD":"73920184""#,
+            r#""VAULT_PIN":"4821""#,
+            r#""API_TOKEN_LIMIT":"true""#,
+        ] {
+            files.push((".claude/settings.json", format!(r#"{{"env":{{{env}}}}}"#)));
+        }
+        for (path, bytes) in &files {
+            assert!(!checked(path, bytes).0, "{path}: {bytes}");
+        }
+    }
+
+    /// The settings the owner approved as public keep passing.
+    #[test]
+    fn rulesync_personal_settings_approved_public_settings_pass() {
+        let server = |fields: &str| format!(r#"{{"mcpServers":{{"fixture":{{{fields}}}}}}}"#);
+        for fields in [
+            r#""command":"npx","args":["-y","@scope/pkg@1.2.3"]"#,
+            r#""command":"npx","args":["-y","@browsermcp/mcp@latest"]"#,
+            r#""command":"uvx","args":["fixture-mcp@1.2.0"]"#,
+            r#""command":"pnpm","args":["dlx","fixture-mcp"]"#,
+            r#""type":"http","url":"https://mcp.example.invalid/mcp","oauth":{"clientId":"fixture-client","callbackPort":8080,"scopes":["read","write"]}"#,
+            r#""type":"http","url":"https://mcp.example.invalid/mcp","headers":{"x-exa-source":"claude-code"}"#,
+            r#""type":"http","url":"https://mcp.example.invalid/mcp","headers":{"Authorization":"Bearer ${FIXTURE_TOKEN}"}"#,
+            r#""type":"http","url":"https://mcp.example.invalid/v1/mcp","headers":{"Accept":"application/json, text/event-stream","User-Agent":"claude-code/1.0","Content-Type":"application/json; charset=utf-8"}"#,
+        ] {
+            assert_eq!(
+                checked(".claude.json", &server(fields)),
+                (true, 1),
+                "{fields}"
+            );
+        }
+        let cursor = server(
+            r#""url":"https://mcp.example.invalid/mcp","headers":{"Authorization":"Bearer ${env:FIXTURE_TOKEN}"}"#,
+        );
+        assert_eq!(checked(".cursor/mcp.json", &cursor), (true, 1));
+        let gemini = server(
+            r#""httpUrl":"https://mcp.example.invalid/mcp","headers":{"Authorization":"Bearer $FIXTURE_TOKEN"}"#,
+        );
+        assert_eq!(checked(".gemini/settings.json", &gemini), (true, 1));
+        for field in [
+            "bearer_token_env_var = 'GITHUB_TOKEN'",
+            "bearer_token_env_var = 'CORRECTHORSEBATTERY'",
+        ] {
+            let bytes =
+                format!("[mcp_servers.remote]\nurl = 'https://mcp.example.invalid/mcp'\n{field}\n");
+            assert_eq!(checked(".codex/config.toml", &bytes), (true, 1), "{field}");
+        }
+        let bytes = "[mcp_servers.local]\ncommand = 'fixture'\nenv_vars = ['FIXTURE_TOKEN', 'GITHUB_TOKEN']\n";
+        assert_eq!(checked(".codex/config.toml", bytes), (true, 1));
+        // A setting name the catalog declares is a fixed spelling, not a key;
+        // a long mixed-case name the person chose is still refused.
+        let copilot = r#"{"defaultPermissionMode":"prompt"}"#;
+        assert_eq!(checked(".copilot/settings.json", copilot), (true, 1));
+        let chosen = r#"{"permissions":{"wJalrXUtnFEMIKMDENGbPxRfiCYEXAMPLEKEY":"allow"}}"#;
+        assert_eq!(checked(".copilot/settings.json", chosen), (false, 0));
+
+        let rules = [
+            "Bash(cargo test -p wenlan-core:*)",
+            "Bash(grep -e fixture-pattern)",
+            "Bash(rg -e fixture-pattern)",
+            "Bash(sed -E s/a/b/)",
+            "Bash(pytest -p no:cacheprovider)",
+            "Bash(echo -e fixture)",
+            "WebFetch(domain:docs.example.com)",
+            "Bash(git push:*)",
+        ];
+        let allow = format!(r#"{{"permissions":{{"allow":{}}}}}"#, json!(rules));
+        assert_eq!(
+            checked(".claude/settings.json", &allow),
+            (true, rules.len())
+        );
+
+        let settings = format!(
+            r#"{{"env":{{"CLAUDE_CODE_MAX_OUTPUT_TOKENS":"64000","BASH_DEFAULT_TIMEOUT_MS":"120000","ANTHROPIC_MODEL":"claude-opus"}},
+            "hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":{}}}]}}]}},
+            "statusLine":{{"type":"command","command":"bash ~/.claude/statusline.sh"}}}}"#,
+            json!("wenlan hook session-start --agent claude-code --agent-name claude-code --tool claude --tool-profile full --format json --space work --session current")
+        );
+        assert_eq!(checked(".claude/settings.json", &settings), (true, 1));
+        let own = r#"{"mcpServers":{"wenlan":{"command":"wenlan-mcp","args":["--agent-name","claude-code"]}}}"#;
+        assert_eq!(checked(".claude.json", own), (true, 0));
     }
 }

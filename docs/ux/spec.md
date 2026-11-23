@@ -1231,32 +1231,63 @@ and wait for evidence that people need them.
   under names such as `API_KEY` or `Authorization`, because the entry then
   holds only the variable's name. It checks commands and arguments, and skips
   credential options and literal values in environment and header maps. A
-  header may hold a plain literal only when it is `Accept`, `Content-Type`,
-  `User-Agent` or an `X-<name>-Source` label. A server started with `npx`,
+  header may hold a plain literal only when it is `Accept`, `Content-Type`
+  or `User-Agent` holding media-type or product text, or an
+  `X-<name>-Source` label. A server started with `npx`,
   `bunx`, `uvx` or `pnpm dlx` may name one package; any other plain word in
   its arguments skips the entry. An `oauth` block may hold only a client id,
   a callback port and scopes; a client secret skips the entry. Wenlan's own
   server entry, which `wenlan mcp connect` writes into each tool, is neither
   managed nor reported as skipped, and it does not stop the file from being
   written. An entry counts as free of keys only when every value matches a
-  named public pattern; anything else may hold a key and stays. A hook or
-  status line command may use plain flags and short plain words, and a flag
-  may take a value only when it is `--agent`, `--agent-name`, `--tool`,
-  `--tool-profile`, `--format`, `--space` or `--session`; any other flag
-  with a value, or a word that looks like a key (a known key prefix, a long
-  run of hex or digits, or random-looking text), skips it. `-u` and `-H` count
-  as credential options. `-p`, `-P`, `-e` and `-E` do too, except in
-  `cargo … -p <crate>`, `grep`, `egrep` or `rg … -e|-E <pattern>` and
-  `sed … -e|-E`. A Codex field that names an environment variable
-  (`bearer_token_env_var`, `env_vars`, `env_http_headers` values) must hold an
-  uppercase name such as `GITHUB_TOKEN` that does not look like a key.
+  named public pattern; anything else may hold a key and stays. Every string
+  in an entry, and every name the person chose, is checked for parts that
+  look like a key: a known key prefix (such as `ghp_`, `sk-ant-`, `glpat-`,
+  `npm_` or `xoxb-`), a Slack webhook path, 16 or more hex characters (a
+  UUID too), 16 or more letters and digits that include a digit, or 20 or
+  more letters and digits in mixed case. Web addresses are checked part by
+  part (host, path, `;name=value`), and so are arguments, headers,
+  permission rules, Codex rule patterns (each word and the whole command)
+  and justifications, Gemini policy prefixes, hooks and environment values.
+  Setting names the catalog itself declares, such as Copilot's
+  `defaultPermissionMode`, are fixed spellings and skip this check. One list
+  of credential words marks a name as credential-like: pass, pwd, pw, pin,
+  otp, mfa, cvc, cvv, puk, ssn, secret, token, key, auth, cred, cookie,
+  session id, account number, backup code, and a joined name ending in
+  `code` such as `DOOR_CODE`. A credential word followed within three words
+  by a value skips the text. In a command (a permission rule, hook, status
+  line or Codex rule), a flag that carries a value, attached (`-pX`,
+  `--name=value`) or as the next word, skips the entry unless the flag is
+  public for that program: `cargo -p`, `grep`, `egrep` or `rg -e|-E`,
+  `sed -e|-E`, `pytest -p`, `echo -e|-E` and `claude -p`. `-u`, `-U`,
+  `-H`, `-a`, `-k` and any flag whose name holds a credential word, `user`,
+  `header`, `login` or `env` always count as credential options.
+  `NAME=value` before a command is allowed only when the value is a `$VAR`
+  reference, or the name holds no credential word and the value does not
+  look like a key. A hook or status line command may use plain flags, and a
+  flag may take a value only when it is `--agent`, `--agent-name`,
+  `--tool`, `--tool-profile`, `--format`, `--space` or `--session`. Every
+  other word must be a path, a lowercase word without digits, or a number of
+  up to four digits that does not follow a credential word, `lock`, `unlock`
+  or `code`. A password made only of lowercase letters, with no digits,
+  cannot be told apart from an ordinary word, so a command such as
+  `notify hunter` passes the check; such an entry is shared only because the
+  person approves the plain words the preview lists. A Codex field that
+  names an environment variable (`bearer_token_env_var`, `env_vars`,
+  `env_http_headers` values) must hold an uppercase name such as
+  `GITHUB_TOKEN` that does not look like a key.
   Gemini's sign-in method (`security.auth.selectedType`) is not a credential.
-  A number or on/off value in Claude Code's `env` is plain under an ordinary
-  name; under a credential-like name such as `..._PASSWORD`, `..._TOKEN` or
-  `..._PIN`, only a number whose name ends in `_TOKENS`, `_LIMIT`,
+  In Claude Code's `env`, a value under an ordinary name is plain when it is
+  a number, an on/off value or text that does not look like a key, such as
+  `ANTHROPIC_MODEL: "claude-opus"`. Under a credential-like name, only a
+  number is plain, and only when its name ends in `_TOKENS`, `_LIMIT`,
   `_TIMEOUT`, `_MS`, `_SECONDS`, `_PORT`, `_SIZE`, `_COUNT` or `_RETRIES`
-  is. A file containing possible credentials
+  and token is its only credential word (`API_SECRET_MS` is not plain).
+  A file containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
+  The backup check reads the raw file as well: a key-looking part anywhere,
+  a value under a credential-like name, or a credential word followed by a
+  value in a comment or text keeps the whole file out of backups.
   Wenlan neither resolves references nor executes hooks or servers.
   Wenlan reads Codex hooks from both native files and requires evidence of
   the OpenCode config generation before using that file. Hard-linked settings
@@ -1298,6 +1329,8 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_hook_and_status_line_admit_plain_words_only`,
   `rulesync_personal_settings_codex_variable_fields_hold_only_usual_names`,
   `rulesync_personal_settings_wenlan_own_server_needs_a_plain_program`,
+  `rulesync_personal_settings_review_inputs_are_refused`,
+  `rulesync_personal_settings_approved_public_settings_pass`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
@@ -1435,7 +1468,10 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_mark_a_written_key_and_keep_it_out`,
   `rules_share_in_session_without_confirm_only_previews`,
   `rules_share_in_session_applies_the_confirmed_plan`,
-  `rules_share_in_session_refuses_a_stale_plan_id` and
+  `rules_share_in_session_refuses_a_stale_plan_id`,
+  `rulesync_share_never_copies_a_server_url_with_a_key_in_its_path`,
+  `rulesync_share_stores_no_password_from_a_permission_rule`,
+  `rulesync_share_backs_up_no_codex_file_with_a_literal_password` and
   `personal_rules_setup_requires_interactive_confirmation`.
 
 ## From the terminal

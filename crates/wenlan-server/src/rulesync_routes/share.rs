@@ -980,6 +980,87 @@ mod tests {
         assert!(!holds(&f.setup.data, SECRET.as_bytes()));
     }
 
+    /// Adopt and share everything, then check that no file under the home
+    /// changed and that nothing under the data folder holds `secret`.
+    fn share_keeps_out(f: &Fixture, files: &[(&str, &str)], secret: &str) -> SharingPlan {
+        write(f, files);
+        adopt(f);
+        f.sync_with("");
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert!(!serde_json::to_string(&plan).unwrap().contains(secret));
+        if !plan.tools.is_empty() {
+            f.setup
+                .share_using(&plan.token, fixture_skill_renderer)
+                .unwrap();
+            f.sync_with("");
+        }
+        assert!(!holds(&f.setup.data, secret.as_bytes()));
+        plan
+    }
+
+    #[test]
+    fn rulesync_share_never_copies_a_server_url_with_a_key_in_its_path() {
+        const SECRET: &str = "3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+        let f = Fixture::new();
+        let home = f.setup.home.clone();
+        let codex =
+            format!("[mcp_servers.remote]\nurl = 'https://mcp.example.invalid/s/{SECRET}/mcp'\n");
+        let claude = "{ \"mcpServers\": {} }\n";
+        let plan = share_keeps_out(
+            &f,
+            &[(".codex/config.toml", &codex), (".claude.json", claude)],
+            SECRET,
+        );
+        assert!(plan.tools.is_empty(), "{plan:?}");
+        assert_eq!(
+            fs::read_to_string(home.join(".claude.json")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+    }
+
+    #[test]
+    fn rulesync_share_stores_no_password_from_a_permission_rule() {
+        let f = Fixture::new();
+        let home = f.setup.home.clone();
+        let claude = "{\"permissions\":{\"allow\":[\"Bash(mysql -uroot -phunter2permpw db)\",\"Bash(git status)\"]}}\n";
+        let rules = "prefix_rule(pattern = [\"sshpass\", \"-p\", \"hunter2rulepw\"], decision = \"allow\")\nprefix_rule(pattern = [\"git\", \"status\"], decision = \"allow\")\n";
+        write(&f, &[(".codex/rules/default.rules", rules)]);
+        share_keeps_out(&f, &[(".claude/settings.json", claude)], "hunter2permpw");
+        assert!(!holds(&f.setup.data, b"hunter2rulepw"));
+        for (path, bytes) in [
+            (".claude/settings.json", claude),
+            (".codex/rules/default.rules", rules),
+        ] {
+            let now = fs::read_to_string(home.join(path)).unwrap();
+            assert!(now.contains(bytes.trim_end()), "{path}: {now}");
+        }
+    }
+
+    #[test]
+    fn rulesync_share_backs_up_no_codex_file_with_a_literal_password() {
+        const SECRET: &str = "hunter2codexpw";
+        let f = Fixture::new();
+        let home = f.setup.home.clone();
+        let codex = format!(
+            "[mcp_servers.safe]\ncommand = 'safe-server'\n\n[shell_environment_policy]\nset = {{ DB_PASS = '{SECRET}' }}\n"
+        );
+        share_keeps_out(
+            &f,
+            &[(".codex/config.toml", &codex), (".claude.json", "{}\n")],
+            SECRET,
+        );
+        assert_eq!(
+            fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        let blobs = f.setup.data.join("personal-blobs");
+        assert!(!blobs.exists() || !holds(&blobs, SECRET.as_bytes()));
+    }
+
     #[test]
     fn rulesync_status_counts_mcp_servers_adopted_in_place() {
         let f = Fixture::new();
