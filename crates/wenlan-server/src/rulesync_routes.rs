@@ -35,7 +35,7 @@ use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
     PullbackCard, PullbackDecision, PullbackKind, PullbackPreview, RulesSetupCode as Code,
     RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport, RulesToolCounts,
-    RulesToolState, RulesToolStatus, SYNC_COMMAND, TO_REVIEW_COMMAND,
+    RulesToolState, RulesToolStatus, SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -55,6 +55,7 @@ mod personal_files;
 mod personal_settings;
 mod review_list;
 mod settings;
+mod share;
 mod storage;
 pub(super) mod watch;
 
@@ -65,6 +66,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/setup/status", get(status))
         .route("/api/rules/setup/adopt", post(adopt))
         .route("/api/rules/setup/adopt/preview", post(adopt_preview))
+        .route("/api/rules/setup/share", post(share_items))
+        .route("/api/rules/setup/share/preview", post(share_preview))
         .route("/api/rules/setup/restore", post(restore))
         .route("/api/rules/setup/sync", post(sync))
         .route("/api/rules/setup/skill-updates", post(skill_updates))
@@ -190,6 +193,41 @@ async fn adopt(
     execute(state, headers, Operation::Adopt(request)).await
 }
 
+async fn share_preview(
+    headers: HeaderMap,
+    Json(request): Json<AdoptPreviewRequest>,
+) -> Result<Json<SharingPlan>, ServerError> {
+    require_local_rules_access(&headers)?;
+    if !wenlan_core::rulesync_personal::enabled() {
+        return Err(ServerError::ValidationError(
+            "WENLAN_RULESYNC is off".into(),
+        ));
+    }
+    tokio::task::spawn_blocking(move || Setup::system_ready()?.preview_share(&request.home))
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))?
+        .map(Json)
+        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+}
+
+fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Result<()> {
+    ensure!(
+        !plan.plan_id.is_empty()
+            && request.confirmed_plan_id.as_deref() == Some(plan.plan_id.as_str())
+            && request.token == plan.token,
+        "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list."
+    );
+    Ok(())
+}
+
+async fn share_items(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(request): Json<AdoptRequest>,
+) -> Result<Json<RulesSyncReport>, ServerError> {
+    execute(state, headers, Operation::Share(request)).await
+}
+
 async fn restore(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -238,6 +276,7 @@ async fn review_preview(
 
 enum Operation {
     Adopt(AdoptRequest),
+    Share(AdoptRequest),
     Restore(RestoreOptions),
     Sync,
     Review(PullbackDecision),
@@ -248,7 +287,10 @@ async fn execute(
     headers: HeaderMap,
     operation: Operation,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    if matches!(operation, Operation::Sync | Operation::Adopt(_)) {
+    if matches!(
+        operation,
+        Operation::Sync | Operation::Adopt(_) | Operation::Share(_)
+    ) {
         require_local_rules_access(&headers)?;
         if !wenlan_core::rulesync_personal::enabled() {
             return Err(ServerError::ValidationError(
@@ -282,6 +324,17 @@ async fn execute(
                     validate_confirmed_adoption(&request, &plan)?;
                 }
                 setup.adopt(&request)
+            }
+            Operation::Share(request) => {
+                if ai_caller || request.confirmed_plan_id.is_some() {
+                    let home = request
+                        .home
+                        .as_deref()
+                        .context("A confirmed share needs the tool home")?;
+                    let plan = setup.preview_share(home)?;
+                    validate_confirmed_share(&request, &plan)?;
+                }
+                setup.share(&request)
             }
             Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
@@ -507,6 +560,22 @@ impl Setup {
         }
         for row in &mut status.tools {
             row.counts.skills = skills.get(row.tool.id.as_str()).map_or(0, BTreeSet::len);
+        }
+        // MCP servers Wenlan manages in place, without a whole-file delivery.
+        for (tool, count) in personal_settings::managed_mcp_counts(&self.home, &manifest)? {
+            let Some(target) = personal_target(tool) else {
+                continue;
+            };
+            if let Some(row) = status
+                .tools
+                .iter_mut()
+                .find(|row| row.tool.id == target.agent)
+            {
+                row.counts.mcp += count;
+                if row.state == RulesToolState::NotManaged {
+                    row.state = RulesToolState::UpToDate;
+                }
+            }
         }
         affected.extend(
             blocked
@@ -5194,7 +5263,7 @@ mod tests {
             self.setup.apply_adoption(&root, adoption, master).unwrap();
         }
 
-        fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
+        pub(super) fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
             let root = FileRoot::open_home(&self.setup.home).unwrap();
             let _lock = self.setup.lock().unwrap();
             let mut manifest = self.setup.load().unwrap().unwrap();
@@ -5581,12 +5650,12 @@ mod tests {
             "password":{"command":"example","args":["--password=synthetic-sentinel-pass"]},
             "bare":{"command":"example","args":["synthetic-sentinel-bare"]},
             "header":{"url":"https://example.invalid/mcp","headers":{"X-Custom":"synthetic-sentinel-header"}},
-            "auth-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SYNTHETIC_TOKEN}"}},
+            "auth-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SHARED_API_TOKEN}"}},
             "userinfo":{"url":"https://u:q4@example.invalid/mcp"},
             "key-field":{"command":"example","key":"synthetic-sentinel-key"},
             "direct-auth":{"command":"example","bearer":"u:q4"},
             "unverified-field":{"command":"example","opaque":"synthetic-sentinel-opaque"},
-            "env-auth":{"command":"example","env":{"API_KEY":"${SYNTHETIC_TOKEN}"}},
+            "env-auth":{"command":"example","env":{"API_KEY":"${SHARED_API_TOKEN}"}},
             "good":{"command":"before"}
         }, "sessionToken":"synthetic-sentinel-unrelated" }"#;
         let claude = home.join(".claude.json");
@@ -5613,7 +5682,9 @@ mod tests {
                 .iter()
                 .filter(|note| note.contains("skipped MCP server"))
                 .count(),
-            11
+            // auth-reference and env-auth name a variable rather than hold a
+            // key, so they are no longer skipped.
+            9
         );
         assert_eq!(
             preview
@@ -5660,7 +5731,8 @@ mod tests {
                 .iter()
                 .filter(|note| note.contains("possible credentials or unsafe text"))
                 .count(),
-            16
+            // auth-reference and env-auth name a variable, so they pass.
+            14
         );
         assert!(!report.contains("synthetic-sentinel"));
         assert!(!report.contains("u:q4") && !report.contains("SYNTHETIC_TOKEN"));

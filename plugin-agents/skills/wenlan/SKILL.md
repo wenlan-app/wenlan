@@ -72,6 +72,12 @@ For the three rules workflows, run the matching CLI command directly and return:
   show the person the list in chat in plain words, wait for their explicit yes
   in chat, then run `wenlan rules adopt --confirm <plan id>`. If the setup
   changed, preview and ask again. Never adopt without a fresh preview and a yes.
+- Share what a person already has with their other tools (after adoption):
+  run `wenlan rules share --dry-run`, show the person in plain words what each
+  tool would get and what stays and why, wait for their explicit yes in chat,
+  then run `wenlan rules share --confirm <plan id>`. If the plan changed,
+  preview and ask again. Never move a key into an environment variable or edit
+  a shell profile for them; say which server needs it and let them do it.
 
 Team has no skill of its own: read [references/team.md](references/team.md)
 and follow it instead of the rest of this step.

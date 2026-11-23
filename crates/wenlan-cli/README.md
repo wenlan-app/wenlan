@@ -556,6 +556,19 @@ Options:
 - `--dry-run`: Preview the changes, or list the installed files while offline.
 - `--confirm <CONFIRM>`: Confirm the plan shown to the person.
 
+#### `wenlan rules share`
+
+Copy your existing skills, commands, subagents and MCP servers to every managed tool that supports them.
+
+```text
+wenlan rules share [OPTIONS]
+```
+
+Options:
+
+- `--dry-run`: Preview what each tool would get.
+- `--confirm <CONFIRM>`: Confirm the plan shown to the person.
+
 #### `wenlan rules status`
 
 Status of the personal setup in each tool.

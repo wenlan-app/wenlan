@@ -16,6 +16,10 @@ use serde_yaml::{Mapping, Value};
 use crate::store::format::{normalize_line_ends, split_frontmatter};
 
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// `sharing_paths` reason for a tool that has no folder for this kind of file.
+pub const NO_PERSONAL_DESTINATION: &str =
+    "This tool has no supported personal destination for this file type.";
+
 pub const NON_ASCII_PERSONAL_NAME: &str =
     "the file or directory has no verified ASCII name. Its case aliases cannot be checked safely";
 
@@ -387,7 +391,7 @@ pub fn sharing_paths(
                 .iter()
                 .copied()
                 .find(|target| target.tool == tool.as_str() && target.feature == source.feature)
-                .ok_or("This tool has no supported personal destination for this file type.")?;
+                .ok_or(NO_PERSONAL_DESTINATION)?;
             if !path.as_os_str().is_ascii() {
                 return Err(NON_ASCII_PERSONAL_NAME);
             }

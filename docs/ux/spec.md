@@ -1227,9 +1227,14 @@ and wait for evidence that people need them.
   previews existing personal MCP servers, hooks and permissions in the tools'
   default home directories. The person types `yes` to import the listed entries
   into the local settings source. The preview gives the reason for each skipped
-  entry or file. It keeps supported native environment references, checks
-  commands and arguments, and skips credential options and literal values in
-  environment and header maps. A file containing possible credentials
+  entry or file. It keeps supported native environment references, also
+  under names such as `API_KEY` or `Authorization`, because the entry then
+  holds only the variable's name. It checks commands and arguments, and skips
+  credential options and literal values in environment and header maps. An
+  `oauth` block may hold only a client id, a callback port and scopes; a
+  client secret skips the entry. Wenlan's own server entry, which
+  `wenlan mcp connect` writes into each tool, is neither managed nor reported
+  as skipped. A file containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
   Wenlan neither resolves references nor executes hooks or servers.
   Wenlan reads Codex hooks from both native files and requires evidence of
@@ -1261,6 +1266,8 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_keep_jsonc_and_toml_siblings_byte_stable`,
   `rulesync_personal_settings_read_codex_and_gemini_permissions_without_writing`,
   `rulesync_personal_settings_accept_only_native_credential_references`,
+  `rulesync_personal_settings_keep_public_oauth_fields_and_refuse_a_client_secret`,
+  `rulesync_personal_settings_recognize_wenlan_own_server_without_sharing_it`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
@@ -1289,7 +1296,9 @@ and wait for evidence that people need them.
   so they inherit access rules from the destination folder.
   A hand edit or removal appears in `wenlan rules review`.
   The person can keep it in the originating tool or share it with enrolled
-  tools that read the same format. Any `$` or `!` in a command keeps it in
+  tools that read the same format. Commands and subagents that were already
+  there before adoption reach the other tools through `wenlan rules share`
+  (UX-SKILL-26). Any `$` or `!` in a command keeps it in
   its own tool because the characters can introduce argument expansion or
   shell execution. Tool-specific fields and Codex TOML subagents can also
   keep a file in its own tool.
@@ -1366,6 +1375,37 @@ and wait for evidence that people need them.
   button and the line below the tool chips show the same merged queue count.
   Tests `UX-SKILL-25: names and orders the setup actions` and
   `ux_skill_25_rulesync_action_hints_parse_with_the_real_cli`.
+
+- **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` copies the
+  skills, commands, subagents and MCP servers a person already had in one tool
+  to every other managed tool that supports that kind. The preview lists each
+  tool with its counts and item names, counts items every tool already has,
+  and gives a line "Stays in <tool>: <item>: <reason>" for each item that
+  cannot travel: a same-name item with different content (never replaced),
+  a command with `$` or `!`, or an MCP server a tool cannot represent.
+  Kinds a tool has no place for are left out without a line. An MCP server
+  travels only when it passes the safety check and refers to keys through
+  environment variables; Wenlan rewrites a reference into each tool's own
+  syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`, Codex `env_vars`,
+  `env_http_headers` and `bearer_token_env_var`). A server with a key written
+  in it stays, with the reason "has a key written in it; move the key to an
+  environment variable to share it". Wenlan never moves the key itself and
+  never edits a shell profile. Only files Wenlan may write receive copies.
+  The person types `yes`; an AI session shows the person
+  `wenlan rules share --dry-run` and runs
+  `wenlan rules share --confirm <plan id>` after they agree, and a plan id
+  from an older preview is refused. Copies go through the same backup as
+  adoption, so `wenlan rules restore` removes them. A second run says
+  "Nothing to share". The app has no Share action yet.
+  Tests `rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `rulesync_share_leaves_a_different_item_with_the_same_name`,
+  `rulesync_status_counts_mcp_servers_adopted_in_place`,
+  `rulesync_personal_settings_translate_environment_references_between_tools`,
+  `rulesync_personal_settings_mark_a_written_key_and_keep_it_out`,
+  `rules_share_in_session_without_confirm_only_previews`,
+  `rules_share_in_session_applies_the_confirmed_plan`,
+  `rules_share_in_session_refuses_a_stale_plan_id` and
+  `personal_rules_setup_requires_interactive_confirmation`.
 
 ## From the terminal
 

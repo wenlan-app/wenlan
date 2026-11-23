@@ -8,10 +8,11 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
+use wenlan_core::rulesync_personal::personal_target;
 use wenlan_core::rulesync_personal::{check_delivery_paths, fingerprint, DeliveryWorktrees};
 use wenlan_core::rulesync_settings::personal::{
-    enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Key, Location,
-    RecordedEntry,
+    enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Feature, Key,
+    Location, RecordedEntry,
 };
 use wenlan_types::rulesync::{
     PullbackAction, PullbackCard, PullbackDecision, PullbackKind, RulesSetupCode as Code,
@@ -342,7 +343,7 @@ impl View {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct Destination {
     path: PathBuf,
     before: Option<Entry>,
@@ -546,6 +547,244 @@ fn awaits_review(
             .chain(state.before.iter())
             .chain(state.wanted.iter())
             .any(|entry| !reviewable(location.tool, entry)))
+}
+
+/// Personal MCP servers Wenlan manages, counted per tool id. An entry
+/// adopted in place counts even when its file has no delivery record.
+pub(super) fn managed_mcp_counts(
+    home: &Path,
+    manifest: &Manifest,
+) -> Result<BTreeMap<&'static str, usize>> {
+    let mut catalog = Catalog::read(home)?;
+    catalog.retain_managed_locations(manifest.personal_settings.keys().map(PathBuf::as_path));
+    let mut counts = BTreeMap::new();
+    for (path, entries) in &manifest.personal_settings {
+        if manifest
+            .delivered
+            .get(path)
+            .is_some_and(|delivery| matches!(delivery.kind, Kind::Settings))
+        {
+            continue;
+        }
+        let Some(location) = catalog
+            .locations
+            .iter()
+            .find(|location| &location.path == path)
+        else {
+            continue;
+        };
+        let count = entries
+            .iter()
+            .filter(|entry| entry.key.feature == Feature::Mcp && entry.wanted.is_some())
+            .count();
+        if count != 0 {
+            *counts.entry(location.tool).or_default() += count;
+        }
+    }
+    Ok(counts)
+}
+
+/// A managed MCP server another enrolled tool can receive unchanged.
+#[derive(Clone, Serialize)]
+pub(super) struct SettingAddition {
+    pub(super) from_tool: &'static str,
+    pub(super) to_tool: &'static str,
+    pub(super) name: String,
+    destination: Destination,
+}
+
+#[derive(Default)]
+pub(super) struct SettingShares {
+    pub(super) additions: Vec<SettingAddition>,
+    /// (tool id, item, reason)
+    pub(super) stays: Vec<(&'static str, String, String)>,
+    pub(super) already_there: usize,
+}
+
+fn tool_name(id: &str) -> &'static str {
+    personal_target(id).map_or("this tool", |target| target.tool.display_name())
+}
+
+/// Record approved additions as entries waiting for their first write, the
+/// same state an all-tools review leaves for `sync_personal_settings`.
+pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddition>) {
+    for addition in additions {
+        let Destination {
+            path,
+            before,
+            wanted,
+            worktree,
+        } = addition.destination;
+        let entries = manifest.personal_settings.entry(path.clone()).or_default();
+        let key = wanted.key.clone();
+        if let Some(current) = entries.iter_mut().find(|entry| entry.key == key) {
+            current.before = before;
+            current.wanted = Some(wanted);
+        } else {
+            entries.push(Managed {
+                key,
+                before,
+                wanted: Some(wanted),
+                receipt: None,
+            });
+        }
+        if let Some(worktree) = worktree {
+            manifest.worktree_writes.insert(path, worktree);
+        }
+    }
+}
+
+impl SettingAddition {
+    pub(super) fn path(&self) -> &Path {
+        &self.destination.path
+    }
+}
+
+impl Setup {
+    /// Managed MCP servers that are in sync, offered to every other enrolled
+    /// tool through the same projection an all-tools review uses.
+    pub(super) fn plan_setting_shares(
+        &self,
+        root: &FileRoot,
+        manifest: &Manifest,
+    ) -> Result<SettingShares> {
+        let view = View::read(&self.home, root, manifest)?;
+        let mut worktrees = DeliveryWorktrees::new(&self.home)?;
+        let mut shares = SettingShares::default();
+        let mut wanted = BTreeMap::<(PathBuf, Key), Vec<SettingAddition>>::new();
+        for (location, file) in &view.files {
+            let Ok(file) = file else {
+                continue;
+            };
+            for (number, feature, literal_key) in file.doc.refused_entries(location.tool) {
+                if feature == Feature::Mcp {
+                    shares.stays.push((
+                        location.tool,
+                        format!("MCP server (entry {number} in {})", location.display()),
+                        if literal_key {
+                            "has a key written in it; move the key to an environment variable to share it"
+                        } else {
+                            "it may contain credentials or unsafe text, so it is not copied"
+                        }
+                        .into(),
+                    ));
+                }
+            }
+            let Some(managed) = manifest.personal_settings.get(&location.path) else {
+                continue;
+            };
+            if reserved(manifest, &location.path) {
+                continue;
+            }
+            for state in managed {
+                if state.key.feature != Feature::Mcp || state.before != state.wanted {
+                    continue;
+                }
+                let Some(current) = file
+                    .doc
+                    .entry(&state.key)
+                    .filter(|current| Some(*current) == state.wanted.as_ref())
+                else {
+                    continue;
+                };
+                if !reviewable(location.tool, current) {
+                    continue;
+                }
+                // The server's own name, without the format's table prefix.
+                let Some(name) = state.key.name.last().cloned() else {
+                    continue;
+                };
+                let item = format!("MCP server {name}");
+                let mut unrepresentable = BTreeSet::new();
+                for (to, other) in &view.files {
+                    if to.tool == location.tool || !view.enrolled.contains(&to.path) {
+                        continue;
+                    }
+                    // A file with no MCP section (Claude's settings.json) is
+                    // not where that tool keeps its servers.
+                    let Ok(other) = other else {
+                        continue;
+                    };
+                    if !other.doc.holds(Feature::Mcp) {
+                        continue;
+                    }
+                    match project(location, to, current, &other.doc) {
+                        Some(projected) => {
+                            if other
+                                .doc
+                                .entry(&projected.key)
+                                .is_some_and(|entry| equivalent(to, entry, &projected))
+                            {
+                                shares.already_there += 1;
+                            }
+                        }
+                        None => {
+                            unrepresentable.insert(tool_name(to.tool));
+                        }
+                    }
+                }
+                if !unrepresentable.is_empty() {
+                    shares.stays.push((
+                        location.tool,
+                        item.clone(),
+                        format!(
+                            "it uses settings {} cannot represent",
+                            unrepresentable.into_iter().collect::<Vec<_>>().join(", ")
+                        ),
+                    ));
+                }
+                let proposal = proposal(
+                    &view,
+                    manifest,
+                    &mut worktrees,
+                    location,
+                    state,
+                    Some(current),
+                )?;
+                for reason in proposal.blocked {
+                    shares.stays.push((location.tool, item.clone(), reason));
+                }
+                for destination in proposal.destinations {
+                    let to_tool = view
+                        .files
+                        .iter()
+                        .find(|(to, _)| to.path == destination.path)
+                        .map(|(to, _)| to.tool)
+                        .context("a settings destination disappeared")?;
+                    wanted
+                        .entry((destination.path.clone(), destination.wanted.key.clone()))
+                        .or_default()
+                        .push(SettingAddition {
+                            from_tool: location.tool,
+                            to_tool,
+                            name: name.clone(),
+                            destination,
+                        });
+                }
+            }
+        }
+        for (_, mut candidates) in wanted {
+            let first = candidates.remove(0);
+            if candidates
+                .iter()
+                .all(|other| other.destination.wanted == first.destination.wanted)
+            {
+                shares.additions.push(first);
+                continue;
+            }
+            for addition in std::iter::once(first).chain(candidates) {
+                shares.stays.push((
+                    addition.from_tool,
+                    format!("MCP server {}", addition.name),
+                    format!(
+                        "another tool has a different MCP server with this name for {}",
+                        tool_name(addition.to_tool)
+                    ),
+                ));
+            }
+        }
+        Ok(shares)
+    }
 }
 
 impl Setup {

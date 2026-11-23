@@ -967,6 +967,17 @@ mod catalog_tests {
             RulesSetupCmd::Adopt { dry_run: true, .. }
         ));
         assert!(matches!(
+            parse("wenlan rules share --dry-run"),
+            RulesSetupCmd::Share { dry_run: true, .. }
+        ));
+        assert!(matches!(
+            parse("wenlan rules share --confirm 0123456789ab"),
+            RulesSetupCmd::Share {
+                confirm: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(
             parse(STATUS_COMMAND),
             RulesSetupCmd::Status { sync: false }
         ));

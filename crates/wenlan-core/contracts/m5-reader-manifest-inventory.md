@@ -907,6 +907,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/rules/setup/status` | main | no | not_applicable | `none` | — | read-only local tool setup and pending reviews for the authenticated person |
 | `POST` | `/api/rules/setup/adopt` | main | no | not_applicable | `none` | — | local tool setup receipt with relative paths and local file diffs |
 | `POST` | `/api/rules/setup/adopt/preview` | main | no | not_applicable | `none` | — | read-only local adoption plan for the authenticated person |
+| `POST` | `/api/rules/setup/share` | main | no | not_applicable | `none` | — | local tool setup receipt with relative paths and local file diffs |
+| `POST` | `/api/rules/setup/share/preview` | main | no | not_applicable | `none` | — | read-only local sharing plan for the authenticated person |
 | `POST` | `/api/rules/setup/checkout` | main | no | not_applicable | `none` | — | checkout-specific rules receipt and private output path |
 | `POST` | `/api/rules/setup/restore` | main | no | not_applicable | `none` | — | local tool setup restoration receipt |
 | `POST` | `/api/rules/setup/skill-updates` | main | no | not_applicable | `none` | — | release metadata for personally adopted tools, no page text |

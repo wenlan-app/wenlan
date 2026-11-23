@@ -35,7 +35,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Mcp => "MCP server",
             Self::Hook => "hook",
@@ -744,6 +744,11 @@ impl Document {
         self.entries.contains_key(key)
     }
 
+    /// Whether this file has a place for `feature` at all.
+    pub fn holds(&self, feature: Feature) -> bool {
+        self.sections.iter().any(|section| section.0 == feature)
+    }
+
     pub fn reviewable_entries<'a>(&'a self, tool: &'a str) -> impl Iterator<Item = &'a Entry> {
         self.entries
             .values()
@@ -758,15 +763,36 @@ impl Document {
         location: &'a Location,
     ) -> impl Iterator<Item = String> + 'a {
         let path = location.display();
+        self.refused_entries(location.tool)
+            .map(move |(number, feature, _)| format!(
+                "{path}: skipped {} (entry {number}) because it contains possible credentials or unsafe text.",
+                feature.label()
+            ))
+    }
+
+    /// Entries the safety check refuses, by 1-based position and feature,
+    /// and whether a key is written in the entry itself. Names are left out
+    /// so a suspected value is never echoed. Wenlan's own server entry is
+    /// set up per tool, so it is neither managed nor reported.
+    pub fn refused_entries<'a>(
+        &'a self,
+        tool: &'a str,
+    ) -> impl Iterator<Item = (usize, Feature, bool)> + 'a {
         self.entries
             .values()
             .flatten()
             .enumerate()
-            .filter(|(_, (entry, _))| !reviewable(location.tool, entry))
-            .map(move |(index, (entry, _))| format!(
-                "{path}: skipped {} (entry {}) because it contains possible credentials or unsafe text.",
-                entry.key.feature.label(), index + 1
-            ))
+            .filter(move |(_, (entry, _))| {
+                let own = entry.key.feature == Mcp && wenlan_own_mcp(tool, &entry.value);
+                !own && !reviewable(tool, entry)
+            })
+            .map(move |(index, (entry, _))| {
+                (
+                    index + 1,
+                    entry.key.feature,
+                    entry.key.feature == Mcp && literal_key(tool, &entry.value),
+                )
+            })
     }
 
     fn extract(&mut self, location: &Location, feature: Feature, path: &[&str], shape: Shape) {
@@ -1136,6 +1162,41 @@ fn material_safe(tool: &str, value: &Value) -> bool {
     }
 }
 
+/// An `oauth` block with only the fields a provider publishes: a client id,
+/// the local callback port and the scopes asked for. The tool keeps tokens in
+/// its own store; a client secret, or any other field, is refused.
+fn public_oauth(value: &Value) -> bool {
+    let scope = |scope: &str| {
+        !scope.is_empty()
+            && !scope.starts_with('-')
+            && scope.len() <= 200
+            && scope
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b":._/-".contains(&byte))
+            && !text_risky("", scope)
+    };
+    value.as_object().is_some_and(|fields| {
+        fields.iter().all(|(name, value)| {
+            match name.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
+                "clientid" => value.as_str().is_some_and(safe_identifier),
+                "callbackport" => value
+                    .as_u64()
+                    .is_some_and(|port| (1..=65535).contains(&port)),
+                "scopes" => match value {
+                    Value::Array(scopes) => {
+                        scopes.iter().all(|value| value.as_str().is_some_and(scope))
+                    }
+                    Value::String(scopes) => {
+                        !text_risky("", scopes) && scopes.split(' ').all(scope)
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        })
+    })
+}
+
 fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
     let normalized = name.to_ascii_lowercase().replace(['-', '_'], "");
     match normalized.as_str() {
@@ -1150,6 +1211,7 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
                 .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
         }),
         "bearertokenenvvar" => tool == "codexcli" && value.as_str().is_some_and(is_env_name),
+        "oauth" => public_oauth(value),
         "envvars" => {
             tool == "codexcli"
                 && value.as_array().is_some_and(|names| {
@@ -1171,9 +1233,10 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
         }),
         "env" | "environment" | "headers" | "httpheaders" | "envhttpheaders" => {
             value.as_object().is_some_and(|map| {
+                // Every value must be a reference to the person's environment,
+                // so a credential-named key carries only a variable name.
                 map.iter().all(|(key, value)| {
                     !text_risky(tool, key)
-                        && !credential_key(key)
                         && value.as_str().is_some_and(|value| {
                             if normalized == "envhttpheaders" && tool == "codexcli" {
                                 is_env_name(value)
@@ -1196,9 +1259,8 @@ fn mcp_payload_safe(tool: &str, value: &Value) -> bool {
                 match normalized.as_str() {
                     "command" => command_safe(tool, value),
                     "args" | "env" | "environment" | "envvars" | "headers" | "httpheaders"
-                    | "envhttpheaders" | "bearertokenenvvar" | "url" | "serverurl" | "httpurl" => {
-                        safe_field(tool, name, value)
-                    }
+                    | "envhttpheaders" | "bearertokenenvvar" | "url" | "serverurl" | "httpurl"
+                    | "oauth" => safe_field(tool, name, value),
                     "type" | "transport" => matches!(
                         value.as_str(),
                         Some(
@@ -1305,14 +1367,122 @@ pub fn reviewable(tool: &str, entry: &Entry) -> bool {
         }
 }
 
+/// The entry `wenlan mcp connect` writes into each tool. It names that tool
+/// in `--agent-name`, so it is set up per tool and never copied between them.
+pub fn wenlan_own_mcp(tool: &str, value: &Value) -> bool {
+    let Some(fields) = value.as_object() else {
+        return false;
+    };
+    fn strings(value: &Value) -> Option<Vec<&str>> {
+        value
+            .as_array()?
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<_>>>()
+    }
+    let mut parts = match fields.get("command") {
+        Some(Value::String(command)) => vec![command.as_str()],
+        Some(command @ Value::Array(_)) => match strings(command) {
+            Some(parts) => parts,
+            None => return false,
+        },
+        _ => return false,
+    };
+    if let Some(args) = fields.get("args") {
+        match strings(args) {
+            Some(args) => parts.extend(args),
+            None => return false,
+        }
+    }
+    let Some((program, rest)) = parts.split_first() else {
+        return false;
+    };
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let mut rest = match (name, rest) {
+        ("npx", ["-y", "wenlan-mcp", rest @ ..]) => rest,
+        ("wenlan-mcp" | "wenlan-mcp.exe", rest) if executable(tool, program) => rest,
+        _ => return false,
+    };
+    while let [flag, value, tail @ ..] = rest {
+        if !matches!(*flag, "--agent-name" | "--tool-profile") || !safe_identifier(value) {
+            return false;
+        }
+        rest = tail;
+    }
+    rest.is_empty()
+        && fields.iter().all(|(name, value)| {
+            matches!(name.as_str(), "command" | "args")
+                || mcp_payload_safe(tool, &json!({ name.clone(): value.clone() }))
+        })
+}
+
+/// Whether an MCP entry writes a value into an environment, header or
+/// credential-named field instead of referring to an environment variable.
+fn literal_key(tool: &str, value: &Value) -> bool {
+    value.as_object().is_some_and(|fields| {
+        fields.iter().any(|(name, value)| {
+            let normalized = name.to_ascii_lowercase().replace(['-', '_'], "");
+            match normalized.as_str() {
+                "env" | "environment" | "headers" | "httpheaders" | "envhttpheaders" => {
+                    !safe_field(tool, name, value)
+                }
+                "oauth" => !public_oauth(value),
+                _ => credential_key(name),
+            }
+        })
+    })
+}
+
 fn reference_free(text: &str) -> bool {
     !text.contains(['$', '%', '{', '}']) && !text.contains('\\')
 }
 
+/// A reference to an environment variable: an optional auth scheme and the
+/// variable name.
+type Reference = (Option<String>, String);
+
 #[derive(PartialEq, Eq)]
 enum PortableMcp {
-    Stdio(Vec<String>),
-    Http(String),
+    /// The command line and environment names mapped to variables.
+    Stdio(Vec<String>, BTreeMap<String, String>),
+    /// The URL and header names mapped to variable references.
+    Http(String, BTreeMap<String, Reference>),
+}
+
+/// The variable behind an exact reference in `tool`'s own syntax.
+fn reference_parts(tool: &str, value: &str) -> Option<Reference> {
+    if !exact_reference(tool, value) {
+        return None;
+    }
+    let (scheme, rest) = match value.split_once(' ') {
+        Some((scheme @ ("Bearer" | "Basic"), rest)) => (Some(scheme.to_owned()), rest),
+        _ => (None, value),
+    };
+    let wrapped = |open: &str, close: &str| {
+        rest.strip_prefix(open)
+            .and_then(|text| text.strip_suffix(close))
+    };
+    let name = match tool {
+        "claudecode" => wrapped("${", "}"),
+        "geminicli" => wrapped("${", "}").or_else(|| rest.strip_prefix('$')),
+        "cursor" => wrapped("${env:", "}"),
+        "opencode" => wrapped("{env:", "}"),
+        _ => None,
+    }?;
+    is_env_name(name).then(|| (scheme, name.to_owned()))
+}
+
+fn native_reference(tool: &str, (scheme, name): &Reference) -> Option<String> {
+    let reference = match tool {
+        "claudecode" | "geminicli" => format!("${{{name}}}"),
+        "cursor" => format!("${{env:{name}}}"),
+        "opencode" => format!("{{env:{name}}}"),
+        _ => return None,
+    };
+    Some(match scheme {
+        Some(scheme) => format!("{scheme} {reference}"),
+        None => reference,
+    })
 }
 
 fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
@@ -1363,7 +1533,29 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
         {
             return None;
         }
-        PortableMcp::Stdio(command)
+        let mut env = BTreeMap::new();
+        if tool == "codexcli" {
+            // Codex passes these variables through under their own names.
+            if let Some(names) = fields.remove("env_vars") {
+                for name in names.as_array()? {
+                    let name = name.as_str().filter(|name| is_env_name(name))?;
+                    env.insert(name.to_owned(), name.to_owned());
+                }
+            }
+        } else if let Some(map) = fields.remove(if tool == "opencode" {
+            "environment"
+        } else {
+            "env"
+        }) {
+            for (name, value) in map.as_object()? {
+                let (scheme, variable) = reference_parts(tool, value.as_str()?)?;
+                if scheme.is_some() || !is_env_name(name) {
+                    return None;
+                }
+                env.insert(name.clone(), variable);
+            }
+        }
+        PortableMcp::Stdio(command, env)
     } else {
         let url_field = match tool {
             "antigravity-ide" => "serverUrl",
@@ -1383,20 +1575,47 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
         {
             return None;
         }
-        PortableMcp::Http(url)
+        let mut headers = BTreeMap::new();
+        if tool == "codexcli" {
+            if let Some(name) = fields.remove("bearer_token_env_var") {
+                let name = name.as_str().filter(|name| is_env_name(name))?;
+                headers.insert(
+                    "Authorization".to_owned(),
+                    (Some("Bearer".to_owned()), name.to_owned()),
+                );
+            }
+            if let Some(map) = fields.remove("env_http_headers") {
+                for (header, name) in map.as_object()? {
+                    let name = name.as_str().filter(|name| is_env_name(name))?;
+                    if headers
+                        .insert(header.clone(), (None, name.to_owned()))
+                        .is_some()
+                    {
+                        return None;
+                    }
+                }
+            }
+        } else if let Some(map) = fields.remove("headers") {
+            for (header, value) in map.as_object()? {
+                headers.insert(header.clone(), reference_parts(tool, value.as_str()?)?);
+            }
+        }
+        PortableMcp::Http(url, headers)
     };
     fields.is_empty().then_some(result)
 }
 
-fn native_mcp(tool: &str, portable: &PortableMcp) -> Value {
-    match portable {
-        PortableMcp::Stdio(command) => match tool {
+/// The same server in `tool`'s native shape, or None when that tool cannot
+/// express one of its environment references.
+fn native_mcp(tool: &str, portable: &PortableMcp) -> Option<Value> {
+    let mut value = match portable {
+        PortableMcp::Stdio(command, _) => match tool {
             "opencode" => json!({"type":"local", "command":command}),
             "musecode" => json!({"transport":"stdio", "command":command[0], "args":command[1..]}),
             "copilotcli" => json!({"type":"stdio", "command":command[0], "args":command[1..]}),
             _ => json!({"command":command[0], "args":command[1..]}),
         },
-        PortableMcp::Http(url) => match tool {
+        PortableMcp::Http(url, _) => match tool {
             "opencode" => json!({"type":"remote", "url":url}),
             "musecode" => json!({"transport":"streamable_http", "url":url}),
             "antigravity-ide" => json!({"serverUrl":url}),
@@ -1404,7 +1623,62 @@ fn native_mcp(tool: &str, portable: &PortableMcp) -> Value {
             "codexcli" => json!({"url":url}),
             _ => json!({"type":"http", "url":url}),
         },
+    };
+    match portable {
+        PortableMcp::Stdio(_, env) if !env.is_empty() => {
+            if tool == "codexcli" {
+                if env.iter().any(|(name, variable)| name != variable) {
+                    return None;
+                }
+                value["env_vars"] = json!(env.keys().collect::<Vec<_>>());
+            } else {
+                let mut map = serde_json::Map::new();
+                for (name, variable) in env {
+                    map.insert(
+                        name.clone(),
+                        Value::String(native_reference(tool, &(None, variable.clone()))?),
+                    );
+                }
+                let field = if tool == "opencode" {
+                    "environment"
+                } else {
+                    "env"
+                };
+                value[field] = Value::Object(map);
+            }
+        }
+        PortableMcp::Http(_, headers) if !headers.is_empty() => {
+            let mut map = serde_json::Map::new();
+            for (header, reference) in headers {
+                if tool != "codexcli" {
+                    map.insert(
+                        header.clone(),
+                        Value::String(native_reference(tool, reference)?),
+                    );
+                    continue;
+                }
+                match reference {
+                    (Some(scheme), name) if scheme == "Bearer" && header == "Authorization" => {
+                        value["bearer_token_env_var"] = json!(name);
+                    }
+                    (None, name) => {
+                        map.insert(header.clone(), json!(name));
+                    }
+                    _ => return None,
+                }
+            }
+            if !map.is_empty() {
+                let field = if tool == "codexcli" {
+                    "env_http_headers"
+                } else {
+                    "headers"
+                };
+                value[field] = Value::Object(map);
+            }
+        }
+        _ => {}
     }
+    Some(value)
 }
 
 /// Translate only the common server fields, or a hook with the same event and
@@ -1419,7 +1693,7 @@ pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document
             let &Section(_, path, _) = current.sections.iter().find(|section| section.0 == Mcp)?;
             let mut path = path.to_vec();
             path.push(entry.key.name.last()?);
-            let value = native_mcp(to.tool, &portable);
+            let value = native_mcp(to.tool, &portable)?;
             if portable_mcp(to.tool, &value)? != portable {
                 return None;
             }
@@ -1538,6 +1812,175 @@ mod tests {
         let hook = doc.reviewable_entries(codex.tool).next().unwrap();
         assert_eq!(hook.key.feature, Hook);
         assert_eq!(hook.value["hooks"][0]["command"], "fixture-hook");
+    }
+
+    fn mcp_entry<'a>(doc: &'a Document, tool: &'a str, name: &str) -> &'a Entry {
+        doc.reviewable_entries(tool)
+            .find(|entry| entry.key.name.last().map(String::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("{name} is not reviewable"))
+    }
+
+    #[test]
+    fn rulesync_personal_settings_translate_environment_references_between_tools() {
+        let claude = file(".claude.json");
+        let source = claude
+            .document(Some(
+                br#"{"mcpServers":{
+                "api":{"command":"server","env":{"API_KEY":"${API_KEY}"}},
+                "remote":{"type":"http","url":"https://example.invalid/mcp",
+                    "headers":{"Authorization":"Bearer ${REMOTE_TOKEN}","X-Team":"${TEAM_ID}"}},
+                "renamed":{"command":"server","env":{"API_KEY":"${OTHER_NAME}"}}
+            }}"#,
+            ))
+            .unwrap();
+        let api = mcp_entry(&source, claude.tool, "api");
+        let remote = mcp_entry(&source, claude.tool, "remote");
+        let renamed = mcp_entry(&source, claude.tool, "renamed");
+
+        let cursor = file(".cursor/mcp.json");
+        let doc = cursor.document(Some(br#"{"mcpServers":{}}"#)).unwrap();
+        let projected = project(&claude, &cursor, api, &doc).unwrap();
+        assert_eq!(projected.value["env"], json!({"API_KEY": "${env:API_KEY}"}));
+        let projected = project(&claude, &cursor, remote, &doc).unwrap();
+        assert_eq!(
+            projected.value["headers"],
+            json!({"Authorization": "Bearer ${env:REMOTE_TOKEN}", "X-Team": "${env:TEAM_ID}"})
+        );
+        assert!(reviewable(cursor.tool, &projected));
+
+        let codex = file(".codex/config.toml");
+        let doc = codex.document(Some(b"# fixture\n")).unwrap();
+        let projected = project(&claude, &codex, api, &doc).unwrap();
+        assert_eq!(projected.value["env_vars"], json!(["API_KEY"]));
+        assert!(reviewable(codex.tool, &projected));
+        let projected = project(&claude, &codex, remote, &doc).unwrap();
+        assert_eq!(
+            projected.value["bearer_token_env_var"],
+            json!("REMOTE_TOKEN")
+        );
+        assert_eq!(
+            projected.value["env_http_headers"],
+            json!({"X-Team": "TEAM_ID"})
+        );
+        assert!(reviewable(codex.tool, &projected));
+        // Codex passes a variable through only under its own name.
+        assert!(project(&claude, &codex, renamed, &doc).is_none());
+        let back = project(
+            &codex,
+            &claude,
+            &projected,
+            &claude.document(Some(b"{}")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(back.value, remote.value);
+
+        let opencode = file(".config/opencode/opencode.jsonc");
+        let doc = opencode
+            .document(Some(
+                br#"{"$schema":"https://opencode.ai/config.json","permission":{"bash":"ask"}}"#,
+            ))
+            .unwrap();
+        let projected = project(&claude, &opencode, api, &doc).unwrap();
+        assert_eq!(
+            projected.value["environment"],
+            json!({"API_KEY": "{env:API_KEY}"})
+        );
+        // Copilot has no reference syntax Wenlan knows, so nothing is copied.
+        let copilot = file(".copilot/mcp-config.json");
+        let doc = copilot.document(Some(br#"{"mcpServers":{}}"#)).unwrap();
+        assert!(project(&claude, &copilot, api, &doc).is_none());
+    }
+
+    #[test]
+    fn rulesync_personal_settings_mark_a_written_key_and_keep_it_out() {
+        let claude = file(".claude.json");
+        let doc = claude
+            .document(Some(
+                br#"{"mcpServers":{
+                "literal-env":{"command":"server","env":{"API_KEY":"fixture-literal-marker"}},
+                "literal-header":{"type":"http","url":"https://example.invalid/mcp",
+                    "headers":{"Authorization":"Bearer fixture-literal-marker"}},
+                "secret-oauth":{"type":"http","url":"https://example.invalid/mcp",
+                    "oauth":{"clientId":"fixture-client","clientSecret":"fixture-literal-marker"}},
+                "unsafe-arg":{"command":"server","args":["--token","fixture-literal-marker"]},
+                "reference":{"command":"server","env":{"API_KEY":"${API_KEY}"}}
+            }}"#,
+            ))
+            .unwrap();
+        let refused = doc.refused_entries(claude.tool).collect::<Vec<_>>();
+        assert_eq!(
+            refused.iter().map(|(_, _, key)| *key).collect::<Vec<_>>(),
+            [true, true, true, false],
+            "{refused:?}"
+        );
+        assert!(doc.reviewable_entries(claude.tool).all(|entry| entry
+            .key
+            .name
+            .last()
+            .map(String::as_str)
+            == Some("reference")));
+    }
+
+    #[test]
+    fn rulesync_personal_settings_keep_public_oauth_fields_and_refuse_a_client_secret() {
+        let claude = file(".claude.json");
+        let public = br#"{"mcpServers":{"github":{"type":"http","url":"https://api.example.invalid/mcp/",
+            "oauth":{"clientId":"Iv1.fixture-client","callbackPort":8080,"scopes":["repo","read:org"]}}}}"#;
+        let doc = claude.document(Some(public)).unwrap();
+        mcp_entry(&doc, claude.tool, "github");
+        assert!(claude.snapshot_safe(public, &doc));
+        for oauth in [
+            r#"{"clientId":"fixture","clientSecret":"fixture-marker"}"#,
+            r#"{"clientId":"fixture","client_secret":"fixture-marker"}"#,
+            r#"{"clientId":"fixture --token fixture-marker"}"#,
+            r#"{"clientId":"fixture","scopes":"repo -p fixture-marker"}"#,
+        ] {
+            let bytes = format!(
+                r#"{{"mcpServers":{{"github":{{"type":"http","url":"https://api.example.invalid/mcp/","oauth":{oauth}}}}}}}"#
+            );
+            let doc = claude.document(Some(bytes.as_bytes())).unwrap();
+            assert_eq!(doc.reviewable_entries(claude.tool).count(), 0, "{oauth}");
+            assert!(!claude.snapshot_safe(bytes.as_bytes(), &doc), "{oauth}");
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_recognize_wenlan_own_server_without_sharing_it() {
+        for (path, bytes) in [
+            (
+                ".codex/config.toml",
+                b"[mcp_servers.wenlan]\ncommand = '/Users/fixture/.wenlan/bin/wenlan-mcp'\nargs = ['--agent-name', 'codex', '--tool-profile', 'daily']\n".as_slice(),
+            ),
+            (
+                ".claude.json",
+                br#"{"mcpServers":{"wenlan":{"command":"npx","args":["-y","wenlan-mcp","--agent-name","claude-code"]}}}"#.as_slice(),
+            ),
+            (
+                ".cursor/mcp.json",
+                br#"{"mcpServers":{"wenlan":{"command":"C:\\Fixture\\wenlan-mcp.exe","args":["--agent-name","cursor"]}}}"#.as_slice(),
+            ),
+        ] {
+            let location = file(path);
+            let doc = location.document(Some(bytes)).unwrap();
+            assert_eq!(doc.refused_entries(location.tool).count(), 0, "{path}");
+            // Each tool gets its own entry from Wenlan, so it is never managed
+            // or copied.
+            assert_eq!(doc.reviewable_entries(location.tool).count(), 0, "{path}");
+        }
+        let claude = file(".claude.json");
+        for args in [
+            r#"["-y","wenlan-mcp","--agent-name","claude-code","--token","fixture-marker"]"#,
+            r#"["-y","wenlan-mcp","--agent-name","fixture marker"]"#,
+            r#"["-y","other-mcp","--agent-name","claude-code"]"#,
+        ] {
+            let bytes =
+                format!(r#"{{"mcpServers":{{"wenlan":{{"command":"npx","args":{args}}}}}}}"#);
+            let doc = claude.document(Some(bytes.as_bytes())).unwrap();
+            assert_eq!(doc.refused_entries(claude.tool).count(), 1, "{args}");
+        }
+        let bytes = br#"{"mcpServers":{"wenlan":{"command":"wenlan-mcp","args":["--agent-name","claude-code"],"env":{"TOKEN":"fixture-marker"}}}}"#;
+        let doc = claude.document(Some(bytes)).unwrap();
+        assert_eq!(doc.refused_entries(claude.tool).count(), 1);
     }
 
     #[test]

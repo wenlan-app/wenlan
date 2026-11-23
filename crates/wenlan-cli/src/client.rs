@@ -28,7 +28,7 @@ use wenlan_types::{
     },
     rulesync::{
         AdoptPreviewRequest, AdoptRequest, AdoptionPlan, PullbackDecision, PullbackPreview,
-        RulesSyncReport,
+        RulesSyncReport, SharingPlan,
     },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
@@ -888,6 +888,22 @@ impl WenlanClient {
         request: &AdoptRequest,
     ) -> Result<RulesSyncReport> {
         self.post_rules_adoption("/api/rules/setup/adopt", request)
+            .await
+    }
+
+    pub(crate) async fn preview_share_as_person(
+        &self,
+        request: &AdoptPreviewRequest,
+    ) -> Result<SharingPlan> {
+        self.post_rules_adoption("/api/rules/setup/share/preview", request)
+            .await
+    }
+
+    pub(crate) async fn share_rules_as_person(
+        &self,
+        request: &AdoptRequest,
+    ) -> Result<RulesSyncReport> {
+        self.post_rules_adoption("/api/rules/setup/share", request)
             .await
     }
 

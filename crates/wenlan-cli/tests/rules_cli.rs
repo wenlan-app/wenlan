@@ -798,6 +798,106 @@ fn rules_confirmed_adoption_refuses_changed_plan_in_session() {
     assert!(!state.path().join("unused-data-root/personal.json").exists());
 }
 
+/// A stub daemon whose share preview returns `plan`, then accepts a share.
+fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, String)>) {
+    fs::create_dir_all(state.join("ai-tools/home")).unwrap();
+    fs::create_dir_all(state.join("unused-data-root")).unwrap();
+    fs::write(state.join("unused-data-root/person.key"), "a".repeat(64)).unwrap();
+    let plan = json!({
+        "plan_id": "0123456789ab",
+        "token": "fixture-token",
+        "tools": [{"tool": "Codex", "skills": [], "commands": ["hello"], "subagents": [], "mcp_servers": ["docs"]}],
+        "stays": [{"tool": "Claude Code", "item": "MCP server (entry 1 in .claude.json)", "reason": "has a key written in it; move the key to an environment variable to share it"}],
+        "already_there": 2
+    });
+    let (base, requests) = spawn_stub(vec![
+        ("GET /api/health", "{}".into()),
+        ("POST /api/rules/setup/share/preview", plan.to_string()),
+        ("GET /api/health", "{}".into()),
+        (
+            "POST /api/rules/setup/share",
+            json!({"written":[],"blocked":[],"proposals":[],"message":"shared"}).to_string(),
+        ),
+    ]);
+    let mut cmd = personal_rules_cli(state);
+    cmd.env("WENLAN_HOST", base).env("WENLAN_RULESYNC", "1");
+    (cmd, requests)
+}
+
+fn shared(requests: &std::sync::mpsc::Receiver<(String, String)>) -> Option<String> {
+    requests
+        .try_iter()
+        .find(|(path, _)| path == "POST /api/rules/setup/share")
+        .map(|(_, body)| body)
+}
+
+#[test]
+fn rules_share_in_session_without_confirm_only_previews() {
+    let state = tempfile::tempdir().unwrap();
+    let (mut cmd, requests) = share_fixture(state.path());
+    // An AI session reads the plan as JSON.
+    for_agent_session(cmd.args(["rules", "share", "--dry-run"]))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"plan_id\": \"0123456789ab\""))
+        .stdout(predicate::str::contains(
+            "move the key to an environment variable",
+        ));
+    assert!(shared(&requests).is_none());
+
+    // The person sees the same plan in words.
+    let (mut cmd, requests) = share_fixture(state.path());
+    cmd.args(["rules", "share", "--dry-run", "--format", "table"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Share with your other tools"))
+        .stdout(predicate::str::contains("Codex: 1 command, 1 MCP server"))
+        .stdout(predicate::str::contains("  + command hello"))
+        .stdout(predicate::str::contains("2 items already in every tool"))
+        .stdout(predicate::str::contains(
+            "Stays in Claude Code: MCP server (entry 1 in .claude.json): has a key written in it",
+        ))
+        .stdout(predicate::str::contains(
+            "wenlan rules share --confirm 0123456789ab",
+        ));
+    assert!(shared(&requests).is_none());
+
+    let (mut cmd, requests) = share_fixture(state.path());
+    for_agent_session(cmd.args(["rules", "share"]))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "after they say yes run `wenlan rules share --confirm <plan id>`",
+        ));
+    assert!(requests.try_iter().next().is_none());
+}
+
+#[test]
+fn rules_share_in_session_applies_the_confirmed_plan() {
+    let state = tempfile::tempdir().unwrap();
+    let (mut cmd, requests) = share_fixture(state.path());
+    for_agent_session(cmd.args(["rules", "share", "--confirm", "0123456789ab"]))
+        .assert()
+        .success();
+    let request: wenlan_types::rulesync::AdoptRequest =
+        serde_json::from_str(&shared(&requests).unwrap()).unwrap();
+    assert_eq!(request.confirmed_plan_id.as_deref(), Some("0123456789ab"));
+    assert_eq!(request.token, "fixture-token");
+}
+
+#[test]
+fn rules_share_in_session_refuses_a_stale_plan_id() {
+    let state = tempfile::tempdir().unwrap();
+    let (mut cmd, requests) = share_fixture(state.path());
+    for_agent_session(cmd.args(["rules", "share", "--confirm", "ba9876543210"]))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Run `wenlan rules share --dry-run` again",
+        ));
+    assert!(shared(&requests).is_none());
+}
+
 #[test]
 fn rules_restore_refused_in_session() {
     session_rules_refused(&["rules", "restore"]);
@@ -825,6 +925,7 @@ fn personal_rules_setup_requires_interactive_confirmation() {
     let state = tempfile::tempdir().unwrap();
     for args in [
         &["rules", "adopt"][..],
+        &["rules", "share"],
         &["rules", "restore"],
         &["rules", "settings", "local-settings"],
         &[

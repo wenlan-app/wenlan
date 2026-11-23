@@ -273,6 +273,44 @@ pub struct AdoptRequest {
     pub home: Option<std::path::PathBuf>,
 }
 
+/// What `wenlan rules share` would copy into the other managed tools.
+/// Approval binds to `token`; an AI session confirms with `plan_id`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingPlan {
+    pub plan_id: String,
+    pub token: String,
+    /// Tools that would receive something, with the names they get.
+    #[serde(default)]
+    pub tools: Vec<SharingTool>,
+    /// Items that stay where they are, one plain reason each.
+    #[serde(default)]
+    pub stays: Vec<SharingStay>,
+    /// Copies another tool already has with the same content.
+    #[serde(default)]
+    pub already_there: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingTool {
+    pub tool: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub subagents: Vec<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingStay {
+    /// The tool the item stays in.
+    pub tool: String,
+    pub item: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RulesSyncReport {
     pub written: Vec<String>,

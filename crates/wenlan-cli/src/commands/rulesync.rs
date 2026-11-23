@@ -12,8 +12,8 @@ use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
     PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
-    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SkillUpdateStatus,
-    SkillUpstream, TO_REVIEW_COMMAND,
+    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SharingPlan,
+    SkillUpdateStatus, SkillUpstream, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -32,6 +32,16 @@ pub enum RulesSetupCmd {
     /// Bring in your personal AI-tool setup and preview the changes.
     Adopt {
         /// Preview the changes, or list the installed files while offline.
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm the plan shown to the person.
+        #[arg(long, conflicts_with = "dry_run")]
+        confirm: Option<String>,
+    },
+    /// Copy your existing skills, commands, subagents and MCP servers to
+    /// every managed tool that supports them.
+    Share {
+        /// Preview what each tool would get.
         #[arg(long)]
         dry_run: bool,
         /// Confirm the plan shown to the person.
@@ -149,9 +159,18 @@ async fn run_inner(
         }
         return show(format, quiet, &adoption_plan()?, plan_for_a_person);
     }
+    if matches!(command, RulesSetupCmd::Share { dry_run: true, .. }) {
+        let client =
+            WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
+        let plan = client.preview_share_as_person(&home_request()?).await?;
+        return show(format, quiet, &plan, sharing_for_a_person);
+    }
     let confirmed_adopt = matches!(
         command,
         RulesSetupCmd::Adopt {
+            confirm: Some(_),
+            ..
+        } | RulesSetupCmd::Share {
             confirm: Some(_),
             ..
         }
@@ -160,6 +179,11 @@ async fn run_inner(
         && (agent_name.is_some() || session.session.is_some())
     {
         bail!("Only you can change your personal tool setup. Run this from your own terminal outside an AI session. From an AI tool: show the person `wenlan rules adopt --dry-run`, and after they say yes run `wenlan rules adopt --confirm <plan id>`.");
+    }
+    if matches!(command, RulesSetupCmd::Share { confirm: None, .. })
+        && (agent_name.is_some() || session.session.is_some())
+    {
+        bail!("Only you can change your personal tool setup. Run this from your own terminal outside an AI session. From an AI tool: show the person `wenlan rules share --dry-run`, and after they say yes run `wenlan rules share --confirm <plan id>`.");
     }
     ensure!(
         confirmed_adopt || matches!(command, RulesSetupCmd::Status { .. } | RulesSetupCmd::Review { id: None, .. })
@@ -206,6 +230,29 @@ async fn run_inner(
             }
             client
                 .adopt_rules_as_person(&AdoptRequest {
+                    token: plan.token,
+                    confirmed_plan_id: confirmed.clone(),
+                    home: Some(expected.home),
+                })
+                .await?
+        }
+        RulesSetupCmd::Share {
+            confirm: confirmed, ..
+        } => {
+            let expected = home_request()?;
+            let plan = client.preview_share_as_person(&expected).await?;
+            if let Some(id) = confirmed {
+                ensure!(plan.plan_id == *id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
+            } else {
+                // The person must see the same plan even with --quiet or --format json.
+                print!("{}", sharing_for_a_person(&plan));
+                if plan.tools.is_empty() || !confirm("Copy these items to the tools listed above?")?
+                {
+                    return Ok(());
+                }
+            }
+            client
+                .share_rules_as_person(&AdoptRequest {
                     token: plan.token,
                     confirmed_plan_id: confirmed.clone(),
                     home: Some(expected.home),
@@ -421,6 +468,76 @@ struct SetupSync {
     following: usize,
     copied: usize,
     left_alone: usize,
+}
+
+fn home_request() -> Result<AdoptPreviewRequest> {
+    Ok(AdoptPreviewRequest {
+        home: rulesync_personal::system_home()?.canonicalize()?,
+    })
+}
+
+fn sharing_for_a_person(plan: &SharingPlan) -> String {
+    let mut out = String::new();
+    if plan.tools.is_empty() {
+        out.push_str("Nothing to share.\n");
+    } else {
+        out.push_str("Share with your other tools\n");
+    }
+    for tool in &plan.tools {
+        let groups = [
+            ("skill", &tool.skills),
+            ("command", &tool.commands),
+            ("subagent", &tool.subagents),
+            ("MCP server", &tool.mcp_servers),
+        ];
+        let counts = groups
+            .iter()
+            .filter(|(_, names)| !names.is_empty())
+            .map(|(word, names)| plural(names.len(), word))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(&mut out, "\n{}: {counts}", one_line(&tool.tool)).unwrap();
+        for (word, names) in groups {
+            for name in names {
+                writeln!(&mut out, "  + {word} {}", one_line(name)).unwrap();
+            }
+        }
+    }
+    if plan.already_there > 0 {
+        writeln!(
+            &mut out,
+            "\n{} already in every tool that supports {}.",
+            plural(plan.already_there, "item"),
+            if plan.already_there == 1 {
+                "it"
+            } else {
+                "them"
+            }
+        )
+        .unwrap();
+    }
+    if !plan.stays.is_empty() {
+        out.push('\n');
+        for stay in &plan.stays {
+            writeln!(
+                &mut out,
+                "Stays in {}: {}: {}",
+                one_line(&stay.tool),
+                one_line(&stay.item),
+                one_line(&stay.reason)
+            )
+            .unwrap();
+        }
+    }
+    if !plan.tools.is_empty() && !plan.plan_id.is_empty() {
+        writeln!(
+            &mut out,
+            "\nPlan id: {} — to go ahead from an AI tool: wenlan rules share --confirm {}",
+            plan.plan_id, plan.plan_id
+        )
+        .unwrap();
+    }
+    out
 }
 
 fn plural(count: usize, word: &str) -> String {
