@@ -1080,7 +1080,8 @@ fn variable_name(name: &str) -> bool {
 /// token prefix, a Slack webhook path, a run of 16 or more hex digits (a
 /// UUID with its hyphens taken out counts), a run of 16 or more letters and
 /// digits with any digit in it (a base32 key such as `JBSWY3DPEHPK3PXP`
-/// included), or a run of 20 or more letters in mixed case.
+/// included), or a run of 20 or more letters in mixed case that does not
+/// split into camelCase words (`camel_name`).
 fn secret_looking(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let prefix = [
@@ -1112,7 +1113,8 @@ fn secret_looking(text: &str) -> bool {
         (run.len() >= 16 && run.bytes().any(|byte| byte.is_ascii_digit()))
             || (run.len() >= 20
                 && run.bytes().any(|byte| byte.is_ascii_uppercase())
-                && run.bytes().any(|byte| byte.is_ascii_lowercase()))
+                && run.bytes().any(|byte| byte.is_ascii_lowercase())
+                && !camel_name(run))
     };
     lower.contains("hooks.slack.com/services")
         || lower
@@ -1124,6 +1126,16 @@ fn secret_looking(text: &str) -> bool {
         || text
             .split(|ch: char| !ch.is_ascii_alphanumeric())
             .any(|run| hex(run) || mixed(run))
+}
+
+/// Letters that split wholly into camelCase words, so they read as a name
+/// such as `skipDangerousModePermissionPrompt`, not a key. Each word is an
+/// optional capital and two or more lowercase letters, and may follow an
+/// acronym of up to five capitals (`MCPServers`).
+fn camel_name(run: &str) -> bool {
+    static CAMEL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^(?:[A-Z]{0,6}[a-z]{2,})+$").expect("camelCase words"));
+    CAMEL.is_match(run)
 }
 
 /// Whether no part of `text` looks like a key. Every string in a setting,
@@ -1159,25 +1171,35 @@ fn without_catalog_names(text: &str) -> std::borrow::Cow<'_, str> {
     })
 }
 
-/// The lowercase words of a name, split at separators and at a capital
-/// after a lowercase letter or digit, so `doorCode` and `DOOR_CODE` both
-/// give `door` and `code`.
+/// The lowercase words of a name, split at separators, at a capital after a
+/// lowercase letter or digit, before the last capital of an acronym
+/// (`APIKey`), and between letters and digits, so `doorCode`, `DOOR_CODE` and
+/// `sqlite3` give `door code`, `door code` and `sqlite 3`.
 fn name_words(name: &str) -> Vec<String> {
+    let chars = name.chars().collect::<Vec<_>>();
     let mut words = Vec::new();
     let mut word = String::new();
-    let mut after_lower = false;
-    for ch in name.chars() {
+    for (index, &ch) in chars.iter().enumerate() {
         if !ch.is_ascii_alphanumeric() {
             if !word.is_empty() {
                 words.push(std::mem::take(&mut word));
             }
-            after_lower = false;
             continue;
         }
-        if ch.is_ascii_uppercase() && after_lower {
-            words.push(std::mem::take(&mut word));
+        if let Some(&before) = index.checked_sub(1).and_then(|before| chars.get(before)) {
+            let next_lower = chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_lowercase());
+            let boundary = (ch.is_ascii_uppercase()
+                && (before.is_ascii_lowercase()
+                    || before.is_ascii_digit()
+                    || (before.is_ascii_uppercase() && next_lower)))
+                || (ch.is_ascii_digit() && before.is_ascii_alphabetic())
+                || (ch.is_ascii_alphabetic() && before.is_ascii_digit());
+            if boundary && !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
         }
-        after_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
         word.push(ch.to_ascii_lowercase());
     }
     if !word.is_empty() {
@@ -1186,45 +1208,89 @@ fn name_words(name: &str) -> Vec<String> {
     words
 }
 
-/// Whether a name, flag or word names a credential. This one list serves
-/// setting names, environment names, flags and free text. It matches inside
-/// longer words, so `MYPIN` and `TOTP` count, and so do some words that name
-/// no credential, such as `spinner` or `author`; those are refused too.
+/// Whole words that name a credential.
+const CREDENTIAL_WORDS: &[&str] = &[
+    "password",
+    "passwords",
+    "passwd",
+    "pass",
+    "pwd",
+    "pw",
+    "pin",
+    "otp",
+    "totp",
+    "mfa",
+    "cvc",
+    "cvv",
+    "puk",
+    "ssn",
+    "secret",
+    "secrets",
+    "token",
+    "tokens",
+    "key",
+    "keys",
+    "apikey",
+    "auth",
+    "authorization",
+    "cred",
+    "creds",
+    "credential",
+    "credentials",
+    "cookie",
+    "cookies",
+    "session",
+    "sessionid",
+    "accountnumber",
+];
+
+/// Words before `code` that make it a credential, as in `DOOR_CODE`.
+const CODE_WORDS: &[&str] = &[
+    "auth",
+    "access",
+    "backup",
+    "door",
+    "verification",
+    "otp",
+    "pin",
+    "recovery",
+];
+
+/// Whether a name, flag or word names a credential. Its words
+/// (`name_words`) are matched whole, so `author`, `spinner`, `bypass`,
+/// `keyboard`, `tokenizer` and `EXIT_CODE` name none, while `DB_PASS`,
+/// `authCode` and `ACCOUNT_NUMBER` do. One word also counts when it joins
+/// two credential words (`authtoken`), ends in a long credential word
+/// (`PGPASSWORD`, `clientsecret`, `githubtoken`) or ends in `code` after a
+/// word that makes it one (`backupcode`). A short credential word inside a
+/// longer word, as in `MYPIN`, is not found (UX-SKILL-17).
 fn credential_word(name: &str) -> bool {
-    let joined = name
-        .to_ascii_lowercase()
-        .replace(|ch: char| !ch.is_ascii_alphanumeric(), "");
-    // `code` counts when it ends a name joined by `_` or a capital, as in
-    // `DOOR_CODE` or `authCode`, but not a dashed name such as `claude-code`.
-    let last = name
-        .rsplit(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .next()
-        .map(name_words)
-        .unwrap_or_default();
-    [
-        "pass",
-        "pwd",
-        "pin",
-        "otp",
-        "mfa",
-        "cvc",
-        "cvv",
-        "puk",
-        "ssn",
-        "secret",
-        "token",
-        "key",
-        "auth",
-        "cred",
-        "cookie",
-        "sessionid",
-        "accountnumber",
-        "backupcode",
-    ]
-    .iter()
-    .any(|word| joined.contains(word))
-        || name_words(name).iter().any(|word| word == "pw")
-        || (last.len() > 1 && last.last().is_some_and(|word| word == "code"))
+    let credential = |word: &str| CREDENTIAL_WORDS.contains(&word);
+    let words = name_words(name);
+    words.iter().enumerate().any(|(index, word)| {
+        let joined = (1..word.len()).any(|split| {
+            let (head, tail) = word.split_at(split);
+            (credential(head) && credential(tail)) || (tail == "code" && CODE_WORDS.contains(&head))
+        });
+        credential(word)
+            || joined
+            || [
+                "password",
+                "passwd",
+                "secret",
+                "token",
+                "credential",
+                "apikey",
+            ]
+            .iter()
+            .any(|long| word.len() > long.len() && word.ends_with(long))
+            || (word == "code"
+                && index
+                    .checked_sub(1)
+                    .is_some_and(|before| CODE_WORDS.contains(&words[before].as_str())))
+            || (word == "number" && index > 0 && words[index - 1] == "account")
+            || (word == "id" && index > 0 && words[index - 1] == "session")
+    })
 }
 
 /// A setting in Claude Code's `env` that names no key: a number, an on/off
@@ -1249,23 +1315,41 @@ fn plain_setting(name: &str, value: &Value) -> bool {
         Value::Bool(_) => (false, true, None),
         _ => (false, false, None),
     };
-    let measure = [
-        "_TOKENS", "_LIMIT", "_TIMEOUT", "_MS", "_SECONDS", "_PORT", "_SIZE", "_COUNT", "_RETRIES",
-    ]
-    .iter()
-    .any(|suffix| name.ends_with(suffix));
-    let without_tokens = name_words(name)
+    if text_risky("", name) {
+        false
+    } else if credential_key(name) {
+        number && token_measure(name)
+    } else {
+        number || switch || text.is_some_and(|text| !text_risky("claudecode", text))
+    }
+}
+
+/// A name that counts or times something and whose only credential word is
+/// `token(s)`, such as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`: its last word is
+/// `tokens`, `limit`, `timeout`, `ms`, `seconds`, `port`, `size`, `count` or
+/// `retries`. A number under it is a measure, not a key.
+fn token_measure(name: &str) -> bool {
+    let words = name_words(name);
+    let measure = words.last().is_some_and(|word| {
+        matches!(
+            word.as_str(),
+            "tokens"
+                | "limit"
+                | "timeout"
+                | "ms"
+                | "seconds"
+                | "port"
+                | "size"
+                | "count"
+                | "retries"
+        )
+    });
+    let without_tokens = words
         .into_iter()
         .filter(|word| !matches!(word.as_str(), "token" | "tokens"))
         .collect::<Vec<_>>()
         .join("_");
-    if text_risky("", name) {
-        false
-    } else if credential_key(name) {
-        number && measure && !credential_key(&without_tokens)
-    } else {
-        number || switch || text.is_some_and(|text| !text_risky("claudecode", text))
-    }
+    measure && !credential_key(&without_tokens)
 }
 
 fn credential_key(key: &str) -> bool {
@@ -1343,15 +1427,7 @@ fn variable_reference(value: &str) -> bool {
 /// part of the text (split at brackets, quotes and shell operators):
 /// - `NAME=value` is refused unless the value is `$NAME`/`${NAME}`, or the
 ///   name has no credential word and the value looks like no key;
-/// - a credential flag (`-u`, `-a`, `-k`, `-H`, `--pass`, `--user`, any flag
-///   with a credential word) is refused, with or without a value;
-/// - any other flag with a value attached (`-pX`, `--x=V`) or after it is
-///   refused, except a few flags whose value is public in a named command:
-///   `cargo -p`, `grep`/`egrep`/`rg -e|-E`, `sed -e|-E`, `pytest -p`,
-///   `echo -e` and `claude -p`. Their value still goes through `leaf_safe`.
-///
-/// Up to four letters after one dash (`-la`) are separate switches, unless
-/// the first is a credential or password letter, as in `-phunter`.
+/// - each flag goes through `flag_risky`.
 fn command_risky(text: &str) -> bool {
     text.split([
         '(', ')', ';', '&', '|', '\n', '\r', ',', '[', ']', '"', '\'', '`',
@@ -1366,10 +1442,6 @@ fn command_risky(text: &str) -> bool {
             })
             .filter(|word| !word.is_empty())
             .collect::<Vec<_>>();
-        let program = words
-            .iter()
-            .find(|word| !word.starts_with('-') && assignment(word).is_none())
-            .map_or("", |word| word.rsplit(['/', '\\']).next().unwrap_or(word));
         words
             .iter()
             .enumerate()
@@ -1377,47 +1449,101 @@ fn command_risky(text: &str) -> bool {
                 Some((name, value)) => {
                     !(variable_reference(value) || (!credential_key(name) && leaf_safe(value)))
                 }
-                None => flag_risky(program, word, words.get(index + 1).copied()),
+                None => {
+                    let programs = words[..index]
+                        .iter()
+                        .filter(|word| !word.starts_with('-') && assignment(word).is_none())
+                        .map(|word| word.rsplit(['/', '\\']).next().unwrap_or(word))
+                        .collect::<Vec<_>>();
+                    flag_risky(&programs, word, words.get(index + 1).copied())
+                }
             })
     })
 }
 
-fn flag_risky(program: &str, word: &str, next: Option<&str>) -> bool {
+/// Whether a flag in a command may carry a key. `programs` are the words
+/// before it that are not flags.
+/// - One dash and up to four letters (`-la`, `-rf`, `-xzf`) are switches; a
+///   longer one, or one with a digit or other character (`-phunter2`), is
+///   refused.
+/// - A credential option refuses any value but a `$VAR` reference: a long
+///   flag with a credential word (`--pass`, `--pin`, `--otp`, `--token`,
+///   `--auth`, `--key`, `--secret`, `--password`, but not `--session`, nor
+///   `--author`), `--user` or `-u` with a `user:password` value, and the
+///   password flag of a named program: `mysql`/`mariadb -p`, `sshpass -p`,
+///   `redis-cli -a`, `openssl -k`/`-pass` and `zip`/`7z -P`/`-p`. Such a
+///   flag without a value (`--passWithNoTests`) is fine.
+/// - Any other flag's value passes `flag_value_safe`.
+fn flag_risky(programs: &[&str], word: &str, next: Option<&str>) -> bool {
     let Some(body) = word.strip_prefix('-') else {
         return false;
     };
     let letter = |text: &str| text.starts_with(|ch: char| ch.is_ascii_alphabetic());
-    let (flag, attached) = match body.strip_prefix('-') {
-        Some(long) if letter(long) => match long.split_once('=') {
-            Some((name, value)) => (&word[..name.len() + 2], Some(value)),
-            None => (word, None),
-        },
-        None if letter(body) => {
-            let rest = &body[1..];
-            let switches = body.len() <= 4
-                && rest.bytes().all(|byte| byte.is_ascii_alphabetic())
-                && !"pPakuUH".contains(&body[..1]);
-            (&word[..2], (!rest.is_empty() && !switches).then_some(rest))
+    let next = next.filter(|next| !next.starts_with('-'));
+    let ran = |names: &[&str]| programs.iter().any(|program| names.contains(program));
+    let secret_value = |value: Option<&str>| value.is_some_and(|value| !variable_reference(value));
+    match body.strip_prefix('-') {
+        Some(long) if letter(long) => {
+            let (name, value) = match long.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (long, next),
+            };
+            if name != "session" && credential_key(name) {
+                secret_value(value)
+            } else if name == "user" && value.is_some_and(|value| value.contains(':')) {
+                true
+            } else {
+                value.is_some_and(|value| !flag_value_safe(value))
+            }
         }
-        _ => return false,
-    };
-    let named = matches!(
-        (program, flag),
-        ("cargo", "-p" | "--package")
-            | ("grep" | "egrep" | "rg", "-e" | "-E" | "--regexp")
-            | ("sed", "-e" | "-E" | "--expression")
-            | ("pytest", "-p")
-            | ("echo", "-e" | "-E")
-            | ("claude", "-p" | "--print")
-    );
-    let valued = attached.is_some() || next.is_some_and(|next| !next.starts_with('-'));
-    credential_flag(flag) || (valued && !named)
+        None if letter(body) => {
+            if body.len() > 4 || !body.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                return true;
+            }
+            let first = &body[..1];
+            let password = (ran(&["mysql", "mariadb", "sshpass"]) && first == "p")
+                || (ran(&["redis-cli"]) && first == "a")
+                || (ran(&["openssl"]) && (first == "k" || body == "pass"))
+                || (ran(&["zip", "7z", "7za"]) && matches!(first, "p" | "P"));
+            if password {
+                (body.len() > 1 && body != "pass") || secret_value(next)
+            } else if body == "u" && next.is_some_and(|value| value.contains(':')) {
+                true
+            } else {
+                next.is_some_and(|value| !flag_value_safe(value))
+            }
+        }
+        _ => false,
+    }
 }
 
-/// A credential word followed within three words by a literal value, as in
-/// `vpn password hunter2`, `pw hunter2` or `add-authtoken 2abc`. A reference
-/// to the environment right after the word, as in `TOKEN=${TOKEN}`, is the
-/// word's value, so the text is not refused for it.
+/// A value after an ordinary flag: a `$VAR` reference, a path (with `/`, or
+/// starting with `~` or `.`), or text whose words are each letters only, a
+/// version such as `v2`, or a number of up to six digits (`HEAD`,
+/// `f.tgz`, `no:cacheprovider`, `4096`). Letters and digits mixed in one
+/// word, as in `hunter2`, or a longer number may be a password or PIN.
+/// Every value also passes `leaf_safe`.
+fn flag_value_safe(value: &str) -> bool {
+    let path = value.contains('/') || value.starts_with(['~', '.']);
+    let plain = value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .all(|run| {
+            run.bytes().all(|byte| byte.is_ascii_alphabetic())
+                || (run.len() <= 6 && run.bytes().all(|byte| byte.is_ascii_digit()))
+                || run.strip_prefix('v').is_some_and(|number| {
+                    !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                })
+        });
+    variable_reference(value) || ((path || plain) && leaf_safe(value))
+}
+
+/// A credential word followed within three words by a value, as in
+/// `vpn password hunter2`, `pw hunter2` or `add-authtoken 2abc`. A lowercase
+/// word (`gh auth status`, `npm run auth:test`), a path or a flag after the
+/// word is not a value; a password made only of lowercase letters cannot be
+/// told from a word (UX-SKILL-17). A reference to the environment right
+/// after the word, as in `TOKEN=${TOKEN}`, is the word's value, so the text
+/// is not refused for it.
 fn near_credential(text: &str) -> bool {
     static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
@@ -1431,14 +1557,21 @@ fn near_credential(text: &str) -> bool {
         .split(|ch: char| ch.is_whitespace() || "(),;\"'[]=:<>|{}`".contains(ch))
         .filter(|word| *word == MARK || word.bytes().any(|byte| byte.is_ascii_alphanumeric()))
         .collect::<Vec<_>>();
+    let value = |word: &str| {
+        let plain = word.starts_with(|ch: char| ch.is_ascii_lowercase())
+            && word
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || b"-_.".contains(&byte));
+        let path = word.contains('/') || word.starts_with(['~', '.']);
+        !(word.starts_with('-') || plain || path)
+    };
     words.iter().enumerate().any(|(index, word)| {
         credential_word(word)
             && words[index + 1..]
                 .iter()
                 .take(3)
                 .take_while(|word| **word != MARK)
-                .next()
-                .is_some()
+                .any(|word| value(word))
     })
 }
 
@@ -1499,9 +1632,9 @@ fn command_safe(tool: &str, command: &Value) -> bool {
     })
 }
 
-/// A flag that can carry a user name, password, header, cookie or other key,
-/// in the argument after it or attached to it. Refused with or without a
-/// value.
+/// A hook flag or header label that can carry a user name, password, header,
+/// cookie or other key, in the argument after it or attached to it. A hook
+/// refuses it with or without a value; permission rules use `flag_risky`.
 fn credential_flag(flag: &str) -> bool {
     let name = flag.trim_start_matches('-').to_ascii_lowercase();
     matches!(flag, "-u" | "-U" | "-H" | "-a" | "-k")
@@ -1595,30 +1728,25 @@ fn shell_command_safe(tool: &str, command: &Value) -> bool {
         })
 }
 
-/// A package name for `npx`, `bunx`, `uvx` or `pnpm dlx`: lowercase, with an
-/// optional `@scope/` and `@version`. Each part of a name between `-`, `.`
-/// and `_` is letters only, digits only or `v` and digits, since a part
-/// mixing letters and digits, such as `hunter2`, may be a password. A version
-/// is a version number or a usual release tag.
+/// A package name for `npx`, `bunx`, `uvx` or `pnpm dlx` in npm or PyPI
+/// form: lowercase letters, digits, `-`, `.` and `_`, with an optional
+/// `@scope/` and an optional `@version` that is a version number or a
+/// lowercase release tag (`@21st-dev/magic@latest`, `mcp-server-sqlite3`).
+/// No part may look like a key. A password shaped like a package name, such
+/// as `hunter2`, cannot be told from one (UX-SKILL-17); one in the version,
+/// as in `some-mcp@hunter2pass`, is refused.
 fn package_spec(spec: &str) -> bool {
     static VERSION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-            r"^(?:latest|next|beta|alpha|canary|rc|stable|[~^]?\d+(?:\.\d+){0,2}(?:-(?:alpha|beta|rc|next|canary|preview)(?:\.\d+)*)?)$",
+            r"^(?:[a-z][a-z-]*|[~^]?\d+(?:\.\d+){0,2}(?:-(?:alpha|beta|rc|next|canary|preview)(?:\.\d+)*)?)$",
         )
         .expect("package versions")
     });
     let name_part = |part: &str| {
         !part.is_empty()
-            && !part.starts_with(['.', '_', '-'])
+            && part.starts_with(|ch: char| ch.is_ascii_lowercase() || ch.is_ascii_digit())
             && part.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
-            })
-            && part.split(['.', '_', '-']).all(|word| {
-                word.bytes().all(|byte| byte.is_ascii_lowercase())
-                    || word.bytes().all(|byte| byte.is_ascii_digit())
-                    || word.strip_prefix('v').is_some_and(|number| {
-                        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-                    })
             })
     };
     let (scope, rest) = match spec.strip_prefix('@') {
@@ -1636,7 +1764,7 @@ fn package_spec(spec: &str) -> bool {
         && scope.is_none_or(name_part)
         && name_part(name)
         && version.is_none_or(|version| VERSION.is_match(version))
-        && !text_risky("", spec)
+        && !secret_looking(spec)
 }
 
 /// An MCP server run through a package launcher, with exactly one package
@@ -1714,11 +1842,58 @@ fn public_header(name: &str, value: &Value) -> bool {
     })
 }
 
+/// Whether a name the person chose (a server, a setting key, a map key) is
+/// safe to copy. A name such as `github-auth` or `apiKeyHelper` names a
+/// thing and is not a value, so it is only checked for key-looking parts;
+/// the value under a credential-like name is checked in `safe_field`. A
+/// "name" with spaces or other characters, such as an OpenCode permission
+/// pattern, is a command and goes through `text_risky`.
+fn name_safe(tool: &str, name: &str) -> bool {
+    catalog_name(name)
+        || if !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        {
+            leaf_safe(name)
+        } else {
+            !text_risky(tool, name)
+        }
+}
+
+/// A value under a credential-like name that holds no key: an on/off value,
+/// a reference to the environment, a path such as `apiKeyHelper`'s script,
+/// or a number under a measure such as `model_auto_compact_token_limit`.
+/// Every value inside a list or table under that name must be one too, so a
+/// server named `github-auth` passes while `auth = { type = "x" }` does not.
+fn credential_value_safe(tool: &str, name: &str, value: &Value) -> bool {
+    match value {
+        Value::Bool(_) | Value::Null => true,
+        Value::Array(items) => items
+            .iter()
+            .all(|item| credential_value_safe(tool, name, item)),
+        Value::Object(map) => map
+            .iter()
+            .all(|(child, value)| credential_value_safe(tool, child, value)),
+        Value::Number(_) => token_measure(name),
+        Value::String(text) => {
+            exact_reference(tool, text)
+                || variable_reference(text)
+                || ((text.contains('/') || text.starts_with(['~', '.']))
+                    && text.len() <= 200
+                    && text
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"/\\._-~".contains(&byte))
+                    && leaf_safe(text))
+        }
+    }
+}
+
 fn material_safe(tool: &str, value: &Value) -> bool {
     match value {
-        Value::Object(map) => map.iter().all(|(name, value)| {
-            (catalog_name(name) || !text_risky(tool, name)) && safe_field(tool, name, value)
-        }),
+        Value::Object(map) => map
+            .iter()
+            .all(|(name, value)| name_safe(tool, name) && safe_field(tool, name, value)),
         Value::Array(items) => items.iter().all(|item| material_safe(tool, item)),
         Value::String(value) => !text_risky(tool, value),
         _ => true,
@@ -1773,12 +1948,14 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
             args.iter()
                 .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
         }),
-        "bearertokenenvvar" => tool == "codexcli" && value.as_str().is_some_and(variable_name),
+        "bearertokenenvvar" | "envkey" => {
+            tool == "codexcli" && value.as_str().is_some_and(variable_name)
+        }
         "oauth" => public_oauth(value),
         "statusline" => value.as_object().is_some_and(|fields| {
             fields.iter().all(|(name, value)| match name.as_str() {
                 "command" => value.is_string() && shell_command_safe(tool, value),
-                _ => !text_risky(tool, name) && safe_field(tool, name, value),
+                _ => name_safe(tool, name) && safe_field(tool, name, value),
             })
         }),
         "envvars" => {
@@ -1822,7 +1999,7 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
             })
         }
         _ => {
-            !credential_key(name)
+            (!credential_key(name) || credential_value_safe(tool, name, value))
                 && material_safe(tool, value)
                 && (!argv_field(&normalized) || !text_risky(tool, &joined(value)))
         }
@@ -1952,10 +2129,7 @@ fn hook_payload_safe(tool: &str, value: &Value) -> bool {
 }
 
 pub fn reviewable(tool: &str, entry: &Entry) -> bool {
-    entry
-        .container
-        .iter()
-        .all(|name| (catalog_name(name) || !text_risky(tool, name)) && !credential_key(name))
+    entry.container.iter().all(|name| name_safe(tool, name))
         && entry
             .key
             .member
@@ -2925,17 +3099,22 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_personal_settings_short_flags_are_plain_only_in_named_commands() {
+    fn rulesync_personal_settings_flag_values_are_checked_by_shape() {
         let allow = |rules: &[&str]| format!(r#"{{"permissions":{{"allow":{}}}}}"#, json!(rules));
-        let (safe, managed) = checked(
-            ".claude/settings.json",
-            &allow(&[
-                "Bash(cargo test -p wenlan:*)",
-                "Bash(rg -e fixture-pattern)",
-                "Bash(sed -E s/a/b/)",
-            ]),
+        let rules = [
+            "Bash(cargo test -p wenlan:*)",
+            "Bash(rg -e fixture-pattern)",
+            "Bash(sed -E s/a/b/)",
+            // A lowercase word after a flag is a word (UX-SKILL-17).
+            "Bash(fixture -e script-name)",
+            "Bash(docker run -p 8080:80 fixture:v2)",
+            "Bash(fixture --pin)",
+            "Bash(mysql -p $MYSQL_PASSWORD)",
+        ];
+        assert_eq!(
+            checked(".claude/settings.json", &allow(&rules)),
+            (true, rules.len())
         );
-        assert!(safe && managed > 0);
         for rule in [
             "Bash(mysql -p user=fixture)",
             "Bash(fixture -p u:q4)",
@@ -2945,8 +3124,14 @@ mod tests {
             "Bash(sshpass -p hunter2 ssh fixture)",
             "Bash(zip -P hunter2 fixture.zip)",
             "Bash(mysql -p hunter2)",
-            "Bash(fixture -e script-name)",
             "Bash(cargo test -P hunter2)",
+            "Bash(mysql -pabc)",
+            "Bash(fixture -maxdepth)",
+            "Bash(fixture --count 1234567)",
+            "Bash(fixture --user=admin:fixture)",
+            "Bash(fixture -u admin:fixture)",
+            "Bash(fixture --token fixture)",
+            "Bash(openssl enc -pass fixture)",
         ] {
             assert!(text_risky("claudecode", rule), "{rule}");
             assert_eq!(
@@ -3132,7 +3317,6 @@ mod tests {
             "Bash(sshpass -p hunter2 ssh fixture)",
             "Bash(zip -P hunter2 fixture.zip)",
             "Bash(mysql -p hunter2)",
-            "Bash(fixture -e script-name)",
             "Bash(cargo test -P hunter2)",
             "Bash(mysql -p user=fixture)",
             "Bash(fixture -p u:q4)",
@@ -3185,9 +3369,9 @@ mod tests {
         ] {
             entries.push((".claude/settings.json", hook(command)));
         }
-        for args in [r#"["-y","hunter2"]"#, r#"["-y","some-mcp@hunter2pass"]"#] {
-            entries.push((".claude.json", launcher(args)));
-        }
+        // `npx -y hunter2` is shaped like a package name and passes by
+        // approval (UX-SKILL-17); a password in the version does not.
+        entries.push((".claude.json", launcher(r#"["-y","some-mcp@hunter2pass"]"#)));
         for (path, bytes) in &entries {
             assert_eq!(checked(path, bytes), (false, 0), "{path}: {bytes}");
         }
@@ -3212,7 +3396,6 @@ mod tests {
         for env in [
             r#""MFA_BACKUP_CODE":"84736251""#,
             r#""CARD_CVC":"123""#,
-            r#""MYPIN":"4821""#,
             r#""SIM_PUK":"12345678""#,
             r#""ACCOUNT_NUMBER":"0123456789""#,
             r#""TOTP":"123456""#,
@@ -3221,9 +3404,15 @@ mod tests {
             r#""DB_PASSWORD":"73920184""#,
             r#""VAULT_PIN":"4821""#,
             r#""API_TOKEN_LIMIT":"true""#,
+            r#""PGPASSWORD":"hunter2""#,
+            r#""GITHUBTOKEN":"fixture""#,
         ] {
             files.push((".claude/settings.json", format!(r#"{{"env":{{{env}}}}}"#)));
         }
+        files.push((
+            ".codex/config.toml",
+            "[model_providers.fixture]\nenv_key = 'fixture_marker'\n".into(),
+        ));
         for (path, bytes) in &files {
             assert!(!checked(path, bytes).0, "{path}: {bytes}");
         }
@@ -3299,5 +3488,104 @@ mod tests {
         assert_eq!(checked(".claude/settings.json", &settings), (true, 1));
         let own = r#"{"mcpServers":{"wenlan":{"command":"wenlan-mcp","args":["--agent-name","claude-code"]}}}"#;
         assert_eq!(checked(".claude.json", own), (true, 0));
+    }
+
+    /// Everyday public settings keep syncing (round 3b corpus). The inputs
+    /// that are public only by the person's approval, because a password
+    /// shaped like a word cannot be told apart, pass too (UX-SKILL-17).
+    #[test]
+    fn rulesync_personal_settings_everyday_settings_pass() {
+        let rules = [
+            "Bash(git diff --stat HEAD)",
+            "Bash(ls -la src)",
+            "Bash(mkdir -p dir)",
+            "Bash(rm -rf dir)",
+            "Bash(tar -xzf f.tgz)",
+            "Bash(git commit -am msg)",
+            "Bash(docker ps -a)",
+            "Bash(curl -k https://localhost:8443)",
+            "Bash(gh auth status)",
+            "Bash(npm run auth:test)",
+            "Bash(git log --author=me)",
+            "Bash(jest --passWithNoTests)",
+            "Bash(cargo nextest run -p wenlan-core)",
+            "Bash(gh pr view:*)",
+        ];
+        for rule in rules {
+            assert!(!text_risky("claudecode", rule), "{rule}");
+        }
+        let settings = format!(
+            r#"{{"enableAllProjectMcpServers":true,"enabledMcpjsonServers":["github-auth"],
+            "alwaysThinkingEnabled":true,"includeCoAuthoredBy":false,"spinnerTipsEnabled":false,
+            "spinnerVerbs":{{"mode":"append","verbs":["Pondering"]}},
+            "skipDangerousModePermissionPrompt":true,"cleanupPeriodDays":30,
+            "outputStyle":"Explanatory",
+            "statusLine":{{"type":"command","command":"bash ~/.claude/statusline.sh"}},
+            "apiKeyHelper":"~/.claude/api-key-helper.sh","forceLoginMethod":"claudeai",
+            "env":{{"NODE_OPTIONS":"--max-old-space-size=4096","EXIT_CODE":"0","ANTHROPIC_MODEL":"claude-opus"}},
+            "permissions":{{"defaultMode":"acceptEdits","additionalDirectories":["~/work"],"allow":{}}}}}"#,
+            json!(rules)
+        );
+        // Every rule plus `defaultMode` and `additionalDirectories`.
+        assert_eq!(
+            checked(".claude/settings.json", &settings),
+            (true, rules.len() + 2)
+        );
+
+        let server = |name: &str, args: &str| {
+            format!(r#"{{"mcpServers":{{"{name}":{{"command":"npx","args":{args}}}}}}}"#)
+        };
+        for (name, args) in [
+            ("context7", r#"["-y","@upstash/context7-mcp"]"#),
+            ("magic", r#"["@21st-dev/magic@latest"]"#),
+            (
+                "github-auth",
+                r#"["-y","@modelcontextprotocol/server-github"]"#,
+            ),
+            // Public by approval: a word shaped like a package name.
+            ("local", r#"["-y","hunter2"]"#),
+        ] {
+            assert_eq!(
+                checked(".claude.json", &server(name, args)),
+                (true, 1),
+                "{name} {args}"
+            );
+        }
+        let sqlite = r#"{"mcpServers":{"sqlite":{"command":"uvx","args":["mcp-server-sqlite3"]}}}"#;
+        assert_eq!(checked(".claude.json", sqlite), (true, 1));
+        let codex = "[model_providers.openai]\nname = 'OpenAI'\nbase_url = 'https://api.openai.com/v1'\nenv_key = 'OPENAI_API_KEY'\n\n[mcp_servers.github-auth]\ncommand = 'fixture'\n";
+        assert_eq!(checked(".codex/config.toml", codex), (true, 1));
+        // Public by approval: a short credential word inside one word.
+        assert!(checked(".claude/settings.json", r#"{"env":{"MYPIN":"4821"}}"#).0);
+
+        for word in [
+            "author",
+            "spinner",
+            "bypass",
+            "hotpath",
+            "keyboard",
+            "tokenizer",
+            "EXIT_CODE",
+            "classname",
+            "MYPIN",
+            "includeCoAuthoredBy",
+        ] {
+            assert!(!credential_word(word), "{word}");
+        }
+        for word in [
+            "DB_PASS",
+            "authCode",
+            "ACCOUNT_NUMBER",
+            "PGPASSWORD",
+            "add-authtoken",
+            "MFA_BACKUP_CODE",
+            "SESSION_ID",
+            "APIKey",
+            "TOTP",
+        ] {
+            assert!(credential_word(word), "{word}");
+        }
+        assert!(!secret_looking("skipDangerousModePermissionPrompt"));
+        assert!(secret_looking("wJalrXUtnFEMIKMDENGbPxRfiCYEXAMPLEKEY"));
     }
 }

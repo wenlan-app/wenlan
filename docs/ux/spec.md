@@ -1245,23 +1245,46 @@ and wait for evidence that people need them.
   look like a key: a known key prefix (such as `ghp_`, `sk-ant-`, `glpat-`,
   `npm_` or `xoxb-`), a Slack webhook path, 16 or more hex characters (a
   UUID too), 16 or more letters and digits that include a digit, or 20 or
-  more letters and digits in mixed case. Web addresses are checked part by
+  more letters in mixed case that do not split into camelCase words
+  (`skipDangerousModePermissionPrompt` is a name; a run of capitals and
+  single lowercase letters is not). Web addresses are checked part by
   part (host, path, `;name=value`), and so are arguments, headers,
   permission rules, Codex rule patterns (each word and the whole command)
   and justifications, Gemini policy prefixes, hooks and environment values.
   Setting names the catalog itself declares, such as Copilot's
-  `defaultPermissionMode`, are fixed spellings and skip this check. One list
-  of credential words marks a name as credential-like: pass, pwd, pw, pin,
-  otp, mfa, cvc, cvv, puk, ssn, secret, token, key, auth, cred, cookie,
-  session id, account number, backup code, and a joined name ending in
-  `code` such as `DOOR_CODE`. A credential word followed within three words
-  by a value skips the text. In a command (a permission rule, hook, status
-  line or Codex rule), a flag that carries a value, attached (`-pX`,
-  `--name=value`) or as the next word, skips the entry unless the flag is
-  public for that program: `cargo -p`, `grep`, `egrep` or `rg -e|-E`,
-  `sed -e|-E`, `pytest -p`, `echo -e|-E` and `claude -p`. `-u`, `-U`,
-  `-H`, `-a`, `-k` and any flag whose name holds a credential word, `user`,
-  `header`, `login` or `env` always count as credential options.
+  `defaultPermissionMode`, are fixed spellings and skip this check. A name
+  the person chose (a server, a setting key) names a thing, not a value, so
+  it gets only the key-looking check: a server named `github-auth` or the
+  setting `apiKeyHelper` passes. One list of credential words marks a name
+  as credential-like, matched as whole words after splitting the name at
+  `_ - . :`, camelCase and digit boundaries: password, passwd, pass, pwd,
+  pw, pin, otp, totp, mfa, cvc, cvv, puk, ssn, secret, token, key, apikey,
+  auth, authorization, cred, credential, cookie, session, session id and
+  account number, and `code` after auth, access, backup, door,
+  verification, otp, pin or recovery (`DOOR_CODE`, `authCode`). One word
+  also counts when it joins two of them (`authtoken`) or ends in password,
+  passwd, secret, token, credential or apikey (`PGPASSWORD`). So `author`,
+  `spinner`, `bypass`, `keyboard`, `tokenizer` and `EXIT_CODE` name no
+  credential, and `DB_PASS` does. A value under a credential-like name may
+  only be an on/off value, an environment reference, a path (as
+  `apiKeyHelper` holds) or a number under a measure such as `_TOKENS`.
+  A credential word followed within three words by a value skips the text;
+  a lowercase word, a path or a flag after it is not a value, so
+  `gh auth status` and `npm run auth:test` pass. In a command (a permission
+  rule, hook, status line or Codex rule), one dash and up to four letters
+  (`-la`, `-rf`, `-xzf`) are switches; a longer cluster or one with a digit
+  or other character (`-phunter2`) skips the entry. A credential option
+  takes no value but a `$VAR` reference: a long flag with a credential word
+  (`--pass`, `--pin`, `--otp`, `--token`, `--auth`, `--key`, `--secret`,
+  `--password`, but not `--session` or `--author`), `-u` or `--user` with a
+  `user:password` value, and a named program's password flag: `mysql` or
+  `mariadb -p`, `sshpass -p`, `redis-cli -a`, `openssl -k` or `-pass`, and
+  `zip` or `7z -P|-p`. Such a flag with no value (`--passWithNoTests`) is
+  fine. After any other flag, the value must be a path, a `$VAR`
+  reference, or text whose words are each letters only, a version such as
+  `v2`, or a number of up to six digits (`HEAD`, `f.tgz`, `4096`); letters
+  and digits mixed in one word, as in `hunter2`, skip the entry. `-u value`
+  and `-H value` stay refused by the older header and user patterns.
   `NAME=value` before a command is allowed only when the value is a `$VAR`
   reference, or the name holds no credential word and the value does not
   look like a key. A hook or status line command may use plain flags, and a
@@ -1269,13 +1292,15 @@ and wait for evidence that people need them.
   `--tool`, `--tool-profile`, `--format`, `--space` or `--session`. Every
   other word must be a path, a lowercase word without digits, or a number of
   up to four digits that does not follow a credential word, `lock`, `unlock`
-  or `code`. A password made only of lowercase letters, with no digits,
-  cannot be told apart from an ordinary word, so a command such as
-  `notify hunter` passes the check; such an entry is shared only because the
-  person approves the plain words the preview lists. A Codex field that
+  or `code`. Some passwords cannot be told apart from ordinary text, so
+  these pass the check and are shared only because the person approves the
+  plain words the preview lists: a password made only of lowercase letters
+  in a command (`notify hunter`, `fixture -e hunter`), a password shaped
+  like a package name after a launcher (`npx -y hunter2`), and a short
+  credential word inside a single-word name (`MYPIN`). A Codex field that
   names an environment variable (`bearer_token_env_var`, `env_vars`,
-  `env_http_headers` values) must hold an uppercase name such as
-  `GITHUB_TOKEN` that does not look like a key.
+  `env_key`, `env_http_headers` values) must hold an uppercase name such as
+  `OPENAI_API_KEY` that does not look like a key.
   Gemini's sign-in method (`security.auth.selectedType`) is not a credential.
   In Claude Code's `env`, a value under an ordinary name is plain when it is
   a number, an on/off value or text that does not look like a key, such as
@@ -1283,6 +1308,8 @@ and wait for evidence that people need them.
   number is plain, and only when its name ends in `_TOKENS`, `_LIMIT`,
   `_TIMEOUT`, `_MS`, `_SECONDS`, `_PORT`, `_SIZE`, `_COUNT` or `_RETRIES`
   and token is its only credential word (`API_SECRET_MS` is not plain).
+  `NODE_OPTIONS: "--max-old-space-size=4096"` and `EXIT_CODE: "0"` are
+  plain.
   A file containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
   The backup check reads the raw file as well: a key-looking part anywhere,
@@ -1325,12 +1352,13 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_file_check_skips_wenlan_own_server_only`,
   `rulesync_personal_settings_gemini_sign_in_method_is_not_a_credential`,
   `rulesync_personal_settings_claude_plain_number_and_switch_settings_are_not_credentials`,
-  `rulesync_personal_settings_short_flags_are_plain_only_in_named_commands`,
+  `rulesync_personal_settings_flag_values_are_checked_by_shape`,
   `rulesync_personal_settings_hook_and_status_line_admit_plain_words_only`,
   `rulesync_personal_settings_codex_variable_fields_hold_only_usual_names`,
   `rulesync_personal_settings_wenlan_own_server_needs_a_plain_program`,
   `rulesync_personal_settings_review_inputs_are_refused`,
   `rulesync_personal_settings_approved_public_settings_pass`,
+  `rulesync_personal_settings_everyday_settings_pass`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
