@@ -1230,11 +1230,22 @@ and wait for evidence that people need them.
   entry or file. It keeps supported native environment references, also
   under names such as `API_KEY` or `Authorization`, because the entry then
   holds only the variable's name. It checks commands and arguments, and skips
-  credential options and literal values in environment and header maps. An
-  `oauth` block may hold only a client id, a callback port and scopes; a
-  client secret skips the entry. Wenlan's own server entry, which
-  `wenlan mcp connect` writes into each tool, is neither managed nor reported
-  as skipped. A file containing possible credentials
+  credential options and literal values in environment and header maps. A
+  header may hold a plain literal only when it is `Accept`, `Content-Type`,
+  `User-Agent` or an `X-<name>-Source` label. A server started with `npx`,
+  `bunx`, `uvx` or `pnpm dlx` may name one package; any other plain word in
+  its arguments skips the entry. An `oauth` block may hold only a client id,
+  a callback port and scopes; a client secret skips the entry. Wenlan's own
+  server entry, which `wenlan mcp connect` writes into each tool, is neither
+  managed nor reported as skipped, and it does not stop the file from being
+  written. A hook or status line command may also use plain words and plain
+  flags such as `--agent`; a flag that can carry a user name, password,
+  header, cookie or key skips it. `-u` and `-H` count as credential options,
+  while `-p`, `-e` and `-E` count only before a value with `:` or `=` or a
+  random-looking value. Gemini's sign-in method (`security.auth.selectedType`)
+  and number or on/off values in Claude Code's `env` are not credentials; under
+  a credential-like name such as `..._TOKEN`, only a number is. A file
+  containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
   Wenlan neither resolves references nor executes hooks or servers.
   Wenlan reads Codex hooks from both native files and requires evidence of
@@ -1268,6 +1279,13 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_accept_only_native_credential_references`,
   `rulesync_personal_settings_keep_public_oauth_fields_and_refuse_a_client_secret`,
   `rulesync_personal_settings_recognize_wenlan_own_server_without_sharing_it`,
+  `rulesync_personal_settings_keep_a_public_header_label_and_refuse_other_literals`,
+  `rulesync_personal_settings_keep_one_package_after_a_launcher_and_refuse_other_words`,
+  `rulesync_personal_settings_file_check_skips_wenlan_own_server_only`,
+  `rulesync_personal_settings_gemini_sign_in_method_is_not_a_credential`,
+  `rulesync_personal_settings_claude_plain_number_and_switch_settings_are_not_credentials`,
+  `rulesync_personal_settings_short_flags_are_risky_only_before_a_secret`,
+  `rulesync_personal_settings_hook_and_status_line_admit_plain_words_only`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,

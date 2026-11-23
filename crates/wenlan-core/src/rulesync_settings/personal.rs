@@ -677,16 +677,16 @@ impl Location {
                     .filter_map(|line| line.split_once('#').map(|(_, comment)| comment))
                     .all(|comment| !text_risky(self.tool, comment))
             }
-        }) && material_safe(self.tool, &doc.raw)
+        }) && material_safe(self.tool, &self.generic_part(doc))
             && doc.sections.iter().all(|&Section(feature, path, shape)| {
                 let Some(value) = lookup(&doc.raw, path.iter().copied()) else {
                     return true;
                 };
                 match (feature, shape) {
                     (Mcp, Named) => value.as_object().is_some_and(|servers| {
-                        servers
-                            .values()
-                            .all(|server| mcp_payload_safe(self.tool, server))
+                        servers.values().all(|server| {
+                            wenlan_own_mcp(self.tool, server) || mcp_payload_safe(self.tool, server)
+                        })
                     }),
                     (Hook, Hooks) => hook_groups_safe(self.tool, value),
                     (Hook, Named) => value.as_object().is_some_and(|groups| {
@@ -697,6 +697,47 @@ impl Location {
                     _ => true,
                 }
             })
+    }
+
+    /// The file as the generic check reads it. MCP servers and hooks are left
+    /// to their own stricter checks, so only their names stay here. Gemini's
+    /// sign-in method and Claude Code's plain number or on/off environment
+    /// settings name no secret, so they are left out too.
+    fn generic_part(&self, doc: &Document) -> Value {
+        let mut raw = doc.raw.clone();
+        for &Section(feature, path, shape) in doc.sections {
+            if !matches!((feature, shape), (Mcp, Named) | (Hook, _)) {
+                continue;
+            }
+            let mut value = Some(&mut raw);
+            for name in path {
+                value = value.and_then(|value| value.get_mut(*name));
+            }
+            if let Some(Value::Object(children)) = value {
+                children.values_mut().for_each(|child| *child = json!({}));
+            }
+        }
+        if self.tool == "geminicli" && self.path == Path::new(".gemini/settings.json") {
+            if let Some(Value::Object(security)) = raw.get_mut("security") {
+                if let Some(Value::Object(auth)) = security.get_mut("auth") {
+                    if matches!(
+                        auth.get("selectedType").and_then(Value::as_str),
+                        Some("oauth-personal" | "gemini-api-key" | "vertex-ai" | "cloud-shell")
+                    ) {
+                        auth.remove("selectedType");
+                    }
+                    if auth.is_empty() {
+                        security.remove("auth");
+                    }
+                }
+            }
+        }
+        if self.tool == "claudecode" && self.path == Path::new(".claude/settings.json") {
+            if let Some(Value::Object(env)) = raw.get_mut("env") {
+                env.retain(|name, value| !plain_setting(name, value));
+            }
+        }
+        raw
     }
 
     fn entry(&self, feature: Feature, path: &[&str], value: Value) -> Entry {
@@ -1021,6 +1062,24 @@ fn safe_identifier(value: &str) -> bool {
         && !text_risky("", value)
 }
 
+/// A number or an on/off switch in Claude Code's `env`. Under a key that
+/// could name a credential, only a number is plain.
+fn plain_setting(name: &str, value: &Value) -> bool {
+    let digits = |text: &str| {
+        !text.is_empty() && text.len() <= 10 && text.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    let (number, switch) = match value {
+        Value::String(text) => (digits(text), matches!(text.as_str(), "true" | "false")),
+        Value::Number(number) => (
+            number.as_u64().is_some_and(|n| digits(&n.to_string())),
+            false,
+        ),
+        Value::Bool(_) => (false, true),
+        _ => (false, false),
+    };
+    number || (switch && !credential_key(name))
+}
+
 fn credential_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase().replace(['-', '_', '.', ' '], "");
     matches!(
@@ -1078,22 +1137,37 @@ fn exact_reference(tool: &str, value: &str) -> bool {
 fn text_risky(tool: &str, value: &str) -> bool {
     static RISK: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-        r"(?i)(?:[a-z][a-z0-9+.-]*://[^/\s?#]*@|[a-z][a-z0-9+.-]*://[^\s]*[?#]|\b(?:sk[-_]|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|eyJ[a-zA-Z0-9_-]+\.)[a-z0-9_./+=-]{6,}|(?:^|\s)-(?:u|H|p|e)(?:\s+|=)[^\s]+|(?:^|\s)--(?:key|auth|header|env|client[-_]?secret)(?:\s+|=)[^\s]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\$\{[^}\n]+:-[^}\n]+|\b(?:api[-_]?key|client[-_]?secret|password|passwd|secret|token)\s*[:=]\s*[^\s]+)",
+        r"(?i)(?:[a-z][a-z0-9+.-]*://[^/\s?#]*@|[a-z][a-z0-9+.-]*://[^\s]*[?#]|\b(?:sk[-_]|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|eyJ[a-zA-Z0-9_-]+\.)[a-z0-9_./+=-]{6,}|(?:^|\s)-(?:u|H)(?:\s+|=)[^\s]+|(?:^|\s)--(?:key|auth|header|env|client[-_]?secret)(?:\s+|=)[^\s]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\$\{[^}\n]+:-[^}\n]+|\b(?:api[-_]?key|client[-_]?secret|password|passwd|secret|token)\s*[:=]\s*[^\s]+)",
     ).expect("settings credential indicators")
+    });
+    // `-p`, `-e` and `-E` usually name a package, a script or a pattern, so
+    // they are risky only when what follows looks like a secret: it holds a
+    // `:` or `=` (after a permission pattern's `:*` wildcard), or is
+    // high-entropy. `-u` and `-H` stay risky above whatever follows.
+    static SHORT_FLAG: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|\s)-[pe](?:\s+|=)([^\s]+)").expect("short flag values")
     });
     if exact_reference(tool, value) {
         return false;
     }
     RISK.is_match(value)
+        || SHORT_FLAG.captures_iter(value).any(|captures| {
+            let flagged = captures[1].trim_end_matches([')', '"', '\'', ',', ']']);
+            let flagged = flagged.strip_suffix(":*").unwrap_or(flagged);
+            flagged.contains([':', '=']) || high_entropy(flagged)
+        })
         || validate_text(value).is_err()
-        || value
-            .split(|ch: char| !(ch.is_ascii_alphanumeric() || "-_".contains(ch)))
-            .any(|word| {
-                word.len() >= 24
-                    && word.bytes().any(|b| b.is_ascii_uppercase())
-                    && word.bytes().any(|b| b.is_ascii_lowercase())
-                    && word.bytes().filter(u8::is_ascii_digit).count() >= 3
-            })
+        || high_entropy(value)
+}
+
+fn high_entropy(text: &str) -> bool {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || "-_".contains(ch)))
+        .any(|word| {
+            word.len() >= 24
+                && word.bytes().any(|b| b.is_ascii_uppercase())
+                && word.bytes().any(|b| b.is_ascii_lowercase())
+                && word.bytes().filter(u8::is_ascii_digit).count() >= 3
+        })
 }
 
 // Free-form argv and shell text can contain even very short credentials.
@@ -1131,24 +1205,157 @@ fn safe_argument(tool: &str, arg: &str) -> bool {
         )
 }
 
-fn command_safe(tool: &str, command: &Value) -> bool {
+/// The program and arguments of a command string or list. A string is split
+/// on whitespace; one with a line break is refused.
+fn argv(command: &Value) -> Option<Vec<&str>> {
     match command {
-        Value::String(command) => {
-            // Refuse shell operators, assignments, quoting we cannot
-            // interpret losslessly, and inline scripts.
-            let mut parts = command.split_ascii_whitespace();
-            !command.contains(['\r', '\n'])
-                && parts.next().is_some_and(|name| executable(tool, name))
-                && parts.all(|arg| safe_argument(tool, arg))
+        Value::String(command) if !command.contains(['\r', '\n']) => {
+            Some(command.split_ascii_whitespace().collect())
         }
-        Value::Array(parts) => parts.split_first().is_some_and(|(name, args)| {
-            name.as_str().is_some_and(|name| executable(tool, name))
-                && args
-                    .iter()
-                    .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
-        }),
-        _ => false,
+        Value::Array(parts) => parts.iter().map(Value::as_str).collect(),
+        _ => None,
     }
+}
+
+fn command_safe(tool: &str, command: &Value) -> bool {
+    // Refuse shell operators, assignments, quoting we cannot interpret
+    // losslessly, and inline scripts.
+    argv(command).is_some_and(|parts| {
+        parts.split_first().is_some_and(|(name, args)| {
+            executable(tool, name) && args.iter().all(|arg| safe_argument(tool, arg))
+        })
+    })
+}
+
+/// A flag that can carry a user name, password, header, cookie or other key
+/// in the argument after it.
+fn credential_flag(flag: &str) -> bool {
+    let name = flag.trim_start_matches('-').to_ascii_lowercase();
+    matches!(flag, "-u" | "-U" | "-h" | "-H")
+        || credential_key(&name)
+        || [
+            "auth", "bearer", "oauth", "user", "pass", "header", "cookie", "key", "cred", "login",
+            "env",
+        ]
+        .iter()
+        .any(|word| name.contains(word))
+}
+
+/// A hook or status line command: a simple executable, then exact
+/// references, plain flags such as `--agent` or `-p`, and plain words such as
+/// `session-start`. A flag that can carry a credential, an assigned flag, or
+/// anything else is refused.
+fn shell_command_safe(tool: &str, command: &Value) -> bool {
+    argv(command).is_some_and(|parts| {
+        parts.split_first().is_some_and(|(name, args)| {
+            executable(tool, name)
+                && args.iter().all(|arg| {
+                    let plain_flag = |name: &str| {
+                        !name.is_empty()
+                            && name
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    };
+                    safe_argument(tool, arg)
+                        || if let Some(name) = arg.strip_prefix("--") {
+                            plain_flag(name) && !credential_flag(arg)
+                        } else if let Some(name) = arg.strip_prefix('-') {
+                            name.len() == 1 && plain_flag(name) && !credential_flag(arg)
+                        } else {
+                            safe_identifier(arg)
+                        }
+                })
+        })
+    })
+}
+
+/// A package name for `npx`, `bunx`, `uvx` or `pnpm dlx`: lowercase, with an
+/// optional `@scope/` and `@version`.
+fn package_spec(spec: &str) -> bool {
+    let name_part = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with(['.', '_', '-'])
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+            })
+    };
+    let (scope, rest) = match spec.strip_prefix('@') {
+        Some(rest) => match rest.split_once('/') {
+            Some((scope, rest)) => (Some(scope), rest),
+            None => return false,
+        },
+        None => (None, spec),
+    };
+    let (name, version) = match rest.split_once('@') {
+        Some((name, version)) => (name, Some(version)),
+        None => (rest, None),
+    };
+    spec.len() <= 214
+        && scope.is_none_or(name_part)
+        && name_part(name)
+        && version.is_none_or(|version| {
+            !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b".+_-".contains(&byte))
+        })
+        && !text_risky("", spec)
+}
+
+/// An MCP server run through a package launcher, with exactly one package
+/// spec and otherwise only the arguments `command_safe` admits.
+fn launcher_safe(tool: &str, fields: &serde_json::Map<String, Value>) -> bool {
+    let Some(mut parts) = fields.get("command").and_then(argv) else {
+        return false;
+    };
+    if let Some(args) = fields.get("args") {
+        match args
+            .as_array()
+            .and_then(|args| args.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+        {
+            Some(args) => parts.extend(args),
+            None => return false,
+        }
+    }
+    let Some((program, rest)) = parts.split_first() else {
+        return false;
+    };
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let name = name
+        .strip_suffix(".cmd")
+        .or_else(|| name.strip_suffix(".exe"))
+        .unwrap_or(name);
+    let rest = match (name, rest) {
+        ("npx" | "bunx" | "uvx", rest) => rest,
+        ("pnpm", ["dlx", rest @ ..]) => rest,
+        _ => return false,
+    };
+    let mut packages = 0;
+    executable(tool, program)
+        && rest.iter().all(|arg| {
+            safe_argument(tool, arg) || {
+                packages += 1;
+                package_spec(arg)
+            }
+        })
+        && packages == 1
+}
+
+/// A literal header value that names a client or a format, never a key.
+fn public_header(name: &str, value: &Value) -> bool {
+    let name = name.to_ascii_lowercase();
+    let source_label = name
+        .strip_prefix("x-")
+        .and_then(|name| name.strip_suffix("-source"))
+        .is_some_and(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && !credential_flag(label)
+        });
+    (source_label || matches!(name.as_str(), "accept" | "content-type" | "user-agent"))
+        && value.as_str().is_some_and(safe_identifier)
 }
 
 fn material_safe(tool: &str, value: &Value) -> bool {
@@ -1212,6 +1419,12 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
         }),
         "bearertokenenvvar" => tool == "codexcli" && value.as_str().is_some_and(is_env_name),
         "oauth" => public_oauth(value),
+        "statusline" => value.as_object().is_some_and(|fields| {
+            fields.iter().all(|(name, value)| match name.as_str() {
+                "command" => value.is_string() && shell_command_safe(tool, value),
+                _ => !text_risky(tool, name) && safe_field(tool, name, value),
+            })
+        }),
         "envvars" => {
             tool == "codexcli"
                 && value.as_array().is_some_and(|names| {
@@ -1237,13 +1450,14 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
                 // so a credential-named key carries only a variable name.
                 map.iter().all(|(key, value)| {
                     !text_risky(tool, key)
-                        && value.as_str().is_some_and(|value| {
+                        && (value.as_str().is_some_and(|value| {
                             if normalized == "envhttpheaders" && tool == "codexcli" {
                                 is_env_name(value)
                             } else {
                                 exact_reference(tool, value)
                             }
-                        })
+                        }) || matches!(normalized.as_str(), "headers" | "httpheaders")
+                            && public_header(key, value))
                 })
             })
         }
@@ -1253,11 +1467,13 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
 
 fn mcp_payload_safe(tool: &str, value: &Value) -> bool {
     value.as_object().is_some_and(|fields| {
+        let launcher = launcher_safe(tool, fields);
         !fields.is_empty()
             && fields.iter().all(|(name, value)| {
                 let normalized = name.to_ascii_lowercase().replace(['-', '_'], "");
                 match normalized.as_str() {
-                    "command" => command_safe(tool, value),
+                    "command" => launcher || command_safe(tool, value),
+                    "args" if launcher => true,
                     "args" | "env" | "environment" | "envvars" | "headers" | "httpheaders"
                     | "envhttpheaders" | "bearertokenenvvar" | "url" | "serverurl" | "httpurl"
                     | "oauth" => safe_field(tool, name, value),
@@ -1320,7 +1536,7 @@ fn hook_payload_safe(tool: &str, value: &Value) -> bool {
                         hooks.iter().all(|hook| hook_payload_safe(tool, hook))
                     }),
                     "command" | "commandwindows" | "commandlinux" | "commandmacos" | "bash"
-                    | "powershell" => value.is_string() && command_safe(tool, value),
+                    | "powershell" => value.is_string() && shell_command_safe(tool, value),
                     "type" => matches!(value.as_str(), Some("command" | "http")),
                     "url" | "headers" | "httpheaders" => safe_field(tool, name, value),
                     "allowedenvvars" => value.as_array().is_some_and(|names| {
@@ -1357,7 +1573,9 @@ pub fn reviewable(tool: &str, entry: &Entry) -> bool {
             .as_deref()
             .is_none_or(|name| !text_risky(tool, name))
         && match entry.key.feature {
-            Mcp => mcp_payload_safe(tool, &entry.value),
+            // Wenlan sets its own entry up in each tool, so it is never
+            // managed or copied, even when it would pass the check.
+            Mcp => !wenlan_own_mcp(tool, &entry.value) && mcp_payload_safe(tool, &entry.value),
             Hook if tool == "antigravity-ide" => hook_groups_safe(tool, &entry.value),
             Hook => hook_payload_safe(tool, &entry.value),
             Permission => entry.container.last().map_or_else(
@@ -2178,6 +2396,202 @@ mod tests {
             permission.value["decision"] = json!("allow");
             assert!(location.edit(Some(bytes), &permission).is_err());
             assert_eq!(fs::read(fixture.path().join(path)).unwrap(), bytes);
+        }
+    }
+
+    /// Whether the whole file may be written and backed up, and how many of
+    /// its entries Wenlan may manage.
+    fn checked(path: &str, bytes: &str) -> (bool, usize) {
+        let location = file(path);
+        let doc = location.document(Some(bytes.as_bytes())).unwrap();
+        (
+            location.snapshot_safe(bytes.as_bytes(), &doc),
+            doc.reviewable_entries(location.tool).count(),
+        )
+    }
+
+    #[test]
+    fn rulesync_personal_settings_keep_a_public_header_label_and_refuse_other_literals() {
+        let server = |headers: &str| {
+            format!(
+                r#"{{"mcpServers":{{"exa":{{"type":"http","url":"https://mcp.example.invalid/mcp","headers":{headers}}}}}}}"#
+            )
+        };
+        assert_eq!(
+            checked(".claude.json", &server(r#"{"x-exa-source":"claude-code"}"#)),
+            (true, 1)
+        );
+        for headers in [
+            r#"{"X-Custom":"fixture-marker"}"#,
+            r#"{"Authorization":"Bearer fixturemarker"}"#,
+            r#"{"x-exa-source":"fixture:marker"}"#,
+            r#"{"x-api-key-source":"fixture"}"#,
+            r#"{"user-agent":"fixture marker"}"#,
+        ] {
+            assert_eq!(
+                checked(".claude.json", &server(headers)),
+                (false, 0),
+                "{headers}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_keep_one_package_after_a_launcher_and_refuse_other_words() {
+        let server = |command: &str, args: &str| {
+            format!(r#"{{"mcpServers":{{"browser":{{"command":"{command}","args":{args}}}}}}}"#)
+        };
+        for (command, args) in [
+            ("npx", r#"["@browsermcp/mcp@latest"]"#),
+            ("npx", r#"["-y","fixture-mcp@1.2.0"]"#),
+            ("uvx", r#"["fixture-mcp"]"#),
+            ("pnpm", r#"["dlx","fixture-mcp"]"#),
+        ] {
+            assert_eq!(
+                checked(".gemini/settings.json", &server(command, args)),
+                (true, 1),
+                "{command} {args}"
+            );
+        }
+        for (command, args) in [
+            ("npx", r#"["fixture-mcp","fixture-marker"]"#),
+            ("npx", r#"["fixture-mcp","sk-fixturemarker123"]"#),
+            ("npx", r#"["fixture-mcp","--api-key=fixture-marker"]"#),
+            ("npx", r#"["--token","fixture-marker","fixture-mcp"]"#),
+            ("npx", r#"["Fixture-Marker"]"#),
+            ("npx", r#"["fixture-mcp","other-mcp"]"#),
+            ("pnpm", r#"["fixture-mcp"]"#),
+            ("example", r#"["fixture-marker"]"#),
+        ] {
+            assert_eq!(
+                checked(".gemini/settings.json", &server(command, args)),
+                (false, 0),
+                "{command} {args}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_file_check_skips_wenlan_own_server_only() {
+        let own = "model = 'fixture'\n[mcp_servers.wenlan]\ncommand = '/Users/fixture/.wenlan/bin/wenlan-mcp'\nargs = ['--agent-name', 'codex']\n";
+        assert_eq!(checked(".codex/config.toml", own), (true, 0));
+        let literal = format!("{own}[mcp_servers.other]\ncommand = 'fixture'\nenv = {{ API_TOKEN = 'fixture-marker' }}\n");
+        assert_eq!(checked(".codex/config.toml", &literal), (false, 0));
+        let not_own = own.replace("'codex']", "'codex', '--token', 'fixture-marker']");
+        assert_eq!(checked(".codex/config.toml", &not_own), (false, 0));
+    }
+
+    #[test]
+    fn rulesync_personal_settings_gemini_sign_in_method_is_not_a_credential() {
+        let settings = |auth: &str| format!(r#"{{"security":{{"auth":{auth}}}}}"#);
+        for method in [
+            "oauth-personal",
+            "gemini-api-key",
+            "vertex-ai",
+            "cloud-shell",
+        ] {
+            let bytes = settings(&format!(r#"{{"selectedType":"{method}"}}"#));
+            assert!(checked(".gemini/settings.json", &bytes).0, "{method}");
+        }
+        for auth in [
+            r#"{"selectedType":"oauth-personal","apiKey":"fixture-marker"}"#,
+            r#"{"selectedType":"fixture-marker"}"#,
+            r#"{"token":"fixture-marker"}"#,
+        ] {
+            assert!(
+                !checked(".gemini/settings.json", &settings(auth)).0,
+                "{auth}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_claude_plain_number_and_switch_settings_are_not_credentials() {
+        let plain = r#"{"env":{"CLAUDE_CODE_MAX_OUTPUT_TOKENS":"64000","DISABLE_TELEMETRY":"1",
+            "USE_FIXTURE":"true","SHARED":"${SHARED_TOKEN}"}}"#;
+        assert!(checked(".claude/settings.json", plain).0);
+        for env in [
+            r#"{"ANTHROPIC_AUTH_TOKEN":"fixture-marker"}"#,
+            r#"{"ANTHROPIC_AUTH_TOKEN":"true"}"#,
+            r#"{"FIXTURE_SETTING":"fixture-marker"}"#,
+            r#"{"FIXTURE_SETTING":"12345678901"}"#,
+        ] {
+            let bytes = format!(r#"{{"env":{env}}}"#);
+            assert!(!checked(".claude/settings.json", &bytes).0, "{env}");
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_short_flags_are_risky_only_before_a_secret() {
+        let allow = |rules: &[&str]| format!(r#"{{"permissions":{{"allow":{}}}}}"#, json!(rules));
+        let (safe, managed) = checked(
+            ".claude/settings.json",
+            &allow(&[
+                "Bash(cargo test -p wenlan:*)",
+                "Bash(fixture -e script-name)",
+            ]),
+        );
+        assert!(safe && managed > 0);
+        for rule in [
+            "Bash(mysql -p user=fixture)",
+            "Bash(fixture -p u:q4)",
+            "Bash(fixture -E Fixture4Marker9Value8Abc7Def)",
+            "Bash(curl -H fixture)",
+            "Bash(curl -u fixture)",
+        ] {
+            assert!(text_risky("claudecode", rule), "{rule}");
+            assert_eq!(
+                checked(".claude/settings.json", &allow(&[rule])),
+                (false, 0),
+                "{rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_hook_and_status_line_admit_plain_words_only() {
+        let settings = |hook: &str, status: &str| {
+            format!(
+                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{hook}"}}]}}]}},
+                "statusLine":{{"type":"command","command":"{status}"}}}}"#
+            )
+        };
+        assert_eq!(
+            checked(
+                ".claude/settings.json",
+                &settings(
+                    "wenlan hook session-start --agent claude-code",
+                    "fixture-status --compact -p plain"
+                )
+            ),
+            (true, 1)
+        );
+        for hook in [
+            "curl --user fixture",
+            "curl -H fixture",
+            "fixture --token fixture-marker",
+            "fixture --oauth2-bearer ${SHARED_TOKEN}",
+            "fixture --agent=claude-code",
+            "fixture --env FIXTURE",
+            "fixture fixture:marker",
+            "fixture a;b",
+        ] {
+            assert_eq!(
+                checked(".claude/settings.json", &settings(hook, "fixture-status")),
+                (false, 0),
+                "{hook}"
+            );
+        }
+        // A path is not a plain word, so a status line script by path stays
+        // with the person.
+        for status in [
+            "fixture --token fixture-marker",
+            "bash ~/.claude/statusline.sh",
+        ] {
+            assert!(
+                !checked(".claude/settings.json", &settings("fixture", status)).0,
+                "{status}"
+            );
         }
     }
 }
