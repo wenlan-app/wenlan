@@ -495,6 +495,15 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
         plural(report.blocked.len(), "item")
     );
     let _ = client.sync_rules_as_person().await;
+    // Name only the tools that ended up managed, not everything the plan listed.
+    let managed = client.rules_setup_status().await.ok().map(|status| {
+        status
+            .tools
+            .into_iter()
+            .filter(|tool| tool.state != RulesToolState::NotManaged)
+            .map(|tool| tool.tool.name)
+            .collect::<std::collections::BTreeSet<_>>()
+    });
     let count = |wanted: fn(&AdoptionSkillOutcome) -> bool| {
         plan.skills
             .iter()
@@ -509,6 +518,11 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
             .tools
             .iter()
             .filter(|tool| tool.rule_files + tool.skills + tool.other_files > 0)
+            .filter(|tool| {
+                managed
+                    .as_ref()
+                    .is_none_or(|managed| managed.contains(&tool.name))
+            })
             .map(|tool| tool.name.clone())
             .collect(),
         rules: plan.tools.iter().map(|tool| tool.rule_files).sum(),
@@ -607,6 +621,16 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
         "No existing files to adopt.",
         &plan.files,
     ));
+    if !plan.new_files.is_empty() {
+        let tools = plan
+            .new_files
+            .iter()
+            .map(|new| one_line(&new.tool))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let files: usize = plan.new_files.iter().map(|new| new.files).sum();
+        writeln!(&mut out, "\nWill also write to: {tools} ({files} files).").unwrap();
+    }
     if let Some(settings) = &plan.settings {
         out.push('\n');
         out.push_str(&settings_plan_for_a_person(settings));
@@ -864,6 +888,37 @@ mod tests {
     }
 
     #[test]
+    fn personal_preview_lists_tools_that_get_new_files() {
+        let mut plan = AdoptionPlan {
+            plan_id: String::new(),
+            token: "t".into(),
+            settings: None,
+            files: Vec::new(),
+            skills: Vec::new(),
+            notes: Vec::new(),
+            tools: Vec::new(),
+            skipped_files: Vec::new(),
+            skipped_tools: Vec::new(),
+            skipped_tool_codes: Vec::new(),
+            note_codes: Vec::new(),
+            new_files: Vec::new(),
+        };
+        assert!(!plan_for_a_person(&plan).contains("Will also write to"));
+        plan.new_files = vec![
+            wenlan_types::rulesync::AdoptionNewFiles {
+                tool: "Cursor".into(),
+                files: 1,
+            },
+            wenlan_types::rulesync::AdoptionNewFiles {
+                tool: "Gemini CLI".into(),
+                files: 2,
+            },
+        ];
+        assert!(plan_for_a_person(&plan)
+            .contains("Will also write to: Cursor, Gemini CLI (3 files).\n"));
+    }
+
+    #[test]
     fn personal_preview_neutralizes_terminal_controls() {
         let plan = AdoptionPlan {
             plan_id: "test".into(),
@@ -885,6 +940,7 @@ mod tests {
             skipped_tools: Vec::new(),
             skipped_tool_codes: Vec::new(),
             note_codes: Vec::new(),
+            new_files: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));

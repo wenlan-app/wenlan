@@ -158,6 +158,15 @@ pub struct AdoptionPlan {
     pub skipped_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_tool_codes: Vec<RulesSetupNotice>,
+    /// Tools the first sync will write files for that do not exist yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub new_files: Vec<AdoptionNewFiles>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdoptionNewFiles {
+    pub tool: String,
+    pub files: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

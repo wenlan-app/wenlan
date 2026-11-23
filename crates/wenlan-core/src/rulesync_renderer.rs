@@ -53,6 +53,68 @@ pub fn pinned_binary_name() -> Result<&'static str> {
     Ok(pin_for(std::env::consts::OS, std::env::consts::ARCH)?.name)
 }
 
+const DOWNLOAD_BASE: &str = "https://github.com/dyoshikawa/rulesync/releases/download";
+
+/// Return `dir/<pinned name>`, fetching the pinned release asset first when it
+/// is missing. The run-time SHA-256 check still applies to the returned file.
+pub fn ensure_pinned_binary(dir: &Path) -> Result<PathBuf> {
+    let pin = pin_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let base = match std::env::var("WENLAN_RULESYNC_DOWNLOAD_BASE") {
+        Ok(base) if !base.is_empty() => format!("{}/v{PINNED_VERSION}", base.trim_end_matches('/')),
+        _ => format!("{DOWNLOAD_BASE}/v{PINNED_VERSION}"),
+    };
+    fetch_pinned(dir, &base, &pin)
+}
+
+fn fetch_pinned(dir: &Path, base: &str, pin: &Pin) -> Result<PathBuf> {
+    let path = dir.join(pin.name);
+    if path.exists() {
+        return Ok(path);
+    }
+    let url = format!("{base}/{}", pin.name);
+    let fail = |error: &dyn std::fmt::Display| {
+        anyhow::anyhow!(
+            "Could not fetch rulesync {PINNED_VERSION} ({error}); set WENLAN_RULESYNC_BINARY to a copy of {}.",
+            pin.name
+        )
+    };
+    fs::create_dir_all(dir).map_err(|error| fail(&error))?;
+    let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(|error| fail(&error))?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|error| fail(&error))?;
+    let mut response = client
+        .get(&url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| fail(&error.without_url()))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = response.read(&mut buffer).map_err(|error| fail(&error))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        io::Write::write_all(&mut temp, &buffer[..read]).map_err(|error| fail(&error))?;
+    }
+    ensure!(
+        format!("{:x}", digest.finalize()) == pin.sha256,
+        "Could not fetch rulesync {PINNED_VERSION} (the download did not match its checksum); set WENLAN_RULESYNC_BINARY to a copy of {}.",
+        pin.name
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o755))
+            .map_err(|error| fail(&error))?;
+    }
+    temp.persist(&path).map_err(|error| fail(&error.error))?;
+    Ok(path)
+}
+
 pub fn new_stage(parent: &Path) -> Result<tempfile::TempDir> {
     let mut builder = tempfile::Builder::new();
     builder.prefix("rulesync-stage-");
@@ -649,6 +711,80 @@ mod tests {
     use std::ffi::OsStr;
 
     const RENDERER_CHILD_MODE: &str = "WENLAN_TEST_RENDERER_CHILD_MODE";
+
+    fn stub_server(
+        body: &'static [u8],
+        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) -> String {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    fn stub_pin(body: &[u8]) -> Pin {
+        let digest = format!("{:x}", Sha256::digest(body));
+        Pin {
+            name: "rulesync-test",
+            sha256: Box::leak(digest.into_boxed_str()),
+        }
+    }
+
+    #[test]
+    fn fetches_verifies_and_places_a_missing_binary_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let base = stub_server(b"fake rulesync", hits.clone());
+        let pin = stub_pin(b"fake rulesync");
+        let path = fetch_pinned(dir.path(), &base, &pin).unwrap();
+        assert_eq!(path, dir.path().join("rulesync-test"));
+        assert_eq!(fs::read(&path).unwrap(), b"fake rulesync");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+        }
+        assert_eq!(fetch_pinned(dir.path(), &base, &pin).unwrap(), path);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn refuses_a_download_with_the_wrong_digest_and_leaves_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let base = stub_server(b"tampered", hits);
+        let error = fetch_pinned(dir.path(), &base, &stub_pin(b"fake rulesync")).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("checksum"), "{message}");
+        assert!(message.contains("WENLAN_RULESYNC_BINARY"), "{message}");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_failed_connection_leaves_no_file_and_names_the_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = fetch_pinned(dir.path(), "http://127.0.0.1:1", &stub_pin(b"x")).unwrap_err();
+        assert!(format!("{error:#}").contains("WENLAN_RULESYNC_BINARY"));
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 
     #[cfg(unix)]
     #[test]

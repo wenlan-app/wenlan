@@ -79,14 +79,38 @@ fn setup_fixture(
     status_adopted: bool,
     plan: &AdoptionPlan,
 ) -> (Command, std::sync::mpsc::Receiver<(String, String)>) {
+    setup_fixture_with(state, status_adopted, plan, &[])
+}
+
+#[cfg(unix)]
+/// `unmanaged` names the planned tools that the status route reports as not managed.
+fn setup_fixture_with(
+    state: &Path,
+    status_adopted: bool,
+    plan: &AdoptionPlan,
+    unmanaged: &[&str],
+) -> (Command, std::sync::mpsc::Receiver<(String, String)>) {
     fs::create_dir_all(state.join("unused-data-root")).unwrap();
     fs::write(state.join("unused-data-root/person.key"), "a".repeat(64)).unwrap();
-    let status = json!({"enabled":true,"adopted":status_adopted,"can_adopt":true,"can_restore":false,"in_sync":true,"proposals":[],"review_tools":{}});
+    let tools: Vec<_> = plan
+        .tools
+        .iter()
+        .map(|tool| {
+            let state = if unmanaged.contains(&tool.name.as_str()) {
+                "not_managed"
+            } else {
+                "up_to_date"
+            };
+            json!({"id":tool.name.to_lowercase(),"name":tool.name,"state":state,"counts":{"rules":tool.rule_files,"skills":tool.skills,"commands":0,"subagents":0,"mcp":0}})
+        })
+        .collect();
+    let status = json!({"enabled":true,"adopted":status_adopted,"can_adopt":true,"can_restore":false,"in_sync":true,"proposals":[],"review_tools":{},"tools":tools});
     let report = json!({"written":[],"blocked":[],"proposals":[],"message":"done"});
     // Every request to the daemon first asks for health.
     let health = json!({"status":"ok","db_initialized":true,"version":"test"}).to_string();
-    let mut routes = vec![("GET /api/health", health); 8];
+    let mut routes = vec![("GET /api/health", health); 10];
     routes.extend([
+        ("GET /api/rules/setup/status", status.to_string()),
         ("GET /api/rules/setup/status", status.to_string()),
         (
             "POST /api/rules/setup/adopt/preview",
@@ -164,6 +188,30 @@ fn ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts() {
     ] {
         assert!(seen.iter().any(|seen| seen == route), "{route}: {seen:?}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_report_names_only_tools_that_end_up_managed() {
+    let state = tempfile::tempdir().unwrap();
+    let mut plan = setup_home(state.path());
+    plan.tools.push(wenlan_types::rulesync::AdoptionTool {
+        name: "Antigravity".into(),
+        rule_files: 1,
+        skills: 0,
+        other_files: 0,
+    });
+    let (mut cmd, _requests) = setup_fixture_with(state.path(), false, &plan, &["Antigravity"]);
+    let output = cmd
+        .args(["--format", "table"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("Codex"), "{text}");
+    assert!(!text.contains("Antigravity"), "{text}");
 }
 
 #[cfg(unix)]

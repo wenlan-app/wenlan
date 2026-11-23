@@ -9751,16 +9751,17 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_TEST_FILE_APPLY_CRASH",         // test-only crash point in the rulesync applier
     "WENLAN_TEST_FILE_APPLY_ROOT",          // test-only crash-during-apply child root
     "WENLAN_TEST_PARENT_NET_NS",            // test-only renderer network-namespace probe
-    "WENLAN_TEST_RULESYNC_BINARY",          // test-only pinned renderer binary for opt-in tests
+    "WENLAN_RULESYNC_DOWNLOAD_BASE", // test-only stub base URL for the pinned rulesync download
+    "WENLAN_TEST_RULESYNC_BINARY",   // test-only pinned renderer binary for opt-in tests
     "WENLAN_TEST_RULESYNC_COPIED_HOME", // test-only copied real-home fixture for opt-in adoption
-    "WENLAN_TEST_PERSONAL_REVIEW_ID",   // test-only personal file review subprocess card id
+    "WENLAN_TEST_PERSONAL_REVIEW_ID", // test-only personal file review subprocess card id
     "WENLAN_TEST_PERSONAL_REVIEW_ROOT", // test-only personal file review subprocess root
-    "WENLAN_TEST_SETTINGS_ROOT",        // test-only crash-during-settings child root
-    "WENLAN_TEST_SETTINGS_REVIEW_ID",   // test-only settings review subprocess card id
-    "WENLAN_TEST_SKILL_REVIEW_ROOT",    // test-only skill review subprocess fixture root
-    "WENLAN_TEST_SKILL_REVIEW_TOKEN",   // test-only skill review subprocess approval token
-    "WENLAN_RULESYNC_GUARD_CHILD",      // test-only rulesync guard subprocess marker
-    "WENLAN_RULESYNC_MATRIX_CHILD",     // test-only rulesync matrix subprocess marker
+    "WENLAN_TEST_SETTINGS_ROOT",     // test-only crash-during-settings child root
+    "WENLAN_TEST_SETTINGS_REVIEW_ID", // test-only settings review subprocess card id
+    "WENLAN_TEST_SKILL_REVIEW_ROOT", // test-only skill review subprocess fixture root
+    "WENLAN_TEST_SKILL_REVIEW_TOKEN", // test-only skill review subprocess approval token
+    "WENLAN_RULESYNC_GUARD_CHILD",   // test-only rulesync guard subprocess marker
+    "WENLAN_RULESYNC_MATRIX_CHILD",  // test-only rulesync matrix subprocess marker
 ];
 
 /// BASELINE: behavioral flags undocumented when this contract was introduced
