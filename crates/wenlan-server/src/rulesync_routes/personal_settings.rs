@@ -31,12 +31,12 @@ pub(super) fn is_proposal(id: &str) -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Managed {
-    key: Key,
+    pub(super) key: Key,
     // A shared review can be durable before its write succeeds. Only this
     // approved previous entry (or absence) can be replaced on a retry.
-    before: Option<Entry>,
-    wanted: Option<Entry>,
-    receipt: Option<RecordedEntry>,
+    pub(super) before: Option<Entry>,
+    pub(super) wanted: Option<Entry>,
+    pub(super) receipt: Option<RecordedEntry>,
 }
 
 impl Managed {
@@ -58,8 +58,8 @@ pub(super) type Source = BTreeMap<PathBuf, Vec<Managed>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Update {
-    key: Key,
-    receipt: RecordedEntry,
+    pub(super) key: Key,
+    pub(super) receipt: RecordedEntry,
 }
 
 pub(super) fn settle(manifest: &mut Manifest, path: &Path, updates: Vec<Update>) {
@@ -390,7 +390,12 @@ fn label(state: &Managed) -> String {
 }
 
 pub(super) fn reserved(manifest: &Manifest, path: &Path) -> bool {
-    manifest.recovery_issues.contains_key(path)
+    manifest
+        .keys
+        .writes
+        .iter()
+        .any(|write| write.destination == path)
+        || manifest.recovery_issues.contains_key(path)
         || manifest.pending.iter().any(|pending| pending.path == path)
         || manifest
             .settings_batch
@@ -1032,11 +1037,15 @@ impl Setup {
         }
         for (path, seen, bytes, updates) in direct {
             let desired = with_bytes(&seen, bytes);
-            if root.apply(&path, &seen, &desired, false)? == ApplyOutcome::Applied {
+            let temp = super::key_shares::begin_write(self, manifest, &path, updates.clone())?;
+            let outcome = root.apply_key_file(&path, &temp, &seen, &desired)?;
+            if outcome == ApplyOutcome::Applied {
                 settle(manifest, &path, updates);
                 self.save(manifest)?;
+                super::key_shares::finish_write(self, root, manifest, &temp)?;
                 result.written.push(path.display().to_string());
             } else {
+                super::key_shares::finish_write(self, root, manifest, &temp)?;
                 result.block(
                     Code::ReviewNeeded,
                     format!(
@@ -1170,6 +1179,8 @@ impl Setup {
                 return Ok(Some(blocked));
             }
         }
-        anyhow::bail!("the settings proposal or its destinations changed. Run rules sync for a fresh preview.")
+        anyhow::bail!(
+            "the settings proposal or its destinations changed. Run rules sync for a fresh preview."
+        )
     }
 }

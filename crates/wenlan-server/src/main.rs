@@ -896,6 +896,16 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
     // read from this data root. Made on the first start; never logged.
     wenlan_server::person_key::install_from(&wenlan_root);
 
+    // Clean up any key-bearing rules temporary left by an interrupted write
+    // before the rules watcher or request handlers can inspect that state.
+    match tokio::task::spawn_blocking(wenlan_server::recover_rulesync_on_startup).await {
+        Ok(Ok(())) => (),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "rules setup recovery needs attention before rules can continue");
+        }
+        Err(error) => tracing::warn!(%error, "rules setup recovery worker failed"),
+    }
+
     let startup::PreparedStartupState {
         mut server_state,
         db_arc,

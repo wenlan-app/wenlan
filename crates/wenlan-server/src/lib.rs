@@ -75,6 +75,7 @@ mod rulesync_checkout;
 mod rulesync_layers;
 mod rulesync_registry;
 mod rulesync_routes;
+pub use rulesync_routes::recover_rulesync_on_startup;
 pub use rulesync_routes::watch::RulesWatch;
 mod rulesync_settings_routes;
 pub mod runtime_observation;

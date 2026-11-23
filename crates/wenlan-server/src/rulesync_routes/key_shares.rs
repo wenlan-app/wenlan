@@ -10,12 +10,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use wenlan_core::rulesync_personal::DeliveryWorktrees;
 use wenlan_core::rulesync_settings::personal::{
     mcp_refusal, project_key, same_key_server, Catalog, Entry, Feature, Key, Location, Refusal,
 };
 use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSyncReport};
 
+use super::personal_settings;
 use super::personal_settings::{
     forget_restore, managed_entry, read, reserved, restore_changes, snapshot_bytes, tool_name,
     LiveFile, View,
@@ -28,6 +30,10 @@ use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct KeyShare {
     pub(super) destination: PathBuf,
+    /// The sibling name used for an atomic rewrite. It is saved with the
+    /// intent before the file is created so an interrupted write is recoverable.
+    #[serde(default)]
+    pub(super) temp: PathBuf,
     pub(super) key: Key,
     /// The source tool id, file and server key.
     pub(super) tool: String,
@@ -43,6 +49,10 @@ pub(super) struct KeyState {
     pub(super) shares: Vec<KeyShare>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) intents: Vec<KeyShare>,
+    /// Pending settings writes that are not represented by a key-share
+    /// receipt (for example a reviewed personal setting or its restore).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) writes: Vec<KeyWrite>,
     /// Plain lines for status about copies left as they are.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) notes: Vec<String>,
@@ -50,7 +60,10 @@ pub(super) struct KeyState {
 
 impl KeyState {
     pub(super) fn is_empty(&self) -> bool {
-        self.shares.is_empty() && self.intents.is_empty() && self.notes.is_empty()
+        self.shares.is_empty()
+            && self.intents.is_empty()
+            && self.writes.is_empty()
+            && self.notes.is_empty()
     }
 
     /// Whether a file holds, or is about to hold, a shared copy.
@@ -59,6 +72,7 @@ impl KeyState {
             .iter()
             .chain(&self.intents)
             .any(|share| share.destination == path)
+            || self.writes.iter().any(|write| write.destination == path)
     }
 
     /// Whether an entry is a shared copy or the source of one.
@@ -74,6 +88,136 @@ impl KeyState {
             self.notes.push(line);
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct KeyWrite {
+    pub(super) destination: PathBuf,
+    pub(super) temp: PathBuf,
+    /// Per-entry restore fragments that were checked with `receipt_clear`
+    /// before a direct personal-settings write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) updates: Vec<super::personal_settings::Update>,
+    #[serde(default)]
+    pub(super) restore: bool,
+}
+
+fn temp_path(destination: &Path, identity: &[u8]) -> Result<PathBuf> {
+    let parent = destination
+        .parent()
+        .context("settings file has no parent")?;
+    let name = destination
+        .file_name()
+        .context("settings file has no name")?
+        .to_string_lossy();
+    let digest = Sha256::digest(identity);
+    let suffix = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(parent.join(format!(".{name}.wenlan-key-{suffix}.tmp")))
+}
+
+fn key_share_temp(share: &KeyShare) -> Result<PathBuf> {
+    let identity = serde_json::to_vec(&(
+        &share.destination,
+        &share.tool,
+        &share.source,
+        &share.key,
+        &share.source_key,
+    ))?;
+    temp_path(&share.destination, &identity)
+}
+
+fn settings_temp(destination: &Path) -> Result<PathBuf> {
+    let identity = serde_json::to_vec(&("personal-settings-write", destination))?;
+    temp_path(destination, &identity)
+}
+
+/// Persist the cleanup pathname before FileRoot creates the temporary file.
+pub(super) fn begin_write(
+    setup: &Setup,
+    manifest: &mut Manifest,
+    destination: &Path,
+    updates: Vec<super::personal_settings::Update>,
+) -> Result<PathBuf> {
+    begin_write_kind(setup, manifest, destination, updates, false)
+}
+
+pub(super) fn begin_restore_write(
+    setup: &Setup,
+    manifest: &mut Manifest,
+    destination: &Path,
+) -> Result<PathBuf> {
+    if let Some(write) = manifest
+        .keys
+        .writes
+        .iter()
+        .find(|write| write.destination == destination && write.restore)
+    {
+        anyhow::ensure!(
+            write.temp == settings_temp(destination)?,
+            "the restore cleanup path does not match its destination"
+        );
+        return Ok(write.temp.clone());
+    }
+    begin_write_kind(setup, manifest, destination, Vec::new(), true)
+}
+
+fn begin_write_kind(
+    setup: &Setup,
+    manifest: &mut Manifest,
+    destination: &Path,
+    updates: Vec<super::personal_settings::Update>,
+    restore: bool,
+) -> Result<PathBuf> {
+    anyhow::ensure!(
+        !manifest
+            .keys
+            .writes
+            .iter()
+            .any(|write| write.destination == destination),
+        "a settings write for this file is still being recovered"
+    );
+    let write = KeyWrite {
+        destination: destination.to_owned(),
+        temp: settings_temp(destination)?,
+        updates,
+        restore,
+    };
+    manifest.keys.writes.push(write.clone());
+    setup.save(manifest)?;
+    Ok(write.temp)
+}
+
+pub(super) fn finish_write(
+    setup: &Setup,
+    root: &FileRoot,
+    manifest: &mut Manifest,
+    temp: &Path,
+) -> Result<()> {
+    let write = manifest
+        .keys
+        .writes
+        .iter()
+        .find(|write| write.temp == temp)
+        .context("the settings cleanup record disappeared")?;
+    anyhow::ensure!(
+        write.temp == settings_temp(&write.destination)?,
+        "the settings cleanup path does not match its recorded destination"
+    );
+    root.cleanup_key_temp(&write.destination, temp)?;
+    manifest.keys.writes.retain(|write| write.temp != temp);
+    setup.save(manifest)
+}
+
+fn cleanup_share_temp(root: &FileRoot, share: &KeyShare) -> Result<()> {
+    anyhow::ensure!(
+        share.temp == key_share_temp(share)?,
+        "the key-share cleanup path does not match its recorded intent"
+    );
+    root.cleanup_key_temp(&share.destination, &share.temp)?;
+    Ok(())
 }
 
 /// The servers that may hold a key and where each would be copied.
@@ -207,6 +351,11 @@ pub(super) fn plan(
                         .intents
                         .iter()
                         .any(|intent| intent.destination == to.path)
+                    || manifest
+                        .keys
+                        .writes
+                        .iter()
+                        .any(|write| write.destination == to.path)
                 {
                     Some(format!("{target}'s settings file has an unfinished write"))
                 } else if worktrees.at(&to.path)?.is_some() {
@@ -226,12 +375,15 @@ pub(super) fn plan(
                 }
                 let share = KeyShare {
                     destination: to.path.clone(),
+                    temp: PathBuf::new(),
                     key: copy.key.clone(),
                     tool: location.tool.to_owned(),
                     source: location.path.clone(),
                     source_key: source.key.clone(),
                     at: 0,
                 };
+                let mut share = share;
+                share.temp = key_share_temp(&share)?;
                 wanted
                     .entry((to.path.clone(), copy.key))
                     .or_default()
@@ -314,16 +466,116 @@ impl Live {
 }
 
 impl Setup {
-    /// Turn interrupted writes into receipts when the copy is there and the
-    /// same as the live source. Anything else is left as it is and noted.
+    /// Run before any rules operation takes its own setup lock. This is the
+    /// common startup/entry cleanup hook; it intentionally does not call
+    /// Setup::system or load recursively. Semantic recovery remains with the
+    /// locked operation that can finish or refuse the recorded intent.
+    pub(super) fn cleanup_key_temps_on_entry(&self) -> Result<()> {
+        match std::fs::symlink_metadata(self.data.join(super::storage::MANIFEST)) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).context("check for a local setup backup"),
+        }
+        let _lock = self.lock()?;
+        let Some(manifest) = self.load_if_present()? else {
+            return Ok(());
+        };
+        let root = FileRoot::open_home(&self.home)?;
+        for write in &manifest.keys.writes {
+            anyhow::ensure!(
+                write.temp == settings_temp(&write.destination)?,
+                "the settings cleanup path does not match its recorded destination"
+            );
+            root.cleanup_key_temp(&write.destination, &write.temp)?;
+        }
+        for intent in &manifest.keys.intents {
+            if !intent.temp.as_os_str().is_empty() {
+                cleanup_share_temp(&root, intent)?;
+            }
+        }
+        // FileRoot cleanup is idempotent; records remain so a mutating route
+        // can reconcile the write under its own operation semantics.
+        Ok(())
+    }
+
+    /// Reconcile interrupted key shares. Generic settings writes have no
+    /// byte-safe restore receipt after an ambiguous replacement, so their
+    /// cleanup temp is removed while the durable intent remains for review.
     pub(super) fn claim_key_intents(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
-        if manifest.keys.intents.is_empty() {
+        if manifest.keys.intents.is_empty() && manifest.keys.writes.is_empty() {
             return Ok(());
         }
-        for intent in std::mem::take(&mut manifest.keys.intents) {
+        let mut unresolved_writes = Vec::new();
+        for write in manifest.keys.writes.clone() {
+            anyhow::ensure!(
+                write.temp == settings_temp(&write.destination)?,
+                "the settings cleanup path does not match its recorded destination"
+            );
+            root.cleanup_key_temp(&write.destination, &write.temp)?;
+            if write.restore {
+                continue;
+            }
+            if write.updates.is_empty() {
+                unresolved_writes.push(write.destination.clone());
+                continue;
+            }
+            let catalog = Catalog::read(&self.home)?;
+            let Some(location) = catalog
+                .locations
+                .iter()
+                .find(|loc| loc.path == write.destination)
+            else {
+                unresolved_writes.push(write.destination.clone());
+                continue;
+            };
+            let Ok(file) = read(&self.home, root, location) else {
+                unresolved_writes.push(write.destination.clone());
+                continue;
+            };
+            let Some(states) = manifest.personal_settings.get(&write.destination) else {
+                unresolved_writes.push(write.destination.clone());
+                continue;
+            };
+            let current_is_wanted = write.updates.iter().all(|update| {
+                states
+                    .iter()
+                    .find(|state| state.key == update.key)
+                    .is_some_and(|state| file.doc.entry(&state.key) == state.wanted.as_ref())
+            });
+            let current_is_before = write.updates.iter().all(|update| {
+                states
+                    .iter()
+                    .find(|state| state.key == update.key)
+                    .is_some_and(|state| file.doc.entry(&state.key) == state.before.as_ref())
+            });
+            if current_is_wanted {
+                personal_settings::settle(manifest, &write.destination, write.updates.clone());
+            } else if !current_is_before {
+                unresolved_writes.push(write.destination.clone());
+                continue;
+            }
+            manifest
+                .keys
+                .writes
+                .retain(|pending| pending.temp != write.temp);
+        }
+        for mut intent in manifest.keys.intents.clone() {
+            if !intent.temp.as_os_str().is_empty() {
+                cleanup_share_temp(root, &intent)?;
+            }
             let live = Live::read(&self.home, root, &intent)?;
             if live.matches(&intent) {
-                manifest.keys.shares.push(intent);
+                if intent.temp.as_os_str().is_empty() {
+                    intent.temp = key_share_temp(&intent)?;
+                }
+                if !manifest
+                    .keys
+                    .shares
+                    .iter()
+                    .any(|share| share.destination == intent.destination && share.key == intent.key)
+                {
+                    manifest.keys.shares.push(intent.clone());
+                }
             } else {
                 manifest.keys.note(format!(
                     "Left {} in {} as it is: an earlier share was interrupted.",
@@ -331,8 +583,21 @@ impl Setup {
                     tool_name(live.to.tool)
                 ));
             }
+            manifest.keys.intents.retain(|pending| {
+                pending.destination != intent.destination || pending.key != intent.key
+            });
         }
-        self.save(manifest)
+        self.save(manifest)?;
+        anyhow::ensure!(
+            unresolved_writes.is_empty(),
+            "An interrupted personal settings write at {} no longer matches its recorded before or wanted entries. Its temp was cleaned and its intent was retained. Restore those entries to either recorded value, then retry rules sync or restore.",
+            unresolved_writes
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        Ok(())
     }
 
     /// Copy each consented server into its destination, in place, one entry
@@ -347,23 +612,31 @@ impl Setup {
         let at = chrono::Utc::now().timestamp();
         for mut share in shares {
             share.at = at;
+            if share.temp.as_os_str().is_empty() {
+                share.temp = key_share_temp(&share)?;
+            }
             manifest.keys.intents.push(share.clone());
             self.save(manifest)?;
             let outcome = self.write_key_share(root, &share);
-            manifest.keys.intents.retain(|intent| *intent != share);
             let display = format!("~/{}", share.destination.display());
             match outcome {
                 Ok(true) => {
+                    cleanup_share_temp(root, &share)?;
+                    manifest.keys.intents.retain(|intent| *intent != share);
                     result.written.push(share.destination.display().to_string());
                     manifest.keys.shares.push(share);
                 }
-                Ok(false) => result.block(
-                    Code::ReviewNeeded,
-                    format!(
-                        "{display}: {} was not shared because a file changed while sharing.",
-                        server_name(&share)
-                    ),
-                ),
+                Ok(false) => {
+                    cleanup_share_temp(root, &share)?;
+                    manifest.keys.intents.retain(|intent| *intent != share);
+                    result.block(
+                        Code::ReviewNeeded,
+                        format!(
+                            "{display}: {} was not shared because a file changed while sharing.",
+                            server_name(&share)
+                        ),
+                    );
+                }
                 Err(error) => result.block(
                     Code::ReviewNeeded,
                     format!("{display}: {} was not shared. {error}", server_name(&share)),
@@ -375,6 +648,10 @@ impl Setup {
     }
 
     fn write_key_share(&self, root: &FileRoot, share: &KeyShare) -> Result<bool> {
+        anyhow::ensure!(
+            share.temp == key_share_temp(share)?,
+            "the key-share temp does not match its stable intent"
+        );
         let live = Live::read(&self.home, root, share)?;
         let source = live.source.as_ref().context("the source server changed")?;
         let file = live
@@ -392,7 +669,7 @@ impl Setup {
         let next = live.to.insert_key(bytes, &copy)?;
         let desired = with_bytes(&file.snapshot, next);
         Ok(
-            root.apply(&share.destination, &file.snapshot, &desired, false)?
+            root.apply_key_file(&share.destination, &share.temp, &file.snapshot, &desired)?
                 == ApplyOutcome::Applied,
         )
     }
@@ -467,13 +744,28 @@ impl Setup {
     ) -> Result<()> {
         let path = location.path.clone();
         let display = location.display();
-        let shares: Vec<_> = manifest
+        let mut shares: Vec<_> = manifest
             .keys
             .shares
             .iter()
             .filter(|share| share.destination == path)
             .cloned()
             .collect();
+        let mut assigned_temp = false;
+        for share in &mut shares {
+            if share.temp.as_os_str().is_empty() {
+                share.temp = key_share_temp(share)?;
+                if let Some(recorded) = manifest.keys.shares.iter_mut().find(|recorded| {
+                    recorded.destination == share.destination && recorded.key == share.key
+                }) {
+                    recorded.temp.clone_from(&share.temp);
+                    assigned_temp = true;
+                }
+            }
+        }
+        if assigned_temp {
+            self.save(manifest)?;
+        }
         let changes = restore_changes(manifest, &path);
         if shares.is_empty() && changes.is_empty() {
             forget_restore(manifest, &path);
@@ -557,8 +849,17 @@ impl Setup {
             } else {
                 with_bytes(&live.snapshot, next)
             };
-        match root.apply(&path, &live.snapshot, &desired, false)? {
+        let temp = begin_restore_write(self, manifest, &path)?;
+        let outcome = root.apply_key_file(&path, &temp, &live.snapshot, &desired)?;
+        let mut finish_generic_write = false;
+        match outcome {
             ApplyOutcome::Applied => {
+                if !shares.is_empty() {
+                    for share in &shares {
+                        cleanup_share_temp(root, share)?;
+                    }
+                }
+                finish_generic_write = true;
                 if desired != live.snapshot {
                     result.written.push(path.display().to_string());
                 }
@@ -570,11 +871,37 @@ impl Setup {
                     forget_restore(manifest, &path);
                 }
             }
-            _ => result.block(
-                Code::RestoreBlocked,
-                format!("{display} changed while restoring."),
-            ),
+            ApplyOutcome::ChangedSincePlan => {
+                for share in &shares {
+                    cleanup_share_temp(root, share)?;
+                }
+                finish_write(self, root, manifest, &temp)?;
+                result.block(
+                    Code::RestoreBlocked,
+                    format!("{display} changed while restoring."),
+                );
+            }
+        }
+        if finish_generic_write {
+            finish_write(self, root, manifest, &temp)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_temp_path_is_deterministic_for_the_same_intent() {
+        let destination = Path::new(".config/tool/settings.json");
+        let first = temp_path(destination, b"stable share identity").unwrap();
+        let second = temp_path(destination, b"stable share identity").unwrap();
+        let other = temp_path(destination, b"different share identity").unwrap();
+
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        assert_eq!(first.parent(), destination.parent());
     }
 }

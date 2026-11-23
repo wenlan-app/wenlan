@@ -260,6 +260,8 @@ pub(crate) struct FileRoot {
     private_directories: bool,
     #[cfg(test)]
     pub(crate) simulate_cross_volume: bool,
+    #[cfg(test)]
+    fail_key_file_after_rename: bool,
     #[cfg(all(test, not(windows)))]
     pub(crate) refuse_windows_acl_in_test: bool,
 }
@@ -282,6 +284,8 @@ impl FileRoot {
             private_directories: false,
             #[cfg(test)]
             simulate_cross_volume: false,
+            #[cfg(test)]
+            fail_key_file_after_rename: false,
             #[cfg(all(test, not(windows)))]
             refuse_windows_acl_in_test: false,
         })
@@ -651,6 +655,183 @@ impl FileRoot {
         options: ApplyOptions<'_>,
     ) -> io::Result<ApplyOutcome> {
         self.apply_inner(path, seen, desired, options, || {})
+    }
+
+    /// Replace a personal settings file using a sibling name recorded in the
+    /// durable rulesync manifest. Key-bearing settings need this separate
+    /// writer: the generic journal retains a displaced copy on Windows.
+    pub(crate) fn apply_key_file(
+        &self,
+        path: &Path,
+        temp: &Path,
+        seen: &Snapshot,
+        desired: &Snapshot,
+    ) -> io::Result<ApplyOutcome> {
+        self.apply_key_file_after(path, temp, seen, desired, || Ok(()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_key_file_error_after_rename(&mut self) {
+        self.fail_key_file_after_rename = true;
+    }
+
+    fn apply_key_file_after(
+        &self,
+        path: &Path,
+        temp: &Path,
+        seen: &Snapshot,
+        desired: &Snapshot,
+        after_replace: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<ApplyOutcome> {
+        let (relative_parent, name) = entry_path(path)?;
+        let (temp_parent, temp_name) = entry_path(temp)?;
+        if relative_parent != temp_parent
+            || !matches!(seen, Snapshot::File { .. })
+            || !matches!(desired, Snapshot::File { .. } | Snapshot::Absent)
+        {
+            return Err(invalid_path());
+        }
+        self.check_tool_path(path)?;
+        self.check_tool_path(temp)?;
+        require_ascii_personal_path(path)?;
+        require_ascii_personal_path(temp)?;
+        let parent = self
+            .open_parent_checked(relative_parent, false, true)?
+            .ok_or_else(invalid_path)?;
+        self.check_directory_leaf(&parent, name)?;
+        if *seen != self.read_entry(&parent, name, false)?
+            || *seen != read_single_link_leaf(&parent, name, false)?
+        {
+            return Ok(ApplyOutcome::ChangedSincePlan);
+        }
+        if seen == desired {
+            return Ok(ApplyOutcome::Applied);
+        }
+        match parent.symlink_metadata(temp_name) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "the recorded settings temp already exists; recover it before retrying",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        #[cfg(not(windows))]
+        let mut incoming_file = None;
+        if let Snapshot::File { bytes, .. } = desired {
+            let mut options = OpenOptions::new();
+            options
+                .write(true)
+                .create_new(true)
+                .follow(FollowSymlinks::No);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut incoming = parent.open_with(temp_name, &options)?;
+            #[cfg(unix)]
+            wenlan_core::rulesync_personal_files::require_plain_unix_acl(&incoming)?;
+            #[cfg(windows)]
+            copy_windows_dacl(
+                &open_windows_entry(&parent, name)?,
+                &open_windows_entry(&parent, temp_name)?,
+            )?;
+            incoming.write_all(bytes)?;
+            incoming.sync_all()?;
+            #[cfg(not(windows))]
+            {
+                incoming_file = Some(incoming);
+            }
+            #[cfg(windows)]
+            {
+                drop(incoming);
+            }
+        }
+
+        let current_parent = self
+            .open_parent_checked(relative_parent, false, true)?
+            .ok_or_else(invalid_path)?;
+        if !same_directory(&parent, &current_parent)?
+            || !matches_leaf_with(&parent, name, seen, read_single_link_leaf)?
+        {
+            self.remove_key_temp_in(&parent, temp_name)?;
+            return Ok(ApplyOutcome::ChangedSincePlan);
+        }
+        #[cfg(windows)]
+        {
+            let old = open_windows_entry(&parent, name)?;
+            check_windows_replacement(&old)?;
+            if matches!(desired, Snapshot::File { .. }) {
+                let incoming = open_windows_entry(&parent, temp_name)?;
+                prepare_windows_file_replacement(&old, &incoming)?;
+                drop(incoming);
+                drop(old);
+                // ReplaceFileW's backup argument is null: no displaced copy
+                // of the key-bearing file is created.
+                windows_paths::replace_file(&parent, name, &parent, temp_name)
+                    .map_err(windows_permissions_error)?;
+            } else {
+                drop(old);
+                parent.remove_file(name)?;
+            }
+        }
+        #[cfg(not(windows))]
+        if matches!(desired, Snapshot::File { .. }) {
+            parent.rename(temp_name, &parent, name)?;
+        } else {
+            parent.remove_file(name)?;
+        }
+        // Keep the incoming file private at its temporary name. Apply the
+        // destination mode only after publication so key bytes are never
+        // transiently broader-accessible through a second pathname.
+        #[cfg(not(windows))]
+        if let (Some(file), Snapshot::File { mode, .. }) = (incoming_file.as_ref(), desired) {
+            mode.set(file)?;
+            file.sync_all()?;
+        }
+        #[cfg(windows)]
+        if let Snapshot::File { mode, .. } = desired {
+            let replaced = open_windows_entry(&parent, name)?;
+            mode.set(&replaced)?;
+        }
+        #[cfg(test)]
+        crash_at("key-renamed", name);
+        #[cfg(test)]
+        if self.fail_key_file_after_rename {
+            return Err(io::Error::other("injected post-rename error"));
+        }
+        after_replace()?;
+        #[cfg(unix)]
+        parent.open(".")?.sync_all()?;
+        Ok(ApplyOutcome::Applied)
+    }
+
+    /// Remove only the exact regular file named by a durable key-write record.
+    pub(crate) fn cleanup_key_temp(&self, destination: &Path, temp: &Path) -> io::Result<()> {
+        let (destination_parent, _) = entry_path(destination)?;
+        let (relative_parent, name) = entry_path(temp)?;
+        if destination_parent != relative_parent {
+            return Err(invalid_path());
+        }
+        self.check_tool_path(temp)?;
+        require_ascii_personal_path(temp)?;
+        let Some(parent) = self.open_parent_checked(relative_parent, false, true)? else {
+            return Ok(());
+        };
+        self.remove_key_temp_in(&parent, name)
+    }
+
+    fn remove_key_temp_in(&self, parent: &Dir, name: &Path) -> io::Result<()> {
+        match parent.symlink_metadata(name) {
+            Ok(metadata) if metadata.is_file() && !metadata.is_symlink() => {
+                parent.remove_file(name)
+            }
+            Ok(_) => Err(io::Error::other(
+                "the recorded settings temp is not a regular file; it was left in place",
+            )),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     fn apply_inner(
@@ -1735,7 +1916,7 @@ fn commit_windows(
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "atomic replacement of this entry type is unavailable",
-            ))
+            ));
         }
     }
     Ok(ApplyOutcome::Applied)
@@ -2246,6 +2427,93 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let root = FileRoot::open(scratch.path()).unwrap();
         (scratch, root)
+    }
+
+    #[test]
+    fn rulesync_key_file_post_rename_error_leaves_destination_and_recorded_temp_recoverable() {
+        let (scratch, root) = root();
+        let path = Path::new("settings.json");
+        let temp = Path::new(".settings.json.wenlan-key-test.tmp");
+        let seen = Snapshot::file(b"before".to_vec());
+        let desired = Snapshot::file(b"after".to_vec());
+        assert_eq!(
+            root.apply(path, &Snapshot::Absent, &seen, false).unwrap(),
+            ApplyOutcome::Applied
+        );
+
+        let error = root
+            .apply_key_file_after(path, temp, &seen, &desired, || {
+                Err(io::Error::other("injected post-rename failure"))
+            })
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "injected post-rename failure");
+        assert_eq!(fs::read(scratch.path().join(path)).unwrap(), b"after");
+        assert!(!scratch.path().join(temp).exists());
+        // The caller's durable intent remains necessary: cleanup and receipt
+        // settlement happen only after this method returns successfully.
+    }
+
+    #[test]
+    fn rulesync_key_temp_cleanup_removes_only_a_regular_recorded_file() {
+        let (scratch, root) = root();
+        let temp = Path::new(".settings.json.wenlan-key-test.tmp");
+        fs::write(scratch.path().join(temp), b"partial settings").unwrap();
+        root.cleanup_key_temp(Path::new("settings.json"), temp)
+            .unwrap();
+        assert!(!scratch.path().join(temp).exists());
+
+        let directory = scratch.path().join(temp);
+        fs::create_dir(&directory).unwrap();
+        assert!(root
+            .cleanup_key_temp(Path::new("settings.json"), temp)
+            .is_err());
+        assert!(directory.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_key_temp_cleanup_refuses_a_symlink() {
+        let (scratch, root) = root();
+        let temp = Path::new(".settings.json.wenlan-key-test.tmp");
+        let target = scratch.path().join("user-file");
+        fs::write(&target, b"leave this alone").unwrap();
+        std::os::unix::fs::symlink("user-file", scratch.path().join(temp)).unwrap();
+
+        assert!(root
+            .cleanup_key_temp(Path::new("settings.json"), temp)
+            .is_err());
+        assert_eq!(fs::read(target).unwrap(), b"leave this alone");
+        assert!(fs::symlink_metadata(scratch.path().join(temp))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rulesync_key_file_windows_replaces_without_a_displaced_copy() {
+        let (scratch, root) = root();
+        let path = Path::new("settings.json");
+        let temp = Path::new(".settings.json.wenlan-key-test.tmp");
+        let seen = Snapshot::file(b"before".to_vec());
+        let desired = Snapshot::file(b"after".to_vec());
+        assert_eq!(
+            root.apply(path, &Snapshot::Absent, &seen, false).unwrap(),
+            ApplyOutcome::Applied
+        );
+
+        assert_eq!(
+            root.apply_key_file(path, temp, &seen, &desired).unwrap(),
+            ApplyOutcome::Applied
+        );
+
+        assert_eq!(fs::read(scratch.path().join(path)).unwrap(), b"after");
+        assert_eq!(
+            fs::read_dir(scratch.path()).unwrap().count(),
+            1,
+            "the settings replacement must not leave a displaced key-bearing copy"
+        );
     }
 
     #[test]

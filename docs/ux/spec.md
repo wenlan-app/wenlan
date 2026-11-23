@@ -1527,7 +1527,9 @@ and wait for evidence that people need them.
   and saves an intent first. A file that holds or will hold such a server
   gets every other Wenlan edit one entry at a time too. After a crash, an
   intent whose copy equals the live source becomes a record; any other is
-  dropped and status says it was left as it is. Restore removes a copy only
+  dropped and status says it was left as it is. Status compares each shared
+  copy with its live source and reports a copy removed or changed since
+  sharing; that tool is not up to date. Restore removes a copy only
   while it still equals the live source, before the other entries of that
   file; otherwise it says "kept <server> in <tool>: changed since sharing;
   remove it by hand if you don't want it".
@@ -1536,6 +1538,10 @@ and wait for evidence that people need them.
   `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
   `rulesync_share_refuses_key_servers_for_an_ai_caller`,
   `rulesync_restore_keeps_a_key_copy_the_person_changed`,
+  `rulesync_status_checks_key_share_receipt_against_live_source_and_destination`,
+  `rules_share_reports_kept_in_place_counts_once`,
+  `rulesync_key_share_post_rename_error_retains_intent_then_claims_receipt`,
+  `rulesync_round6_direct_key_settings_rename_recovers_receipt_then_restores`,
   `rulesync_interrupted_key_share_is_claimed_when_the_copy_landed`,
   `rulesync_interrupted_key_share_is_dropped_when_the_copy_is_not_there`,
   `rulesync_safe_server_shares_syncs_and_restores_in_a_file_with_a_key` and

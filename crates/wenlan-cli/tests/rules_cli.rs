@@ -823,7 +823,17 @@ fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, S
         ("GET /api/health", "{}".into()),
         (
             "POST /api/rules/setup/share",
-            json!({"written":[],"blocked":[],"proposals":[],"message":"shared"}).to_string(),
+            json!({
+                "written": [],
+                "blocked": [],
+                "proposals": [],
+                "message": "shared",
+                "kept_in_place": [
+                    {"tool": "Claude Code", "count": 2},
+                    {"tool": "Codex CLI", "count": 3}
+                ]
+            })
+            .to_string(),
         ),
     ]);
     let mut cmd = personal_rules_cli(state);
@@ -895,6 +905,31 @@ fn rules_share_in_session_applies_the_confirmed_plan() {
     assert_eq!(request.token, "fixture-token");
     // The AI confirm route never asks for the servers that may hold a key.
     assert!(!request.include_keys);
+}
+
+#[test]
+fn rules_share_reports_kept_in_place_counts_once() {
+    let state = tempfile::tempdir().unwrap();
+    let (mut cmd, requests) = share_fixture(state.path());
+    let output = cmd
+        .args([
+            "--format",
+            "table",
+            "rules",
+            "share",
+            "--confirm",
+            "0123456789ab",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "shared\nKept 5 settings in place in their own tools because they may hold keys or cannot be copied.\n"
+    );
+    assert!(shared(&requests).is_some());
 }
 
 #[test]

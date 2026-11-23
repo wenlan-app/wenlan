@@ -66,7 +66,9 @@ fn keys_left_message(count: usize, answer: KeyAnswer) -> String {
     let servers = if count == 1 { "server" } else { "servers" };
     let line = format!("Left {count} {servers} that may contain a key where they are.");
     if answer == KeyAnswer::NotAsked {
-        format!("{line} Only the person can share those, by running `wenlan rules share` in their own terminal.")
+        format!(
+            "{line} Only the person can share those, by running `wenlan rules share` in their own terminal."
+        )
     } else {
         line
     }
@@ -298,6 +300,7 @@ impl Setup {
             let mut written = report("");
             self.sync_personal_settings(&root, &mut manifest, &mut written)?;
             result.written.extend(written.written);
+            result.kept_in_place.extend(written.kept_in_place);
             for (line, code) in written.blocked.into_iter().zip(written.blocked_codes) {
                 if destinations
                     .iter()
@@ -1279,6 +1282,13 @@ mod tests {
                 .ends_with("Left 1 server that may contain a key where they are."),
             "{shared:?}"
         );
+        assert!(
+            shared
+                .kept_in_place
+                .iter()
+                .any(|kept| kept.tool == "codexcli" && kept.count == 1),
+            "{shared:?}"
+        );
         let text = fs::read_to_string(&claude).unwrap();
         assert!(text.contains("safe-server"), "{text}");
         assert!(!text.contains("keyed-server") && !text.contains(KEY_SECRET));
@@ -1289,6 +1299,54 @@ mod tests {
         // The key server is still there to share later.
         let again = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
         assert_eq!(again.key_servers, ["keyed"]);
+    }
+
+    #[test]
+    fn rulesync_status_checks_key_share_receipt_against_live_source_and_destination() {
+        let (f, _) = key_fixture();
+        share_keys(&f, KeyAnswer::Yes);
+
+        // The destination still contains the recorded copy, but its live
+        // source has changed since the receipt was written.
+        let source = f.setup.home.join(".codex/config.toml");
+        let original = fs::read_to_string(&source).unwrap();
+        fs::write(&source, original.replace("keyed-server", "changed-server")).unwrap();
+
+        let status = f.setup.status().unwrap();
+        assert!(
+            status.notes.iter().any(|note| {
+                note.starts_with("keyed in Claude Code was removed or changed since sharing")
+                    && note.contains("Claude Code")
+                    && note.contains("Review both tools before syncing")
+            }),
+            "{status:?}"
+        );
+        assert!(!status.in_sync, "{status:?}");
+        assert!(
+            !status.notes.iter().any(|note| note.contains(KEY_SECRET)),
+            "status must not expose key material: {status:?}"
+        );
+
+        fs::write(&source, original).unwrap();
+        let destination = f.setup.home.join(".claude.json");
+        fs::remove_file(&destination).unwrap();
+        let status = f.setup.status().unwrap();
+        assert!(
+            status.notes.iter().any(|note| {
+                note.starts_with("keyed in Claude Code was removed or changed since sharing")
+            }),
+            "{status:?}"
+        );
+        assert!(!status.in_sync, "{status:?}");
+        assert_eq!(
+            status
+                .tools
+                .iter()
+                .find(|tool| tool.tool.id == "claude-code")
+                .map(|tool| tool.state),
+            Some(wenlan_types::rulesync::RulesToolState::NeedsReview),
+            "{status:?}"
+        );
     }
 
     #[test]
@@ -1394,6 +1452,42 @@ mod tests {
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         assert_eq!(tree(&f.setup.home), before);
+        assert!(!data_holds_key(&f));
+    }
+
+    #[test]
+    fn rulesync_key_share_post_rename_error_retains_intent_then_claims_receipt() {
+        let (f, _) = key_fixture();
+        let mut root = FileRoot::open_home(&f.setup.home).unwrap();
+        root.inject_key_file_error_after_rename();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let share = f
+            .setup
+            .plan_share(&root, &manifest, &fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(share.keys.len(), 1);
+
+        let mut result = report("share key fixture");
+        f.setup
+            .apply_key_shares(&root, &mut manifest, share.keys, &mut result)
+            .unwrap();
+        assert!(
+            result
+                .blocked
+                .iter()
+                .any(|line| line.contains("injected post-rename error")),
+            "{result:?}"
+        );
+
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(manifest.keys.intents.len(), 1, "{manifest:?}");
+        assert!(manifest.keys.shares.is_empty(), "{manifest:?}");
+        assert!(f.text(".claude.json").contains("keyed-server"));
+        assert!(!data_holds_key(&f));
+
+        f.setup.claim_key_intents(&root, &mut manifest).unwrap();
+        assert!(manifest.keys.intents.is_empty(), "{manifest:?}");
+        assert_eq!(manifest.keys.shares.len(), 1, "{manifest:?}");
         assert!(!data_holds_key(&f));
     }
 
