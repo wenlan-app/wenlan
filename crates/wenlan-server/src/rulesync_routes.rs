@@ -51,6 +51,7 @@ use crate::rulesync_registry::{
 use crate::state::SharedState;
 
 mod displaced;
+mod key_shares;
 mod personal_files;
 mod personal_settings;
 mod review_list;
@@ -282,6 +283,15 @@ enum Operation {
     Review(PullbackDecision),
 }
 
+/// A request that names an AI session or an agent. The CLI sends these
+/// headers from `WENLAN_SESSION`/`--session` and `--agent-name`/
+/// `WENLAN_AGENT_NAME`. They are cooperative: a program under the same
+/// account can leave them out, so this tells an AI tool's normal route
+/// from a person's, and is not a security boundary.
+fn ai_caller(headers: &HeaderMap) -> bool {
+    headers.contains_key(wenlan_types::SESSION_HEADER) || headers.contains_key("x-agent-name")
+}
+
 async fn execute(
     state: SharedState,
     headers: HeaderMap,
@@ -300,8 +310,7 @@ async fn execute(
     } else {
         require_personal_rules_writer(&headers)?;
     }
-    let ai_caller =
-        headers.contains_key(wenlan_types::SESSION_HEADER) || headers.contains_key("x-agent-name");
+    let ai_caller = ai_caller(&headers);
     let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
@@ -334,7 +343,7 @@ async fn execute(
                     let plan = setup.preview_share(home)?;
                     validate_confirmed_share(&request, &plan)?;
                 }
-                setup.share(&request)
+                setup.share(&request, share::KeyAnswer::of(ai_caller, &request))
             }
             Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
@@ -457,6 +466,13 @@ impl Setup {
             return Ok(status);
         };
         status.adopted = manifest.adopted;
+        status.notes.clone_from(&manifest.keys.notes);
+        if !manifest.keys.intents.is_empty() {
+            status.notes.push(format!(
+                "Sharing {} server(s) that may contain a key was interrupted. The next rules sync checks them.",
+                manifest.keys.intents.len()
+            ));
+        }
         status.can_adopt = manifest.adopted || manifest.settings_only;
         status.can_restore = true;
         if manifest.adopted {
@@ -890,6 +906,9 @@ struct Manifest<Content = Vec<u8>> {
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     dismissed_skill_updates: BTreeMap<String, String>,
+    /// Servers that may hold a key, shared by name only. No value or hash.
+    #[serde(default, skip_serializing_if = "key_shares::KeyState::is_empty")]
+    keys: key_shares::KeyState,
 }
 
 impl Manifest {
@@ -954,6 +973,7 @@ impl Manifest {
             scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
             dismissed_skill_updates: BTreeMap::new(),
+            keys: key_shares::KeyState::default(),
         }
     }
 }
@@ -1598,12 +1618,13 @@ impl Setup {
 
     fn recover(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<Option<RulesSyncReport>> {
         self.recover_pending(root, manifest)?;
+        self.claim_key_intents(root, manifest)?;
         if manifest.extension_paths.is_empty() {
             return Ok(None);
         }
         let mut result =
             report("Rolled back the interrupted tool addition. Earlier tools are still managed");
-        self.restore_deliveries(root, manifest, &mut result, true)?;
+        self.restore_deliveries(root, manifest, &mut result, true, &BTreeSet::new())?;
         let pending: BTreeSet<_> = manifest.pending.iter().map(|op| &op.path).collect();
         manifest.extension_paths.retain(|path| {
             if pending.contains(path) || manifest.delivered.contains_key(path) {
@@ -1963,6 +1984,7 @@ impl Setup {
         manifest.adopted = false;
         manifest.settings_batch = None;
         let mut result = report("Restored the managed files from the local setup backup");
+        let (in_place, kept) = self.restore_key_files(&root, &mut manifest, &mut result)?;
         if !manifest.settings_only {
             let (written, blocked) = crate::rulesync_checkout::refresh(
                 self,
@@ -1974,7 +1996,7 @@ impl Setup {
             result.written.extend(written);
             result.extend_blocks(Code::CheckoutNeedsReview, blocked);
         }
-        self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
+        self.restore_deliveries(&root, &mut manifest, &mut result, false, &in_place)?;
         for (path, original) in &manifest.backup {
             if *original == Snapshot::Absent
                 || manifest.delivered.contains_key(path)
@@ -2028,6 +2050,9 @@ impl Setup {
             result.message =
                 "Some paths could not be restored. The backup is still available".into();
         }
+        if !kept.is_empty() {
+            result.message = format!("{}.\n{}", result.message, kept.join("\n"));
+        }
         Ok(result)
     }
 
@@ -2037,9 +2062,10 @@ impl Setup {
         manifest: &mut Manifest,
         result: &mut RulesSyncReport,
         extension_only: bool,
+        in_place: &BTreeSet<PathBuf>,
     ) -> Result<()> {
         let selected = |manifest: &Manifest, path: &Path| {
-            !extension_only || manifest.extension_paths.contains(path)
+            (!extension_only || manifest.extension_paths.contains(path)) && !in_place.contains(path)
         };
         result.extend_blocks(
             Code::RecoveryNeeded,
@@ -2443,6 +2469,7 @@ impl Setup {
                     "A tool update was interrupted. Open Wenlan to finish or undo it.",
                 ));
             }
+            self.claim_key_intents(&root, &mut manifest)?;
             None
         } else {
             self.recover(&root, &mut manifest)?
@@ -5757,13 +5784,19 @@ mod tests {
                 |root, manifest| f.sync_review(root, manifest),
             )
             .unwrap();
-        assert!(reviewed
-            .blocked
-            .iter()
-            .any(|reason| reason.contains(".cursor/mcp.json")
-                && reason.contains("possible credentials")));
+        // The Cursor file holds other text that may be a key, so the shared server is
+        // written into it as one entry and the file is never copied whole.
+        assert!(
+            reviewed
+                .written
+                .iter()
+                .any(|path| path == ".cursor/mcp.json"),
+            "{reviewed:?}"
+        );
+        let cursor_now = fs::read_to_string(&cursor).unwrap();
+        assert!(cursor_now.contains("\"after\""), "{cursor_now}");
+        assert!(cursor_now.contains("\"password\":\"synthetic-sentinel-other\""));
         assert_eq!(fs::read_to_string(&claude).unwrap(), safe_edit);
-        assert_eq!(fs::read_to_string(&cursor).unwrap(), cursor_original);
         assert!(fs::read_to_string(&codex).unwrap().contains("after"));
         assert!(!contains_sentinel(&f.setup.data));
         assert!(f.setup.restore().unwrap().blocked.is_empty());
@@ -11006,6 +11039,7 @@ mod tests {
                 confirmed_plan_id: None,
                 token: String::new(),
                 home: Some(other),
+                include_keys: false,
             })
             .unwrap_err();
         assert!(error.to_string().contains("different tool homes"));
@@ -12644,6 +12678,7 @@ mod tests {
             token: plan.token.clone(),
             home: Some(home.clone()),
             confirmed_plan_id: Some(plan.plan_id.clone()),
+            include_keys: false,
         };
         validate_confirmed_adoption(&request, &plan).unwrap();
         let report = f
@@ -12690,6 +12725,7 @@ mod tests {
             token: plan.token.clone(),
             home: Some(home.clone()),
             confirmed_plan_id: None,
+            include_keys: false,
         };
         assert!(validate_confirmed_adoption(&request, &plan).is_err());
         request.confirmed_plan_id = Some("wrong".into());

@@ -12,7 +12,7 @@ use wenlan_core::rulesync_personal::personal_target;
 use wenlan_core::rulesync_personal::{check_delivery_paths, fingerprint, DeliveryWorktrees};
 use wenlan_core::rulesync_settings::personal::{
     enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Feature, Key,
-    Location, RecordedEntry,
+    Location, RecordedEntry, Refusal,
 };
 use wenlan_types::rulesync::{
     PullbackAction, PullbackCard, PullbackDecision, PullbackKind, RulesSetupCode as Code,
@@ -177,13 +177,17 @@ pub(super) fn enroll(manifest: &mut Manifest, source: Source) {
     }
 }
 
-struct LiveFile {
-    snapshot: Snapshot,
-    doc: Document,
-    safe: bool,
+pub(super) struct LiveFile {
+    pub(super) snapshot: Snapshot,
+    pub(super) doc: Document,
+    pub(super) safe: bool,
 }
 
-fn read(home: &Path, root: &FileRoot, location: &Location) -> Result<LiveFile, &'static str> {
+pub(super) fn read(
+    home: &Path,
+    root: &FileRoot,
+    location: &Location,
+) -> Result<LiveFile, &'static str> {
     check_delivery_paths(home, [location.path.as_path()])
         .map_err(|_| "the file aliases the shared harness or its path is unsafe")?;
     let snapshot = root
@@ -209,11 +213,28 @@ fn read(home: &Path, root: &FileRoot, location: &Location) -> Result<LiveFile, &
     })
 }
 
-fn snapshot_bytes(snapshot: &Snapshot) -> Option<&[u8]> {
+pub(super) fn snapshot_bytes(snapshot: &Snapshot) -> Option<&[u8]> {
     match snapshot {
         Snapshot::File { bytes, .. } => Some(bytes),
         _ => None,
     }
+}
+
+/// The entries Wenlan changed in a file, newest first, with their receipts.
+pub(super) fn restore_changes(manifest: &Manifest, path: &Path) -> Vec<(Key, RecordedEntry)> {
+    manifest
+        .personal_settings
+        .get(path)
+        .into_iter()
+        .flatten()
+        .rev()
+        .filter_map(|entry| {
+            Some((
+                entry.key.clone(),
+                entry.receipt.clone().filter(|record| record.changed())?,
+            ))
+        })
+        .collect()
 }
 
 pub(super) fn restore_operation(
@@ -223,19 +244,7 @@ pub(super) fn restore_operation(
     path: &Path,
     original: &Snapshot,
 ) -> Result<Option<Pending>> {
-    let changes = manifest
-        .personal_settings
-        .get(path)
-        .into_iter()
-        .flatten()
-        .rev()
-        .filter_map(|entry| {
-            Some((
-                &entry.key,
-                entry.receipt.as_ref().filter(|record| record.changed())?,
-            ))
-        })
-        .collect::<Vec<_>>();
+    let changes = restore_changes(manifest, path);
     if changes.is_empty() {
         return Ok(None);
     }
@@ -251,11 +260,13 @@ pub(super) fn restore_operation(
         "the settings path changed spelling"
     );
     let live = read(home, root, location).map_err(anyhow::Error::msg)?;
+    // A file that holds a key is restored entry by entry before this
+    // journaled restore runs (`restore_key_files`), so it never gets here.
     ensure!(live.safe, "the settings file contains possible credentials");
     let mut bytes = snapshot_bytes(&live.snapshot)
         .context("the settings file is missing")?
         .to_vec();
-    for (key, receipt) in changes {
+    for (key, receipt) in &changes {
         location.restore_entry(&mut bytes, key, receipt)?;
     }
     let doc = location.document(Some(&bytes))?;
@@ -277,13 +288,13 @@ pub(super) fn restore_operation(
     }))
 }
 
-struct View {
-    files: Vec<(Location, Result<LiveFile, &'static str>)>,
-    enrolled: BTreeSet<PathBuf>,
+pub(super) struct View {
+    pub(super) files: Vec<(Location, Result<LiveFile, &'static str>)>,
+    pub(super) enrolled: BTreeSet<PathBuf>,
 }
 
 impl View {
-    fn read(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Self> {
+    pub(super) fn read(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Self> {
         let mut catalog = Catalog::read(home)?;
         catalog.retain_managed_locations(manifest.personal_settings.keys().map(PathBuf::as_path));
         let mut tools: BTreeSet<_> = manifest
@@ -358,7 +369,11 @@ struct Proposal {
     blocked: Vec<String>,
 }
 
-fn managed_entry<'a>(manifest: &'a Manifest, path: &Path, key: &Key) -> Option<&'a Managed> {
+pub(super) fn managed_entry<'a>(
+    manifest: &'a Manifest,
+    path: &Path,
+    key: &Key,
+) -> Option<&'a Managed> {
     manifest
         .personal_settings
         .get(path)?
@@ -374,7 +389,7 @@ fn label(state: &Managed) -> String {
         .map_or_else(|| "personal setting".into(), Entry::label)
 }
 
-fn reserved(manifest: &Manifest, path: &Path) -> bool {
+pub(super) fn reserved(manifest: &Manifest, path: &Path) -> bool {
     manifest.recovery_issues.contains_key(path)
         || manifest.pending.iter().any(|pending| pending.path == path)
         || manifest
@@ -446,8 +461,12 @@ fn proposal(
                 }
             };
             let display = to.display();
-            if !file.safe || reserved(manifest, &to.path) {
-                blocked.push(format!("{display}: {name} cannot be delivered while the file contains possible credentials or has an unfinished write."));
+            // A file that also holds a key gets this entry on its own, so
+            // only an unfinished write holds the delivery back.
+            if reserved(manifest, &to.path) {
+                blocked.push(format!(
+                    "{display}: {name} cannot be delivered while the file has an unfinished write."
+                ));
                 continue;
             }
             let current = file.doc.entry(&wanted.key);
@@ -599,9 +618,11 @@ pub(super) struct SettingShares {
     /// (tool id, item, reason)
     pub(super) stays: Vec<(&'static str, String, String)>,
     pub(super) already_there: usize,
+    /// Servers that may hold a key, shared only with the person's second yes.
+    pub(super) keys: super::key_shares::KeyGroup,
 }
 
-fn tool_name(id: &str) -> &'static str {
+pub(super) fn tool_name(id: &str) -> &'static str {
     personal_target(id).map_or("this tool", |target| target.tool.display_name())
 }
 
@@ -656,19 +677,23 @@ impl Setup {
             let Ok(file) = file else {
                 continue;
             };
-            for (number, feature, literal_key) in file.doc.refused_entries(location.tool) {
-                if feature == Feature::Mcp {
-                    shares.stays.push((
-                        location.tool,
-                        format!("MCP server (entry {number} in {})", location.display()),
-                        if literal_key {
-                            "has a key written in it; move the key to an environment variable to share it"
-                        } else {
-                            "it may contain credentials or unsafe text, so it is not copied"
-                        }
-                        .into(),
-                    ));
+            let enrolled = view.enrolled.contains(&location.path);
+            for (number, entry, refusal) in file.doc.refused_servers(location.tool) {
+                // Servers that may hold a key in a managed tool form the key
+                // group; a copy Wenlan made is not listed again.
+                let reason = match refusal {
+                    Refusal::MayHoldKey if enrolled => continue,
+                    Refusal::MayHoldKey => "it may contain a key and its tool is not managed",
+                    Refusal::Unsafe(reason) => reason,
+                };
+                if manifest.keys.covers(&location.path, &entry.key) {
+                    continue;
                 }
+                shares.stays.push((
+                    location.tool,
+                    format!("MCP server (entry {number} in {})", location.display()),
+                    reason.into(),
+                ));
             }
             let Some(managed) = manifest.personal_settings.get(&location.path) else {
                 continue;
@@ -763,6 +788,8 @@ impl Setup {
                 }
             }
         }
+        let taken = wanted.keys().cloned().collect();
+        shares.keys = super::key_shares::plan(&view, manifest, &mut worktrees, &taken)?;
         for (_, mut candidates) in wanted {
             let first = candidates.remove(0);
             if candidates
@@ -826,6 +853,7 @@ impl Setup {
         let view = View::read(&self.home, root, manifest)?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
         let mut operations = Vec::new();
+        let mut direct = Vec::new();
         let mut advanced = Vec::new();
         for (location, file) in &view.files {
             let path = &location.path;
@@ -839,7 +867,24 @@ impl Setup {
                     continue;
                 }
             };
-            result.extend_blocks(Code::ReviewNeeded, file.doc.refusal_notices(location));
+            // A server the person shared, and its copies, are not skipped.
+            let shared: BTreeSet<usize> = file
+                .doc
+                .refused_servers(location.tool)
+                .filter(|(_, entry, _)| manifest.keys.covers(path, &entry.key))
+                .map(|(number, ..)| number)
+                .collect();
+            result.extend_blocks(
+                Code::ReviewNeeded,
+                file.doc
+                    .refused_entries(location.tool)
+                    .zip(file.doc.refusal_notices(location))
+                    .filter(|((number, ..), _)| !shared.contains(number))
+                    .map(|(_, notice)| notice),
+            );
+            // A file that holds, or will hold, a key is never copied whole:
+            // each entry is written in place with its own receipt.
+            let in_place = !file.safe || manifest.keys.targets(path);
             let Some(managed) = manifest.personal_settings.get(path) else {
                 continue;
             };
@@ -894,10 +939,6 @@ impl Setup {
                         );
                         continue;
                     }
-                    if !file.safe {
-                        result.block(Code::ReviewNeeded, format!("{display}: {label} stayed in place because this file cannot be backed up without copying possible credentials."));
-                        continue;
-                    }
                     let previous = next.as_deref().or_else(|| snapshot_bytes(&file.snapshot));
                     match location.edit(previous, wanted).and_then(|bytes| {
                         let receipt = location.record_write(
@@ -927,6 +968,26 @@ impl Setup {
                         proposal(&view, manifest, &mut worktrees, location, state, current)?;
                     result.proposals.push(proposal.card);
                 }
+            }
+            if let (Some(bytes), true) = (&next, in_place) {
+                let clear = location.document(Some(bytes)).is_ok_and(|doc| {
+                    updates
+                        .iter()
+                        .all(|update| doc.receipt_clear(location.tool, &update.receipt))
+                });
+                if !clear {
+                    result.block(
+                        Code::ReviewNeeded,
+                        format!("{display}: a setting stayed in place because its restore record could include text from a server that may hold a key."),
+                    );
+                    continue;
+                }
+                if let Some(reason) = worktrees.unreviewed(path, &manifest.worktree_writes)? {
+                    result.block(Code::GitUnreviewed, format!("{display}: {reason}"));
+                    continue;
+                }
+                direct.push((path.clone(), file.snapshot.clone(), bytes.clone(), updates));
+                continue;
             }
             if let Some(bytes) = next {
                 // Check the assembled snapshot too, before any part of it
@@ -967,6 +1028,22 @@ impl Setup {
         }
         if !advanced.is_empty() {
             self.save(manifest)?;
+        }
+        for (path, seen, bytes, updates) in direct {
+            let desired = with_bytes(&seen, bytes);
+            if root.apply(&path, &seen, &desired, false)? == ApplyOutcome::Applied {
+                settle(manifest, &path, updates);
+                self.save(manifest)?;
+                result.written.push(path.display().to_string());
+            } else {
+                result.block(
+                    Code::ReviewNeeded,
+                    format!(
+                        "{} changed while applying a personal setting.",
+                        path.display()
+                    ),
+                );
+            }
         }
         for (path, outcome) in self.sync_batch(root, manifest, operations, result)? {
             if outcome == ApplyOutcome::Applied {

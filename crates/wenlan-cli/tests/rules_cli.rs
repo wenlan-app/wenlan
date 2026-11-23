@@ -807,8 +807,10 @@ fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, S
         "plan_id": "0123456789ab",
         "token": "fixture-token",
         "tools": [{"tool": "Codex", "skills": [], "commands": ["hello"], "subagents": [], "mcp_servers": ["docs"]}],
-        "stays": [{"tool": "Claude Code", "item": "MCP server (entry 1 in .claude.json)", "reason": "has a key written in it; move the key to an environment variable to share it"}],
-        "already_there": 2
+        "stays": [{"tool": "Claude Code", "item": "MCP server (entry 1 in .claude.json)", "reason": "its name may contain a key"}],
+        "already_there": 2,
+        "key_servers": ["billing", "search"],
+        "key_tools": ["Codex", "Cursor"]
     });
     let (base, requests) = spawn_stub(vec![
         ("GET /api/health", "{}".into()),
@@ -840,9 +842,8 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"plan_id\": \"0123456789ab\""))
-        .stdout(predicate::str::contains(
-            "move the key to an environment variable",
-        ));
+        .stdout(predicate::str::contains("its name may contain a key"))
+        .stdout(predicate::str::contains("\"key_servers\""));
     assert!(shared(&requests).is_none());
 
     // The person sees the same plan in words.
@@ -855,8 +856,12 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .stdout(predicate::str::contains("  + command hello"))
         .stdout(predicate::str::contains("2 items already in every tool"))
         .stdout(predicate::str::contains(
-            "Stays in Claude Code: MCP server (entry 1 in .claude.json): has a key written in it",
+            "Stays in Claude Code: MCP server (entry 1 in .claude.json): its name may contain a key",
         ))
+        .stdout(predicate::str::contains(
+            "These 2 servers may contain a key. Sharing copies the key into: Codex, Cursor.",
+        ))
+        .stdout(predicate::str::contains("  ? MCP server billing"))
         .stdout(predicate::str::contains(
             "wenlan rules share --confirm 0123456789ab",
         ));
@@ -883,6 +888,8 @@ fn rules_share_in_session_applies_the_confirmed_plan() {
         serde_json::from_str(&shared(&requests).unwrap()).unwrap();
     assert_eq!(request.confirmed_plan_id.as_deref(), Some("0123456789ab"));
     assert_eq!(request.token, "fixture-token");
+    // The AI confirm route never asks for the servers that may hold a key.
+    assert!(!request.include_keys);
 }
 
 #[test]

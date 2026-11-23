@@ -47,6 +47,10 @@ pub enum RulesSetupCmd {
         /// Confirm the plan shown to the person.
         #[arg(long, conflicts_with = "dry_run")]
         confirm: Option<String>,
+        /// Also offer the MCP servers that may contain a key. You are still
+        /// asked to type yes; an AI tool cannot share them.
+        #[arg(long, conflicts_with_all = ["dry_run", "confirm"])]
+        include_keys: bool,
     },
     /// Status of the personal setup in each tool.
     #[command(hide = !rulesync_personal::enabled())]
@@ -233,6 +237,7 @@ async fn run_inner(
                     token: plan.token,
                     confirmed_plan_id: confirmed.clone(),
                     home: Some(expected.home),
+                    include_keys: false,
                 })
                 .await?
         }
@@ -241,13 +246,35 @@ async fn run_inner(
         } => {
             let expected = home_request()?;
             let plan = client.preview_share_as_person(&expected).await?;
+            let mut include_keys = false;
             if let Some(id) = confirmed {
                 ensure!(plan.plan_id == *id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
             } else {
                 // The person must see the same plan even with --quiet or --format json.
                 print!("{}", sharing_for_a_person(&plan));
-                if plan.tools.is_empty() || !confirm("Copy these items to the tools listed above?")?
+                if !plan.tools.is_empty()
+                    && !confirm("Copy these items to the tools listed above?")?
                 {
+                    return Ok(());
+                }
+                // Servers that may contain a key need their own typed yes.
+                if !plan.key_servers.is_empty() {
+                    let count = plan.key_servers.len();
+                    include_keys = confirm(&format!(
+                        "Also copy {} that may contain a key into {}?",
+                        if count == 1 {
+                            "this server".to_owned()
+                        } else {
+                            format!("these {count} servers")
+                        },
+                        plan.key_tools
+                            .iter()
+                            .map(|tool| one_line(tool))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))?;
+                }
+                if plan.tools.is_empty() && !include_keys {
                     return Ok(());
                 }
             }
@@ -256,6 +283,7 @@ async fn run_inner(
                     token: plan.token,
                     confirmed_plan_id: confirmed.clone(),
                     home: Some(expected.home),
+                    include_keys,
                 })
                 .await?
         }
@@ -516,6 +544,29 @@ fn sharing_for_a_person(plan: &SharingPlan) -> String {
         )
         .unwrap();
     }
+    if !plan.key_servers.is_empty() {
+        // Names and tools only; no value of these servers is ever shown.
+        let count = plan.key_servers.len();
+        writeln!(
+            &mut out,
+            "\n{} may contain a key. Sharing copies the key into: {}.",
+            if count == 1 {
+                "This server".to_owned()
+            } else {
+                format!("These {count} servers")
+            },
+            plan.key_tools
+                .iter()
+                .map(|tool| one_line(tool))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+        for name in &plan.key_servers {
+            writeln!(&mut out, "  ? MCP server {}", one_line(name)).unwrap();
+        }
+        out.push_str("Only you can share them, with a second yes in your own terminal.\n");
+    }
     if !plan.stays.is_empty() {
         out.push('\n');
         for stay in &plan.stays {
@@ -604,6 +655,7 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
             token: plan.token.clone(),
             confirmed_plan_id: Some(plan.plan_id.clone()).filter(|id| !id.is_empty()),
             home: Some(home),
+            include_keys: false,
         })
         .await?;
     ensure!(
@@ -853,6 +905,9 @@ fn status_for_a_person(status: &RulesSetupStatus) -> String {
         .unwrap();
     } else {
         out.push_str("No background check yet.\n");
+    }
+    for note in &status.notes {
+        writeln!(out, "{}", one_line(note)).unwrap();
     }
     for row in &status.tools {
         let state = match row.state {

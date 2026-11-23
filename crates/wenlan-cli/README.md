@@ -568,6 +568,7 @@ Options:
 
 - `--dry-run`: Preview what each tool would get.
 - `--confirm <CONFIRM>`: Confirm the plan shown to the person.
+- `--include-keys`: Also offer the MCP servers that may contain a key. You are still asked to type yes; an AI tool cannot share them.
 
 #### `wenlan rules status`
 

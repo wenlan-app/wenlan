@@ -101,6 +101,115 @@ pub(super) fn edit(
     }
 }
 
+/// Undo `edit`'s insertion of one named member at `path`, from its layout
+/// alone: the member, the separators that insertion added and, when that
+/// insertion created its parent as well, the parent. A member whose layout
+/// differs from what `edit` writes is refused.
+pub(super) fn remove(format: Format, bytes: &[u8], path: &[&str]) -> Result<Vec<u8>> {
+    match format {
+        Format::Json => remove_json(&json_tree(bytes)?, bytes, path),
+        Format::Toml => {
+            let text = std::str::from_utf8(bytes)?;
+            let mut doc = text
+                .parse::<DocumentMut>()
+                .map_err(|_| anyhow::anyhow!("invalid TOML settings"))?;
+            remove_toml(doc.as_item_mut(), path)?;
+            Ok(keep_toml_line_endings(text, doc.to_string())?.into_bytes())
+        }
+        Format::CommandRules => bail!("command rules have no named entries"),
+    }
+}
+
+/// Remove the member at `path`. A parent `edit` created as an inline table
+/// goes with its last member, and a table header `edit` made explicit by
+/// adding a value under it becomes implicit again.
+fn remove_toml(item: &mut Item, path: &[&str]) -> Result<bool> {
+    let (first, rest) = path.split_first().context("missing settings path")?;
+    let table = item
+        .as_table_like_mut()
+        .context("settings parent is not a table")?;
+    if rest.is_empty() {
+        table
+            .remove(first)
+            .context("the settings entry is missing")?;
+    } else {
+        let child = table
+            .get_mut(first)
+            .context("the settings parent is missing")?;
+        if remove_toml(child, rest)? {
+            table.remove(first);
+        }
+    }
+    match item {
+        Item::Value(toml_edit::Value::InlineTable(table)) => Ok(table.is_empty()),
+        Item::Table(table) => {
+            if !table.iter().any(|(_, child)| child.is_value()) {
+                table.set_implicit(true);
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn remove_json(tree: &Node, bytes: &[u8], path: &[&str]) -> Result<Vec<u8>> {
+    let (name, parents) = path.split_last().context("missing settings path")?;
+    let parts = parents.iter().map(|key| Part::Key(key)).collect::<Vec<_>>();
+    let parent = tree
+        .node_at(&parts)
+        .context("the settings parent is missing")?;
+    let Items::Object(members) = &parent.items else {
+        bail!("settings parent has a different shape");
+    };
+    let index = members
+        .iter()
+        .position(|(key, _)| key == name)
+        .context("the settings entry is missing")?;
+    let value = &members[index].1.span;
+    let depth = parents.len();
+    let indent = "  ".repeat(depth + 1);
+    let outer = "  ".repeat(depth);
+    let key = serde_json::to_string(name)?;
+    let lead = format!("\n{indent}{key}: ");
+    if !bytes[..value.start].ends_with(lead.as_bytes()) {
+        // A parent created by the same insertion holds only this member,
+        // written compactly.
+        let compact = [b"{", key.as_bytes(), b":", &bytes[value.clone()], b"}"].concat();
+        ensure!(
+            members.len() == 1 && !parents.is_empty() && bytes[parent.span.clone()] == compact,
+            "the entry layout changed"
+        );
+        return remove_json(tree, bytes, parents);
+    }
+    let start = value.start - lead.len();
+    let mut next = bytes.to_vec();
+    if index + 1 == members.len() {
+        let close = parent.span.end - 1;
+        ensure!(
+            bytes[value.end..close] == *format!("\n{outer}").as_bytes(),
+            "the entry layout changed"
+        );
+        next.drain(start..close);
+        if let Some((_, previous)) = index.checked_sub(1).map(|index| &members[index]) {
+            ensure!(
+                next.get(previous.span.end) == Some(&b','),
+                "the entry layout changed"
+            );
+            next.remove(previous.span.end);
+        }
+    } else {
+        // A later insertion added a comma after this member and kept the
+        // closing layout this member's insertion wrote.
+        let between = format!(",\n{outer}\n{indent}");
+        ensure!(
+            bytes[value.end..].starts_with(between.as_bytes()),
+            "the entry layout changed"
+        );
+        next.drain(start..value.end + 2 + outer.len());
+    }
+    Ok(next)
+}
+
 // toml_edit's encoder normalizes CRLF even in untouched decoration.
 // Apply its changes to the original lines and keep their individual endings.
 fn keep_toml_line_endings(original: &str, rendered: String) -> Result<String> {

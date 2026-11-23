@@ -3,6 +3,7 @@
 //! server to the other enrolled tools that support it. The writes use the
 //! same journal, backup and restore path as adding a tool to the setup.
 
+use super::key_shares::KeyShare;
 use super::personal_files::{choose_destination, file_bytes};
 use super::personal_settings::{enroll_shares, SettingAddition};
 use super::*;
@@ -25,6 +26,8 @@ pub(super) struct Share {
     operations: Vec<Pending>,
     skills: Vec<SkillAddition>,
     settings: Vec<SettingAddition>,
+    /// Servers that may hold a key; written only with the person's yes.
+    keys: Vec<KeyShare>,
     worktree_writes: BTreeMap<PathBuf, PathBuf>,
     pub(super) plan: SharingPlan,
 }
@@ -32,6 +35,40 @@ pub(super) struct Share {
 impl Share {
     fn is_empty(&self) -> bool {
         self.operations.is_empty() && self.settings.is_empty()
+    }
+}
+
+/// The person's answer to the second question, about servers that may
+/// hold a key. An AI caller is never asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyAnswer {
+    Yes,
+    No,
+    NotAsked,
+}
+
+impl KeyAnswer {
+    /// Servers that may hold a key travel only on the person's own second
+    /// yes: never on the AI confirm route, never for a request that names
+    /// a session or an agent.
+    pub(super) fn of(ai_caller: bool, request: &AdoptRequest) -> Self {
+        if ai_caller || request.confirmed_plan_id.is_some() {
+            Self::NotAsked
+        } else if request.include_keys {
+            Self::Yes
+        } else {
+            Self::No
+        }
+    }
+}
+
+fn keys_left_message(count: usize, answer: KeyAnswer) -> String {
+    let servers = if count == 1 { "server" } else { "servers" };
+    let line = format!("Left {count} {servers} that may contain a key where they are.");
+    if answer == KeyAnswer::NotAsked {
+        format!("{line} Only the person can share those, by running `wenlan rules share` in their own terminal.")
+    } else {
+        line
     }
 }
 
@@ -150,31 +187,54 @@ impl Setup {
         Ok(self.plan_share(&root, &manifest, &render_skills)?.plan)
     }
 
-    pub(super) fn share(&self, request: &AdoptRequest) -> Result<RulesSyncReport> {
+    /// `keys` is true only for the person's own second yes; the route
+    /// decides it from the request (see `execute`).
+    pub(super) fn share(&self, request: &AdoptRequest, keys: KeyAnswer) -> Result<RulesSyncReport> {
         if let Some(home) = &request.home {
             self.check_adoption_home(home)?;
         }
         let session = RenderSession::new(&self.binary);
-        self.share_using(&request.token, |renderer, skills| {
+        self.share_with_keys(&request.token, keys, |renderer, skills| {
             self.render_skills(&session, renderer, skills)
         })
     }
 
+    #[cfg(test)]
     pub(super) fn share_using(
         &self,
         token: &str,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<RulesSyncReport> {
+        self.share_with_keys(token, KeyAnswer::No, render_skills)
+    }
+
+    pub(super) fn share_with_keys(
+        &self,
+        token: &str,
+        answer: KeyAnswer,
+        render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    ) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let mut manifest = self.share_manifest()?;
         let root = FileRoot::open_home(&self.home)?;
+        self.claim_key_intents(&root, &mut manifest)?;
         let share = self.plan_share(&root, &manifest, &render_skills)?;
         ensure!(
             share.plan.token == token,
             "The setup changed since that preview. Run `wenlan rules share --dry-run` again."
         );
-        if share.is_empty() {
-            return Ok(report(NOTHING_TO_SHARE));
+        let (keys, left) = if answer == KeyAnswer::Yes {
+            (share.keys.clone(), 0)
+        } else {
+            (Vec::new(), share.plan.key_servers.len())
+        };
+        let left = (left != 0).then(|| keys_left_message(left, answer));
+        if share.is_empty() && keys.is_empty() {
+            let mut result = report(NOTHING_TO_SHARE);
+            if let Some(left) = left {
+                result.message = format!("{NOTHING_TO_SHARE}.\n{left}");
+            }
+            return Ok(result);
         }
         let Share {
             operations,
@@ -184,11 +244,14 @@ impl Setup {
             ..
         } = share;
         let mut result = report("Shared existing items with the other tools");
-        let outcomes = self
-            .run_batch(&root, &mut manifest, operations, BatchMode::Extend, None)
-            .with_context(|| {
-                format!("Sharing stopped. Run `{SYNC_COMMAND}` to roll back the copies")
-            })?;
+        let outcomes = if operations.is_empty() {
+            Vec::new()
+        } else {
+            self.run_batch(&root, &mut manifest, operations, BatchMode::Extend, None)
+                .with_context(|| {
+                    format!("Sharing stopped. Run `{SYNC_COMMAND}` to roll back the copies")
+                })?
+        };
         for (path, status) in outcomes {
             ensure!(
                 status == ApplyOutcome::Applied,
@@ -221,6 +284,15 @@ impl Setup {
             .map(|addition| addition.path().to_owned())
             .collect();
         enroll_shares(&mut manifest, settings);
+        // Files about to hold a key take their safe additions in place too.
+        let at = chrono::Utc::now().timestamp();
+        manifest
+            .keys
+            .intents
+            .extend(keys.iter().cloned().map(|mut share| {
+                share.at = at;
+                share
+            }));
         self.save(&manifest)?;
         if !destinations.is_empty() {
             let mut written = report("");
@@ -235,6 +307,14 @@ impl Setup {
                     result.blocked_codes.push(code);
                 }
             }
+        }
+        if !keys.is_empty() {
+            manifest.keys.intents.clear();
+            manifest.keys.notes.clear();
+            self.apply_key_shares(&root, &mut manifest, keys, &mut result)?;
+        }
+        if let Some(left) = left {
+            result.message = format!("{}.\n{left}", result.message);
         }
         Ok(result)
     }
@@ -263,9 +343,13 @@ impl Setup {
             &mut operations,
         )?;
         self.plan_file_shares(root, manifest, &enrolled, &mut listing, &mut operations)?;
-        let settings = self.plan_setting_shares(root, manifest)?;
-        listing.already_there += settings.already_there;
-        for (tool, item, reason) in settings.stays {
+        let mut settings = self.plan_setting_shares(root, manifest)?;
+        listing.already_there += settings.already_there + settings.keys.already_there;
+        for (tool, item, reason) in settings
+            .stays
+            .into_iter()
+            .chain(std::mem::take(&mut settings.keys.stays))
+        {
             listing.stay(tool, item, reason);
         }
         for addition in &settings.additions {
@@ -292,11 +376,13 @@ impl Setup {
                 names.dedup();
             }
         }
+        // The key group enters the token by place and name only.
         let token = fingerprint(&(
             SHARE_TOKEN_VERSION,
             &operations,
             &skills,
             &settings.additions,
+            &settings.keys.shares,
             &worktree_writes,
             &listing.stays,
             listing.already_there,
@@ -312,7 +398,10 @@ impl Setup {
                 tools: listing.tools.into_values().collect(),
                 stays: listing.stays,
                 already_there: listing.already_there,
+                key_servers: settings.keys.servers(),
+                key_tools: settings.keys.tools.clone(),
             },
+            keys: settings.keys.shares,
         })
     }
 
@@ -741,8 +830,11 @@ mod tests {
     const COMMAND: &str = "---\ndescription: Greet.\n---\nSay hello.\n";
     const CODEX_CONFIG: &str = "# keep comment\n[mcp_servers.safe]\ncommand = 'safe-server'\n\n[mcp_servers.held]\nurl = 'https://example.invalid/mcp'\nhttp_headers = { 'X-Custom' = 'synthetic-sentinel-header' }\n";
 
+    /// Paths with their bytes (none for a folder) and permissions.
+    type Tree = BTreeMap<PathBuf, (Option<Vec<u8>>, u32)>;
+
     /// Every path under the home with its bytes and permissions.
-    fn tree(home: &Path) -> BTreeMap<PathBuf, (Option<Vec<u8>>, u32)> {
+    fn tree(home: &Path) -> Tree {
         fn walk(home: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, (Option<Vec<u8>>, u32)>) {
             for entry in fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -823,16 +915,13 @@ mod tests {
         assert_eq!(codex.commands, ["hello"]);
         assert!(codex.skills.is_empty() && codex.mcp_servers.is_empty());
         assert_eq!(plan.tools.len(), 2, "{plan:?}");
-        assert!(
-            plan.stays.iter().any(|stay| stay.tool == "Codex"
-                && stay.item.contains("MCP server")
-                && stay
-                    .reason
-                    .contains("move the key to an environment variable")),
-            "{plan:?}"
-        );
+        // The held server may contain a key: the preview names it and the tools it
+        // would reach, never its value.
+        assert_eq!(plan.key_servers, ["held"]);
+        assert_eq!(plan.key_tools, ["Claude Code"]);
+        assert!(plan.stays.is_empty(), "{plan:?}");
         let shown = serde_json::to_string(&plan).unwrap();
-        assert!(!shown.contains("synthetic-sentinel") && !shown.contains("held"));
+        assert!(!shown.contains("synthetic-sentinel"));
         assert_eq!(tree(&home), adopted, "a preview writes nothing");
 
         let stale = f.setup.share_using("stale", fixture_skill_renderer);
@@ -876,7 +965,13 @@ mod tests {
             .setup
             .share_using(&again.token, fixture_skill_renderer)
             .unwrap();
-        assert_eq!(rerun.message, NOTHING_TO_SHARE);
+        assert!(
+            rerun.message.starts_with(NOTHING_TO_SHARE)
+                && rerun
+                    .message
+                    .contains("Left 1 server that may contain a key"),
+            "{rerun:?}"
+        );
         assert_eq!(tree(&home), after);
 
         let status = f.setup.status().unwrap();
@@ -1080,5 +1175,324 @@ mod tests {
             .unwrap();
         assert_eq!(codex.counts.mcp, 1, "{status:?}");
         assert_ne!(codex.state, RulesToolState::NotManaged);
+    }
+
+    const KEY_SECRET: &str = "sk-keyFixtureSentinel0123456789abcdef";
+    const EMPTY_CLAUDE: &str = "{ \"mcpServers\": {} }\n";
+
+    fn keyed_codex() -> String {
+        format!(
+            "[mcp_servers.safe]\ncommand = 'safe-server'\n\n\
+             [mcp_servers.keyed]\ncommand = 'keyed-server'\nenv = {{ 'API_TOKEN' = '{KEY_SECRET}' }}\n"
+        )
+    }
+
+    /// A Codex file with one safe server and one that may hold a key, and an
+    /// empty Claude Code file. Returns the home before adoption.
+    fn key_fixture() -> (Fixture, Tree) {
+        let f = Fixture::new();
+        write(
+            &f,
+            &[
+                (".codex/config.toml", &keyed_codex()),
+                (".claude.json", EMPTY_CLAUDE),
+            ],
+        );
+        let before = tree(&f.setup.home);
+        adopt(&f);
+        (f, before)
+    }
+
+    fn share_keys(f: &Fixture, answer: KeyAnswer) -> RulesSyncReport {
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        f.setup
+            .share_with_keys(&plan.token, answer, fixture_skill_renderer)
+            .unwrap()
+    }
+
+    fn data_holds_key(f: &Fixture) -> bool {
+        f.setup.data.exists() && holds(&f.setup.data, KEY_SECRET.as_bytes())
+    }
+
+    #[test]
+    fn rulesync_share_previews_key_servers_by_name_and_tool_only() {
+        let (f, _) = key_fixture();
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(plan.key_servers, ["keyed"]);
+        assert_eq!(plan.key_tools, ["Claude Code"]);
+        assert_eq!(tool(&plan, "Claude Code").mcp_servers, ["safe"]);
+        let shown = serde_json::to_string(&plan).unwrap();
+        assert!(
+            !shown.contains(KEY_SECRET) && !shown.contains("API_TOKEN"),
+            "{shown}"
+        );
+        assert!(!data_holds_key(&f));
+    }
+
+    #[test]
+    fn rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it() {
+        let (f, before) = key_fixture();
+        let claude = f.setup.home.join(".claude.json");
+        let shared = share_keys(&f, KeyAnswer::Yes);
+        assert!(shared.blocked.is_empty(), "{shared:?}");
+        let text = fs::read_to_string(&claude).unwrap();
+        assert!(
+            text.contains("safe-server") && text.contains("keyed-server"),
+            "{text}"
+        );
+        assert!(text.contains(KEY_SECRET));
+        assert!(!data_holds_key(&f), "the key reached the data folder");
+
+        let after = tree(&f.setup.home);
+        let synced = f.sync_with("");
+        assert!(
+            !synced
+                .blocked
+                .iter()
+                .any(|line| line.contains(".claude.json")),
+            "{synced:?}"
+        );
+        assert_eq!(tree(&f.setup.home), after, "a sync keeps the copy");
+        assert!(!data_holds_key(&f));
+        // Nothing is left to share, and the key server is not offered again.
+        let again = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert!(
+            again.key_servers.is_empty() && again.tools.is_empty(),
+            "{again:?}"
+        );
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(tree(&f.setup.home), before);
+        assert!(!data_holds_key(&f));
+    }
+
+    #[test]
+    fn rulesync_share_leaves_key_servers_on_no_and_shares_the_rest() {
+        let (f, _) = key_fixture();
+        let claude = f.setup.home.join(".claude.json");
+        let shared = share_keys(&f, KeyAnswer::No);
+        assert!(shared.blocked.is_empty(), "{shared:?}");
+        assert!(
+            shared
+                .message
+                .ends_with("Left 1 server that may contain a key where they are."),
+            "{shared:?}"
+        );
+        let text = fs::read_to_string(&claude).unwrap();
+        assert!(text.contains("safe-server"), "{text}");
+        assert!(!text.contains("keyed-server") && !text.contains(KEY_SECRET));
+        assert_eq!(
+            fs::read_to_string(f.setup.home.join(".codex/config.toml")).unwrap(),
+            keyed_codex()
+        );
+        // The key server is still there to share later.
+        let again = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(again.key_servers, ["keyed"]);
+    }
+
+    #[test]
+    fn rulesync_share_refuses_key_servers_for_an_ai_caller() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let request = |confirmed: Option<&str>| AdoptRequest {
+            confirmed_plan_id: confirmed.map(str::to_owned),
+            token: "token".into(),
+            home: None,
+            include_keys: true,
+        };
+        let mut session = HeaderMap::new();
+        session.insert(wenlan_types::SESSION_HEADER, HeaderValue::from_static("s1"));
+        let mut agent = HeaderMap::new();
+        agent.insert("x-agent-name", HeaderValue::from_static("codex"));
+        assert!(super::super::ai_caller(&session) && super::super::ai_caller(&agent));
+        assert!(!super::super::ai_caller(&HeaderMap::new()));
+        assert_eq!(KeyAnswer::of(true, &request(None)), KeyAnswer::NotAsked);
+        assert_eq!(
+            KeyAnswer::of(false, &request(Some("0123456789ab"))),
+            KeyAnswer::NotAsked
+        );
+        assert_eq!(KeyAnswer::of(false, &request(None)), KeyAnswer::Yes);
+
+        let (f, _) = key_fixture();
+        let shared = share_keys(&f, KeyAnswer::NotAsked);
+        assert!(
+            shared.message.contains(
+                "Left 1 server that may contain a key where they are. Only the person can share those, by running `wenlan rules share` in their own terminal."
+            ),
+            "{shared:?}"
+        );
+        let text = fs::read_to_string(f.setup.home.join(".claude.json")).unwrap();
+        assert!(text.contains("safe-server"));
+        assert!(!text.contains("keyed-server") && !text.contains(KEY_SECRET));
+    }
+
+    #[test]
+    fn rulesync_restore_keeps_a_key_copy_the_person_changed() {
+        let (f, before) = key_fixture();
+        let claude = f.setup.home.join(".claude.json");
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        // Share the safe server alone first to know the bytes without the copy.
+        f.setup
+            .share_with_keys(&plan.token, KeyAnswer::No, fixture_skill_renderer)
+            .unwrap();
+        let without_copy = fs::read(&claude).unwrap();
+        share_keys(&f, KeyAnswer::Yes);
+        let edited = fs::read_to_string(&claude)
+            .unwrap()
+            .replace("\"keyed-server\"", "\"keyed-server-edited\"");
+        assert!(edited.contains("keyed-server-edited"));
+        fs::write(&claude, &edited).unwrap();
+
+        let restored = f.setup.restore().unwrap();
+        assert!(
+            restored.message.contains(
+                "kept keyed in Claude Code: changed since sharing; remove it by hand if you don't want it"
+            ),
+            "{restored:?}"
+        );
+        // The kept copy sits next to the safe server Wenlan added, so that
+        // entry's recorded surroundings no longer match: it stays, with a
+        // plain way out, and nothing else in the file changes.
+        assert!(
+            restored
+                .blocked
+                .iter()
+                .any(|line| line.starts_with(".claude.json")
+                    && line.contains(
+                        "Remove the kept server, then run `wenlan rules restore` again."
+                    )),
+            "{restored:?}"
+        );
+        assert_eq!(fs::read_to_string(&claude).unwrap(), edited);
+        assert!(!data_holds_key(&f));
+
+        // Once the person removes the kept copy, restore finishes.
+        fs::write(&claude, &without_copy).unwrap();
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(tree(&f.setup.home), before);
+        assert!(!data_holds_key(&f));
+    }
+
+    #[test]
+    fn rulesync_interrupted_key_share_is_claimed_when_the_copy_landed() {
+        let (f, before) = key_fixture();
+        share_keys(&f, KeyAnswer::Yes);
+        // A crash after the write and before the receipt was saved.
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        manifest.keys.intents = std::mem::take(&mut manifest.keys.shares);
+        f.setup.save(&manifest).unwrap();
+        assert!(f
+            .setup
+            .status()
+            .unwrap()
+            .notes
+            .iter()
+            .any(|note| note.contains("was interrupted")));
+
+        // Restore claims the copy first, so it can take it out.
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(tree(&f.setup.home), before);
+        assert!(!data_holds_key(&f));
+    }
+
+    #[test]
+    fn rulesync_interrupted_key_share_is_dropped_when_the_copy_is_not_there() {
+        let (f, _) = key_fixture();
+        let claude = f.setup.home.join(".claude.json");
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let keys = f
+            .setup
+            .plan_share(&root, &manifest, &fixture_skill_renderer)
+            .unwrap()
+            .keys;
+        assert_eq!(keys.len(), 1);
+        // A crash after the intent was saved and before the write; then the
+        // person added their own server with that name.
+        manifest.keys.intents = keys;
+        f.setup.save(&manifest).unwrap();
+        let own = "{ \"mcpServers\": {\"keyed\":{\"command\":\"my-own\"}} }\n";
+        fs::write(&claude, own).unwrap();
+
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        f.setup.claim_key_intents(&root, &mut manifest).unwrap();
+        assert!(manifest.keys.intents.is_empty() && manifest.keys.shares.is_empty());
+        let status = f.setup.status().unwrap();
+        assert!(
+            status.notes.contains(
+                &"Left keyed in Claude Code as it is: an earlier share was interrupted.".to_owned()
+            ),
+            "{status:?}"
+        );
+        assert_eq!(fs::read_to_string(&claude).unwrap(), own);
+        f.setup.restore().unwrap();
+        assert_eq!(fs::read_to_string(&claude).unwrap(), own, "nothing deleted");
+    }
+
+    #[test]
+    fn rulesync_safe_server_shares_syncs_and_restores_in_a_file_with_a_key() {
+        let f = Fixture::new();
+        let home = f.setup.home.clone();
+        let claude = home.join(".claude.json");
+        let codex = home.join(".codex/config.toml");
+        let own = "{ \"mcpServers\": {\"mine\":{\"command\":\"mine\",\"env\":{\"API_TOKEN\":\"sk-otherFixture0123456789abcdef\"}}} }\n";
+        write(
+            &f,
+            &[
+                (
+                    ".codex/config.toml",
+                    "[mcp_servers.safe]\ncommand = 'safe-server'\n",
+                ),
+                (".claude.json", own),
+            ],
+        );
+        let before = tree(&home);
+        adopt(&f);
+        let shared = share_keys(&f, KeyAnswer::No);
+        assert!(shared.blocked.is_empty(), "{shared:?}");
+        let text = fs::read_to_string(&claude).unwrap();
+        assert!(
+            text.contains("safe-server") && text.contains("sk-otherFixture"),
+            "{text}"
+        );
+
+        // An edit to the shared server reaches the file that holds a key.
+        fs::write(&codex, "[mcp_servers.safe]\ncommand = 'safe-server-2'\n").unwrap();
+        let pull = f.sync_with("");
+        let card = pull
+            .proposals
+            .iter()
+            .find(|card| card.id.starts_with("setting-"))
+            .unwrap_or_else(|| panic!("{pull:?}"));
+        let reviewed = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: card.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        // Only the standing notice about Claude Code's own server remains.
+        assert!(
+            reviewed.written.iter().any(|path| path == ".claude.json")
+                && reviewed
+                    .blocked
+                    .iter()
+                    .all(|line| line.contains("skipped MCP server (entry 1)")),
+            "{reviewed:?}"
+        );
+        let text = fs::read_to_string(&claude).unwrap();
+        assert!(text.contains("safe-server-2"), "{text}");
+        assert!(!holds(&f.setup.data, b"sk-otherFixture"));
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(fs::read(&claude).unwrap(), own.as_bytes());
+        assert_eq!(tree(&home), before);
     }
 }

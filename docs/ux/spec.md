@@ -1478,15 +1478,14 @@ and wait for evidence that people need them.
   travels only when it passes the safety check and refers to keys through
   environment variables; Wenlan rewrites a reference into each tool's own
   syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`, Codex `env_vars`,
-  `env_http_headers` and `bearer_token_env_var`). A server with a key written
-  in it stays, with the reason "has a key written in it; move the key to an
-  environment variable to share it". Wenlan never moves the key itself and
-  never edits a shell profile. Only files Wenlan may write receive copies.
+  `env_http_headers` and `bearer_token_env_var`). A server that may hold a
+  key joins the key group of UX-SKILL-27 instead. Wenlan never edits a shell
+  profile. Only files Wenlan may write receive copies.
   The person types `yes`; an AI session shows the person
   `wenlan rules share --dry-run` and runs
   `wenlan rules share --confirm <plan id>` after they agree, and a plan id
-  from an older preview is refused. Copies go through the same backup as
-  adoption, so `wenlan rules restore` removes them. A second run says
+  from an older preview is refused. Other copies go through the same backup
+  as adoption, so `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
   `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
@@ -1501,6 +1500,40 @@ and wait for evidence that people need them.
   `rulesync_share_stores_no_password_from_a_permission_rule`,
   `rulesync_share_backs_up_no_codex_file_with_a_literal_password` and
   `personal_rules_setup_requires_interactive_confirmation`.
+
+- **UX-SKILL-27** `shipped` MCP servers that may hold a key (a value written
+  in the entry rather than an environment variable reference) form one key
+  group in `wenlan rules share`. Hooks, permissions and other settings stay
+  in their own tool. The preview names the servers and the tools only:
+  "These N servers may contain a key. Sharing copies the key into: <tools>."
+  A server the check cannot copy safely keeps its "Stays in <tool>: <reason>"
+  line. Only the person can share the key group: after the first `yes`, a
+  second typed `yes` in their own terminal. `--include-keys` still asks. The
+  `--confirm <plan id>` route and any request that names an AI session or an
+  agent leave the group where it is with a plain line, and the rest applies;
+  a "no" does the same. This tells the AI tools' normal route from the
+  person's and is not a security boundary: a program under the same account
+  can leave those markers out.
+  Wenlan stores no value and no hash of such a server anywhere. It records
+  only where each copy went (destination file and server name, source tool,
+  file and server name, time). It reads the live source and writes the copy
+  into the destination one entry at a time, never through a whole-file backup,
+  and saves an intent first. A file that holds or will hold such a server
+  gets every other Wenlan edit one entry at a time too. After a crash, an
+  intent whose copy equals the live source becomes a record; any other is
+  dropped and status says it was left as it is. Restore removes a copy only
+  while it still equals the live source, before the other entries of that
+  file; otherwise it says "kept <server> in <tool>: changed since sharing;
+  remove it by hand if you don't want it".
+  Tests `rulesync_share_previews_key_servers_by_name_and_tool_only`,
+  `rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
+  `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
+  `rulesync_share_refuses_key_servers_for_an_ai_caller`,
+  `rulesync_restore_keeps_a_key_copy_the_person_changed`,
+  `rulesync_interrupted_key_share_is_claimed_when_the_copy_landed`,
+  `rulesync_interrupted_key_share_is_dropped_when_the_copy_is_not_there`,
+  `rulesync_safe_server_shares_syncs_and_restores_in_a_file_with_a_key` and
+  `rules_share_in_session_without_confirm_only_previews`.
 
 ## From the terminal
 

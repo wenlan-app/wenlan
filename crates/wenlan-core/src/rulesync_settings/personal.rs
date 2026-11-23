@@ -658,6 +658,67 @@ impl Location {
         bytes == self.initial.as_bytes()
     }
 
+    /// Add a server that may hold a key, by its name only. The file gains
+    /// that one entry and nothing else changes.
+    pub fn insert_key(&self, bytes: &[u8], entry: &Entry) -> Result<Vec<u8>> {
+        ensure!(
+            entry.key.feature == Mcp && entry.key.member.is_none(),
+            "only a server can be shared this way"
+        );
+        let doc = self.document(Some(bytes))?;
+        ensure!(
+            !doc.has(&entry.key),
+            "a server with this name is already there"
+        );
+        let next = document::edit(
+            self.format,
+            bytes,
+            &doc.path_to(entry)?,
+            entry.value.clone(),
+        )?;
+        let mut checked = self.document(Some(&next))?;
+        ensure!(
+            checked.entry(&entry.key) == Some(entry),
+            "the native settings entry did not round trip"
+        );
+        checked.entries.remove(&entry.key);
+        ensure!(
+            checked.entries == doc.entries,
+            "adding the server changed other settings"
+        );
+        Ok(next)
+    }
+
+    /// Take out a server `insert_key` added, with the separators it wrote.
+    /// Every other entry must stay as it was.
+    pub fn remove_key(&self, bytes: &[u8], key: &Key) -> Result<Vec<u8>> {
+        ensure!(
+            key.feature == Mcp && key.member.is_none(),
+            "only a server can be removed this way"
+        );
+        let mut doc = self.document(Some(bytes))?;
+        doc.entry(key)
+            .context("the server is missing or ambiguous")?;
+        let path = key.name.iter().map(String::as_str).collect::<Vec<_>>();
+        let next = document::remove(self.format, bytes, &path)?;
+        let checked = self.document(Some(&next))?;
+        doc.entries.remove(key);
+        ensure!(
+            checked.entries == doc.entries,
+            "removing the server changed other settings"
+        );
+        Ok(next)
+    }
+
+    /// Whether adding `entry` and taking it out again gives back `bytes`
+    /// exactly, so a later restore can leave the file as it was found
+    /// without keeping a copy of it.
+    pub fn key_round_trip(&self, bytes: &[u8], entry: &Entry) -> bool {
+        self.insert_key(bytes, entry)
+            .and_then(|next| self.remove_key(&next, &entry.key))
+            .is_ok_and(|back| back == bytes)
+    }
+
     /// A whole-file backup and exchange would also copy unrelated secrets.
     /// Such files can be inspected, but are ineligible for automatic writes.
     pub fn snapshot_safe(&self, bytes: &[u8], doc: &Document) -> bool {
@@ -813,6 +874,54 @@ impl Document {
                 "{path}: skipped {} (entry {number}) because it contains possible credentials or unsafe text.",
                 feature.label()
             ))
+    }
+
+    /// The servers that stay in their own tool, by 1-based position as in
+    /// `refused_entries`, with the reason.
+    pub fn refused_servers<'a>(
+        &'a self,
+        tool: &'a str,
+    ) -> impl Iterator<Item = (usize, &'a Entry, Refusal)> + 'a {
+        self.entries
+            .values()
+            .flatten()
+            .enumerate()
+            .filter_map(move |(index, (entry, _))| {
+                mcp_refusal(tool, entry).map(|refusal| (index + 1, entry, refusal))
+            })
+    }
+
+    /// Whether a stored receipt holds no text of an entry the check refused,
+    /// so per-entry receipts in a file that also holds a key never carry it.
+    pub fn receipt_clear(&self, tool: &str, receipt: &RecordedEntry) -> bool {
+        let (mut refused, mut safe) = (Vec::new(), Vec::new());
+        for (entry, _) in self.entries.values().flatten() {
+            if reviewable(tool, entry) || wenlan_own_mcp(tool, &entry.value) {
+                strings_in(&entry.value, &mut safe);
+            } else {
+                strings_in(&entry.value, &mut refused);
+            }
+        }
+        // Text a safe entry also holds, such as `stdio`, is no key.
+        let leaves = refused
+            .into_iter()
+            .filter(|leaf| leaf.len() >= 6 && !safe.contains(leaf))
+            .collect::<Vec<_>>();
+        let fragments: Vec<&[u8]> = match &receipt.original {
+            OriginalEntry::Existing(bytes) => vec![bytes, &receipt.delivered],
+            OriginalEntry::Inserted {
+                prefix,
+                suffix,
+                replaced,
+            } => vec![prefix, suffix, replaced, &receipt.delivered],
+        };
+        fragments.iter().all(|fragment| {
+            leaves.iter().all(|leaf| {
+                !fragment
+                    .windows(leaf.len())
+                    .any(|part| part == leaf.as_bytes())
+            })
+        })
     }
 
     /// Entries the safety check refuses, by 1-based position and feature,
@@ -2222,12 +2331,20 @@ fn reference_free(text: &str) -> bool {
 /// variable name.
 type Reference = (Option<String>, String);
 
-#[derive(PartialEq, Eq)]
+/// A setting a server passes on: a value written in the file, or a
+/// reference to an environment variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Setting {
+    Literal(String),
+    Variable(Reference),
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum PortableMcp {
-    /// The command line and environment names mapped to variables.
-    Stdio(Vec<String>, BTreeMap<String, String>),
-    /// The URL and header names mapped to variable references.
-    Http(String, BTreeMap<String, Reference>),
+    /// The command line and environment names with their settings.
+    Stdio(Vec<String>, BTreeMap<String, Setting>),
+    /// The URL and header names with their settings.
+    Http(String, BTreeMap<String, Setting>),
 }
 
 /// The variable behind an exact reference in `tool`'s own syntax.
@@ -2266,7 +2383,25 @@ fn native_reference(tool: &str, (scheme, name): &Reference) -> Option<String> {
     })
 }
 
+/// A header or environment value: a reference, or with `literals` a plain
+/// value that no tool would read as a substitution.
+fn setting(tool: &str, value: &Value, literals: bool, scheme_allowed: bool) -> Option<Setting> {
+    let value = value.as_str()?;
+    match reference_parts(tool, value) {
+        Some(reference) => {
+            (scheme_allowed || reference.0.is_none()).then_some(Setting::Variable(reference))
+        }
+        None => (literals && reference_free(value)).then(|| Setting::Literal(value.to_owned())),
+    }
+}
+
 fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
+    mcp_form(tool, value, false)
+}
+
+/// The common server fields. Without `literals` every environment and
+/// header value must be a reference; with it, written values are kept too.
+fn mcp_form(tool: &str, value: &Value, literals: bool) -> Option<PortableMcp> {
     let mut fields = value.as_object()?.clone();
     let tag_key = if tool == "musecode" {
         "transport"
@@ -2320,7 +2455,21 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
             if let Some(names) = fields.remove("env_vars") {
                 for name in names.as_array()? {
                     let name = name.as_str().filter(|name| variable_name(name))?;
-                    env.insert(name.to_owned(), name.to_owned());
+                    env.insert(name.to_owned(), Setting::Variable((None, name.to_owned())));
+                }
+            }
+            if literals {
+                if let Some(map) = fields.remove("env") {
+                    for (name, value) in map.as_object()? {
+                        let value = value.as_str().filter(|value| reference_free(value))?;
+                        if !variable_name(name)
+                            || env
+                                .insert(name.clone(), Setting::Literal(value.to_owned()))
+                                .is_some()
+                        {
+                            return None;
+                        }
+                    }
                 }
             }
         } else if let Some(map) = fields.remove(if tool == "opencode" {
@@ -2329,11 +2478,10 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
             "env"
         }) {
             for (name, value) in map.as_object()? {
-                let (scheme, variable) = reference_parts(tool, value.as_str()?)?;
-                if scheme.is_some() || !variable_name(name) {
+                if !variable_name(name) {
                     return None;
                 }
-                env.insert(name.clone(), variable);
+                env.insert(name.clone(), setting(tool, value, literals, false)?);
             }
         }
         PortableMcp::Stdio(command, env)
@@ -2362,23 +2510,36 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
                 let name = name.as_str().filter(|name| variable_name(name))?;
                 headers.insert(
                     "Authorization".to_owned(),
-                    (Some("Bearer".to_owned()), name.to_owned()),
+                    Setting::Variable((Some("Bearer".to_owned()), name.to_owned())),
                 );
             }
             if let Some(map) = fields.remove("env_http_headers") {
                 for (header, name) in map.as_object()? {
                     let name = name.as_str().filter(|name| variable_name(name))?;
                     if headers
-                        .insert(header.clone(), (None, name.to_owned()))
+                        .insert(header.clone(), Setting::Variable((None, name.to_owned())))
                         .is_some()
                     {
                         return None;
                     }
                 }
             }
+            if literals {
+                if let Some(map) = fields.remove("http_headers") {
+                    for (header, value) in map.as_object()? {
+                        let value = value.as_str().filter(|value| reference_free(value))?;
+                        if headers
+                            .insert(header.clone(), Setting::Literal(value.to_owned()))
+                            .is_some()
+                        {
+                            return None;
+                        }
+                    }
+                }
+            }
         } else if let Some(map) = fields.remove("headers") {
             for (header, value) in map.as_object()? {
-                headers.insert(header.clone(), reference_parts(tool, value.as_str()?)?);
+                headers.insert(header.clone(), setting(tool, value, literals, true)?);
             }
         }
         PortableMcp::Http(url, headers)
@@ -2408,17 +2569,33 @@ fn native_mcp(tool: &str, portable: &PortableMcp) -> Option<Value> {
     match portable {
         PortableMcp::Stdio(_, env) if !env.is_empty() => {
             if tool == "codexcli" {
-                if env.iter().any(|(name, variable)| name != variable) {
-                    return None;
+                let mut names = Vec::new();
+                let mut written = serde_json::Map::new();
+                for (name, setting) in env {
+                    match setting {
+                        Setting::Variable((None, variable)) if variable == name => {
+                            names.push(name);
+                        }
+                        Setting::Literal(text) => {
+                            written.insert(name.clone(), json!(text));
+                        }
+                        Setting::Variable(_) => return None,
+                    }
                 }
-                value["env_vars"] = json!(env.keys().collect::<Vec<_>>());
+                if !names.is_empty() {
+                    value["env_vars"] = json!(names);
+                }
+                if !written.is_empty() {
+                    value["env"] = Value::Object(written);
+                }
             } else {
                 let mut map = serde_json::Map::new();
-                for (name, variable) in env {
-                    map.insert(
-                        name.clone(),
-                        Value::String(native_reference(tool, &(None, variable.clone()))?),
-                    );
+                for (name, setting) in env {
+                    let text = match setting {
+                        Setting::Variable(reference) => native_reference(tool, reference)?,
+                        Setting::Literal(text) => text.clone(),
+                    };
+                    map.insert(name.clone(), Value::String(text));
                 }
                 let field = if tool == "opencode" {
                     "environment"
@@ -2430,22 +2607,29 @@ fn native_mcp(tool: &str, portable: &PortableMcp) -> Option<Value> {
         }
         PortableMcp::Http(_, headers) if !headers.is_empty() => {
             let mut map = serde_json::Map::new();
-            for (header, reference) in headers {
+            let mut written = serde_json::Map::new();
+            for (header, setting) in headers {
                 if tool != "codexcli" {
-                    map.insert(
-                        header.clone(),
-                        Value::String(native_reference(tool, reference)?),
-                    );
+                    let text = match setting {
+                        Setting::Variable(reference) => native_reference(tool, reference)?,
+                        Setting::Literal(text) => text.clone(),
+                    };
+                    map.insert(header.clone(), Value::String(text));
                     continue;
                 }
-                match reference {
-                    (Some(scheme), name) if scheme == "Bearer" && header == "Authorization" => {
+                match setting {
+                    Setting::Variable((Some(scheme), name))
+                        if scheme == "Bearer" && header == "Authorization" =>
+                    {
                         value["bearer_token_env_var"] = json!(name);
                     }
-                    (None, name) => {
+                    Setting::Variable((None, name)) => {
                         map.insert(header.clone(), json!(name));
                     }
-                    _ => return None,
+                    Setting::Literal(text) => {
+                        written.insert(header.clone(), json!(text));
+                    }
+                    Setting::Variable(_) => return None,
                 }
             }
             if !map.is_empty() {
@@ -2455,6 +2639,9 @@ fn native_mcp(tool: &str, portable: &PortableMcp) -> Option<Value> {
                     "headers"
                 };
                 value[field] = Value::Object(map);
+            }
+            if !written.is_empty() {
+                value["http_headers"] = Value::Object(written);
             }
         }
         _ => {}
@@ -2518,6 +2705,75 @@ pub fn project(from: &Location, to: &Location, entry: &Entry, current: &Document
         _ => return None,
     };
     reviewable(to.tool, &next).then_some(next)
+}
+
+/// Why a server stays in its own tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// A value in it may be a key. A person can still choose to copy it.
+    MayHoldKey,
+    /// Its name, shape or fields cannot be copied at all.
+    Unsafe(&'static str),
+}
+
+/// None when the server is not refused (or is Wenlan's own), otherwise why.
+pub fn mcp_refusal(tool: &str, entry: &Entry) -> Option<Refusal> {
+    if entry.key.feature != Mcp || wenlan_own_mcp(tool, &entry.value) || reviewable(tool, entry) {
+        return None;
+    }
+    // The name is stored and shown, so it must not look like a key.
+    if entry.key.member.is_some() || !entry.container.iter().all(|name| name_safe(tool, name)) {
+        return Some(Refusal::Unsafe("its name may contain a key"));
+    }
+    if mcp_form(tool, &entry.value, true).is_none() {
+        return Some(Refusal::Unsafe(
+            "it uses settings other tools cannot read the same way",
+        ));
+    }
+    Some(Refusal::MayHoldKey)
+}
+
+/// The same server, key included, in `to`'s native shape. The copy must
+/// read back the same there and still count as a server that may hold a
+/// key, so it is never mistaken for a safe entry later.
+pub fn project_key(
+    from: &Location,
+    to: &Location,
+    entry: &Entry,
+    current: &Document,
+) -> Option<Entry> {
+    if from.tool == to.tool || mcp_refusal(from.tool, entry) != Some(Refusal::MayHoldKey) {
+        return None;
+    }
+    let portable = mcp_form(from.tool, &entry.value, true)?;
+    let &Section(_, path, _) = current.sections.iter().find(|section| section.0 == Mcp)?;
+    let mut path = path.to_vec();
+    path.push(entry.key.name.last()?);
+    let value = native_mcp(to.tool, &portable)?;
+    if mcp_form(to.tool, &value, true)? != portable {
+        return None;
+    }
+    let next = to.entry(Mcp, &path, value);
+    (mcp_refusal(to.tool, &next) == Some(Refusal::MayHoldKey)).then_some(next)
+}
+
+/// Whether two servers in two tools are the same server, value for value.
+/// Compared live; nothing about either is stored.
+pub fn same_key_server(from: &str, source: &Entry, to: &str, destination: &Entry) -> bool {
+    source.key.name.last() == destination.key.name.last()
+        && source.key.feature == Mcp
+        && destination.key.feature == Mcp
+        && mcp_form(from, &source.value, true)
+            .is_some_and(|server| mcp_form(to, &destination.value, true) == Some(server))
+}
+
+fn strings_in(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(text) => out.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| strings_in(item, out)),
+        Value::Object(fields) => fields.values().for_each(|item| strings_in(item, out)),
+        _ => {}
+    }
 }
 
 pub fn equivalent(location: &Location, left: &Entry, right: &Entry) -> bool {
@@ -2713,6 +2969,103 @@ mod tests {
             .last()
             .map(String::as_str)
             == Some("reference")));
+    }
+
+    #[test]
+    fn rulesync_personal_settings_tell_a_key_server_from_an_unsafe_one() {
+        let claude = file(".claude.json");
+        let doc = claude
+            .document(Some(
+                br#"{"mcpServers":{
+                "literal-env":{"command":"server","env":{"API_KEY":"fixture-literal-marker"}},
+                "secret-oauth":{"type":"http","url":"https://example.invalid/mcp",
+                    "oauth":{"clientId":"fixture-client","clientSecret":"fixture-literal-marker"}},
+                "sk-proj-abcdefghijklmnopqrstuvwxyz012345":{"command":"server"},
+                "reference":{"command":"server","env":{"API_KEY":"${API_KEY}"}}
+            }}"#,
+            ))
+            .unwrap();
+        let reasons = doc
+            .refused_servers(claude.tool)
+            .map(|(_, entry, reason)| (entry.key.name.last().unwrap().clone(), reason))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(reasons["literal-env"], Refusal::MayHoldKey);
+        assert!(matches!(reasons["secret-oauth"], Refusal::Unsafe(_)));
+        assert!(matches!(
+            reasons["sk-proj-abcdefghijklmnopqrstuvwxyz012345"],
+            Refusal::Unsafe(_)
+        ));
+        assert!(!reasons.contains_key("reference"));
+    }
+
+    #[test]
+    fn rulesync_personal_settings_copy_a_key_server_and_take_it_out_byte_for_byte() {
+        let claude = file(".claude.json");
+        let source = claude
+            .document(Some(
+                br#"{"mcpServers":{
+                "literal-env":{"command":"server","env":{"API_KEY":"fixture-literal-marker","HOME_DIR":"${HOME_DIR}"}},
+                "literal-header":{"type":"http","url":"https://example.invalid/mcp",
+                    "headers":{"Authorization":"Bearer fixture-literal-marker"}}
+            }}"#,
+            ))
+            .unwrap();
+        let key_server = |name: &str| {
+            source
+                .refused_servers(claude.tool)
+                .find(|(_, entry, _)| entry.key.name.last().map(String::as_str) == Some(name))
+                .unwrap()
+                .1
+        };
+        let stdio = key_server("literal-env");
+        let http = key_server("literal-header");
+        // A trailing comma could have been written by the person or by the
+        // insertion, so that layout is refused rather than guessed.
+        let cases: &[(&str, &[u8], bool)] = &[
+            (".cursor/mcp.json", b"{\n  \"mcpServers\": {\n    \"other\": {\"command\": \"x\"}\n  }\n}\n", true),
+            (".cursor/mcp.json", b"{\n  \"mcpServers\": {}\n}", true),
+            (".cursor/mcp.json", b"{}", true),
+            (".cursor/mcp.json", b"{\n  \"a\": 1\n}\n", true),
+            (".codex/config.toml", b"# fixture\n", true),
+            (".codex/config.toml", b"model = \"x\"\n\n[mcp_servers.other]\ncommand = \"x\"\n", true),
+            (".codex/config.toml", b"[mcp_servers]\nother = { command = \"x\" }\n", true),
+            (".gemini/settings.json", b"{\n  // comment\n  \"mcpServers\": {\n    \"other\": {\"command\": \"x\"},\n  },\n}\n", false),
+        ];
+        for &(path, bytes, restorable) in cases {
+            let to = file(path);
+            let doc = to.document(Some(bytes)).unwrap();
+            for entry in [stdio, http] {
+                let copy = project_key(&claude, &to, entry, &doc)
+                    .unwrap_or_else(|| panic!("{path}: {}", entry.label()));
+                assert!(
+                    same_key_server(claude.tool, entry, to.tool, &copy),
+                    "{path}"
+                );
+                assert!(!reviewable(to.tool, &copy), "{path}");
+                let next = to.insert_key(bytes, &copy).unwrap();
+                assert_eq!(
+                    to.document(Some(&next)).unwrap().entry(&copy.key),
+                    Some(&copy)
+                );
+                assert_eq!(to.key_round_trip(bytes, &copy), restorable, "{path}");
+                if restorable {
+                    assert_eq!(to.remove_key(&next, &copy.key).unwrap(), bytes, "{path}");
+                }
+            }
+        }
+        // Two servers added one after the other come out in reverse order.
+        let cursor = file(".cursor/mcp.json");
+        let before = b"{\n  \"mcpServers\": {\n    \"other\": {\"command\": \"x\"}\n  }\n}\n";
+        let doc = cursor.document(Some(before)).unwrap();
+        let first = project_key(&claude, &cursor, stdio, &doc).unwrap();
+        let second = project_key(&claude, &cursor, http, &doc).unwrap();
+        let one = cursor.insert_key(before, &first).unwrap();
+        let two = cursor.insert_key(&one, &second).unwrap();
+        let back = cursor.remove_key(&two, &first.key).unwrap();
+        let back = cursor.remove_key(&back, &second.key).unwrap();
+        assert_eq!(back, before);
+        let back = cursor.remove_key(&two, &second.key).unwrap();
+        assert_eq!(cursor.remove_key(&back, &first.key).unwrap(), before);
     }
 
     #[test]

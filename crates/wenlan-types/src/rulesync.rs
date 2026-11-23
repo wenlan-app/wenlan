@@ -271,6 +271,10 @@ pub struct AdoptRequest {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<std::path::PathBuf>,
+    /// The person also said yes to sharing the servers that may hold a key.
+    /// The server ignores it on the AI confirm route and for agent sessions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_keys: bool,
 }
 
 /// What `wenlan rules share` would copy into the other managed tools.
@@ -288,6 +292,13 @@ pub struct SharingPlan {
     /// Copies another tool already has with the same content.
     #[serde(default)]
     pub already_there: usize,
+    /// Servers that may hold a key. Only a person can share them, with a
+    /// second yes. Names only; no value is ever part of a plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_servers: Vec<String>,
+    /// Tools those servers would be copied into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +385,9 @@ pub struct RulesSetupStatus {
     pub last_checked_at: Option<i64>,
     #[serde(default)]
     pub tools: Vec<RulesToolStatus>,
+    /// Plain lines about shared servers Wenlan left as they are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

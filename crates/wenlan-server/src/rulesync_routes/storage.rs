@@ -271,5 +271,6 @@ fn map_contents<From, To>(
         scope_review_heads: manifest.scope_review_heads.clone(),
         dismissed_skill_updates: manifest.dismissed_skill_updates.clone(),
         delivery_issues: manifest.delivery_issues.clone(),
+        keys: manifest.keys.clone(),
     })
 }

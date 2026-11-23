@@ -4463,6 +4463,7 @@ pub async fn rules_setup_adopt(
         confirmed_plan_id: None,
         token,
         home: Some(rules_setup_home()?),
+        include_keys: false,
     };
     daemon_client(&state)
         .await
