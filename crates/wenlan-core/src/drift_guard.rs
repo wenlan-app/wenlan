@@ -9758,6 +9758,8 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_TEST_PERSONAL_REVIEW_ROOT", // test-only personal file review subprocess root
     "WENLAN_TEST_SETTINGS_ROOT",     // test-only crash-during-settings child root
     "WENLAN_TEST_SETTINGS_REVIEW_ID", // test-only settings review subprocess card id
+    "WENLAN_TEST_KEY_SETTINGS_ROOT", // test-only crash-during-key-copy child root
+    "WENLAN_TEST_KEY_SETTINGS_REVIEW_ID", // test-only key-copy review subprocess card id
     "WENLAN_TEST_SKILL_REVIEW_ROOT", // test-only skill review subprocess fixture root
     "WENLAN_TEST_SKILL_REVIEW_TOKEN", // test-only skill review subprocess approval token
     "WENLAN_RULESYNC_GUARD_CHILD",   // test-only rulesync guard subprocess marker
