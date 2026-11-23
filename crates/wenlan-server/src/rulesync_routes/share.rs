@@ -939,6 +939,47 @@ mod tests {
         );
     }
 
+    /// Whether any file under a folder holds these bytes.
+    fn holds(dir: &Path, needle: &[u8]) -> bool {
+        tree(dir).into_iter().any(|(_, (bytes, _))| {
+            bytes.is_some_and(|bytes| bytes.windows(needle.len()).any(|part| part == needle))
+        })
+    }
+
+    #[test]
+    fn rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field() {
+        const SECRET: &str = "ghp_shareFixtureSentinel0123456789";
+        let f = Fixture::new();
+        let home = f.setup.home.clone();
+        let codex = format!(
+            "[mcp_servers.named]\nurl = 'https://example.invalid/mcp'\nbearer_token_env_var = '{SECRET}'\n\n\
+             [mcp_servers.header]\nurl = 'https://example.invalid/mcp'\nenv_http_headers = {{ 'X-Team' = '{SECRET}' }}\n"
+        );
+        let claude = "{ \"mcpServers\": {} }\n";
+        write(
+            &f,
+            &[(".codex/config.toml", &codex), (".claude.json", claude)],
+        );
+        adopt(&f);
+        f.sync_with("");
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert!(plan.tools.is_empty(), "{plan:?}");
+        assert!(!serde_json::to_string(&plan).unwrap().contains(SECRET));
+        f.setup
+            .share_using(&plan.token, fixture_skill_renderer)
+            .unwrap();
+        f.sync_with("");
+        assert_eq!(
+            fs::read_to_string(home.join(".claude.json")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        assert!(!holds(&f.setup.data, SECRET.as_bytes()));
+    }
+
     #[test]
     fn rulesync_status_counts_mcp_servers_adopted_in_place() {
         let f = Fixture::new();

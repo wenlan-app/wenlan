@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 use super::{
     document::{self, Format, Part},
-    is_env_name, validate_text, MAX_SETTINGS_BYTES,
+    validate_text, MAX_SETTINGS_BYTES,
 };
 use crate::{
     rulesync_personal::{check_delivery_paths, personal_target},
@@ -1062,8 +1062,61 @@ fn safe_identifier(value: &str) -> bool {
         && !text_risky("", value)
 }
 
-/// A number or an on/off switch in Claude Code's `env`. Under a key that
-/// could name a credential, only a number is plain.
+/// An environment variable name in the usual form, such as `API_TOKEN`.
+/// A lowercase, mixed-case or token-looking "name" may be the key itself.
+fn variable_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    name.len() <= 64
+        && bytes.next().is_some_and(|byte| byte.is_ascii_uppercase())
+        && bytes.all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        && !secret_looking(name)
+}
+
+/// Text that looks like a key whatever its context: a known token prefix, a
+/// long run of hex digits, or a long run of letters mixed with digits.
+fn secret_looking(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let prefix = [
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "github_pat_",
+        "sk-",
+        "sk_",
+        "xoxa-",
+        "xoxb-",
+        "xoxp-",
+        "xoxr-",
+        "xoxs-",
+        "akia",
+        "asia",
+        "eyj",
+        "glpat-",
+        "npm_",
+    ];
+    let long_run = |run: &str| {
+        run.len() >= 16
+            && (run.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || run.bytes().any(|byte| byte.is_ascii_digit()))
+    };
+    lower
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || "_-".contains(ch)))
+        .any(|word| prefix.iter().any(|prefix| word.starts_with(prefix)))
+        || lower
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(long_run)
+        || lower
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-'))
+            .map(|word| word.replace('-', ""))
+            .any(|run| run.len() >= 16 && run.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        || high_entropy(text)
+}
+
+/// A number or an on/off switch in Claude Code's `env`, under a name that
+/// cannot hold a key, or a number under a name that only counts or times
+/// something, such as `..._MAX_TOKENS` or `..._TIMEOUT_MS`.
 fn plain_setting(name: &str, value: &Value) -> bool {
     let digits = |text: &str| {
         !text.is_empty() && text.len() <= 10 && text.bytes().all(|byte| byte.is_ascii_digit())
@@ -1077,7 +1130,22 @@ fn plain_setting(name: &str, value: &Value) -> bool {
         Value::Bool(_) => (false, true),
         _ => (false, false),
     };
-    number || (switch && !credential_key(name))
+    let measure = [
+        "_TOKENS", "_LIMIT", "_TIMEOUT", "_MS", "_SECONDS", "_PORT", "_SIZE", "_COUNT", "_RETRIES",
+    ]
+    .iter()
+    .any(|suffix| name.ends_with(suffix));
+    let secret_word = name.split(['_', '-', '.']).any(|word| {
+        matches!(
+            word.to_ascii_uppercase().as_str(),
+            "PIN" | "PINCODE" | "PASSCODE" | "PASS" | "PW" | "PWD" | "OTP" | "CVV" | "SSN"
+        )
+    });
+    if credential_key(name) || secret_word {
+        number && measure
+    } else {
+        number || switch
+    }
 }
 
 fn credential_key(key: &str) -> bool {
@@ -1122,11 +1190,11 @@ fn exact_reference(tool: &str, value: &str) -> bool {
         value
             .strip_prefix(open)
             .and_then(|text| text.strip_suffix(close))
-            .is_some_and(is_env_name)
+            .is_some_and(variable_name)
     };
     match tool {
         "claudecode" => wrapped("${", "}"),
-        "geminicli" => wrapped("${", "}") || value.strip_prefix('$').is_some_and(is_env_name),
+        "geminicli" => wrapped("${", "}") || value.strip_prefix('$').is_some_and(variable_name),
         "cursor" => wrapped("${env:", "}"),
         "opencode" => wrapped("{env:", "}"),
         // Codex's env-valued fields use bare variable names below.
@@ -1140,21 +1208,35 @@ fn text_risky(tool: &str, value: &str) -> bool {
         r"(?i)(?:[a-z][a-z0-9+.-]*://[^/\s?#]*@|[a-z][a-z0-9+.-]*://[^\s]*[?#]|\b(?:sk[-_]|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|eyJ[a-zA-Z0-9_-]+\.)[a-z0-9_./+=-]{6,}|(?:^|\s)-(?:u|H)(?:\s+|=)[^\s]+|(?:^|\s)--(?:key|auth|header|env|client[-_]?secret)(?:\s+|=)[^\s]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\$\{[^}\n]+:-[^}\n]+|\b(?:api[-_]?key|client[-_]?secret|password|passwd|secret|token)\s*[:=]\s*[^\s]+)",
     ).expect("settings credential indicators")
     });
-    // `-p`, `-e` and `-E` usually name a package, a script or a pattern, so
-    // they are risky only when what follows looks like a secret: it holds a
-    // `:` or `=` (after a permission pattern's `:*` wildcard), or is
-    // high-entropy. `-u` and `-H` stay risky above whatever follows.
+    // `-p`, `-P`, `-e` and `-E` with a value are risky, as for `-u` and
+    // `-H`, except in three named commands where they take a public name:
+    // `cargo -p <crate>`, `grep`/`rg`/`egrep -e|-E <pattern>` and
+    // `sed -e|-E <script>`.
     static SHORT_FLAG: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(?:^|\s)-[pe](?:\s+|=)([^\s]+)").expect("short flag values")
+        Regex::new(r"(?i)(?:^|\s)(-[pe])(?:\s+|=)([^\s]+)").expect("short flag values")
     });
     if exact_reference(tool, value) {
         return false;
     }
     RISK.is_match(value)
         || SHORT_FLAG.captures_iter(value).any(|captures| {
-            let flagged = captures[1].trim_end_matches([')', '"', '\'', ',', ']']);
+            let start = captures.get(0).map_or(0, |found| found.start());
+            let program = value[..start]
+                .rsplit(['(', '"', '\'', ';', '&', '|', '[', ',', '\n'])
+                .next()
+                .unwrap_or_default()
+                .split_ascii_whitespace()
+                .next()
+                .unwrap_or_default();
+            let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
+            let flagged = captures[2].trim_end_matches([')', '"', '\'', ',', ']']);
             let flagged = flagged.strip_suffix(":*").unwrap_or(flagged);
-            flagged.contains([':', '=']) || high_entropy(flagged)
+            let named = match (program, &captures[1]) {
+                ("cargo", "-p") => safe_identifier(flagged),
+                ("grep" | "rg" | "egrep" | "sed", "-e" | "-E") => true,
+                _ => false,
+            };
+            !named || secret_looking(flagged)
         })
         || validate_text(value).is_err()
         || high_entropy(value)
@@ -1242,28 +1324,47 @@ fn credential_flag(flag: &str) -> bool {
 }
 
 /// A hook or status line command: a simple executable, then exact
-/// references, plain flags such as `--agent` or `-p`, and plain words such as
-/// `session-start`. A flag that can carry a credential, an assigned flag, or
-/// anything else is refused.
+/// references, plain flags and short plain words such as `session-start`.
+/// A word after a flag counts as that flag's value, which is public only for
+/// a few named flags such as `--agent`; after any other flag it may be a key.
 fn shell_command_safe(tool: &str, command: &Value) -> bool {
+    const VALUE_FLAGS: &[&str] = &[
+        "--agent",
+        "--agent-name",
+        "--tool",
+        "--tool-profile",
+        "--format",
+        "--space",
+        "--session",
+    ];
+    let plain_flag = |arg: &str| {
+        let name = arg.strip_prefix("--").or_else(|| {
+            arg.strip_prefix('-')
+                .filter(|name| name.len() == 1 && !name.starts_with('-'))
+        });
+        name.is_some_and(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        }) && !credential_flag(arg)
+    };
+    let plain_word = |arg: &str| arg.len() <= 64 && safe_identifier(arg) && !secret_looking(arg);
     argv(command).is_some_and(|parts| {
         parts.split_first().is_some_and(|(name, args)| {
             executable(tool, name)
-                && args.iter().all(|arg| {
-                    let plain_flag = |name: &str| {
-                        !name.is_empty()
-                            && name
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                    };
-                    safe_argument(tool, arg)
-                        || if let Some(name) = arg.strip_prefix("--") {
-                            plain_flag(name) && !credential_flag(arg)
-                        } else if let Some(name) = arg.strip_prefix('-') {
-                            name.len() == 1 && plain_flag(name) && !credential_flag(arg)
-                        } else {
-                            safe_identifier(arg)
-                        }
+                && args.iter().enumerate().all(|(index, arg)| {
+                    if safe_argument(tool, arg) {
+                        return true;
+                    }
+                    if arg.starts_with('-') {
+                        return plain_flag(arg);
+                    }
+                    let after = index.checked_sub(1).map(|before| args[before]);
+                    plain_word(arg)
+                        && after.is_none_or(|flag| {
+                            !flag.starts_with('-') || VALUE_FLAGS.contains(&flag)
+                        })
                 })
         })
     })
@@ -1300,6 +1401,7 @@ fn package_spec(spec: &str) -> bool {
                     .all(|byte| byte.is_ascii_alphanumeric() || b".+_-".contains(&byte))
         })
         && !text_risky("", spec)
+        && !secret_looking(spec)
 }
 
 /// An MCP server run through a package launcher, with exactly one package
@@ -1355,7 +1457,9 @@ fn public_header(name: &str, value: &Value) -> bool {
                 && !credential_flag(label)
         });
     (source_label || matches!(name.as_str(), "accept" | "content-type" | "user-agent"))
-        && value.as_str().is_some_and(safe_identifier)
+        && value
+            .as_str()
+            .is_some_and(|value| safe_identifier(value) && !secret_looking(value))
 }
 
 fn material_safe(tool: &str, value: &Value) -> bool {
@@ -1417,7 +1521,7 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
             args.iter()
                 .all(|arg| arg.as_str().is_some_and(|arg| safe_argument(tool, arg)))
         }),
-        "bearertokenenvvar" => tool == "codexcli" && value.as_str().is_some_and(is_env_name),
+        "bearertokenenvvar" => tool == "codexcli" && value.as_str().is_some_and(variable_name),
         "oauth" => public_oauth(value),
         "statusline" => value.as_object().is_some_and(|fields| {
             fields.iter().all(|(name, value)| match name.as_str() {
@@ -1430,7 +1534,7 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
                 && value.as_array().is_some_and(|names| {
                     names
                         .iter()
-                        .all(|name| name.as_str().is_some_and(is_env_name))
+                        .all(|name| name.as_str().is_some_and(variable_name))
                 })
         }
         "url" | "serverurl" | "httpurl" => value.as_str().is_some_and(|url| {
@@ -1452,7 +1556,7 @@ fn safe_field(tool: &str, name: &str, value: &Value) -> bool {
                     !text_risky(tool, key)
                         && (value.as_str().is_some_and(|value| {
                             if normalized == "envhttpheaders" && tool == "codexcli" {
-                                is_env_name(value)
+                                variable_name(value)
                             } else {
                                 exact_reference(tool, value)
                             }
@@ -1542,7 +1646,7 @@ fn hook_payload_safe(tool: &str, value: &Value) -> bool {
                     "allowedenvvars" => value.as_array().is_some_and(|names| {
                         names
                             .iter()
-                            .all(|name| name.as_str().is_some_and(is_env_name))
+                            .all(|name| name.as_str().is_some_and(variable_name))
                     }),
                     "matcher" => value
                         .as_str()
@@ -1617,7 +1721,7 @@ pub fn wenlan_own_mcp(tool: &str, value: &Value) -> bool {
     };
     let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
     let mut rest = match (name, rest) {
-        ("npx", ["-y", "wenlan-mcp", rest @ ..]) => rest,
+        ("npx", ["-y", "wenlan-mcp", rest @ ..]) if executable(tool, program) => rest,
         ("wenlan-mcp" | "wenlan-mcp.exe", rest) if executable(tool, program) => rest,
         _ => return false,
     };
@@ -1687,7 +1791,7 @@ fn reference_parts(tool: &str, value: &str) -> Option<Reference> {
         "opencode" => wrapped("{env:", "}"),
         _ => None,
     }?;
-    is_env_name(name).then(|| (scheme, name.to_owned()))
+    variable_name(name).then(|| (scheme, name.to_owned()))
 }
 
 fn native_reference(tool: &str, (scheme, name): &Reference) -> Option<String> {
@@ -1756,7 +1860,7 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
             // Codex passes these variables through under their own names.
             if let Some(names) = fields.remove("env_vars") {
                 for name in names.as_array()? {
-                    let name = name.as_str().filter(|name| is_env_name(name))?;
+                    let name = name.as_str().filter(|name| variable_name(name))?;
                     env.insert(name.to_owned(), name.to_owned());
                 }
             }
@@ -1767,7 +1871,7 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
         }) {
             for (name, value) in map.as_object()? {
                 let (scheme, variable) = reference_parts(tool, value.as_str()?)?;
-                if scheme.is_some() || !is_env_name(name) {
+                if scheme.is_some() || !variable_name(name) {
                     return None;
                 }
                 env.insert(name.clone(), variable);
@@ -1796,7 +1900,7 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
         let mut headers = BTreeMap::new();
         if tool == "codexcli" {
             if let Some(name) = fields.remove("bearer_token_env_var") {
-                let name = name.as_str().filter(|name| is_env_name(name))?;
+                let name = name.as_str().filter(|name| variable_name(name))?;
                 headers.insert(
                     "Authorization".to_owned(),
                     (Some("Bearer".to_owned()), name.to_owned()),
@@ -1804,7 +1908,7 @@ fn portable_mcp(tool: &str, value: &Value) -> Option<PortableMcp> {
             }
             if let Some(map) = fields.remove("env_http_headers") {
                 for (header, name) in map.as_object()? {
-                    let name = name.as_str().filter(|name| is_env_name(name))?;
+                    let name = name.as_str().filter(|name| variable_name(name))?;
                     if headers
                         .insert(header.clone(), (None, name.to_owned()))
                         .is_some()
@@ -2515,6 +2619,9 @@ mod tests {
             r#"{"ANTHROPIC_AUTH_TOKEN":"true"}"#,
             r#"{"FIXTURE_SETTING":"fixture-marker"}"#,
             r#"{"FIXTURE_SETTING":"12345678901"}"#,
+            r#"{"DB_PASSWORD":"73920184"}"#,
+            r#"{"VAULT_PIN":"4821"}"#,
+            r#"{"API_TOKEN_LIMIT":"true"}"#,
         ] {
             let bytes = format!(r#"{{"env":{env}}}"#);
             assert!(!checked(".claude/settings.json", &bytes).0, "{env}");
@@ -2522,13 +2629,14 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_personal_settings_short_flags_are_risky_only_before_a_secret() {
+    fn rulesync_personal_settings_short_flags_are_plain_only_in_named_commands() {
         let allow = |rules: &[&str]| format!(r#"{{"permissions":{{"allow":{}}}}}"#, json!(rules));
         let (safe, managed) = checked(
             ".claude/settings.json",
             &allow(&[
                 "Bash(cargo test -p wenlan:*)",
-                "Bash(fixture -e script-name)",
+                "Bash(rg -e fixture-pattern)",
+                "Bash(sed -E s/a/b/)",
             ]),
         );
         assert!(safe && managed > 0);
@@ -2538,6 +2646,11 @@ mod tests {
             "Bash(fixture -E Fixture4Marker9Value8Abc7Def)",
             "Bash(curl -H fixture)",
             "Bash(curl -u fixture)",
+            "Bash(sshpass -p hunter2 ssh fixture)",
+            "Bash(zip -P hunter2 fixture.zip)",
+            "Bash(mysql -p hunter2)",
+            "Bash(fixture -e script-name)",
+            "Bash(cargo test -P hunter2)",
         ] {
             assert!(text_risky("claudecode", rule), "{rule}");
             assert_eq!(
@@ -2561,7 +2674,7 @@ mod tests {
                 ".claude/settings.json",
                 &settings(
                     "wenlan hook session-start --agent claude-code",
-                    "fixture-status --compact -p plain"
+                    "fixture-status --compact --format plain"
                 )
             ),
             (true, 1)
@@ -2575,6 +2688,13 @@ mod tests {
             "fixture --env FIXTURE",
             "fixture fixture:marker",
             "fixture a;b",
+            "redis-cli -a fixture",
+            "sshpass -p hunter2 ssh fixture",
+            "deploy --pw hunter2",
+            "fixture -k 123e4567-e89b-12d3-a456-426614174000",
+            "notify-hook 0123456789abcdef0123456789abcdef",
+            "fixture --verbose hunter2",
+            "fixture ghp_fixturemarker",
         ] {
             assert_eq!(
                 checked(".claude/settings.json", &settings(hook, "fixture-status")),
@@ -2591,6 +2711,68 @@ mod tests {
             assert!(
                 !checked(".claude/settings.json", &settings("fixture", status)).0,
                 "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_codex_variable_fields_hold_only_usual_names() {
+        let remote = |field: &str| {
+            format!("[mcp_servers.remote]\nurl = 'https://example.invalid/mcp'\n{field}\n")
+        };
+        for field in [
+            "bearer_token_env_var = 'GITHUB_TOKEN'",
+            "env_http_headers = { 'X-Team' = 'TEAM_ID' }",
+        ] {
+            assert_eq!(
+                checked(".codex/config.toml", &remote(field)),
+                (true, 1),
+                "{field}"
+            );
+        }
+        let local = |name: &str| {
+            format!("[mcp_servers.local]\ncommand = 'fixture'\nenv_vars = ['{name}']\n")
+        };
+        assert_eq!(
+            checked(".codex/config.toml", &local("FIXTURE_TOKEN")),
+            (true, 1)
+        );
+        assert_eq!(
+            checked(".codex/config.toml", &local("ghp_fixturemarker0123456789")),
+            (false, 0)
+        );
+        for field in [
+            "bearer_token_env_var = 'ghp_fixturemarker0123456789'",
+            "bearer_token_env_var = 'fixture_marker'",
+            "bearer_token_env_var = 'AKIAFIXTUREMARKER'",
+            "bearer_token_env_var = 'A1B2C3D4E5F6A7B8C9D0'",
+            "env_http_headers = { 'X-Team' = 'ghp_fixturemarker0123456789' }",
+        ] {
+            assert_eq!(
+                checked(".codex/config.toml", &remote(field)),
+                (false, 0),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn rulesync_personal_settings_wenlan_own_server_needs_a_plain_program() {
+        let own = |command: &str, name: &str| {
+            format!(
+                r#"{{"mcpServers":{{"wenlan":{{"command":"{command}","args":["-y","wenlan-mcp","--agent-name","{name}"]}}}}}}"#
+            )
+        };
+        assert!(checked(".claude.json", &own("npx", "claude-code")).0);
+        for (command, name) in [
+            ("FIXTURE=marker npx", "claude-code"),
+            ("npx --token fixture-marker", "claude-code"),
+            ("npx", "ghp_fixturemarker0123456789"),
+        ] {
+            assert_eq!(
+                checked(".claude.json", &own(command, name)),
+                (false, 0),
+                "{command} {name}"
             );
         }
     }

@@ -1238,14 +1238,24 @@ and wait for evidence that people need them.
   a callback port and scopes; a client secret skips the entry. Wenlan's own
   server entry, which `wenlan mcp connect` writes into each tool, is neither
   managed nor reported as skipped, and it does not stop the file from being
-  written. A hook or status line command may also use plain words and plain
-  flags such as `--agent`; a flag that can carry a user name, password,
-  header, cookie or key skips it. `-u` and `-H` count as credential options,
-  while `-p`, `-e` and `-E` count only before a value with `:` or `=` or a
-  random-looking value. Gemini's sign-in method (`security.auth.selectedType`)
-  and number or on/off values in Claude Code's `env` are not credentials; under
-  a credential-like name such as `..._TOKEN`, only a number is. A file
-  containing possible credentials
+  written. An entry counts as free of keys only when every value matches a
+  named public pattern; anything else may hold a key and stays. A hook or
+  status line command may use plain flags and short plain words, and a flag
+  may take a value only when it is `--agent`, `--agent-name`, `--tool`,
+  `--tool-profile`, `--format`, `--space` or `--session`; any other flag
+  with a value, or a word that looks like a key (a known key prefix, a long
+  run of hex or digits, or random-looking text), skips it. `-u` and `-H` count
+  as credential options. `-p`, `-P`, `-e` and `-E` do too, except in
+  `cargo … -p <crate>`, `grep`, `egrep` or `rg … -e|-E <pattern>` and
+  `sed … -e|-E`. A Codex field that names an environment variable
+  (`bearer_token_env_var`, `env_vars`, `env_http_headers` values) must hold an
+  uppercase name such as `GITHUB_TOKEN` that does not look like a key.
+  Gemini's sign-in method (`security.auth.selectedType`) is not a credential.
+  A number or on/off value in Claude Code's `env` is plain under an ordinary
+  name; under a credential-like name such as `..._PASSWORD`, `..._TOKEN` or
+  `..._PIN`, only a number whose name ends in `_TOKENS`, `_LIMIT`,
+  `_TIMEOUT`, `_MS`, `_SECONDS`, `_PORT`, `_SIZE`, `_COUNT` or `_RETRIES`
+  is. A file containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
   Wenlan neither resolves references nor executes hooks or servers.
   Wenlan reads Codex hooks from both native files and requires evidence of
@@ -1284,8 +1294,10 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_file_check_skips_wenlan_own_server_only`,
   `rulesync_personal_settings_gemini_sign_in_method_is_not_a_credential`,
   `rulesync_personal_settings_claude_plain_number_and_switch_settings_are_not_credentials`,
-  `rulesync_personal_settings_short_flags_are_risky_only_before_a_secret`,
+  `rulesync_personal_settings_short_flags_are_plain_only_in_named_commands`,
   `rulesync_personal_settings_hook_and_status_line_admit_plain_words_only`,
+  `rulesync_personal_settings_codex_variable_fields_hold_only_usual_names`,
+  `rulesync_personal_settings_wenlan_own_server_needs_a_plain_program`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
@@ -1416,6 +1428,7 @@ and wait for evidence that people need them.
   adoption, so `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
   `rulesync_share_leaves_a_different_item_with_the_same_name`,
   `rulesync_status_counts_mcp_servers_adopted_in_place`,
   `rulesync_personal_settings_translate_environment_references_between_tools`,
