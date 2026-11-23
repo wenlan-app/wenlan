@@ -13,8 +13,8 @@ use cap_std::fs::{Dir, Metadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{
-    AdoptionChange, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome, AdoptionTextDiff,
-    AdoptionTool, RulesSetupCode as Code, RulesSetupNotice, RulesSetupTool,
+    AdoptionChange, AdoptionNewFiles, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome,
+    AdoptionTextDiff, AdoptionTool, RulesSetupCode as Code, RulesSetupNotice, RulesSetupTool,
 };
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
@@ -1497,7 +1497,19 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     // `note_codes` stays aligned with `notes` by index.
     notes.extend(adoption.settings.notes.iter().cloned());
     let token = adoption_token(adoption)?;
+    let mut created = BTreeMap::<String, usize>::new();
+    for (path, file) in &adoption.files {
+        if matches!(file.before, AdoptionEntry::Missing) {
+            if let Some(tool) = adoption_tool(path) {
+                *created.entry(tool.name).or_default() += 1;
+            }
+        }
+    }
     Ok(AdoptionPlan {
+        new_files: created
+            .into_iter()
+            .map(|(tool, files)| AdoptionNewFiles { tool, files })
+            .collect(),
         settings: None,
         plan_id: adoption_plan_id(&token),
         token,
@@ -1924,6 +1936,26 @@ pub fn reject_secret_lines(text: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rulesync_preview_names_tools_that_get_new_files() {
+        let home = tempfile::tempdir().unwrap();
+        for (path, text) in [(".claude/CLAUDE.md", "Rule.\n"), (".gemini/note", "x")] {
+            let path = home.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let plan = plan_adoption(home.path()).unwrap();
+        assert_eq!(
+            plan.new_files,
+            vec![AdoptionNewFiles {
+                tool: "Gemini CLI".into(),
+                files: 1
+            }]
+        );
+        fs::write(home.path().join(".gemini/GEMINI.md"), "Rule.\n").unwrap();
+        assert!(plan_adoption(home.path()).unwrap().new_files.is_empty());
+    }
 
     #[test]
     fn rulesync_adoption_imports_installed_overlays_and_skips_missing_tools() {

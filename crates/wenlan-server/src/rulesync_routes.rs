@@ -165,7 +165,7 @@ async fn adopt_preview(
             "WENLAN_RULESYNC is off".into(),
         ));
     }
-    tokio::task::spawn_blocking(move || Setup::system()?.preview_adoption(&request.home))
+    tokio::task::spawn_blocking(move || Setup::system_ready()?.preview_adoption(&request.home))
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))?
         .map(Json)
@@ -229,7 +229,7 @@ async fn review_preview(
     Json(request): Json<PullbackDecision>,
 ) -> Result<Json<PullbackPreview>, ServerError> {
     require_personal_rules_writer(&headers)?;
-    tokio::task::spawn_blocking(move || Setup::system()?.preview_review(&request))
+    tokio::task::spawn_blocking(move || Setup::system_ready()?.preview_review(&request))
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))?
         .map(Json)
@@ -266,7 +266,11 @@ async fn execute(
         Vec::new()
     };
     let result = tokio::task::spawn_blocking(move || {
-        let setup = Setup::system()?;
+        let setup = if matches!(operation, Operation::Restore(_)) {
+            Setup::system()?
+        } else {
+            Setup::system_ready()?
+        };
         match operation {
             Operation::Adopt(request) => {
                 if ai_caller || request.confirmed_plan_id.is_some() {
@@ -1056,6 +1060,19 @@ impl Setup {
         let home = Self::tool_home()?;
         let data = wenlan_core::config::data_root().join("rulesync");
         Ok(Self::new(home, data))
+    }
+
+    /// `system()` for operations that render: fetches the pinned binary when
+    /// it is missing, unless `WENLAN_RULESYNC_BINARY` names one.
+    pub(crate) fn system_ready() -> Result<Self> {
+        Self::system()?.ready()
+    }
+
+    fn ready(self) -> Result<Self> {
+        if std::env::var_os("WENLAN_RULESYNC_BINARY").is_none() {
+            rulesync_renderer::ensure_pinned_binary(&self.data)?;
+        }
+        Ok(self)
     }
 
     fn new(home: PathBuf, data: PathBuf) -> Self {
@@ -12912,5 +12929,37 @@ mod tests {
             before
         );
         assert_eq!(f.text(path.to_str().unwrap()), settings);
+    }
+
+    #[test]
+    fn ready_fetches_the_pinned_binary_before_rendering() {
+        let data = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope",
+            );
+        });
+        let error = temp_env::with_vars(
+            [
+                ("WENLAN_RULESYNC_BINARY", None::<&str>),
+                ("WENLAN_RULESYNC_DOWNLOAD_BASE", Some(base.as_str())),
+            ],
+            || {
+                Setup::new(data.path().join("home"), data.path().join("rulesync"))
+                    .ready()
+                    .err()
+                    .map(|error| format!("{error:#}"))
+            },
+        );
+        let error = error.expect("a download that fails its checksum is refused");
+        assert!(error.contains("WENLAN_RULESYNC_BINARY"), "{error}");
+        let name = rulesync_renderer::pinned_binary_name().unwrap();
+        assert!(!data.path().join("rulesync").join(name).exists());
     }
 }

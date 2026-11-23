@@ -1150,6 +1150,11 @@ and wait for evidence that people need them.
   policy, a protected audit list or a detected explicit audit rule, or a failure
   to preserve permissions leaves the path unmanaged.
   The preview names any Git worktree that contains a delivery destination.
+  When installed tools get files that do not exist yet, the preview prints
+  one line, `Will also write to: <Tool A>, <Tool B> (N files).`, and leaves
+  it out when every target already has its files. Tests
+  `rulesync_preview_names_tools_that_get_new_files` and
+  `personal_preview_lists_tools_that_get_new_files`.
   The preview says `~/.agents` is left untouched. Wenlan reads its shared
   sources and replaces adopted links at the tool paths. Personal Codex
   copies use `~/.codex/skills`.

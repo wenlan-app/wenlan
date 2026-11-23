@@ -74,7 +74,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 sysinfo = { workspace = true }
 
 # Business logic (phase 3d)
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
 # tempfile is used from eval/ runners (non-test code paths) in addition to
 # the dev-dependency usage by other modules.
 tempfile = { workspace = true }
