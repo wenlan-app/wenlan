@@ -77,7 +77,9 @@ test("keeps the compact service row quiet during automatic recovery and explains
   const status = page.getByTestId("service-status");
   await expect(status).toHaveAttribute("data-kind", "outOfDate");
   if (await status.getAttribute("aria-expanded") === "false") await status.click();
-  await expect(page.getByTestId("service-status-popover")).toContainText("0.19.3");
+  const popover = page.getByTestId("service-status-popover");
+  await expect(popover).toContainText("The background service is older than the app. Restart it to finish updating.");
+  await expect(popover).not.toContainText("0.19.3");
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("Wenlan couldn't confirm the background service stopped");
   await expect(alert).not.toContainText("12345");
