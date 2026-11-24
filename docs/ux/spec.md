@@ -1144,6 +1144,15 @@ and wait for evidence that people need them.
   directory modes, and says why. Skills with internal symlinks stay unmanaged.
   Unsafe paths and links stay in place with a reason in the plan. Adoption
   stages the files again and checks their bytes against the approved plan before writing.
+  When a tool rule file holds text that looks like a key, Wenlan records the
+  tool, path and line positions and leaves the file in place. Adoption,
+  sync, review and restore keep those values out of previews and backups.
+  Wenlan also leaves a skill package in place if one of its files holds
+  text that looks like a key, and records the tool and affected file paths.
+  Tests `rulesync_leaves_rule_credentials_at_their_original_locations`,
+  `rulesync_pullback_refuses_a_rule_edit_with_credentials_before_review`,
+  `rulesync_keeps_key_shaped_skill_assets_and_accepts_code_references`,
+  and `rulesync_skill_sync_keeps_an_asset_that_newly_contains_a_key`.
   On Windows, the plan lists linked rule files and skill folders as unmanaged.
   On Windows, a replacement keeps the destination's access rules, including
   custom rules. New entries inherit permissions from their folder. A different

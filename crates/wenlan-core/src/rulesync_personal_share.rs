@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag};
 use regex::Regex;
 
-use super::reject_secret_lines;
+use super::credentials::scanned_lines;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LocalReason {
@@ -77,9 +77,8 @@ pub fn overlay_lines_with(
     let mut lines = Vec::new();
     let mut sections = Vec::new();
     let mut lead_ins = Vec::new();
-    let mut in_key = false;
     let mut start = 0;
-    for raw in text.split_inclusive('\n') {
+    for (_, raw, credential) in scanned_lines(text) {
         let end = start + raw.len();
         let line = raw.lines().next().unwrap_or(raw);
         let trimmed = line.trim();
@@ -99,14 +98,6 @@ pub fn overlay_lines_with(
             continue;
         }
 
-        let refused = reject_secret_lines(line).is_err();
-        let credential = refused || in_key;
-        if refused && trimmed.contains("-----BEGIN ") && trimmed.contains("PRIVATE KEY-----") {
-            in_key = true;
-        }
-        if trimmed.contains("-----END ") && trimmed.contains("PRIVATE KEY-----") {
-            in_key = false;
-        }
         let reason = if credential {
             Some(LocalReason::Credential)
         } else if let Some(reason) = local(line) {
@@ -212,7 +203,8 @@ mod tests {
 
     #[test]
     fn rulesync_share_redacts_a_credential_even_in_a_tool_line_or_key_block() {
-        let overlay = "Codex PASSWORD=fixture-secret\n```\n-----BEGIN PRIVATE KEY-----\n\
+        let overlay =
+            "Codex PASSWORD=Z8sm1sFz7dJ5dKwS9E4nyP2g_87\n```\n-----BEGIN PRIVATE KEY-----\n\
             synthetic-key-body\n-----END PRIVATE KEY-----\n```\nKeep secrets local.\n";
         let reasons = overlay_lines(overlay)
             .into_iter()

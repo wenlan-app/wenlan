@@ -13,7 +13,7 @@ use anyhow::{bail, ensure, Context, Result};
 use fs2::FileExt;
 
 use super::{
-    group_drafts, inspect_rule, needs_conflict_card, record_scope_review,
+    group_drafts, inspect_rule, needs_conflict_card, record_scope_review, snapshot_has_credentials,
     storage::{save_manifest, BlobHash, StoredSetup, MANIFEST},
     Code, Kind, Manifest, Setup,
 };
@@ -230,6 +230,12 @@ impl RulesWatch {
                 stamp()? == Some(current_stamp),
                 "delivered rule changed during read"
             );
+            if snapshot_has_credentials(&content) {
+                // The delivery check records the location. Do not hash or
+                // cache this text as an observed rules edit.
+                self.rules.remove(path);
+                return Ok(None);
+            }
             let Snapshot::File { bytes, mode } = &content else {
                 bail!("delivered rule was replaced during read");
             };

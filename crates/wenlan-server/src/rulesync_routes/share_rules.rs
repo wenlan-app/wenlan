@@ -99,6 +99,15 @@ pub(super) fn plan(
     for &target in enrolled {
         let path = Path::new(target.rules.destination);
         let Some(receipt) = manifest.delivered.get(path) else {
+            if let Some(credential) = manifest.credentials.rules.get(path) {
+                let lines =
+                    read_credential_lines(root, path).unwrap_or_else(|| credential.lines.clone());
+                plan.stays.extend(
+                    lines
+                        .iter()
+                        .map(|_| stay(target.tool.display_name(), "", LocalReason::Credential)),
+                );
+            }
             continue;
         };
         let Kind::Rule {
@@ -110,8 +119,21 @@ pub(super) fn plan(
         if id != target.id {
             continue;
         }
-        let current = rule_snapshot(root, path, receipt)?;
-        let personal = rulesync_layers::only_personal(text(current)?)?;
+        let current = root.read(path, false);
+        if let Ok(snapshot) = &current {
+            let credential_lines = snapshot_credential_lines(snapshot);
+            if !credential_lines.is_empty() {
+                plan.stays.extend(
+                    credential_lines
+                        .iter()
+                        .map(|_| stay(target.tool.display_name(), "", LocalReason::Credential)),
+                );
+                continue;
+            }
+        }
+        let expected = receipt.observed.as_ref().unwrap_or(&receipt.delivered);
+        verify_rule_snapshot(path, current, expected)?;
+        let personal = rulesync_layers::only_personal(text(expected)?)?;
         let overlay = manifest.master.authored_overlay(target.id, base, &personal);
         let (imported, native) = if target.id != "claudecode" {
             (BTreeSet::new(), None)
@@ -148,6 +170,18 @@ pub(super) fn plan(
         plan.targets.push(target);
         plan.versions
             .push((target.id, receipt.rule_revision.clone()));
+    }
+    let shared_path = Path::new(SHARED_RULES);
+    if read_credential_lines(root, shared_path).map_or_else(
+        || manifest.credentials.rules.contains_key(shared_path),
+        |lines| !lines.is_empty(),
+    ) {
+        plan.stays.push(SharingRuleStay {
+            tool: SHARED_RULES.into(),
+            line: None,
+            reason: CREDENTIAL_FILE_REASON.into(),
+        });
+        return Ok((plan, Vec::new()));
     }
     let previously_kept = |line: &str| manifest.kept_share_rules.contains(line);
     let local = classified_local(&documents, previously_kept, BTreeMap::new());
@@ -235,13 +269,21 @@ fn stay(tool: &str, line: &str, reason: LocalReason) -> SharingRuleStay {
 
 fn rule_snapshot<'a>(root: &FileRoot, path: &Path, receipt: &'a Delivery) -> Result<&'a Snapshot> {
     let expected = receipt.observed.as_ref().unwrap_or(&receipt.delivered);
+    verify_rule_snapshot(path, root.read(path, false), expected)?;
+    Ok(expected)
+}
+
+fn verify_rule_snapshot(
+    path: &Path,
+    current: std::io::Result<Snapshot>,
+    expected: &Snapshot,
+) -> Result<()> {
     ensure!(
-        root.read(path, false)
-            .is_ok_and(|actual| actual == *expected),
+        current.is_ok_and(|actual| actual == *expected),
         "{} changed. Run `wenlan rules sync` and review the rule file before sharing.",
         path.display()
     );
-    Ok(expected)
+    Ok(())
 }
 
 pub(super) struct RuleShareChange {
@@ -367,6 +409,11 @@ impl Setup {
             let seen = source_root
                 .read(&path, false)
                 .context("Read ~/.agents/AGENTS.md before sharing rules")?;
+            ensure!(
+                !snapshot_has_credentials(&seen),
+                "{}",
+                credential_note(&path)
+            );
             ensure!(
                 text(&seen)? == manifest.master.shared,
                 "~/.agents/AGENTS.md differs from the shared rules saved in Wenlan. Resolve the difference before sharing rules."

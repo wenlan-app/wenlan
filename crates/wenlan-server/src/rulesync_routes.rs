@@ -18,7 +18,12 @@ use axum::{
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
+use wenlan_core::rulesync_adopt::{
+    AdoptedSkill, Adoption, AdoptionEntry, CredentialLocations, RuleCredentialLocation,
+};
+use wenlan_core::rulesync_personal::credentials::{
+    contains_credential_bytes, credential_line_numbers, CREDENTIAL_FILE_REASON,
+};
 use wenlan_core::rulesync_personal::{
     additional_personal_files, additional_targets, adoption_plan, adoption_token, adoption_tool,
     check_delivery_paths, check_skill_frontmatter, describe_change, discover_additional_adoption,
@@ -545,7 +550,20 @@ impl Setup {
             drafts,
             cards,
             blocked,
+            credentials,
         } = inspect(&self.home, &root, &manifest)?;
+        status.notes.extend(
+            credentials
+                .keys()
+                .chain(
+                    manifest
+                        .credentials
+                        .skills
+                        .keys()
+                        .filter(|path| kept_skill_asset(&root, path)),
+                )
+                .map(|path| credential_note(path)),
+        );
         status.in_sync = manifest.adopted
             && drafts.is_empty()
             && blocked.is_empty()
@@ -1056,6 +1074,9 @@ struct Manifest<Content = Vec<u8>> {
     /// Rule lines the person chose to keep in their existing overlays.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     kept_share_rules: BTreeSet<String>,
+    /// Locations we can report without retaining the original text or its hash.
+    #[serde(default, skip_serializing_if = "CredentialLocations::is_empty")]
+    credentials: CredentialLocations,
     /// Servers that may hold a key, shared by name only. No value or hash.
     #[serde(default, skip_serializing_if = "key_shares::KeyState::is_empty")]
     keys: key_shares::KeyState,
@@ -1125,6 +1146,7 @@ impl Manifest {
             delivery_issues: BTreeMap::new(),
             dismissed_skill_updates: BTreeMap::new(),
             kept_share_rules: BTreeSet::new(),
+            credentials: CredentialLocations::default(),
             keys: key_shares::KeyState::default(),
         }
     }
@@ -1677,6 +1699,9 @@ impl Setup {
             (Manifest::new(master, BTreeMap::new()), None)
         };
         let extending = extension.is_some();
+        if !extending {
+            manifest.credentials = adoption.credentials.clone();
+        }
         let mut skipped = adoption.skipped.into_keys().collect::<BTreeSet<_>>();
         let skipped_skills = !skipped.is_empty();
         let mut skipped_personal: BTreeMap<_, _> = adoption
@@ -1776,6 +1801,14 @@ impl Setup {
             extend_personal_master(&mut manifest.master, master);
             manifest.unmanaged_skills.append(&mut skipped);
             manifest.worktree_writes.append(&mut worktree_writes);
+            manifest
+                .credentials
+                .rules
+                .extend(adoption.credentials.rules.clone());
+            manifest
+                .credentials
+                .skills
+                .extend(adoption.credentials.skills.clone());
             manifest.extension_paths.clear();
         }
         // Enroll the settings in the same final checkpoint as the new tool
@@ -1794,6 +1827,7 @@ impl Setup {
                 " The command and subagent paths marked unmanaged in the plan stayed in place.",
             );
         }
+        append_credential_notes(&mut result, &adoption.credentials);
         append_skipped_tools(&mut result, &adoption.skipped_tools);
         Ok(result)
     }
@@ -2084,6 +2118,18 @@ impl Setup {
         let mut outcomes = Vec::with_capacity(operations.len());
         let mut ready: Vec<Pending> = Vec::with_capacity(operations.len());
         for op in operations {
+            if op.kind.as_ref().is_some_and(is_rule_or_skill)
+                || manifest
+                    .delivered
+                    .get(&op.path)
+                    .is_some_and(|record| is_rule_or_skill(&record.kind))
+            {
+                ensure!(
+                    !snapshot_has_credentials(&op.seen) && !snapshot_has_credentials(&op.desired),
+                    "{}",
+                    credential_note(&op.path)
+                );
+            }
             let settings_path =
                 wenlan_core::rulesync_settings::personal::is_settings_path(&op.path);
             let personal_file = settings_path
@@ -2250,10 +2296,16 @@ impl Setup {
                     let removal = operation.desired == Snapshot::Absent;
                     let verify = || {
                         if verify_spelling {
-                            return Ok(matches!(
-                                root.restore_leaf_alias(&path, |_| false),
-                                Ok(None)
-                            ));
+                            let proper_spelling =
+                                matches!(root.restore_leaf_alias(&path, |_| false), Ok(None));
+                            // A skill folder may still contain a local file
+                            // we refused to remove. Leave that folder in
+                            // place even when replacing an original link.
+                            let replacing_directory = restoring
+                                && operation.seen.is_directory()
+                                && !operation.desired.is_directory();
+                            return Ok(proper_spelling
+                                && (!replacing_directory || root.children(&path)?.is_empty()));
                         }
                         if removal && skill_case_alias(root, &path)?.is_some() {
                             return Ok(false);
@@ -2578,6 +2630,16 @@ impl Setup {
                 }
             };
             let seen = match read_for_restore() {
+                Ok(current)
+                    if manifest
+                        .delivered
+                        .get(&path)
+                        .is_some_and(|record| is_rule_or_skill(&record.kind))
+                        && snapshot_has_credentials(&current) =>
+                {
+                    block_path(result, &path, Code::RestoreBlocked, credential_note(&path));
+                    continue;
+                }
                 Ok(current) if extension_only && original == current => {
                     manifest.delivered.remove(&path);
                     continue;
@@ -2948,6 +3010,9 @@ impl Setup {
             let Ok(current) = root.read(path, false) else {
                 continue;
             };
+            if snapshot_has_credentials(&current) {
+                continue;
+            }
             let record = &manifest.delivered[path];
             let previous = record.observed.as_ref().unwrap_or(&record.delivered);
             let (Ok(before), Ok(delivered), Ok(after)) =
@@ -2997,6 +3062,9 @@ impl Setup {
             let Ok(current) = root.read(&path, false) else {
                 continue;
             };
+            if snapshot_has_credentials(&current) {
+                continue;
+            }
             let (Ok(before), Ok(after)) = (text(previous), text(&current)) else {
                 continue;
             };
@@ -3271,15 +3339,22 @@ impl Setup {
             .filter(|target| manifest.master.enrolls_target(target.id))
             .map(|target| target.tool)
             .collect();
-        let pending_skills = rulesync_registry::collect_tool_proposals(
+        let skills = rulesync_registry::collect_tool_proposals(
             &self.home, &self.data, &skills, &unmanaged, &enrolled,
         )?;
         let Pullback {
             drafts,
             cards,
             mut blocked,
+            credentials,
         } = inspect(&self.home, root, manifest)?;
-        blocked.extend(pending_skills);
+        blocked.extend(skills.blocked);
+        let previous_credentials = manifest.credentials.clone();
+        manifest.credentials.rules = credentials;
+        manifest.credentials.skills.retain(|path, _| {
+            path_blocked(&manifest.unmanaged_skills, path) && kept_skill_asset(root, path)
+        });
+        manifest.credentials.skills.extend(skills.credentials);
         let previous = (
             manifest.scope_reviews.len(),
             manifest.scope_review_heads.len(),
@@ -3293,11 +3368,12 @@ impl Setup {
                 .scope_review_heads
                 .retain(|path, _| unchanged(path));
         }
-        let mut changed = previous
-            != (
-                manifest.scope_reviews.len(),
-                manifest.scope_review_heads.len(),
-            );
+        let mut changed = previous_credentials != manifest.credentials
+            || previous
+                != (
+                    manifest.scope_reviews.len(),
+                    manifest.scope_review_heads.len(),
+                );
         for draft in drafts
             .iter()
             .filter(|draft| !cards.iter().any(|card| card.paths.contains(&draft.path)))
@@ -3319,13 +3395,29 @@ impl Setup {
             }
             result.proposals.push(card.wire);
         }
-        result
-            .proposals
-            .extend(manifest.current_scope_reviews().map(ScopeReview::wire));
+        result.proposals.extend(
+            manifest
+                .current_scope_reviews()
+                .filter(|review| !blocked.contains_key(&review.path))
+                .map(ScopeReview::wire),
+        );
         for (path, (code, reason)) in &blocked {
             block_path(result, path, *code, format!("{}: {reason}", path.display()));
         }
-        Ok(blocked.into_keys().collect())
+        // Report paths omitted from adoption without turning them into review
+        // blockers for deliveries to the other tools.
+        let blocked = blocked.into_keys().collect();
+        let locations = &manifest.credentials;
+        for path in locations
+            .rules
+            .keys()
+            .chain(locations.skills.keys())
+            .filter(|path| !path_blocked(&blocked, path))
+        {
+            result.message.push('\n');
+            result.message.push_str(&credential_note(path));
+        }
+        Ok(blocked)
     }
 
     fn sync_registry(
@@ -3979,6 +4071,10 @@ impl Setup {
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
             );
+            ensure!(
+                !snapshot_has_credentials(&root.read(&scope.path, false)?),
+                CREDENTIAL_FILE_REASON
+            );
             return Ok(PullbackPreview {
                 diff: scope.card.diff.clone(),
                 plan: scope.card.reason.clone(),
@@ -4039,6 +4135,10 @@ impl Setup {
             ensure!(
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
+            );
+            ensure!(
+                !snapshot_has_credentials(&root.read(&scope.path, false)?),
+                CREDENTIAL_FILE_REASON
             );
             let scope = scope.clone();
             if action == PullbackAction::AllTools {
@@ -4785,6 +4885,12 @@ fn render_personal_skills<'a>(
     let mut staged = BTreeMap::new();
     let mut candidates = Vec::new();
     for (name, files) in sources {
+        if let Some((path, _)) = files
+            .iter()
+            .find(|(_, bytes)| contains_credential_bytes(bytes))
+        {
+            bail!("{}", credential_note(&Path::new(name).join(path)));
+        }
         let source = files
             .get(entry)
             .context("missing SKILL.md in the skill master")?;
@@ -5213,6 +5319,57 @@ pub(crate) fn text(snapshot: &Snapshot) -> Result<&str> {
     }
 }
 
+fn is_rule_or_skill(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Rule { .. }
+            | Kind::SharedRuleSource
+            | Kind::RuleRevocation { .. }
+            | Kind::Skill
+            | Kind::RegistrySkill { .. }
+    )
+}
+
+fn snapshot_has_credentials(snapshot: &Snapshot) -> bool {
+    matches!(snapshot, Snapshot::File { bytes, .. } if contains_credential_bytes(bytes))
+}
+
+fn snapshot_credential_lines(snapshot: &Snapshot) -> Vec<usize> {
+    match snapshot {
+        Snapshot::File { bytes, .. } => credential_line_numbers(&String::from_utf8_lossy(bytes)),
+        _ => Vec::new(),
+    }
+}
+
+/// On an unreadable path retain the last observed line positions.
+fn read_credential_lines(root: &FileRoot, path: &Path) -> Option<Vec<usize>> {
+    let current = if is_shared_rule_source_path(path) {
+        root.with_shared_rule_source()
+            .and_then(|source| source.read(path, false))
+    } else {
+        root.read(path, false)
+    };
+    current
+        .ok()
+        .map(|snapshot| snapshot_credential_lines(&snapshot))
+}
+
+fn kept_skill_asset(root: &FileRoot, path: &Path) -> bool {
+    root.read(path, false)
+        .map_or(true, |snapshot| snapshot_has_credentials(&snapshot))
+}
+
+fn credential_note(path: &Path) -> String {
+    format!("{}: {CREDENTIAL_FILE_REASON}", path.display())
+}
+
+fn append_credential_notes(result: &mut RulesSyncReport, credentials: &CredentialLocations) {
+    for path in credentials.rules.keys().chain(credentials.skills.keys()) {
+        result.message.push('\n');
+        result.message.push_str(&credential_note(path));
+    }
+}
+
 struct Draft {
     path: PathBuf,
     current: Snapshot,
@@ -5252,10 +5409,29 @@ struct Pullback {
     drafts: Vec<Draft>,
     cards: Vec<Card>,
     blocked: BTreeMap<PathBuf, (Code, String)>,
+    credentials: BTreeMap<PathBuf, RuleCredentialLocation>,
 }
 
 fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
     let mut drafts = Vec::new();
+    let mut credentials = manifest
+        .credentials
+        .rules
+        .iter()
+        .filter(|(path, _)| !manifest.delivered.contains_key(*path))
+        .filter_map(|(path, marker)| {
+            let lines = read_credential_lines(root, path).unwrap_or_else(|| marker.lines.clone());
+            (!lines.is_empty()).then(|| {
+                (
+                    path.clone(),
+                    RuleCredentialLocation {
+                        tool: marker.tool.clone(),
+                        lines,
+                    },
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut blocked: BTreeMap<_, _> = manifest
         .recovery_issues
         .iter()
@@ -5317,8 +5493,25 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                     );
                 }
             }
-        } else if let Some(draft) = inspect_rule(path, delivery, current, &mut blocked)? {
-            drafts.push(draft);
+        } else if let Kind::Rule { target, .. } = &delivery.kind {
+            let lines = snapshot_credential_lines(&current);
+            if lines.is_empty() {
+                if let Some(draft) = inspect_rule(path, delivery, current, &mut blocked)? {
+                    drafts.push(draft);
+                }
+            } else {
+                credentials.insert(
+                    path.clone(),
+                    RuleCredentialLocation {
+                        tool: Some(target.clone()),
+                        lines,
+                    },
+                );
+                blocked.insert(
+                    path.clone(),
+                    (Code::RuleUnavailable, CREDENTIAL_FILE_REASON.into()),
+                );
+            }
         }
     }
     let mut cards = Vec::new();
@@ -5405,6 +5598,7 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
         drafts,
         cards,
         blocked,
+        credentials,
     })
 }
 
@@ -5800,6 +5994,354 @@ mod tests {
                     .map(move |(path, bytes)| (folder.join(path), bytes.clone()))
             })
             .collect())
+    }
+
+    const RULE_CREDENTIALS: [(&str, &str); 4] = [
+        (
+            "Authorization: Basic Zml4dHVyZTpydWxlLW9ubHk=",
+            "Zml4dHVyZTpydWxlLW9ubHk=",
+        ),
+        (
+            "Authorization: Bearer Z8sm1sFz7dJ5dKwS9E4nyP2g",
+            "Z8sm1sFz7dJ5dKwS9E4nyP2g",
+        ),
+        (
+            "Use example:rule-credential-fixture@localhost",
+            "rule-credential-fixture",
+        ),
+        (
+            "Use https://fixture.invalid/?token=rule-query-fixture",
+            "rule-query-fixture",
+        ),
+    ];
+
+    fn assert_no_fixture_keys(directory: &Path, excluded: &[&str], keys: &[&str]) {
+        let mut pending = vec![directory.to_owned()];
+        while let Some(path) = pending.pop() {
+            for entry in fs::read_dir(path).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    pending.push(entry.path());
+                } else if kind.is_file()
+                    && !excluded
+                        .iter()
+                        .any(|path| entry.path() == directory.join(path))
+                {
+                    let bytes = fs::read(entry.path()).unwrap();
+                    assert!(
+                        keys.iter().all(|key| !bytes
+                            .windows(key.len())
+                            .any(|part| part == key.as_bytes())),
+                        "credential fixture found in {}",
+                        entry.path().display()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rulesync_leaves_rule_credentials_at_their_original_locations() {
+        let f = Fixture::new();
+        let keys: Vec<_> = RULE_CREDENTIALS.iter().map(|(_, key)| *key).collect();
+        let claude = format!(
+            "Claude rule.\r\n{}\r\n{}\r\n",
+            RULE_CREDENTIALS[0].0, RULE_CREDENTIALS[1].0
+        );
+        let codex = format!(
+            "{}\nCodex rule.\n{}",
+            RULE_CREDENTIALS[2].0, RULE_CREDENTIALS[3].0
+        );
+        f.write(CLAUDE, &claude);
+        f.write(CODEX, &codex);
+        fs::create_dir(f.setup.home.join(".gemini")).unwrap();
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let preview = serde_json::to_string(&plan).unwrap();
+        assert!(
+            keys.iter().all(|key| !preview.contains(key)),
+            "adoption preview contained a credential"
+        );
+        assert!(preview.contains(CREDENTIAL_FILE_REASON.trim_end_matches('.')));
+        let rotated = codex.replace(RULE_CREDENTIALS[3].1, "rotated-query-fixture");
+        f.write(CODEX, &rotated);
+        let next_plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(
+            next_plan.plan_id, plan.plan_id,
+            "approval should depend only on the location"
+        );
+        f.write(CODEX, &codex);
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_no_fixture_keys(&f.setup.data, &[], &keys);
+        let manifest = f.setup.load().unwrap().unwrap();
+        for (path, tool, lines) in [(CLAUDE, "claudecode", [2, 3]), (CODEX, "codexcli", [1, 3])] {
+            let marker = &manifest.credentials.rules[Path::new(path)];
+            assert_eq!(marker.tool.as_deref(), Some(tool));
+            assert_eq!(marker.lines, lines);
+            assert!(!manifest.backup.contains_key(Path::new(path)));
+            assert!(!manifest.delivered.contains_key(Path::new(path)));
+        }
+
+        f.sync_generated(&["A safe generated rule.".into()]);
+        let gemini = personal_target("geminicli").unwrap().rules.destination;
+        assert!(f.text(gemini).contains("A safe generated rule."));
+        assert_eq!(
+            fs::read(f.setup.home.join(CLAUDE)).unwrap(),
+            claude.as_bytes()
+        );
+        assert_eq!(
+            fs::read(f.setup.home.join(CODEX)).unwrap(),
+            codex.as_bytes()
+        );
+        assert_no_fixture_keys(&f.setup.data, &[], &keys);
+        assert_no_fixture_keys(&f.setup.home, &[CLAUDE, CODEX], &keys);
+
+        f.setup.restore().unwrap();
+        assert_eq!(
+            fs::read(f.setup.home.join(CLAUDE)).unwrap(),
+            claude.as_bytes()
+        );
+        assert_eq!(
+            fs::read(f.setup.home.join(CODEX)).unwrap(),
+            codex.as_bytes()
+        );
+        assert_no_fixture_keys(&f.setup.data, &[], &keys);
+        assert_no_fixture_keys(&f.setup.home, &[CLAUDE, CODEX], &keys);
+    }
+
+    #[test]
+    fn rulesync_pullback_refuses_a_rule_edit_with_credentials_before_review() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let first = "changed-fixture-one";
+        let second = "changed-fixture-two";
+        f.write(
+            CLAUDE,
+            &format!(
+                "{}\nhttps://fixture.invalid/?token={first}\n",
+                f.text(CLAUDE)
+            ),
+        );
+        f.sync_generated(&[]);
+        let first_state = fs::read(f.setup.data.join(storage::MANIFEST)).unwrap();
+        let edited = f.text(CLAUDE).replace(first, second);
+        f.write(CLAUDE, &edited);
+        // An unrelated safe change still appears in review.
+        f.write(CODEX, &format!("{}\nA new safe rule.\n", f.text(CODEX)));
+        let status = f.setup.status().unwrap();
+        let cards = serde_json::to_string(&status.proposals).unwrap();
+        assert!(cards.contains("A new safe rule."));
+        assert!(
+            !cards.contains(first) && !cards.contains(second),
+            "review leaked a credential"
+        );
+        assert!(status
+            .notes
+            .iter()
+            .any(|note| note == &credential_note(Path::new(CLAUDE))));
+        let report = f.sync_generated(&[]);
+        assert!(report
+            .blocked
+            .iter()
+            .any(|reason| reason.contains(CLAUDE) && reason.contains("looks like a key")));
+        assert!(first_state
+            .windows(first.len())
+            .all(|part| part != first.as_bytes()));
+        assert_no_fixture_keys(&f.setup.data, &[], &[first, second]);
+        f.setup.restore().unwrap();
+        assert_eq!(f.text(CLAUDE), edited);
+        assert_no_fixture_keys(&f.setup.data, &[], &[first, second]);
+        assert_no_fixture_keys(&f.setup.home, &[CLAUDE], &[first, second]);
+    }
+
+    #[test]
+    fn rulesync_keeps_key_shaped_skill_assets_and_accepts_code_references() {
+        let f = Fixture::new();
+        let bearer = "zn7SpKc2bVT9jpD4RfyK2Hwg4zfcQFtQ29xwBwC2enAZpx3sY5hcpTMcqdX";
+        let api_key = "w79wxza928af410e9c4f36xdpycb01h6";
+        let samples = [
+            (
+                ".claude/skills/vendor",
+                "dist/bundle.js",
+                format!("const headers = {{ Authorization: 'Bearer {bearer}' }};\n"),
+            ),
+            (
+                ".codex/skills/docs",
+                "readme.md",
+                format!("api-key: {api_key}\n"),
+            ),
+            (
+                ".claude/skills/plain-code",
+                "main.py",
+                "token = data.get(\"token\")\napi_key = os.getenv(\"KEY\")\n".into(),
+            ),
+        ];
+        for (folder, file, contents) in &samples {
+            let path = f.setup.home.join(folder).join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let name = folder.rsplit('/').next().unwrap();
+            f.write(
+                &format!("{folder}/SKILL.md"),
+                &format!("---\nname: {name}\ndescription: A fixture\n---\nExample skill.\n"),
+            );
+            fs::write(path, contents).unwrap();
+        }
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_no_fixture_keys(&f.setup.data, &[], &[bearer, api_key]);
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(manifest
+            .master
+            .skills
+            .iter()
+            .any(|skill| skill.name == "plain-code"));
+        let flags = [
+            ".claude/skills/vendor/dist/bundle.js",
+            ".codex/skills/docs/readme.md",
+        ];
+        assert_eq!(
+            manifest.credentials.skills,
+            BTreeMap::from([
+                (PathBuf::from(flags[0]), Some("claudecode".into())),
+                (PathBuf::from(flags[1]), Some("codexcli".into())),
+            ])
+        );
+        let report = f.sync_generated(&[]);
+        for path in flags {
+            assert!(report.message.contains(&credential_note(Path::new(path))));
+        }
+        for (folder, file, contents) in &samples {
+            assert_eq!(
+                fs::read(f.setup.home.join(folder).join(file)).unwrap(),
+                contents.as_bytes()
+            );
+        }
+        assert_no_fixture_keys(&f.setup.data, &[], &[bearer, api_key]);
+        assert_no_fixture_keys(&f.setup.home, &flags, &[bearer, api_key]);
+        f.setup.restore().unwrap();
+        for (folder, file, contents) in &samples {
+            assert_eq!(
+                fs::read(f.setup.home.join(folder).join(file)).unwrap(),
+                contents.as_bytes()
+            );
+        }
+        assert_no_fixture_keys(&f.setup.home, &flags, &[bearer, api_key]);
+    }
+
+    #[test]
+    fn rulesync_clears_credential_markers_after_the_person_removes_the_keys() {
+        let f = Fixture::new();
+        let asset = ".codex/skills/example/readme.md";
+        fs::create_dir_all(f.setup.home.join(".codex/skills/example")).unwrap();
+        f.write(".codex/skills/example/SKILL.md", "A skill with examples.\n");
+        f.write(asset, RULE_CREDENTIALS[1].0);
+        f.write(CLAUDE, RULE_CREDENTIALS[0].0);
+        f.adopt_from_plan();
+        assert_eq!(f.setup.status().unwrap().notes.len(), 2);
+
+        f.write(CLAUDE, "The person's clean rules.\n");
+        f.write(asset, "The person's clean examples.\n");
+        assert!(f.setup.status().unwrap().notes.is_empty());
+        f.sync_generated(&["Safe new rule.".into()]);
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(manifest.credentials.is_empty());
+        assert_eq!(f.text(CLAUDE), "The person's clean rules.\n");
+        assert_eq!(f.text(asset), "The person's clean examples.\n");
+    }
+
+    #[test]
+    fn rulesync_skill_sync_keeps_an_asset_that_newly_contains_a_key() {
+        let f = Fixture::new();
+        let folder = ".claude/skills/notes";
+        let asset = ".claude/skills/notes/example.js";
+        fs::create_dir_all(f.setup.home.join(folder)).unwrap();
+        f.write(
+            &format!("{folder}/SKILL.md"),
+            "---\nname: notes\ndescription: A fixture\n---\nRead the examples.\n",
+        );
+        f.write(asset, "const example = 'fixture';\n");
+        f.adopt_from_plan();
+
+        let key = RULE_CREDENTIALS[1].1;
+        let contents = format!("const authorization = 'Bearer {key}';\r\n");
+        f.write(asset, &contents);
+        let report = f.sync_generated(&[]);
+        assert_block(&report, CREDENTIAL_FILE_REASON, Code::SkillUnreadable);
+        assert!(rulesync_registry::pending_skill_reviews(&f.setup.data)
+            .unwrap()
+            .is_empty());
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(
+            manifest.credentials.skills[Path::new(asset)].as_deref(),
+            Some("claudecode")
+        );
+        assert_no_fixture_keys(&f.setup.data, &[], &[key]);
+        assert_eq!(f.text(asset), contents);
+
+        f.setup.restore().unwrap();
+        assert_eq!(f.text(asset), contents);
+        assert_no_fixture_keys(&f.setup.data, &[], &[key]);
+        assert_no_fixture_keys(&f.setup.home, &[asset], &[key]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_restore_does_not_displace_a_linked_skill_with_a_local_key() {
+        let f = Fixture::new();
+        let source = ".agents/skills/notes";
+        let installed = ".claude/skills/notes";
+        let asset = ".claude/skills/notes/local.txt";
+        fs::create_dir_all(f.setup.home.join(source)).unwrap();
+        fs::create_dir(f.setup.home.join(".claude/skills")).unwrap();
+        f.write(
+            &format!("{source}/SKILL.md"),
+            "---\nname: notes\ndescription: A fixture\n---\nRead the examples.\n",
+        );
+        std::os::unix::fs::symlink("../../.agents/skills/notes", f.setup.home.join(installed))
+            .unwrap();
+        f.adopt_from_plan();
+        assert!(!fs::symlink_metadata(f.setup.home.join(installed))
+            .unwrap()
+            .is_symlink());
+
+        let (contents, key) = RULE_CREDENTIALS[1];
+        f.write(asset, contents);
+        let report = f.setup.restore().unwrap();
+        assert!(!report.blocked.is_empty());
+        assert_eq!(f.text(asset), contents);
+        assert_no_fixture_keys(&f.setup.data, &[], &[key]);
+        assert_no_fixture_keys(&f.setup.home, &[asset], &[key]);
+    }
+
+    #[test]
+    fn rulesync_legacy_rule_credentials_leave_the_saved_setup_in_place() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let path = f.setup.data.join(storage::MANIFEST);
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        state["state"]["master"]["shared"] = RULE_CREDENTIALS[0].0.into();
+        let legacy_bytes = serde_json::to_vec(&state).unwrap();
+        fs::write(&path, &legacy_bytes).unwrap();
+
+        let failure = f.setup.status().unwrap_err().to_string();
+        assert!(failure.contains("holds text that looks like a key"));
+        assert!(!failure.contains(RULE_CREDENTIALS[0].1));
+        assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
     }
 
     #[test]

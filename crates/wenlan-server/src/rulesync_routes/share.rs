@@ -7,7 +7,7 @@ use super::key_shares::{plan_token, KeyDigests, KeyPreview, KeyShare, EXPIRED_KE
 use super::personal_files::{choose_destination, file_bytes};
 use super::personal_settings::{enroll_shares, offered_unmanaged_sources, SettingAddition};
 use super::*;
-use wenlan_core::rulesync_personal::{adoption_plan_id, reject_secret_lines};
+use wenlan_core::rulesync_personal::adoption_plan_id;
 use wenlan_core::rulesync_personal_files::{sharing_paths, NO_PERSONAL_DESTINATION};
 use wenlan_types::rulesync::{SharingPlan, SharingStay, SharingTool};
 
@@ -115,9 +115,7 @@ impl Listing {
 
 /// The credential check shared setup already applies to skills and rules.
 fn possible_credentials<'a>(files: impl IntoIterator<Item = &'a [u8]>) -> bool {
-    files
-        .into_iter()
-        .any(|bytes| reject_secret_lines(&String::from_utf8_lossy(bytes)).is_err())
+    files.into_iter().any(contains_credential_bytes)
 }
 
 fn plain_folder_name(name: &str) -> bool {
@@ -1198,10 +1196,11 @@ mod tests {
     fn rulesync_share_keeps_numbered_rules_and_redacts_credentials() {
         let f = Fixture::new();
         rule_fixture(&f);
-        const SECRET: &str = "Claude PASSWORD=synthetic-rule-credential";
+        const VALUE: &str = "Z8sm1sFz7dJ5dKwS9E4nyP2g_87";
+        let secret = format!("Claude PASSWORD={VALUE}");
         f.write(
             CLAUDE_RULES,
-            &format!("{COMMON_RULE}\n{CLAUDE_RULE}\n{SECRET}\n"),
+            &format!("{COMMON_RULE}\n{CLAUDE_RULE}\n{secret}\n"),
         );
         adopt(&f);
 
@@ -1214,20 +1213,18 @@ mod tests {
             .rule_stays
             .iter()
             .any(|stay| stay.line.is_none() && stay.reason == "This line may hold a credential."));
-        assert!(!serde_json::to_string(&keep)
-            .unwrap()
-            .contains("synthetic-rule-credential"));
+        assert!(!serde_json::to_string(&keep).unwrap().contains(VALUE));
         assert!(
             apply_rules(&f, &keep, &[]).is_err(),
             "keep choices must match the approval"
         );
         let report = apply_rules(&f, &keep, &[2]).unwrap();
         assert!(report.blocked.is_empty(), "{report:?}");
-        assert!(f.text(CLAUDE_RULES).contains(SECRET));
+        assert!(f.text(CLAUDE_RULES).contains(VALUE));
         assert!(f.text(CODEX_RULES).contains(REVIEW_RULE));
-        assert!(!f.text(CODEX_RULES).contains(SECRET));
+        assert!(!f.text(CODEX_RULES).contains(VALUE));
         assert!(!f.text(GEMINI_RULES).contains(REVIEW_RULE));
-        assert!(!f.text(GEMINI_RULES).contains(SECRET));
+        assert!(!f.text(GEMINI_RULES).contains(VALUE));
 
         let again = preview_rules(&f, &[]);
         assert!(again.rules.is_empty());
@@ -1251,8 +1248,14 @@ mod tests {
                 "synthetic:example",
             ),
             ("Use https://docs.invalid/?token=t1", "token=t1"),
-            ("Call the endpoint with api_key='k2'", "k2"),
-            ("Send secret=s3", "secret=s3"),
+            (
+                "Call the endpoint with api_key='w79wxza928af410e9c4f36xdpycb01h6'",
+                "w79wxza928af410e9c4f36xdpycb01h6",
+            ),
+            (
+                "Send secret=s5d2b8t055kc14mh1shs65e791v7mcyb",
+                "s5d2b8t055kc14mh1shs65e791v7mcyb",
+            ),
         ];
         let mut donor = f.text(CLAUDE_RULES);
         for (line, _) in credentials {
@@ -1355,8 +1358,6 @@ mod tests {
     fn rulesync_share_reclassifies_accepted_edits_and_binds_the_donor_revision() {
         let f = Fixture::new();
         rule_fixture(&f);
-        let original = f.text(CODEX_RULES);
-        f.write(CODEX_RULES, &format!("{original}PASSWORD=fixture-v1\n"));
         adopt(&f);
         let accept = |edited: &str| {
             f.write(CODEX_RULES, edited);
@@ -1378,10 +1379,12 @@ mod tests {
                 .unwrap();
         };
         let old = preview_rules(&f, &[]);
-        accept(
-            &f.text(CODEX_RULES)
-                .replace("PASSWORD=fixture-v1", "PASSWORD=fixture-v2"),
-        );
+        // The blank line changes the donor's approved revision without
+        // changing the lines offered to the other tools.
+        accept(&f.text(CODEX_RULES).replace(
+            &format!("{COMMON_RULE}\n{REVIEW_RULE}"),
+            &format!("{COMMON_RULE}\n\n{REVIEW_RULE}"),
+        ));
         let same_listing = preview_rules(&f, &[]);
         assert_eq!(old.rules, same_listing.rules);
         assert_eq!(old.rule_stays, same_listing.rule_stays);

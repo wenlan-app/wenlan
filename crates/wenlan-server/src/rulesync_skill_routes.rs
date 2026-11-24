@@ -14,6 +14,9 @@ use sha2::{Digest, Sha256};
 use wenlan_core::rulesync_adopt::{
     skip_skill_asset, MAX_ADOPTED_SKILL_BYTES, MAX_ADOPTED_SKILL_DEPTH, MAX_ADOPTED_SKILL_ENTRIES,
 };
+use wenlan_core::rulesync_personal::credentials::{
+    contains_credential_bytes, CREDENTIAL_FILE_REASON,
+};
 use wenlan_core::rulesync_personal::{self, fingerprint};
 use wenlan_core::rulesync_renderer::RenderSession;
 use wenlan_core::rulesync_skill::{self as skills, SkillFiles};
@@ -1467,8 +1470,12 @@ impl SkillHome {
             directories: BTreeMap::from([(PathBuf::new(), FileMode::of(&dir.dir_metadata()?))]),
             bytes: 0,
             entries: 0,
+            credentials: Vec::new(),
         };
         self.read_files(&dir, folder, Path::new(""), &mut package)?;
+        if !package.credentials.is_empty() {
+            return Err(SkillCredentials(package.credentials).into());
+        }
         ensure!(
             package.files.contains_key(Path::new("SKILL.md")),
             "the skill changed during discovery"
@@ -1554,7 +1561,11 @@ impl SkillHome {
                 "skill package exceeds the {} MiB import limit",
                 MAX_ADOPTED_SKILL_BYTES / (1024 * 1024)
             );
-            result.files.insert(path, snapshot);
+            if contains_credential_bytes(bytes) {
+                result.credentials.push(folder.join(path));
+            } else {
+                result.files.insert(path, snapshot);
+            }
         }
         Ok(())
     }
@@ -1565,7 +1576,19 @@ struct PackageRead {
     directories: BTreeMap<PathBuf, FileMode>,
     bytes: u64,
     entries: usize,
+    credentials: Vec<PathBuf>,
 }
+
+#[derive(Debug)]
+struct SkillCredentials(Vec<PathBuf>);
+
+impl std::fmt::Display for SkillCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(CREDENTIAL_FILE_REASON)
+    }
+}
+
+impl std::error::Error for SkillCredentials {}
 
 fn unchanged_tool_skill(
     current: &ManagedSkill,
@@ -1588,13 +1611,18 @@ fn unchanged_tool_skill(
 /// Capture unapproved skill bytes. Returned package roots must remain blocked
 /// from delivery until the person accepts the observed bytes.
 /// The caller holds the setup lock through both discovery and delivery.
+pub(crate) struct ToolProposals {
+    pub blocked: BTreeMap<PathBuf, (Code, String)>,
+    pub credentials: BTreeMap<PathBuf, Option<String>>,
+}
+
 pub(crate) fn collect_tool_proposals(
     home: &Path,
     data: &Path,
     managed: &BTreeMap<PathBuf, ManagedSkill>,
     unmanaged: &BTreeSet<PathBuf>,
     enrolled: &BTreeSet<SavedSkillTool>,
-) -> Result<BTreeMap<PathBuf, (Code, String)>> {
+) -> Result<ToolProposals> {
     let home = SkillHome::open(home)?;
     let mut candidates = home.candidates();
     candidates.extend(
@@ -1613,6 +1641,7 @@ pub(crate) fn collect_tool_proposals(
                 .is_some_and(|hold| hold.proposal == *id)
     });
     let mut blocked = BTreeMap::new();
+    let mut credentials = BTreeMap::new();
     for (folder, tool) in candidates {
         if folder.ancestors().any(|path| unmanaged.contains(path)) {
             continue;
@@ -1622,6 +1651,32 @@ pub(crate) fn collect_tool_proposals(
             Ok(Some(snapshot)) => snapshot,
             problem => {
                 if let Err(error) = &problem {
+                    if let Some(protected) = error.downcast_ref::<SkillCredentials>() {
+                        let target = rulesync_personal::PERSONAL_TARGETS
+                            .iter()
+                            .find(|target| target.tool == tool)
+                            .map(|target| target.id.to_owned());
+                        credentials.extend(
+                            protected
+                                .0
+                                .iter()
+                                .map(|path| (path.clone(), target.clone())),
+                        );
+                        let paths = protected
+                            .0
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        blocked.insert(
+                            folder,
+                            (
+                                Code::SkillUnreadable,
+                                format!("{CREDENTIAL_FILE_REASON} {paths}"),
+                            ),
+                        );
+                        continue;
+                    }
                     #[cfg(windows)]
                     if error
                         .downcast_ref::<std::io::Error>()
@@ -1630,8 +1685,6 @@ pub(crate) fn collect_tool_proposals(
                         blocked.insert(folder, (Code::SkillUnreadable, format!("{error:#}")));
                         continue;
                     }
-                    #[cfg(not(windows))]
-                    let _ = error;
                 }
                 if baseline.is_some_and(|skill| skill.files.contains_key(Path::new("SKILL.md"))) {
                     let reason = match problem {
@@ -1719,7 +1772,10 @@ pub(crate) fn collect_tool_proposals(
         .state
         .queue_new_tool_deliveries(enrolled, &mut blocked)?;
     store.save()?;
-    Ok(blocked)
+    Ok(ToolProposals {
+        blocked,
+        credentials,
+    })
 }
 
 #[cfg(test)]
@@ -1930,8 +1986,8 @@ mod tests {
             &BTreeSet::new(),
         )
         .unwrap();
-        assert_eq!(pending.len(), 1);
-        assert!(pending.contains_key(&folder));
+        assert_eq!(pending.blocked.len(), 1);
+        assert!(pending.blocked.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
         let (id, draft) = store.state.proposals.first_key_value().unwrap();
         let proposal = draft.preview(id.clone()).unwrap();
@@ -1984,6 +2040,7 @@ mod tests {
             &BTreeSet::new()
         )
         .unwrap()
+        .blocked
         .is_empty());
 
         let mut store = SkillStore::open(&data).unwrap();
@@ -2028,8 +2085,8 @@ mod tests {
                 &BTreeSet::new(),
             )
             .unwrap();
-            assert_eq!(blocked.len(), 1);
-            assert!(blocked.contains_key(&folder));
+            assert_eq!(blocked.blocked.len(), 1);
+            assert!(blocked.blocked.contains_key(&folder));
             let mut store = SkillStore::open(&data).unwrap();
             let (id, draft) = store.state.proposals.first_key_value().unwrap();
             let proposal = draft.preview(id.clone()).unwrap();
@@ -2082,6 +2139,7 @@ mod tests {
         assert!(
             collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new())
                 .unwrap()
+                .blocked
                 .is_empty()
         );
 
@@ -2089,7 +2147,7 @@ mod tests {
         let pending =
             collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new())
                 .unwrap();
-        assert!(pending.contains_key(&folder));
+        assert!(pending.blocked.contains_key(&folder));
         let mut store = SkillStore::open(&data).unwrap();
         let id = store.state.proposals.first_key_value().unwrap().0.clone();
         store
@@ -2100,6 +2158,7 @@ mod tests {
         assert!(
             collect_tool_proposals(&home, &data, &managed, &BTreeSet::new(), &BTreeSet::new())
                 .unwrap()
+                .blocked
                 .contains_key(&folder)
         );
         assert!(SkillStore::open(&data).unwrap().state.proposals.is_empty());

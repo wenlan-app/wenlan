@@ -9,11 +9,13 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use wenlan_core::rulesync_personal::{reject_secret_lines, PERSONAL_TARGETS};
 
 use super::{
-    AdoptedSkill, Delivery, Manifest, Pending, PersonalMaster, Setup, UnsupportedRulesyncState,
+    is_rule_or_skill, snapshot_has_credentials, AdoptedSkill, Delivery, Kind, Manifest, Pending,
+    PersonalMaster, Setup, UnsupportedRulesyncState,
 };
-use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
+use crate::rulesync_apply::{is_shared_rule_source_path, ApplyOutcome, FileRoot, Snapshot};
 
 pub(super) const MANIFEST: &str = "personal.json";
 const BLOBS: &str = "personal-blobs";
@@ -109,7 +111,7 @@ impl StoredSetup {
 
     pub(super) fn load_contents(&self, root: &FileRoot) -> Result<Manifest> {
         let mut cache = BTreeMap::<String, Vec<u8>>::new();
-        map_contents(&self.state, |hash| {
+        let manifest = map_contents(&self.state, |hash| {
             if let Some(bytes) = cache.get(&hash.0) {
                 return Ok(bytes.clone());
             }
@@ -123,8 +125,83 @@ impl StoredSetup {
             );
             cache.insert(hash.0.clone(), bytes.clone());
             Ok(bytes)
-        })
+        })?;
+        // Older builds could already have saved credentials. Leave that
+        // backup intact and refuse to use it for delivery, restore or review.
+        check_saved_rules_and_skills(&manifest)?;
+        Ok(manifest)
     }
+}
+
+fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
+    use wenlan_core::rulesync_personal::credentials::contains_credential_bytes;
+
+    let master = &manifest.master;
+    let rule_text = std::iter::once(&master.shared)
+        .chain(master.overlays.values())
+        .chain(master.claude_imported_rules.iter().flatten())
+        .chain(
+            master
+                .overrides
+                .values()
+                .flat_map(|local| [&local.base, &local.edited]),
+        )
+        .chain(&manifest.kept_share_rules)
+        .chain(
+            manifest
+                .scope_reviews
+                .values()
+                .flat_map(|review| [&review.before, &review.after]),
+        )
+        .chain(
+            manifest
+                .delivered
+                .values()
+                .filter_map(|record| match &record.kind {
+                    Kind::Rule { base, source, .. } => Some([base, source]),
+                    _ => None,
+                })
+                .flatten(),
+        );
+    let is_rules_or_skills_path = |path: &Path| {
+        is_shared_rule_source_path(path)
+            || PERSONAL_TARGETS.iter().any(|target| {
+                path == Path::new(target.rules.destination)
+                    || path.starts_with(target.skills.destination)
+            })
+    };
+    let snapshots = manifest
+        .backup
+        .iter()
+        .filter(|(path, _)| is_rules_or_skills_path(path))
+        .map(|(_, original)| original)
+        .chain(
+            manifest
+                .delivered
+                .values()
+                .filter(|record| is_rule_or_skill(&record.kind))
+                .flat_map(|record| {
+                    std::iter::once(&record.delivered).chain(record.observed.iter())
+                }),
+        )
+        .chain(
+            manifest
+                .pending
+                .iter()
+                .filter(|op| {
+                    is_rules_or_skills_path(&op.path)
+                        || op.kind.as_ref().is_some_and(is_rule_or_skill)
+                })
+                .flat_map(|op| [&op.seen, &op.desired]),
+        );
+    ensure!(
+        !rule_text.into_iter().any(|text| reject_secret_lines(text).is_err())
+            && !master.skills.iter().flat_map(|skill| skill.files.values())
+                .any(|bytes| contains_credential_bytes(bytes))
+            && !snapshots.into_iter().any(snapshot_has_credentials),
+        "The saved rules or skills setup holds text that looks like a key. Wenlan is leaving the existing backup and tool files in place."
+    );
+    Ok(())
 }
 
 pub(super) fn save_manifest(root: &FileRoot, manifest: &Manifest) -> Result<()> {
@@ -274,6 +351,7 @@ fn map_contents<From, To>(
         scope_review_heads: manifest.scope_review_heads.clone(),
         dismissed_skill_updates: manifest.dismissed_skill_updates.clone(),
         kept_share_rules: manifest.kept_share_rules.clone(),
+        credentials: manifest.credentials.clone(),
         delivery_issues: manifest.delivery_issues.clone(),
         keys: manifest.keys.clone(),
     })

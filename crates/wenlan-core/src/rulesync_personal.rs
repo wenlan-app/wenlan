@@ -23,6 +23,10 @@ use crate::rulesync_adopt::{
     self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionSkip, AdoptionTarget,
 };
 
+#[path = "rulesync_credentials.rs"]
+pub mod credentials;
+pub use credentials::reject_secret_lines;
+
 #[path = "rulesync_delivery_worktrees.rs"]
 mod delivery_worktrees;
 #[path = "rulesync_skill_preview.rs"]
@@ -1250,6 +1254,7 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
             &adoption.skipped_rules,
             &adoption.skipped_tools,
             &adoption.added_tools,
+            &adoption.credentials,
         ))?,
         fingerprint(&(
             &adoption.shared,
@@ -1975,50 +1980,6 @@ pub fn write_named_root_rule(input: &Path, name: &str, text: &str) -> Result<()>
     Ok(())
 }
 
-/// Shared setup must never carry credential-like text. Error messages
-/// identify only the position so the suspected value is never echoed.
-pub fn reject_secret_lines(text: &str) -> Result<()> {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
-    use std::sync::LazyLock;
-
-    static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(concat!(
-            r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----",
-            r"|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}",
-            r"|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}",
-            r"|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|wlt_[a-f0-9]{64})\b",
-            r"|(?i)\bbearer\s+[A-Za-z0-9_.~+/-]{20,}",
-            r#"|(?i)\b(?:proxy[-_])?authorization["']?\s*:\s*["']?\s*(?:basic|bearer)\s+[^\s"'\x60]+"#,
-            r#"|(?i)\b[a-z][a-z0-9+.-]*://[^:/@?#\s"'\x60]+:[^/@?#\s"'\x60]+@"#,
-            r#"|(?i)\b(?:token|api[_-]?key|secret)\b["']?\s*=\s*[^\s"'\x60&;,)]"#,
-            r#"|(?i)\b(?:token|api[_-]?key|secret)\b["']?\s*=\s*["'][^\s"']"#,
-            r#"|(?i)\b(?:[a-z0-9_]*[_-])?(?:api[_-]?key|secret|token|password|access[_-]?key)\b["']?"#,
-            r#"\s*[:=]\s*["']?[A-Za-z0-9_+/.-]{8,}"#,
-        )).expect("credential detection pattern")
-    });
-    static BASIC: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"(?i)\bbasic\s+([a-z0-9+/]+={0,2})").expect("Basic credentials")
-    });
-    for (index, line) in text.lines().enumerate() {
-        let basic = || {
-            BASIC.captures_iter(line).any(|capture| {
-                STANDARD_NO_PAD
-                    .decode(capture[1].trim_end_matches('='))
-                    .is_ok_and(|bytes| {
-                        bytes.contains(&b':')
-                            || (!bytes.is_empty() && bytes.iter().all(u8::is_ascii_graphic))
-                    })
-            })
-        };
-        ensure!(
-            !TOKEN.is_match(line) && !basic(),
-            "possible credential on line {}",
-            index + 1
-        );
-    }
-    Ok(())
-}
-
 #[path = "rulesync_personal_share.rs"]
 pub mod sharing;
 
@@ -2408,6 +2369,6 @@ mod tests {
         let error = reject_secret_lines(&format!("ordinary rule\nBearer {fixture}")).unwrap_err();
         assert_eq!(error.to_string(), "possible credential on line 2");
         assert!(reject_secret_lines("Read API keys from the system keychain.").is_ok());
-        assert!(reject_secret_lines("SERVICE_TOKEN=fixture-value").is_err());
+        assert!(reject_secret_lines("SERVICE_TOKEN=w79wxza928af410e9c4f36xdpycb01h6").is_err());
     }
 }
