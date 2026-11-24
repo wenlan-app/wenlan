@@ -1475,7 +1475,10 @@ and wait for evidence that people need them.
 
 - **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` copies the
   skills, commands, subagents and MCP servers a person already had in one tool
-  to every other managed tool that supports that kind. The preview lists each
+  to every other managed tool that supports that kind. Safe personal MCP
+  servers in managed tools are offered even if Wenlan does not yet manage the
+  entry; on confirmation they are first adopted with the usual receipts and
+  backups. Project-scoped servers stay out of this share. The preview lists each
   tool with its counts, counts items every tool already has, and summarizes
   items that stay by reason. `--details` lists the item names and a line
   "Stays in <tool>: <item>: <reason>" for each item that cannot travel;
@@ -1499,6 +1502,8 @@ and wait for evidence that people need them.
   as adoption, so `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,
+  `ux_skill_26_rulesync_share_names_an_unmanaged_unsafe_server`,
   `ux_skill_26_rulesync_share_names_refused_servers_without_exposing_unsafe_names`,
   `ux_skill_26_rules_share_short_preview_summarizes_distinct_stays`,
   `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
@@ -1516,7 +1521,8 @@ and wait for evidence that people need them.
 
 - **UX-SKILL-27** `shipped` MCP servers that may hold a key (a value written
   in the entry rather than an environment variable reference) form one key
-  group in `wenlan rules share`. Hooks, permissions and other settings stay
+  group in `wenlan rules share`, including entries not yet managed by Wenlan.
+  Hooks, permissions and other settings stay
   in their own tool. The preview names the servers and the tools only:
   "These N servers may contain a key. Sharing copies the key into: <tools>."
   A server the check cannot copy safely keeps its "Stays in <tool>: <reason>"
@@ -1541,6 +1547,7 @@ and wait for evidence that people need them.
   file; otherwise it says "kept <server> in <tool>: changed since sharing;
   remove it by hand if you don't want it".
   Tests `rulesync_share_previews_key_servers_by_name_and_tool_only`,
+  `ux_skill_27_rulesync_share_unmanaged_key_requires_person_and_stores_no_value_or_hash`,
   `ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
   `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
   `rulesync_share_refuses_key_servers_for_an_ai_caller`,

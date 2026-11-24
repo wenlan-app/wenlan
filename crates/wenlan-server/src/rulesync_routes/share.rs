@@ -5,7 +5,7 @@
 
 use super::key_shares::KeyShare;
 use super::personal_files::{choose_destination, file_bytes};
-use super::personal_settings::{enroll_shares, SettingAddition};
+use super::personal_settings::{enroll_shares, offered_unmanaged_sources, SettingAddition};
 use super::*;
 use wenlan_core::rulesync_personal::{adoption_plan_id, reject_secret_lines};
 use wenlan_core::rulesync_personal_files::{sharing_paths, NO_PERSONAL_DESTINATION};
@@ -239,12 +239,19 @@ impl Setup {
             return Ok(result);
         }
         let Share {
-            operations,
+            mut operations,
             skills,
             settings,
             worktree_writes,
             ..
         } = share;
+        // Import the sources through the ordinary adoption path before any
+        // projected copies are enrolled. It re-reads and verifies each entry
+        // and adds its normal backup operation to this same batch.
+        let unmanaged = offered_unmanaged_sources(&settings);
+        let source_paths: BTreeSet<_> = unmanaged.sources.keys().cloned().collect();
+        let adopted =
+            personal_settings::adopt(&self.home, &root, &manifest, unmanaged, &mut operations)?;
         let mut result = report("Shared existing items with the other tools");
         let outcomes = if operations.is_empty() {
             Vec::new()
@@ -260,10 +267,11 @@ impl Setup {
                 "{} changed while sharing. Run `{SYNC_COMMAND}` to roll back the copies",
                 path.display()
             );
-            if !manifest
-                .delivered
-                .get(&path)
-                .is_some_and(|delivery| matches!(delivery.kind, Kind::Directory))
+            if !source_paths.contains(&path)
+                && !manifest
+                    .delivered
+                    .get(&path)
+                    .is_some_and(|delivery| matches!(delivery.kind, Kind::Directory))
             {
                 result.written.push(path.display().to_string());
             }
@@ -281,6 +289,7 @@ impl Setup {
         }
         manifest.extension_paths.clear();
         manifest.worktree_writes.extend(worktree_writes);
+        personal_settings::enroll(&mut manifest, adopted);
         let destinations: BTreeSet<_> = settings
             .iter()
             .map(|addition| addition.path().to_owned())
@@ -385,6 +394,8 @@ impl Setup {
             &operations,
             &skills,
             &settings.additions,
+            &settings.unmanaged,
+            &settings.unmanaged_refusals,
             &settings.keys.shares,
             &worktree_writes,
             &listing.stays,
@@ -889,6 +900,219 @@ mod tests {
             .unwrap_or_else(|| panic!("{name}: {plan:?}"))
     }
 
+    /// Enroll three tools before adding the settings under test, so those
+    /// entries are genuinely unmanaged when share discovers them.
+    fn unmanaged_fixture() -> Fixture {
+        let f = Fixture::new();
+        write(
+            &f,
+            &[
+                (".codex/config.toml", ""),
+                (".claude.json", EMPTY_CLAUDE),
+                (".gemini/GEMINI.md", "Gemini rules.\n"),
+                (".gemini/settings.json", "{\"mcpServers\":{}}\n"),
+            ],
+        );
+        adopt(&f);
+        f
+    }
+
+    #[test]
+    fn ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting() {
+        const SOURCE: &str = "[mcp_servers.context7]\ncommand = 'npx'\nargs = ['-y', '@upstash/context7-mcp']\n\n[mcp_servers.wenlan]\ncommand = 'wenlan-mcp'\nargs = ['--agent-name', 'codex']\n";
+        const CLAUDE_PROJECT: &str = "{\"mcpServers\":{},\"projects\":{\"/fixture\":{\"mcpServers\":{\"project-only\":{\"command\":\"project-only-server\"}}}}}\n";
+        let f = unmanaged_fixture();
+        write(
+            &f,
+            &[
+                (".codex/config.toml", SOURCE),
+                (".claude.json", CLAUDE_PROJECT),
+            ],
+        );
+        let before = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        for destination in ["Claude Code", "Gemini CLI"] {
+            assert_eq!(tool(&before, destination).mcp_servers, ["context7"]);
+        }
+        assert!(!serde_json::to_string(&before)
+            .unwrap()
+            .contains("wenlan-mcp"));
+
+        let report = f
+            .setup
+            .share_using(&before.token, fixture_skill_renderer)
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        for path in [".claude.json", ".gemini/settings.json"] {
+            let text = fs::read_to_string(f.setup.home.join(path)).unwrap();
+            assert!(
+                text.contains("context7") && text.contains("@upstash/context7-mcp"),
+                "{path}: {text}"
+            );
+            assert!(!text.contains("wenlan-mcp"), "{path}: {text}");
+            if path == ".gemini/settings.json" {
+                assert!(!text.contains("project-only-server"), "{text}");
+            }
+        }
+        let manifest = f.setup.load().unwrap().unwrap();
+        let entries = &manifest.personal_settings[Path::new(".codex/config.toml")];
+        assert!(entries.iter().any(|entry| entry
+            .key
+            .name
+            .last()
+            .is_some_and(|name| name == "context7")
+            && entry.receipt.is_some()));
+        assert!(manifest
+            .backup
+            .contains_key(Path::new(".codex/config.toml")));
+        let again = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert!(again.tools.is_empty(), "{again:?}");
+        assert_eq!(
+            f.setup
+                .share_using(&again.token, fixture_skill_renderer)
+                .unwrap()
+                .message,
+            NOTHING_TO_SHARE
+        );
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(
+            fs::read_to_string(f.setup.home.join(".codex/config.toml")).unwrap(),
+            SOURCE
+        );
+        for path in [".claude.json", ".gemini/settings.json"] {
+            assert!(!fs::read_to_string(f.setup.home.join(path))
+                .unwrap()
+                .contains("context7"));
+        }
+        assert!(fs::read_to_string(f.setup.home.join(".claude.json"))
+            .unwrap()
+            .contains("project-only-server"));
+    }
+
+    #[test]
+    fn rulesync_share_unmanaged_set_changes_plan_even_when_already_everywhere() {
+        let f = unmanaged_fixture();
+        write(
+            &f,
+            &[(
+                ".codex/config.toml",
+                "[mcp_servers.one]\ncommand = 'server-one'\n",
+            )],
+        );
+        let first = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        write(&f, &[
+            (".codex/config.toml", "[mcp_servers.one]\ncommand = 'server-one'\n[mcp_servers.two]\ncommand = 'server-two'\n"),
+            (".claude.json", "{\"mcpServers\":{\"two\":{\"command\":\"server-two\"}}}\n"),
+            (".gemini/settings.json", "{\"mcpServers\":{\"two\":{\"command\":\"server-two\"}}}\n"),
+        ]);
+        let second = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_ne!(first.plan_id, second.plan_id);
+        assert!(f
+            .setup
+            .share_using(&first.token, fixture_skill_renderer)
+            .unwrap_err()
+            .to_string()
+            .contains("--dry-run"));
+        for destination in ["Claude Code", "Gemini CLI"] {
+            assert_eq!(tool(&second, destination).mcp_servers, ["one"]);
+        }
+    }
+
+    #[test]
+    fn rulesync_share_unmanaged_source_uses_adoption_stale_check() {
+        let f = unmanaged_fixture();
+        write(
+            &f,
+            &[(
+                ".codex/config.toml",
+                "[mcp_servers.one]\ncommand = 'server-one'\n",
+            )],
+        );
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        let plan = f
+            .setup
+            .plan_share(&root, &manifest, &fixture_skill_renderer)
+            .unwrap();
+        let source = offered_unmanaged_sources(&plan.settings);
+        assert!(!source.sources.is_empty());
+        write(
+            &f,
+            &[(
+                ".codex/config.toml",
+                "[mcp_servers.one]\ncommand = 'changed'\n",
+            )],
+        );
+        let error =
+            personal_settings::adopt(&f.setup.home, &root, &manifest, source, &mut Vec::new())
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("changed after the settings preview"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn ux_skill_26_rulesync_share_names_an_unmanaged_unsafe_server() {
+        let f = unmanaged_fixture();
+        write(
+            &f,
+            &[(
+                ".codex/config.toml",
+                "[mcp_servers.unsafe_server]\ncommand = 'server'\nunexpected = true\n",
+            )],
+        );
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert!(
+            plan.stays
+                .iter()
+                .any(|stay| stay.item == "MCP server unsafe_server"
+                    && stay.reason.contains("cannot read")),
+            "{plan:?}"
+        );
+        assert!(!serde_json::to_string(&plan).unwrap().contains("entry "));
+    }
+
+    #[test]
+    fn rulesync_share_binds_the_count_of_unmanaged_redacted_servers_without_hashing_names() {
+        const FIRST: &str = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+        const SECOND: &str = "sk-proj-zyxwvutsrqponmlkjihgfedcba543210";
+        let f = unmanaged_fixture();
+        let server = |name: &str| format!("[mcp_servers.{name}]\ncommand = 'server'\n");
+        write(&f, &[(".codex/config.toml", &server(FIRST))]);
+        let first = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert!(first
+            .stays
+            .iter()
+            .any(|stay| stay.item == "an MCP server in .codex/config.toml"));
+        write(&f, &[(".codex/config.toml", &server(SECOND))]);
+        let renamed = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(
+            first.plan_id, renamed.plan_id,
+            "a redacted name must not enter the hash"
+        );
+        write(
+            &f,
+            &[(
+                ".codex/config.toml",
+                &format!("{}{}", server(FIRST), server(SECOND)),
+            )],
+        );
+        let added = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_ne!(renamed.plan_id, added.plan_id);
+        let shown = serde_json::to_string(&added).unwrap();
+        assert!(!shown.contains(FIRST) && !shown.contains(SECOND));
+        assert!(f
+            .setup
+            .share_using(&renamed.token, fixture_skill_renderer)
+            .unwrap_err()
+            .to_string()
+            .contains("--dry-run"));
+    }
+
     #[test]
     fn ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores() {
         let f = Fixture::new();
@@ -1303,6 +1527,103 @@ mod tests {
 
     fn data_holds_key(f: &Fixture) -> bool {
         f.setup.data.exists() && holds(&f.setup.data, KEY_SECRET.as_bytes())
+    }
+
+    #[test]
+    fn ux_skill_27_rulesync_share_unmanaged_key_requires_person_and_stores_no_value_or_hash() {
+        use sha2::{Digest, Sha256};
+
+        let f = unmanaged_fixture();
+        write(&f, &[(".codex/config.toml", &keyed_codex())]);
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        let view = personal_settings::View::read(&f.setup.home, &root, &manifest).unwrap();
+        let (location, file) = view
+            .files
+            .iter()
+            .find(|(location, _)| location.path == Path::new(".codex/config.toml"))
+            .unwrap();
+        let key_entry = file
+            .as_ref()
+            .unwrap()
+            .doc
+            .refused_servers(location.tool)
+            .find(|(_, entry, _)| entry.key.name.last().is_some_and(|name| name == "keyed"))
+            .unwrap()
+            .1;
+        let entry_hash = fingerprint(key_entry).unwrap();
+        let secret_hash = format!("{:x}", Sha256::digest(KEY_SECRET.as_bytes()));
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(plan.key_servers, ["keyed"]);
+        assert_eq!(plan.key_tools, ["Claude Code", "Gemini CLI"]);
+        assert!(!serde_json::to_string(&plan).unwrap().contains(KEY_SECRET));
+
+        // Changing only the key material must not enter even the plan hash.
+        let changed = keyed_codex().replace(KEY_SECRET, "sk-aDifferentSentinel0123456789abcdef");
+        write(&f, &[(".codex/config.toml", &changed)]);
+        assert_eq!(
+            plan.plan_id,
+            f.setup
+                .preview_share_using(fixture_skill_renderer)
+                .unwrap()
+                .plan_id
+        );
+        write(&f, &[(".codex/config.toml", &keyed_codex())]);
+
+        let request = AdoptRequest {
+            confirmed_plan_id: Some(plan.plan_id.clone()),
+            token: plan.token.clone(),
+            home: Some(f.setup.home.clone()),
+            include_keys: true,
+        };
+        super::super::validate_confirmed_share(&request, &plan).unwrap();
+        let answer = KeyAnswer::of(true, &request);
+        assert_eq!(answer, KeyAnswer::NotAsked);
+        let report = f
+            .setup
+            .share_with_keys(&request.token, answer, fixture_skill_renderer)
+            .unwrap();
+        assert!(
+            report.message.contains("Only the person can share"),
+            "{report:?}"
+        );
+        for path in [".claude.json", ".gemini/settings.json"] {
+            let text = fs::read_to_string(f.setup.home.join(path)).unwrap();
+            assert!(
+                text.contains("safe-server")
+                    && !text.contains("keyed-server")
+                    && !text.contains(KEY_SECRET),
+                "{path}: {text}"
+            );
+        }
+        for needle in [
+            KEY_SECRET.as_bytes(),
+            entry_hash.as_bytes(),
+            secret_hash.as_bytes(),
+        ] {
+            assert!(
+                !holds(&f.setup.data, needle),
+                "key value or hash reached the data folder"
+            );
+        }
+
+        let report = share_keys(&f, KeyAnswer::Yes);
+        assert!(report.blocked.is_empty(), "{report:?}");
+        for path in [".claude.json", ".gemini/settings.json"] {
+            assert!(fs::read_to_string(f.setup.home.join(path))
+                .unwrap()
+                .contains(KEY_SECRET));
+        }
+        for needle in [
+            KEY_SECRET.as_bytes(),
+            entry_hash.as_bytes(),
+            secret_hash.as_bytes(),
+        ] {
+            assert!(
+                !holds(&f.setup.data, needle),
+                "key value or hash reached the data folder"
+            );
+        }
     }
 
     #[test]

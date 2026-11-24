@@ -629,7 +629,7 @@ pub(super) fn managed_mcp_counts(
     Ok(counts)
 }
 
-/// A managed MCP server another enrolled tool can receive unchanged.
+/// An MCP server another enrolled tool can receive unchanged.
 #[derive(Clone, Serialize)]
 pub(super) struct SettingAddition {
     pub(super) from_tool: &'static str,
@@ -637,11 +637,19 @@ pub(super) struct SettingAddition {
     pub(super) name: String,
     item: String,
     destination: Destination,
+    /// A safe source to adopt before projecting it, if not yet managed.
+    unmanaged: Option<(PathBuf, Entry)>,
 }
 
 #[derive(Default)]
 pub(super) struct SettingShares {
     pub(super) additions: Vec<SettingAddition>,
+    /// All safe unmanaged sources bind the preview, including those already
+    /// present at every destination or blocked by a conflict.
+    pub(super) unmanaged: Adoption,
+    /// Refused unmanaged entries bind by path and safe-to-show name only.
+    /// A redacted name contributes only its presence, never a secret or hash.
+    pub(super) unmanaged_refusals: Vec<(PathBuf, Option<String>, &'static str)>,
     /// (tool id, item, reason)
     pub(super) stays: Vec<(&'static str, String, String)>,
     pub(super) already_there: usize,
@@ -688,9 +696,49 @@ impl SettingAddition {
     }
 }
 
+/// Adopt only unmanaged sources that actually won a destination in the plan.
+pub(super) fn offered_unmanaged_sources(additions: &[SettingAddition]) -> Adoption {
+    let mut source = Adoption::default();
+    for (path, entry) in additions
+        .iter()
+        .filter_map(|addition| addition.unmanaged.as_ref())
+    {
+        let entries = source.sources.entry(path.clone()).or_default();
+        if !entries.contains(entry) {
+            entries.push(entry.clone());
+        }
+    }
+    source
+}
+
+/// Find only unique, reviewable MCP entries in enrolled tools. Reuse the
+/// adoption safety check, which also excludes Wenlan's own server.
+fn unmanaged_mcp_sources(view: &View, manifest: &Manifest) -> Adoption {
+    let mut sources = Adoption::default();
+    for (location, file) in &view.files {
+        if !view.enrolled.contains(&location.path) || reserved(manifest, &location.path) {
+            continue;
+        }
+        let Ok(file) = file else { continue };
+        let entries: Vec<_> = file
+            .doc
+            .reviewable_entries(location.tool)
+            .filter(|entry| {
+                entry.key.feature == Feature::Mcp
+                    && managed_entry(manifest, &location.path, &entry.key).is_none()
+            })
+            .cloned()
+            .collect();
+        if !entries.is_empty() {
+            sources.sources.insert(location.path.clone(), entries);
+        }
+    }
+    sources
+}
+
 impl Setup {
-    /// Managed MCP servers that are in sync, offered to every other enrolled
-    /// tool through the same projection an all-tools review uses.
+    /// In-sync managed and safe unmanaged MCP servers offered through the
+    /// same projection an all-tools review uses.
     pub(super) fn plan_setting_shares(
         &self,
         root: &FileRoot,
@@ -698,7 +746,10 @@ impl Setup {
     ) -> Result<SettingShares> {
         let view = View::read(&self.home, root, manifest)?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
-        let mut shares = SettingShares::default();
+        let mut shares = SettingShares {
+            unmanaged: unmanaged_mcp_sources(&view, manifest),
+            ..Default::default()
+        };
         let mut wanted = BTreeMap::<(PathBuf, Key), Vec<SettingAddition>>::new();
         for (location, file) in &view.files {
             let Ok(file) = file else {
@@ -706,6 +757,19 @@ impl Setup {
             };
             let enrolled = view.enrolled.contains(&location.path);
             for (name, entry, refusal) in file.doc.refused_servers(location.tool) {
+                if enrolled
+                    && managed_entry(manifest, &location.path, &entry.key).is_none()
+                    && !manifest.keys.covers(&location.path, &entry.key)
+                {
+                    shares.unmanaged_refusals.push((
+                        location.path.clone(),
+                        name.map(str::to_owned),
+                        match refusal {
+                            Refusal::MayHoldKey => "may hold a key",
+                            Refusal::Unsafe(reason) => reason,
+                        },
+                    ));
+                }
                 // Servers that may hold a key in a managed tool form the key
                 // group; a copy Wenlan made is not listed again.
                 let reason = match refusal {
@@ -719,13 +783,20 @@ impl Setup {
                 let item = view.mcp_label(location, name);
                 shares.stays.push((location.tool, item, reason.into()));
             }
-            let Some(managed) = manifest.personal_settings.get(&location.path) else {
-                continue;
-            };
             if reserved(manifest, &location.path) {
                 continue;
             }
-            for state in managed {
+            let unmanaged: Vec<_> = shares
+                .unmanaged
+                .sources
+                .get(&location.path)
+                .into_iter()
+                .flatten()
+                .cloned()
+                .map(|entry| Managed::kept(entry, None))
+                .collect();
+            let managed = manifest.personal_settings.get(&location.path);
+            for state in managed.into_iter().flatten().chain(&unmanaged) {
                 if state.key.feature != Feature::Mcp || state.before != state.wanted {
                     continue;
                 }
@@ -809,6 +880,9 @@ impl Setup {
                             name: name.clone(),
                             item: item.clone(),
                             destination,
+                            unmanaged: managed_entry(manifest, &location.path, &state.key)
+                                .is_none()
+                                .then(|| (location.path.clone(), current.clone())),
                         });
                 }
             }
