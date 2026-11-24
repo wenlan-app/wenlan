@@ -1493,7 +1493,7 @@ and wait for evidence that people need them.
   from an older preview is refused. Other copies go through the same backup
   as adoption, so `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
-  Tests `rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
   `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
   `rulesync_share_leaves_a_different_item_with_the_same_name`,
   `rulesync_status_counts_mcp_servers_adopted_in_place`,
@@ -1534,7 +1534,7 @@ and wait for evidence that people need them.
   file; otherwise it says "kept <server> in <tool>: changed since sharing;
   remove it by hand if you don't want it".
   Tests `rulesync_share_previews_key_servers_by_name_and_tool_only`,
-  `rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
+  `ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
   `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
   `rulesync_share_refuses_key_servers_for_an_ai_caller`,
   `rulesync_restore_keeps_a_key_copy_the_person_changed`,

@@ -890,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_share_offers_each_item_to_every_supporting_tool_and_restores() {
+    fn ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores() {
         let f = Fixture::new();
         let home = f.setup.home.clone();
         write(
@@ -1233,7 +1233,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it() {
+    fn ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it() {
         let (f, before) = key_fixture();
         let claude = f.setup.home.join(".claude.json");
         let shared = share_keys(&f, KeyAnswer::Yes);
