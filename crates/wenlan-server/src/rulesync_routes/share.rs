@@ -6,12 +6,13 @@
 use super::key_shares::{plan_token, KeyDigests, KeyPreview, KeyShare, EXPIRED_KEY_PREVIEW};
 use super::personal_files::{choose_destination, file_bytes};
 use super::personal_settings::{enroll_shares, offered_unmanaged_sources, SettingAddition};
+use super::shared_source::SharedSource;
 use super::*;
 use wenlan_core::rulesync_personal::adoption_plan_id;
 use wenlan_core::rulesync_personal_files::{sharing_paths, NO_PERSONAL_DESTINATION};
 use wenlan_types::rulesync::{SharingPlan, SharingStay, SharingTool};
 
-const SHARE_TOKEN_VERSION: &str = "share-3";
+const SHARE_TOKEN_VERSION: &str = "share-4";
 const NOTHING_TO_SHARE: &str = "Nothing to share";
 
 /// A skill folder a tool receives, recorded in the master after the write.
@@ -205,11 +206,12 @@ impl Setup {
     ) -> Result<SharingPlan> {
         let manifest = self.share_manifest()?;
         let root = FileRoot::open_home(&self.home)?;
+        let source = SharedSource::read(&self.home, &manifest)?;
         let Share {
             mut plan,
             key_digests,
             ..
-        } = self.plan_share(&root, &manifest, keep_rule, &render_skills)?;
+        } = self.plan_share(&root, &manifest, &source, keep_rule, &render_skills)?;
         if key_consent {
             plan.token = KeyPreview::remember(self, plan.token, key_digests);
         }
@@ -292,8 +294,9 @@ impl Setup {
         let _lock = self.lock()?;
         let mut manifest = self.share_manifest()?;
         let root = FileRoot::open_home(&self.home)?;
+        let source = SharedSource::read(&self.home, &manifest)?;
         self.claim_key_intents(&root, &mut manifest)?;
-        let share = self.plan_share(&root, &manifest, keep_rule, &render_skills)?;
+        let share = self.plan_share(&root, &manifest, &source, keep_rule, &render_skills)?;
         ensure!(
             share.plan.token == plan_token(token),
             "The setup changed after the preview. Run `wenlan rules share --dry-run` again."
@@ -316,6 +319,41 @@ impl Setup {
         });
         if key_yes && preview.is_none() {
             result.block(Code::ReviewNeeded, EXPIRED_KEY_PREVIEW);
+        }
+        let source_changed = source.merged != manifest.master.shared
+            || manifest.active_deliveries().any(|(_, delivery)| {
+                let Kind::Rule {
+                    target,
+                    base,
+                    authored_ends: Some([end, _]),
+                    ..
+                } = &delivery.kind
+                else {
+                    return false;
+                };
+                base.get(..*end)
+                    .is_some_and(|shared| shared != manifest.master.shared_rule_text(target))
+            });
+        if source.record(&mut manifest) {
+            self.save(&manifest)?;
+        }
+        if source_changed {
+            // Deliver the reconciled rules before moving the approved lines.
+            // Its receipt checks still protect local edits in each tool.
+            let pullback = inspect(&self.home, &root, &manifest)?;
+            let blocked = pullback
+                .blocked
+                .into_keys()
+                .chain(pullback.drafts.into_iter().map(|draft| draft.path))
+                .collect();
+            self.deliver_rules(
+                &root,
+                &mut manifest,
+                generated,
+                &render_rule,
+                &blocked,
+                &mut result,
+            )?;
         }
         if empty {
             if let Some(left) = left {
@@ -426,6 +464,7 @@ impl Setup {
         &self,
         root: &FileRoot,
         manifest: &Manifest,
+        source: &SharedSource,
         keep_rule: Option<&[usize]>,
         render_skills: &impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<Share> {
@@ -438,7 +477,9 @@ impl Setup {
             .collect();
         let mut listing = Listing::default();
         let (rules, rule_additions) = match keep_rule {
-            Some(keep_rule) => share_rules::plan(&self.home, root, manifest, &enrolled, keep_rule)?,
+            Some(keep_rule) => {
+                share_rules::plan(&self.home, root, manifest, source, &enrolled, keep_rule)?
+            }
             None => Default::default(),
         };
         for (target, count) in rule_additions {
@@ -503,8 +544,14 @@ impl Setup {
             &worktree_writes,
             &listing.stays,
             listing.already_there,
-            rules.approval(),
+            (
+                &source.read,
+                &source.merged,
+                &source.credential_lines,
+                rules.approval(),
+            ),
         ))?;
+        let count = rules.moving().count();
         Ok(Share {
             operations,
             skills,
@@ -520,6 +567,10 @@ impl Setup {
                 key_tools: settings.keys.tools.clone(),
                 rules: rules.lines.clone(),
                 rule_stays: rules.stays.clone(),
+                shared_source_notice: (count != 0).then(|| {
+                    let unit = if count == 1 { "line" } else { "lines" };
+                    format!("Also adds {count} {unit} to ~/.agents/AGENTS.md.")
+                }),
             },
             rules,
             keys: settings.keys.shares,
@@ -1128,6 +1179,10 @@ mod tests {
         adopt(&f);
         let plan = preview_rules(&f, &[]);
         assert_eq!(
+            serde_json::to_value(&plan).unwrap()["shared_source_notice"],
+            "Also adds 2 lines to ~/.agents/AGENTS.md."
+        );
+        assert_eq!(
             plan.rules
                 .iter()
                 .map(|rule| rule.line.as_str())
@@ -1270,7 +1325,13 @@ mod tests {
         let root = FileRoot::open_home(&f.setup.home).unwrap();
         let share = f
             .setup
-            .plan_share(&root, &manifest, Some(&[]), &fixture_skill_renderer)
+            .plan_share(
+                &root,
+                &manifest,
+                &SharedSource::read(&f.setup.home, &manifest).unwrap(),
+                Some(&[]),
+                &fixture_skill_renderer,
+            )
             .unwrap();
         let plan = share.plan;
         let preview_json = serde_json::to_string(&plan).unwrap();
@@ -1667,37 +1728,335 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_sync_keeps_the_saved_master_after_a_shared_source_edit() {
-        const SOURCE: &str = ".agents/AGENTS.md";
-        const EDIT: &str = "An edit made directly to the shared source.";
-        for share_first in [false, true] {
-            let f = Fixture::new();
-            rule_fixture(&f);
-            adopt(&f);
-            if share_first {
-                apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
-            }
-            let source = f.text(SOURCE);
-            let edited = format!("{source}{EDIT}\n");
-            f.write(SOURCE, &edited);
-            let sync = f.sync_with("");
-            assert!(
-                sync.blocked.is_empty() && sync.proposals.is_empty(),
-                "{sync:?}"
+    fn rulesync_sync_follows_shared_source_edits_without_review() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let edited = "Edited directly in the shared source.\n";
+        let before = [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES].map(|path| f.text(path));
+        f.write(".agents/AGENTS.md", edited);
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, edited);
+        assert_eq!(f.text(".agents/AGENTS.md"), edited);
+        for (path, before) in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES]
+            .into_iter()
+            .zip(before)
+        {
+            assert_eq!(
+                f.text(path),
+                before.replacen("Already shared.\n", edited, 1)
             );
-            assert_eq!(f.text(SOURCE), edited);
-            let saved = f.setup.load().unwrap().unwrap();
-            assert_eq!(saved.master.shared, source);
-            assert!(!f.text(GEMINI_RULES).contains(EDIT));
-            if !share_first {
-                let before = tree(&f.setup.home);
-                let error = apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap_err();
-                assert!(
-                    error.to_string().contains("differs from the shared rules"),
-                    "{error:#}"
-                );
-                assert_eq!(tree(&f.setup.home), before);
-            }
+        }
+        assert!(f.setup.status().unwrap().proposals.is_empty());
+    }
+
+    #[test]
+    fn rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let removed = "Remove this rule from every tool.\n";
+        let edited = f.text(".agents/AGENTS.md");
+        f.write(".agents/AGENTS.md", &format!("{removed}{edited}"));
+        adopt(&f);
+        let before = [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES].map(|path| f.text(path));
+
+        f.write(".agents/AGENTS.md", &edited);
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, edited);
+        for (path, before) in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES]
+            .into_iter()
+            .zip(before)
+        {
+            assert_eq!(f.text(path), before.replacen(removed, "", 1));
+        }
+    }
+
+    #[test]
+    fn rulesync_sync_keeps_shared_moves_and_follows_later_source_edits() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        let edited = f
+            .text(".agents/AGENTS.md")
+            .replace("Already shared.", "Edited in the source.");
+        f.write(".agents/AGENTS.md", &edited);
+
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, edited);
+        for path in [".agents/AGENTS.md", CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(f.text(path).contains("Edited in the source."), "{path}");
+            assert!(f.text(path).contains(COMMON_RULE), "{path}");
+        }
+    }
+
+    fn approve_shared_edit(f: &Fixture, before: &str, after: &str) {
+        f.write(CODEX_RULES, &f.text(CODEX_RULES).replace(before, after));
+        let report = f.sync_with("");
+        let card = report
+            .proposals
+            .iter()
+            .find(|card| card.files == [CODEX_RULES])
+            .unwrap();
+        let report = f
+            .setup
+            .review_using(
+                &PullbackDecision {
+                    id: card.id.clone(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| f.sync_review(root, manifest),
+            )
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(f.text(CLAUDE_RULES).contains(after));
+        assert!(f.text(".agents/AGENTS.md").contains(before));
+    }
+
+    #[test]
+    fn rulesync_sync_merges_independent_edits_on_both_sides() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        approve_shared_edit(&f, COMMON_RULE, "Reviewed in Wenlan.");
+        // A setup created before source tracking can still use its share receipt.
+        let mut legacy = f.setup.load().unwrap().unwrap();
+        legacy.shared_source_base = None;
+        f.setup.save(&legacy).unwrap();
+        let source = f
+            .text(".agents/AGENTS.md")
+            .replace("Already shared.", "Edited in the source.");
+        f.write(".agents/AGENTS.md", &source);
+
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        let expected = source.replace(COMMON_RULE, "Reviewed in Wenlan.");
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, expected);
+        assert_eq!(f.text(".agents/AGENTS.md"), source);
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(f.text(path).contains("Edited in the source."), "{path}");
+            assert!(f.text(path).contains("Reviewed in Wenlan."), "{path}");
+        }
+        assert!(f.sync_with("").written.is_empty());
+    }
+
+    #[test]
+    fn rulesync_shared_source_conflict_reports_once_and_leaves_files_intact() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        approve_shared_edit(&f, COMMON_RULE, "Reviewed in Wenlan.");
+        let prior_plan = preview_rules(&f, &[]);
+        let source = f.text(".agents/AGENTS.md");
+        f.write(
+            ".agents/AGENTS.md",
+            &source.replace(COMMON_RULE, "Changed in the source."),
+        );
+        let before = tree(&f.setup.home);
+        let saved = tree(&f.setup.data);
+
+        let sync = f.sync_with("");
+        assert!(
+            sync.written.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        assert_eq!(sync.blocked.len(), 1, "{sync:?}");
+        assert!(sync.blocked[0].contains("same shared lines"), "{sync:?}");
+        assert!(sync.blocked[0].contains(SYNC_COMMAND), "{sync:?}");
+        let share_error = f
+            .setup
+            .build_share_preview(Some(&[]), false, fixture_skill_renderer)
+            .unwrap_err();
+        assert_eq!(share_error.to_string(), sync.blocked[0]);
+        assert_eq!(
+            apply_rules(&f, &prior_plan, &[]).unwrap_err().to_string(),
+            sync.blocked[0]
+        );
+        assert_eq!(tree(&f.setup.home), before);
+        assert_eq!(tree(&f.setup.data), saved);
+
+        f.write(
+            ".agents/AGENTS.md",
+            &source.replace("Already shared.", "A separate source edit."),
+        );
+        let resolved = f.sync_with("");
+        assert!(
+            resolved.blocked.is_empty() && resolved.proposals.is_empty(),
+            "{resolved:?}"
+        );
+        assert!(f.text(GEMINI_RULES).contains("A separate source edit."));
+        assert!(f.text(GEMINI_RULES).contains("Reviewed in Wenlan."));
+    }
+
+    #[test]
+    fn rulesync_sync_keeps_shared_source_credentials_out_of_every_copy() {
+        const FIXTURE_VALUE: &str = "sk-sharedSourceFixtureOnly123456789";
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        // Also exercise a source already owned by a share receipt.
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        let before = f.text(".agents/AGENTS.md");
+        let source = format!("{before}A safe new rule.\nAPI_KEY={FIXTURE_VALUE}\n");
+        f.write(".agents/AGENTS.md", &source);
+
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(saved.master.shared, format!("{before}A safe new rule.\n"));
+        assert_eq!(
+            saved.credentials.rules[Path::new(".agents/AGENTS.md")].lines,
+            [source.lines().count()],
+        );
+        assert_eq!(f.text(".agents/AGENTS.md"), source);
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(f.text(path).contains("A safe new rule."), "{path}");
+            assert!(!f.text(path).contains(FIXTURE_VALUE), "{path}");
+        }
+        assert!(!holds(&f.setup.data, FIXTURE_VALUE.as_bytes()));
+    }
+
+    #[test]
+    fn rulesync_share_plans_against_an_edited_source_and_appends_only_approved_lines() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let original_wording = "Keep this wording in the source.";
+        let revised_wording = "An edit approved in Wenlan.";
+        f.write(
+            ".agents/AGENTS.md",
+            &format!("{original_wording}\r\nA line to edit in the source.\r\n"),
+        );
+        write(
+            &f,
+            &[
+                (".agents/config.toml", "# preserve settings\r\n"),
+                (
+                    ".agents/rules/local.md",
+                    "Preserve this file without a newline.",
+                ),
+            ],
+        );
+        adopt(&f);
+        approve_shared_edit(&f, original_wording, revised_wording);
+        let old_plan = preview_rules(&f, &[]);
+        let original = format!("{original_wording}\r\n{COMMON_RULE}");
+        f.write(".agents/AGENTS.md", &original);
+        let harness = f.setup.home.join(".agents");
+        let before_preview = tree(&f.setup.home);
+        let mut before = tree(&harness);
+        let plan = preview_rules(&f, &[]);
+
+        assert_eq!(tree(&f.setup.home), before_preview);
+        assert_eq!(plan.rules.len(), 1);
+        assert_eq!(plan.rules[0].line, REVIEW_RULE);
+        assert_eq!(
+            serde_json::to_value(&plan).unwrap()["shared_source_notice"],
+            "Also adds 1 line to ~/.agents/AGENTS.md."
+        );
+        assert_ne!(plan.plan_id, old_plan.plan_id);
+        assert!(apply_rules(&f, &old_plan, &[]).is_err());
+        assert_eq!(tree(&f.setup.home), before_preview);
+        let result = apply_rules(&f, &plan, &[]).unwrap();
+        assert!(
+            result.blocked.is_empty() && result.proposals.is_empty(),
+            "{result:?}"
+        );
+        let expected = format!("{original}\r\n{REVIEW_RULE}");
+        before.get_mut(Path::new("AGENTS.md")).unwrap().0 = Some(expected.as_bytes().to_vec());
+        assert_eq!(tree(&harness), before);
+        assert_eq!(
+            f.setup.load().unwrap().unwrap().master.shared,
+            expected.replace(original_wording, revised_wording),
+        );
+        assert!(f.text(".agents/AGENTS.md").ends_with(REVIEW_RULE));
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(f.text(path).contains(revised_wording), "{path}");
+            assert!(f.text(path).contains(REVIEW_RULE), "{path}");
+        }
+    }
+
+    #[test]
+    fn rulesync_share_retries_a_source_edit_that_has_not_reached_tools() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let deleted = f.text(".agents/AGENTS.md");
+        f.write(".agents/AGENTS.md", "");
+        // Record the edit without writing the tool files, as an interrupted
+        // delivery can do. The old shared line is not a local share candidate.
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        f.setup.follow_shared_source(&mut manifest).unwrap();
+        let plan = preview_rules(&f, &[]);
+        assert!(plan.rules.iter().all(|rule| rule.line != deleted.trim()));
+        let result = apply_rules(&f, &plan, &[]).unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        for path in [".agents/AGENTS.md", CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(!f.text(path).contains(&deleted), "{path}");
+            assert!(f.text(path).contains(COMMON_RULE), "{path}");
+        }
+    }
+
+    #[test]
+    fn rulesync_restore_keeps_source_edits_made_between_shares() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        accept_local_rule_additions(&f, "Another rule for every tool.\n");
+        let source = f
+            .text(".agents/AGENTS.md")
+            .replace("Already shared.", "An edit between shares.");
+        f.write(".agents/AGENTS.md", &source);
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        let before_restore = f.text(".agents/AGENTS.md");
+
+        let result = f.setup.restore().unwrap();
+        assert!(result
+            .blocked
+            .iter()
+            .any(|line| line.contains("edits you made between shares")));
+        assert_eq!(f.text(".agents/AGENTS.md"), before_restore);
+    }
+
+    #[test]
+    fn rulesync_adding_a_tool_uses_the_latest_shared_source() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let source = "A new version of the shared source.\n";
+        f.write(".agents/AGENTS.md", source);
+        fs::create_dir(f.setup.home.join(".gemini")).unwrap();
+
+        adopt(&f);
+        assert_eq!(f.text(GEMINI_RULES), source);
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, source);
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(f.text(path).contains(source), "{path}");
         }
     }
 
@@ -1862,7 +2221,13 @@ mod tests {
         let manifest = f.setup.load().unwrap().unwrap();
         let plan = f
             .setup
-            .plan_share(&root, &manifest, None, &fixture_skill_renderer)
+            .plan_share(
+                &root,
+                &manifest,
+                &SharedSource::read(&f.setup.home, &manifest).unwrap(),
+                None,
+                &fixture_skill_renderer,
+            )
             .unwrap();
         let source = offered_unmanaged_sources(&plan.settings);
         assert!(!source.sources.is_empty());
@@ -2984,7 +3349,13 @@ mod tests {
         let mut manifest = f.setup.load().unwrap().unwrap();
         let share = f
             .setup
-            .plan_share(&root, &manifest, None, &fixture_skill_renderer)
+            .plan_share(
+                &root,
+                &manifest,
+                &SharedSource::read(&f.setup.home, &manifest).unwrap(),
+                None,
+                &fixture_skill_renderer,
+            )
             .unwrap();
         assert_eq!(share.keys.len(), 1);
 
@@ -3022,7 +3393,13 @@ mod tests {
         let mut manifest = f.setup.load().unwrap().unwrap();
         let keys = f
             .setup
-            .plan_share(&root, &manifest, None, &fixture_skill_renderer)
+            .plan_share(
+                &root,
+                &manifest,
+                &SharedSource::read(&f.setup.home, &manifest).unwrap(),
+                None,
+                &fixture_skill_renderer,
+            )
             .unwrap()
             .keys;
         assert_eq!(keys.len(), 1);

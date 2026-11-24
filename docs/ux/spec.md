@@ -1482,8 +1482,18 @@ and wait for evidence that people need them.
   interrupted stage, or blocking skill proposal stops all tool writes in that
   round. Changed receipts surface for review. A clear round delivers approved
   content through the same writer as Sync now.
+  Sync now and the background check follow the person's edits and deletions in
+  `~/.agents/AGENTS.md` without a review card. Wenlan merges these edits with
+  the saved shared rules using the last text it read or wrote as the common
+  version. Each tool keeps its own rule lines. A possible credential stays in
+  the shared source, and Wenlan records only its location. When both sides
+  change the same lines differently, one message explains how to resolve the
+  conflict and retry. Wenlan leaves the saved rules and all copies in place.
   Tests `rulesync_watch_delivery_open_card`, `rulesync_watch_delivery_busy_lock`,
   `rulesync_watch_delivery_receipt_mismatch`, and `rulesync_watch_delivery_positive`.
+  Tests `rulesync_watch_delivers_shared_source_edits_without_review`,
+  `rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays`, and
+  `rulesync_shared_source_conflict_reports_once_and_leaves_files_intact`.
 - **UX-SKILL-25** `shipped` Local rules setup uses the same four action names
   in the app, CLI help and command hints. In order they are Bring in, Status,
   To review, and Restore (搬進來、狀態、待確認、還原 in Traditional Chinese and
@@ -1510,12 +1520,15 @@ and wait for evidence that people need them.
   preview shows only that reason.
   `--details` numbers portable lines. The person can keep any of those lines
   locally with `--keep-rule N[,N]` in the same preview and confirmation.
-  The plan ID binds the numbered lines, the keep choices and the reviewed
-  versions of the rule files. The same batch updates `~/.agents/AGENTS.md`
-  and the tool copies. A conflict leaves the previous shared master and
-  receipts in force. Sync keeps the shared rules and each tool's local
-  lines. Restore uses the adoption backups and preserves added rules in their
-  originating tools. The shared source file returns to its pre-share contents.
+  The preview accounts for edits to `~/.agents/AGENTS.md` before choosing
+  which lines to move. The short, detailed, and JSON previews say
+  “Also adds N lines to ~/.agents/AGENTS.md.” The plan ID binds the shared
+  source, numbered lines, keep choices, and reviewed versions of the tool
+  files. On confirmation, Wenlan appends only the selected lines to that file
+  and delivers them to the tool copies. A conflict leaves the previous shared
+  master and receipts in force. Restore uses the adoption backups and
+  preserves added rules in their originating tools. It undoes the shared
+  source append when the file has no intervening edits.
   Safe personal MCP
   servers in managed tools are offered even if Wenlan does not yet manage the
   entry; on confirmation they are first adopted with the usual receipts and
@@ -1560,6 +1573,7 @@ and wait for evidence that people need them.
   `rulesync_share_keeps_scoped_sections_and_preserves_repeated_lines_in_order`,
   `rulesync_share_keeps_flattened_imports_local_with_or_without_saved_provenance`,
   `rulesync_share_updates_and_restores_the_shared_source`,
+  `rulesync_share_plans_against_an_edited_source_and_appends_only_approved_lines`,
   `rules_share_short_preview_shows_each_moving_line_at_terminal_width`,
   `ux_skill_26_rules_share_keep_rule_reaches_preview_and_confirm`,
   `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,

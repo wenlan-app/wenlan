@@ -315,6 +315,28 @@ pub(super) fn discover_with_shared(
     discover_with_platform(home, targets, Some(shared), cfg!(windows))
 }
 
+/// Read the person's shared file using the same checks as adoption.
+pub fn read_shared_rule_source(home: &Path) -> Result<(String, Vec<usize>)> {
+    let home = Home::open(home)?;
+    let file = load_text(&home, Path::new(SHARED_RULES), &mut BTreeSet::new(), false)?;
+    Ok(shared_rule_lines(
+        file.as_ref().map_or("", |file| &file.text),
+    ))
+}
+
+fn shared_rule_lines(text: &str) -> (String, Vec<usize>) {
+    let mut safe = String::new();
+    let mut credentials = Vec::new();
+    for (number, line, has_key) in scanned_lines(text) {
+        if has_key {
+            credentials.push(number);
+        } else {
+            safe.push_str(line);
+        }
+    }
+    (safe, credentials)
+}
+
 fn discover_with_platform(
     home: &Path,
     targets: &[AdoptionTarget],
@@ -338,13 +360,14 @@ fn discover_with_platform(
     let mut credentials = CredentialLocations::default();
     let shared_source = Path::new(SHARED_RULES);
     let shared_file = load_text(&home, shared_source, &mut sources, false)?;
-    if let Some(file) = &shared_file {
-        record_rule_credentials(&mut credentials.rules, shared_source, None, &file.text);
+    let (source, lines) = shared_rule_lines(shared_file.as_ref().map_or("", |file| &file.text));
+    if !lines.is_empty() {
+        credentials.rules.insert(
+            shared_source.into(),
+            RuleCredentialLocation { tool: None, lines },
+        );
     }
-    let shared = saved_shared.unwrap_or_else(|| shared_file.as_ref().map_or("", |file| &file.text));
-    let shared: String = scanned_lines(shared)
-        .filter_map(|(_, line, has_key)| (!has_key).then_some(line))
-        .collect();
+    let shared = saved_shared.map_or(source, |saved| shared_rule_lines(saved).0);
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
     let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules, claude_imported_rules) =
         discover_rules(
@@ -1648,7 +1671,7 @@ impl Imports<'_> {
     }
 }
 
-fn append_text(out: &mut String, text: &str) {
+pub(super) fn append_text(out: &mut String, text: &str) {
     if !out.is_empty() && !out.ends_with('\n') && !text.is_empty() {
         out.push('\n');
     }

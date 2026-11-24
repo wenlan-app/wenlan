@@ -1030,6 +1030,7 @@ pub fn additional_targets(
 pub fn discover_additional_adoption(
     home: &Path,
     master: &PersonalMaster,
+    shared: &str,
     known_files: &BTreeSet<PathBuf>,
 ) -> Result<Adoption> {
     let installed = additional_targets(home, master)?;
@@ -1039,7 +1040,7 @@ pub fn discover_additional_adoption(
         .map(String::as_str)
         .chain(installed.iter().map(|target| target.id));
     let files = rulesync_adopt::discover_personal_files(home, tools, known_files)?;
-    let mut adoption = discover_targets(home, &installed, Some(master), Some(files))?;
+    let mut adoption = discover_targets(home, &installed, Some(shared), Some(files))?;
     adoption.settings = crate::rulesync_settings::personal::Adoption::discover(home)?;
     adoption.added_tools = installed
         .iter()
@@ -1132,19 +1133,19 @@ fn new_file_unit(path: &Path) -> PathBuf {
 fn discover_targets(
     home: &Path,
     installed: &[&PersonalTarget],
-    master: Option<&PersonalMaster>,
+    shared: Option<&str>,
     personal_files: Option<rulesync_adopt::PersonalFileDiscovery>,
 ) -> Result<Adoption> {
     let targets: Vec<_> = installed
         .iter()
         .map(|target| target.adoption_input())
         .collect();
-    let mut adoption = if let Some(master) = master {
-        rulesync_adopt::discover_with_shared(home, &targets, &master.shared)?
+    let mut adoption = if let Some(shared) = shared {
+        rulesync_adopt::discover_with_shared(home, &targets, shared)?
     } else {
         rulesync_adopt::discover(home, &targets)?
     };
-    if master.is_some() {
+    if shared.is_some() {
         adoption.skills.retain(|skill| !skill.locations.is_empty());
         adoption.skipped.retain(|path, _| !is_harness_path(path));
     }
@@ -1838,6 +1839,11 @@ fn describe_line_changes(path: &str, changes: Vec<LineChange>) -> (usize, usize,
     (added, removed, diff)
 }
 
+/// Both sides changed the same lines in different ways.
+#[derive(Debug, thiserror::Error)]
+#[error("the master and this tool changed the same lines")]
+pub struct RuleTextConflict;
+
 /// Apply both sets of changes to a common ancestor. Overlapping changes
 /// require consent when they disagree rather than guessing how to combine them.
 pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
@@ -1857,7 +1863,7 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
             let earlier_end = earlier.start + earlier.removed.len();
             earlier.start < end && change.start < earlier_end || earlier.start == change.start
         }) {
-            bail!("the master and this tool changed the same lines");
+            return Err(RuleTextConflict.into());
         }
         changes.push(change);
     }
@@ -1865,11 +1871,18 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
     let lines: Vec<_> = base.split_inclusive('\n').collect();
     let (mut result, mut at) = (String::new(), 0);
     for change in changes {
-        result.extend(lines[at..change.start].iter().copied());
-        result.extend(change.added);
+        for line in lines[at..change.start]
+            .iter()
+            .copied()
+            .chain(change.added.iter().map(String::as_str))
+        {
+            rulesync_adopt::append_text(&mut result, line);
+        }
         at = change.start + change.removed.len();
     }
-    result.extend(lines[at..].iter().copied());
+    for line in &lines[at..] {
+        rulesync_adopt::append_text(&mut result, line);
+    }
     Ok(result)
 }
 
@@ -2211,6 +2224,16 @@ mod tests {
             "one\nnew\n"
         );
         assert!(merge_rule_text(base, local, "one\nsecond\nthree\n").is_err());
+    }
+
+    #[test]
+    fn rulesync_merge_separates_a_new_line_after_a_removed_final_newline() {
+        let merged = merge_rule_text(
+            "Shared rule.\n",
+            "Shared rule.",
+            "Shared rule.\nAdded rule.\n",
+        );
+        assert_eq!(merged.unwrap(), "Shared rule.\nAdded rule.\n");
     }
 
     #[test]

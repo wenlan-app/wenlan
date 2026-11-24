@@ -318,6 +318,9 @@ pub struct SharingPlan {
     pub rules: Vec<SharingRule>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_stays: Vec<SharingRuleStay>,
+    /// The approved append to the person's shared rule file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_source_notice: Option<String>,
     /// Copies another tool already has with the same content.
     #[serde(default)]
     pub already_there: usize,

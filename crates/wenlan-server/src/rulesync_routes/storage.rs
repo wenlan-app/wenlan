@@ -138,6 +138,7 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
 
     let master = &manifest.master;
     let rule_text = std::iter::once(&master.shared)
+        .chain(&manifest.shared_source_base)
         .chain(master.overlays.values())
         .chain(master.claude_imported_rules.iter().flatten())
         .chain(
@@ -301,6 +302,8 @@ fn map_contents<From, To>(
             skills,
             overrides: master.overrides.clone(),
         },
+        shared_source_base: manifest.shared_source_base.clone(),
+        shared_source_restore_blocked: manifest.shared_source_restore_blocked,
         backup: manifest
             .backup
             .iter()

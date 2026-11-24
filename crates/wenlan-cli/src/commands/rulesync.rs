@@ -871,6 +871,9 @@ fn append_rule_preview(out: &mut String, plan: &SharingPlan, details: bool, widt
             .unwrap();
         }
     }
+    if let Some(notice) = &plan.shared_source_notice {
+        writeln!(out, "\n{}", one_line(notice)).unwrap();
+    }
     if details {
         if !plan.rules.is_empty() {
             out.push_str("\nNumbered rule lines\n");
@@ -1526,6 +1529,7 @@ mod tests {
     fn ux_cli_8_setup_share_previews_numbered_rules_and_uses_one_yes() {
         let plan = SharingPlan {
             plan_id: "rule-plan".into(),
+            shared_source_notice: Some("Also adds 1 line to ~/.agents/AGENTS.md.".into()),
             tools: vec![SharingTool {
                 tool: "Codex".into(),
                 rules: 1,
@@ -1565,6 +1569,16 @@ mod tests {
             ..Default::default()
         };
         let short = sharing_for_a_person(&plan, false, false);
+        for details in [false, true] {
+            let preview = sharing_for_a_person(&plan, details, false);
+            assert_eq!(
+                preview
+                    .matches("Also adds 1 line to ~/.agents/AGENTS.md.")
+                    .count(),
+                1,
+                "{preview}"
+            );
+        }
         assert!(short.contains("Codex: 1 rule"), "{short}");
         assert!(
             short.contains(

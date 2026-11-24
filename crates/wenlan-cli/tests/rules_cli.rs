@@ -836,6 +836,7 @@ fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, S
         "already_there": 2,
         "key_servers": ["billing", "search"],
         "key_tools": ["Codex", "Cursor"],
+        "shared_source_notice": "Also adds 2 lines to ~/.agents/AGENTS.md.",
         "rules": [
             {"number": 1, "line": "Run the release checklist.", "tools": ["Claude Code"], "kept": false},
             {"number": 2, "line": format!("Review {} for changes.", "規".repeat(60)), "tools": ["Claude Code"], "kept": false},
@@ -887,6 +888,9 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .success()
         .stdout(predicate::str::contains("\"plan_id\": \"0123456789ab\""))
         .stdout(predicate::str::contains("its name may contain a key"))
+        .stdout(predicate::str::contains(
+            "\"shared_source_notice\": \"Also adds 2 lines to ~/.agents/AGENTS.md.\"",
+        ))
         .stdout(predicate::str::contains("\"key_servers\""));
     assert!(shared(&requests).is_none());
 
@@ -896,6 +900,9 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Share with your other tools"))
+        .stdout(predicate::str::contains(
+            "Also adds 2 lines to ~/.agents/AGENTS.md.",
+        ))
         .stdout(predicate::str::contains("Codex: 1 command, 1 MCP server"))
         .stdout(predicate::str::contains("  + command hello").not())
         .stdout(predicate::str::contains("2 items already in every tool"))
@@ -924,6 +931,9 @@ fn rules_share_in_session_without_confirm_only_previews() {
     .assert()
     .success()
     .stdout(predicate::str::contains("  + command hello"))
+    .stdout(predicate::str::contains(
+        "Also adds 2 lines to ~/.agents/AGENTS.md.",
+    ))
     .stdout(predicate::str::contains(
         "Stays in Claude Code: an MCP server in .claude.json: its name may contain a key",
     ));
