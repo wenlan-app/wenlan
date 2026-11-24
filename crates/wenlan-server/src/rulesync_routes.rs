@@ -35,7 +35,8 @@ use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, KeptInPlace,
     PullbackAction, PullbackCard, PullbackDecision, PullbackKind, PullbackPreview,
     RulesSetupCode as Code, RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport,
-    RulesToolCounts, RulesToolState, RulesToolStatus, SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
+    RulesToolCounts, RulesToolState, RulesToolStatus, SharePreviewRequest, ShareRequest,
+    SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -43,7 +44,9 @@ use wenlan_types::rulesync_skill::{
 
 use crate::error::ServerError;
 use crate::route_registry::{get, post, TrackedRouter};
-use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot};
+use crate::rulesync_apply::{
+    is_shared_rule_source_path, ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot,
+};
 use crate::rulesync_layers;
 use crate::rulesync_registry::{
     self, ApprovedSkills, ManagedSkill, SavedSkillDeliveries, SkillHome, SkillModes,
@@ -57,6 +60,7 @@ mod personal_settings;
 mod review_list;
 mod settings;
 mod share;
+mod share_rules;
 mod storage;
 pub(super) mod watch;
 
@@ -210,7 +214,7 @@ async fn adopt(
 
 async fn share_preview(
     headers: HeaderMap,
-    Json(request): Json<AdoptPreviewRequest>,
+    Json(request): Json<SharePreviewRequest>,
 ) -> Result<Json<SharingPlan>, ServerError> {
     require_local_rules_access(&headers)?;
     if !wenlan_core::rulesync_personal::enabled() {
@@ -220,7 +224,11 @@ async fn share_preview(
     }
     let key_consent = !ai_caller(&headers);
     tokio::task::spawn_blocking(move || {
-        Setup::system_ready()?.preview_share(&request.home, key_consent)
+        Setup::system_ready()?.preview_share(
+            &request.home,
+            request.keep_rule.as_deref(),
+            key_consent,
+        )
     })
     .await
     .map_err(|error| ServerError::Internal(error.to_string()))?
@@ -233,7 +241,7 @@ fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Resul
         !plan.plan_id.is_empty()
             && request.confirmed_plan_id.as_deref() == Some(plan.plan_id.as_str())
             && key_shares::plan_token(&request.token) == key_shares::plan_token(&plan.token),
-        "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list."
+        "The setup changed after the preview. Run `wenlan rules share --dry-run` again and show the person the new list."
     );
     Ok(())
 }
@@ -241,7 +249,7 @@ fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Resul
 async fn share_items(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Json(request): Json<AdoptRequest>,
+    Json(request): Json<ShareRequest>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
     execute(state, headers, Operation::Share(request)).await
 }
@@ -294,7 +302,7 @@ async fn review_preview(
 
 enum Operation {
     Adopt(AdoptRequest),
-    Share(AdoptRequest),
+    Share(ShareRequest),
     Restore(RestoreOptions),
     Sync,
     Review(PullbackDecision),
@@ -328,7 +336,9 @@ async fn execute(
         require_personal_rules_writer(&headers)?;
     }
     let ai_caller = ai_caller(&headers);
-    let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
+    let generated = if matches!(operation, Operation::Sync | Operation::Review(_))
+        || matches!(&operation, Operation::Share(request) if request.keep_rule.is_some())
+    {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
         Vec::new()
@@ -352,15 +362,20 @@ async fn execute(
                 setup.adopt(&request)
             }
             Operation::Share(request) => {
-                if ai_caller || request.confirmed_plan_id.is_some() {
-                    let home = request
+                let approval = &request.approval;
+                if ai_caller || approval.confirmed_plan_id.is_some() {
+                    let home = approval
                         .home
                         .as_deref()
                         .context("A confirmed share needs the tool home")?;
-                    let plan = setup.preview_share(home, false)?;
-                    validate_confirmed_share(&request, &plan)?;
+                    let plan = setup.preview_share(home, request.keep_rule.as_deref(), false)?;
+                    validate_confirmed_share(approval, &plan)?;
                 }
-                setup.share(&request, share::KeyAnswer::of(ai_caller, &request))
+                setup.share(
+                    &request,
+                    share::KeyAnswer::of(ai_caller, approval),
+                    &generated,
+                )
             }
             Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
@@ -860,6 +875,7 @@ enum Kind {
         source: String,
         base: String,
     },
+    SharedRuleSource,
     Skill,
     PersonalFile,
     Directory,
@@ -892,6 +908,18 @@ struct Delivery<Content = Vec<u8>> {
     // fresh decision while delivery of the reviewed version is outstanding.
     reviewed: bool,
     at: i64,
+    /// Binds share approval to a rule version without hashing its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule_revision: Option<String>,
+}
+
+impl Delivery {
+    fn observe(&mut self, current: Snapshot) {
+        self.observed = Some(current);
+        if matches!(self.kind, Kind::Rule { .. }) {
+            self.rule_revision = Some(uuid::Uuid::new_v4().simple().to_string());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -910,6 +938,7 @@ enum BatchMode {
     Restore,
     SealRestore { extension_only: bool },
     Review,
+    ShareRules(share_rules::RuleShareUpdate),
     Settings,
 }
 
@@ -917,6 +946,13 @@ enum BatchMode {
 struct PendingStage {
     id: String,
     displaced: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuleShareJournal {
+    new_backups: BTreeSet<PathBuf>,
+    undo_stages: BTreeMap<PathBuf, PendingStage>,
+    attempted: usize,
 }
 
 impl PendingStage {
@@ -943,11 +979,19 @@ struct BatchDirectories {
 
 impl BatchDirectories {
     fn record(&mut self, operation: &Pending) {
-        if operation.seen != operation.desired {
+        self.record_change(&operation.path, &operation.seen, &operation.desired);
+    }
+
+    fn record_reverse(&mut self, operation: &Pending) {
+        self.record_change(&operation.path, &operation.desired, &operation.seen);
+    }
+
+    fn record_change(&mut self, path: &Path, seen: &Snapshot, desired: &Snapshot) {
+        if seen != desired {
             self.parents
-                .extend(operation.path.ancestors().skip(1).map(Path::to_owned));
-            if operation.seen.is_directory() && !operation.desired.is_directory() {
-                self.replaced.insert(operation.path.clone());
+                .extend(path.ancestors().skip(1).map(Path::to_owned));
+            if seen.is_directory() && !desired.is_directory() {
+                self.replaced.insert(path.to_owned());
             }
         }
     }
@@ -964,6 +1008,14 @@ impl BatchDirectories {
     }
 }
 
+fn is_shared_source_receipt(manifest: &Manifest, path: &Path) -> bool {
+    is_shared_rule_source_path(path)
+        && manifest
+            .delivered
+            .get(path)
+            .is_some_and(|receipt| matches!(receipt.kind, Kind::SharedRuleSource))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Manifest<Content = Vec<u8>> {
     master: PersonalMaster<Content>,
@@ -978,6 +1030,8 @@ struct Manifest<Content = Vec<u8>> {
     delivered: BTreeMap<PathBuf, Delivery<Content>>,
     pending: Vec<Pending<Content>>,
     stages: BTreeMap<PathBuf, PendingStage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule_share: Option<RuleShareJournal>,
     recovery_issues: BTreeMap<PathBuf, String>,
     adopted: bool,
     /// Journaled destinations of an addition that has not enrolled yet.
@@ -999,6 +1053,9 @@ struct Manifest<Content = Vec<u8>> {
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     dismissed_skill_updates: BTreeMap<String, String>,
+    /// Rule lines the person chose to keep in their existing overlays.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    kept_share_rules: BTreeSet<String>,
     /// Servers that may hold a key, shared by name only. No value or hash.
     #[serde(default, skip_serializing_if = "key_shares::KeyState::is_empty")]
     keys: key_shares::KeyState,
@@ -1052,6 +1109,7 @@ impl Manifest {
             delivered: BTreeMap::new(),
             pending: Vec::new(),
             stages: BTreeMap::new(),
+            rule_share: None,
             recovery_issues: BTreeMap::new(),
             adopted: false,
             extension_paths: BTreeSet::new(),
@@ -1066,6 +1124,7 @@ impl Manifest {
             scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
             dismissed_skill_updates: BTreeMap::new(),
+            kept_share_rules: BTreeSet::new(),
             keys: key_shares::KeyState::default(),
         }
     }
@@ -1768,9 +1827,19 @@ impl Setup {
     }
 
     fn recover_pending(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
+        if manifest.rule_share.is_some() {
+            return self.rollback_rule_share(root, manifest);
+        }
         if manifest.pending.is_empty() {
             return Ok(());
         }
+        let source_root = manifest
+            .pending
+            .iter()
+            .any(|op| is_shared_source_receipt(manifest, &op.path))
+            .then(|| root.with_shared_rule_source())
+            .transpose()?;
+        let root = source_root.as_ref().unwrap_or(root);
         let data = self.data_files()?;
         let pending = std::mem::take(&mut manifest.pending);
         // Child entries are not reachable while a journaled directory link
@@ -1812,6 +1881,85 @@ impl Setup {
             }
         }
         directories.sync(root)?;
+        self.save(manifest)
+    }
+
+    /// Until the final checkpoint, the old master and deliveries own the
+    /// setup. Undo only the writes that may have started and still match
+    /// the batch, leaving later user edits for ordinary sync review.
+    fn rollback_rule_share(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
+        let journal = manifest
+            .rule_share
+            .as_ref()
+            .context("missing rule share journal")?;
+        ensure!(
+            journal.attempted <= manifest.pending.len(),
+            "invalid rule share journal"
+        );
+        let source_root = root.with_shared_rule_source()?;
+        let data = self.data_files()?;
+        let mut directories = BatchDirectories::default();
+        for op in manifest.pending.iter().take(journal.attempted).rev() {
+            if op.seen == op.desired {
+                continue;
+            }
+            let path = &op.path;
+            let stage = manifest
+                .stages
+                .get(path)
+                .context("missing rule share stage")?;
+            let undo = journal
+                .undo_stages
+                .get(path)
+                .context("missing rule share undo stage")?;
+            let verify = || {
+                source_root
+                    .restore_leaf_alias(path, |_| op.seen == Snapshot::Absent)
+                    .map(|alias| alias.is_none())
+            };
+            ensure!(
+                verify()?,
+                "{} changed spelling during rule share recovery",
+                path.display()
+            );
+            let live = source_root.read(path, false)?;
+            source_root.recover_stage(
+                path,
+                &op.seen,
+                &op.desired,
+                &live,
+                stage.options(&data, false, None),
+            )?;
+            let live = source_root.read(path, false)?;
+            source_root.recover_stage(
+                path,
+                &op.desired,
+                &op.seen,
+                &live,
+                undo.options(&data, false, None),
+            )?;
+            let live = source_root.read(path, false)?;
+            if live == op.desired
+                && source_root.apply_with(
+                    path,
+                    &op.desired,
+                    &op.seen,
+                    undo.options(&data, false, Some(&verify)),
+                )? == ApplyOutcome::Applied
+            {
+                directories.record_reverse(op);
+            }
+        }
+        directories.sync(&source_root)?;
+        let journal = manifest.rule_share.take().expect("rule share journal");
+        for path in journal.new_backups {
+            manifest.backup.remove(&path);
+            #[cfg(windows)]
+            manifest.windows_backup_owners.remove(&path);
+        }
+        for op in manifest.pending.drain(..) {
+            manifest.stages.remove(&op.path);
+        }
         self.save(manifest)
     }
 
@@ -1894,7 +2042,8 @@ impl Setup {
     ) -> Result<Vec<(PathBuf, ApplyOutcome)>> {
         let adopting = matches!(mode, BatchMode::Adopt);
         let extending = matches!(mode, BatchMode::Extend);
-        let reviewing = matches!(mode, BatchMode::Review);
+        let sharing_rules = matches!(mode, BatchMode::ShareRules(_));
+        let reviewing = sharing_rules || matches!(mode, BatchMode::Review);
         let restoring = matches!(mode, BatchMode::Restore | BatchMode::SealRestore { .. });
         let stop_on_conflict = !restoring && !matches!(mode, BatchMode::Continue);
         if operations.is_empty() {
@@ -1911,7 +2060,27 @@ impl Setup {
         } else {
             with_missing_parents(root, operations, extending.then_some(&manifest.backup))?
         };
-        check_delivery_paths(&self.home, operations.iter().map(|op| op.path.as_path()))?;
+        let shared_source = |op: &Pending| {
+            is_shared_rule_source_path(&op.path)
+                && (sharing_rules && matches!(op.kind, Some(Kind::SharedRuleSource))
+                    || restoring && is_shared_source_receipt(manifest, &op.path))
+        };
+        check_delivery_paths(
+            &self.home,
+            operations
+                .iter()
+                .filter(|op| !shared_source(op))
+                .map(|op| op.path.as_path()),
+        )?;
+        let shared_source_paths: BTreeSet<_> = operations
+            .iter()
+            .filter(|op| shared_source(op))
+            .map(|op| op.path.clone())
+            .collect();
+        let source_root = (!shared_source_paths.is_empty())
+            .then(|| root.with_shared_rule_source())
+            .transpose()?;
+        let root = source_root.as_ref().unwrap_or(root);
         let mut outcomes = Vec::with_capacity(operations.len());
         let mut ready: Vec<Pending> = Vec::with_capacity(operations.len());
         for op in operations {
@@ -1952,6 +2121,9 @@ impl Setup {
                 }
             }
             if changed
+                || sharing_rules
+                    && shared_source_paths.contains(&op.path)
+                    && !matches!(root.restore_leaf_alias(&op.path, |_| true), Ok(None))
                 || manifest.pending.iter().any(|pending| {
                     op.path.starts_with(&pending.path) || pending.path.starts_with(&op.path)
                 })
@@ -1964,9 +2136,16 @@ impl Setup {
         if ready.is_empty() || stop_on_conflict && !outcomes.is_empty() {
             return Ok(outcomes);
         }
+        let new_backups = sharing_rules.then(|| {
+            ready
+                .iter()
+                .filter(|op| !manifest.backup.contains_key(&op.path))
+                .map(|op| op.path.clone())
+                .collect()
+        });
         record_originals(root, manifest, &ready, adopting || extending)?;
         let data = self.data_files()?;
-        let displaced = displaced::Batch::prepare(root, &data, &ready)?;
+        let displaced = displaced::Batch::prepare(root, &data, &ready, sharing_rules)?;
         let batch_paths = ready.iter().map(|op| op.path.clone()).collect::<Vec<_>>();
         manifest.stages.extend(
             ready
@@ -1987,6 +2166,30 @@ impl Setup {
             manifest.extension_paths.extend(batch_paths.iter().cloned());
         }
         let first = manifest.pending.len();
+        if let Some(new_backups) = new_backups {
+            ensure!(first == 0, "a rule share requires a settled setup");
+            let undo_stages = ready
+                .iter()
+                .enumerate()
+                .filter(|(_, op)| op.seen != op.desired)
+                .map(|(index, op)| {
+                    (
+                        op.path.clone(),
+                        PendingStage {
+                            id: uuid::Uuid::new_v4().simple().to_string(),
+                            displaced: displaced
+                                .as_ref()
+                                .and_then(|batch| batch.location(index + ready.len())),
+                        },
+                    )
+                })
+                .collect();
+            manifest.rule_share = Some(RuleShareJournal {
+                new_backups,
+                undo_stages,
+                attempted: 0,
+            });
+        }
         manifest.pending.append(&mut ready);
         self.save(manifest)?;
         #[cfg(test)]
@@ -1997,8 +2200,28 @@ impl Setup {
         }
         let mut directories = BatchDirectories::default();
         let mut failed = BTreeSet::new();
-        for operation in manifest.pending.split_off(first) {
+        let operations = if sharing_rules {
+            manifest.pending.clone()
+        } else {
+            manifest.pending.split_off(first)
+        };
+        for (index, operation) in operations.into_iter().enumerate() {
             let path = operation.path.clone();
+            if let Some(journal) = &mut manifest.rule_share {
+                if operation.seen == Snapshot::Absent {
+                    if let Some(undo) = journal
+                        .undo_stages
+                        .get(&path)
+                        .and_then(|stage| stage.displaced.as_deref())
+                    {
+                        root.check_recovery_volume(&path, &data, undo)?;
+                    }
+                }
+                journal.attempted = index + 1;
+                self.save(manifest)?;
+                #[cfg(test)]
+                share_rules::before_rule_share_write(&path);
+            }
             // Keep the receipt if closing this directory would prevent a
             // later retry from restoring a descendant that is still managed.
             let unfinished_children = match (&mode, &operation.desired) {
@@ -2015,7 +2238,8 @@ impl Setup {
                 }
                 _ => false,
             };
-            let wrong_spelling = restoring
+            let verify_spelling = restoring || shared_source_paths.contains(&path);
+            let wrong_spelling = verify_spelling
                 && operation.seen != operation.desired
                 && !matches!(root.restore_leaf_alias(&path, |_| false), Ok(None));
             let status = if path_blocked(&failed, &path) || unfinished_children || wrong_spelling {
@@ -2025,7 +2249,7 @@ impl Setup {
                     let link = links.and_then(|links| links.get(&path));
                     let removal = operation.desired == Snapshot::Absent;
                     let verify = || {
-                        if restoring {
+                        if verify_spelling {
                             return Ok(matches!(
                                 root.restore_leaf_alias(&path, |_| false),
                                 Ok(None)
@@ -2040,7 +2264,7 @@ impl Setup {
                     let options = stage.options(
                         &data,
                         operation.allow_link,
-                        (link.is_some() || removal || restoring).then_some(&verify as _),
+                        (link.is_some() || removal || verify_spelling).then_some(&verify as _),
                     );
                     root.apply_with(&path, &operation.seen, &operation.desired, options)
                         .with_context(|| format!("write {}", path.display()))?
@@ -2066,10 +2290,17 @@ impl Setup {
             outcomes.push((path.clone(), status));
             if status == ApplyOutcome::Applied {
                 directories.record(&operation);
-                settle(manifest, operation)?;
+                if !sharing_rules {
+                    settle(manifest, operation)?;
+                }
             } else {
                 failed.insert(path);
                 if stop_on_conflict {
+                    if let Some(journal) = &mut manifest.rule_share {
+                        // The writer cleaned its stage without applying this operation.
+                        journal.attempted = index;
+                        self.save(manifest)?;
+                    }
                     break;
                 }
             }
@@ -2077,6 +2308,27 @@ impl Setup {
         directories.sync(root)?;
         if let Some(batch) = displaced {
             batch.sync(&data)?;
+        }
+        if let BatchMode::ShareRules(update) = mode {
+            if failed.is_empty() {
+                if let Some(op) = manifest.pending.iter().find(|op| {
+                    !root
+                        .read(&op.path, false)
+                        .is_ok_and(|actual| actual == op.desired)
+                }) {
+                    failed.insert(op.path.clone());
+                    outcomes.push((op.path.clone(), ApplyOutcome::ChangedSincePlan));
+                }
+            }
+            if !failed.is_empty() {
+                self.rollback_rule_share(root, manifest)?;
+                return Ok(outcomes);
+            }
+            for op in std::mem::take(&mut manifest.pending) {
+                settle(manifest, op)?;
+            }
+            update.commit(manifest);
+            manifest.rule_share = None;
         }
         if adopting {
             manifest.adopted = failed.is_empty();
@@ -2127,7 +2379,11 @@ impl Setup {
             {
                 continue;
             }
-            let current = if crate::rulesync_apply::is_personal_entry(path) {
+            let current = if is_shared_rule_source_path(path) {
+                // The successful restore has already retired the delivery.
+                root.with_shared_rule_source()
+                    .and_then(|root| root.read(path, false))
+            } else if crate::rulesync_apply::is_personal_entry(path) {
                 root.read_personal_file(path, true)
             } else {
                 root.read(path, true)
@@ -2187,6 +2443,14 @@ impl Setup {
         extension_only: bool,
         in_place: &BTreeSet<PathBuf>,
     ) -> Result<()> {
+        let source_root = (!extension_only
+            && manifest
+                .delivered
+                .keys()
+                .any(|path| is_shared_source_receipt(manifest, path)))
+        .then(|| root.with_shared_rule_source())
+        .transpose()?;
+        let root = source_root.as_ref().unwrap_or(root);
         let selected = |manifest: &Manifest, path: &Path| {
             (!extension_only || manifest.extension_paths.contains(path)) && !in_place.contains(path)
         };
@@ -2241,7 +2505,8 @@ impl Setup {
             let Some(delivered) = manifest.delivered.get(&path) else {
                 continue;
             };
-            if is_harness_path(&path) {
+            let shared_source = is_shared_source_receipt(manifest, &path);
+            if is_harness_path(&path) && !shared_source {
                 block_path(
                     result,
                     &path,
@@ -2309,7 +2574,7 @@ impl Setup {
                 if crate::rulesync_apply::is_personal_entry(&path) {
                     root.read_personal_file(&path, true)
                 } else {
-                    read_planned_path(root, &path, true, *expected == Snapshot::Absent)
+                    read_planned_path(root, &path, !shared_source, *expected == Snapshot::Absent)
                 }
             };
             let seen = match read_for_restore() {
@@ -2352,7 +2617,7 @@ impl Setup {
                 seen,
                 desired: original,
                 kind: None,
-                allow_link: true,
+                allow_link: !shared_source,
             });
         }
         // Descendants are restored before their parent's final mode or link.
@@ -2766,7 +3031,7 @@ impl Setup {
                         .delivered
                         .get_mut(&path)
                         .expect("managed rule")
-                        .observed = Some(current.clone());
+                        .observe(current.clone());
                     observed_edits = true;
                 }
             }
@@ -3814,7 +4079,7 @@ impl Setup {
                         );
                     }
                 }
-                delivery.observed = Some(expected.clone());
+                delivery.observe(expected.clone());
                 delivery.reviewed = true;
             }
             manifest
@@ -3886,7 +4151,7 @@ impl Setup {
                 .delivered
                 .get_mut(&draft.path)
                 .context("file is no longer managed")?;
-            delivery.observed = Some(draft.current.clone());
+            delivery.observe(draft.current.clone());
             delivery.reviewed |= all_tools;
         }
         self.save(&manifest)?;
@@ -4395,6 +4660,9 @@ fn registry_removals(
 
 fn extend_personal_master(master: &mut PersonalMaster, added: PersonalMaster) {
     master.overlays.extend(added.overlays);
+    if added.claude_imported_rules.is_some() {
+        master.claude_imported_rules = added.claude_imported_rules;
+    }
     master.codex_sync_replaced |= added.codex_sync_replaced;
     for skill in added.skills {
         let shared = master.skills.iter_mut().find(|current| {
@@ -4890,6 +5158,7 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
         if let Some(observed) = &mut record.observed {
             *observed = without_revoked_rules(observed, accessible)?;
         }
+        record.rule_revision = Some(uuid::Uuid::new_v4().simple().to_string());
         return Ok(());
     }
     if let Some(kind) = operation.kind {
@@ -4911,6 +5180,8 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
             Kind::SettingsParent => return Ok(()),
             kind => (kind, operation.desired),
         };
+        let rule_revision =
+            matches!(kind, Kind::Rule { .. }).then(|| uuid::Uuid::new_v4().simple().to_string());
         manifest.delivered.insert(
             operation.path,
             Delivery {
@@ -4919,6 +5190,7 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
                 observed: None,
                 reviewed: false,
                 at: chrono::Utc::now().timestamp(),
+                rule_revision,
             },
         );
     } else if manifest
@@ -4995,6 +5267,9 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
             continue;
         }
         if is_harness_path(path) {
+            if is_shared_source_receipt(manifest, path) {
+                continue;
+            }
             blocked.insert(
                 path.clone(),
                 (Code::SharedReadOnly, HARNESS_READ_ONLY.into()),
@@ -5305,7 +5580,7 @@ fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
             edited,
         },
     );
-    delivery.observed = Some(draft.current.clone());
+    delivery.observe(draft.current.clone());
     Ok(())
 }
 
@@ -11869,6 +12144,7 @@ mod tests {
                 observed: None,
                 reviewed: false,
                 at: 0,
+                rule_revision: None,
             },
         );
         f.setup.save(&manifest).unwrap();
@@ -13557,6 +13833,7 @@ mod tests {
                 observed: None,
                 reviewed: false,
                 at: 1,
+                rule_revision: None,
             },
         );
         f.setup.save(&manifest).unwrap();

@@ -13,8 +13,8 @@ use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
     PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
-    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SharingPlan,
-    SkillUpdateStatus, SkillUpstream, TO_REVIEW_COMMAND,
+    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SharePreviewRequest,
+    ShareRequest, SharingPlan, SkillUpdateStatus, SkillUpstream, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -39,7 +39,7 @@ pub enum RulesSetupCmd {
         #[arg(long, conflicts_with = "dry_run")]
         confirm: Option<String>,
     },
-    /// Copy your existing skills, commands, subagents and MCP servers to
+    /// Share your rule lines, skills, commands, subagents and MCP servers with
     /// every managed tool that supports them.
     Share {
         /// Preview what each tool would get.
@@ -48,6 +48,9 @@ pub enum RulesSetupCmd {
         /// Show every item in the preview.
         #[arg(long)]
         details: bool,
+        /// Keep numbered rule lines in their own tools.
+        #[arg(long, value_delimiter = ',', value_name = "N[,N]")]
+        keep_rule: Vec<usize>,
         /// Confirm the plan shown to the person.
         #[arg(long, conflicts_with = "dry_run")]
         confirm: Option<String>,
@@ -170,14 +173,17 @@ async fn run_inner(
     if let RulesSetupCmd::Share {
         dry_run: true,
         details,
+        keep_rule,
         ..
     } = command
     {
         let client =
             WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
-        let plan = client.preview_share_as_person(&home_request()?).await?;
+        let plan = client
+            .preview_share_as_person(&share_request(keep_rule)?)
+            .await?;
         return show(format, quiet, &plan, |plan| {
-            sharing_for_a_person(plan, *details)
+            sharing_for_a_person(plan, *details, false)
         });
     }
     let confirmed_adopt = matches!(
@@ -255,8 +261,11 @@ async fn run_inner(
         RulesSetupCmd::Share {
             confirm: confirmed,
             details,
+            keep_rule,
             ..
-        } => match share_with_person(&client, *details, confirmed.as_deref(), false).await? {
+        } => match share_with_person(&client, *details, keep_rule, confirmed.as_deref(), false)
+            .await?
+        {
             ShareResult::Applied(report) => report,
             ShareResult::Cancelled | ShareResult::Nothing => return Ok(()),
         },
@@ -484,9 +493,10 @@ struct SetupSync {
     left_alone: usize,
 }
 
-fn home_request() -> Result<AdoptPreviewRequest> {
-    Ok(AdoptPreviewRequest {
+fn share_request(keep_rule: &[usize]) -> Result<SharePreviewRequest> {
+    Ok(SharePreviewRequest {
         home: rulesync_personal::system_home()?.canonicalize()?,
+        keep_rule: Some(keep_rule.to_vec()),
     })
 }
 
@@ -500,23 +510,24 @@ enum ShareResult {
 async fn share_with_person(
     client: &WenlanClient,
     details: bool,
+    keep_rule: &[usize],
     confirmed: Option<&str>,
     setup: bool,
 ) -> Result<ShareResult> {
-    let expected = home_request()?;
+    let expected = share_request(keep_rule)?;
     let plan = client.preview_share_as_person(&expected).await?;
     let include_keys = if let Some(id) = confirmed {
-        ensure!(plan.plan_id == id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
+        ensure!(plan.plan_id == id && !id.is_empty(), "The setup changed after the preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
         false
     } else {
         // The person must see the plan even with --quiet or --format json.
-        let preview = sharing_for_a_person(&plan, details);
+        let preview = sharing_for_a_person(&plan, details, setup);
         if setup {
             print!("{}", wrap_setup_text(&preview)?);
         } else {
             print!("{preview}");
         }
-        if plan.tools.is_empty() && plan.key_servers.is_empty() {
+        if !has_safe_share(&plan) && plan.key_servers.is_empty() {
             return Ok(ShareResult::Nothing);
         }
         let Some(include_keys) =
@@ -527,20 +538,27 @@ async fn share_with_person(
             }
             return Ok(ShareResult::Cancelled);
         };
-        if plan.tools.is_empty() && !include_keys {
+        if !has_safe_share(&plan) && !include_keys {
             return Ok(ShareResult::Nothing);
         }
         include_keys
     };
     let report = client
-        .share_rules_as_person(&AdoptRequest {
-            token: plan.token,
-            confirmed_plan_id: confirmed.map(str::to_owned),
-            home: Some(expected.home),
-            include_keys,
+        .share_rules_as_person(&ShareRequest {
+            approval: AdoptRequest {
+                token: plan.token,
+                confirmed_plan_id: confirmed.map(str::to_owned),
+                home: Some(expected.home),
+                include_keys,
+            },
+            keep_rule: expected.keep_rule,
         })
         .await?;
     Ok(ShareResult::Applied(report))
+}
+
+fn has_safe_share(plan: &SharingPlan) -> bool {
+    !plan.tools.is_empty() || !plan.rules.is_empty()
 }
 
 /// The key group always needs its own answer, including when it is the only group.
@@ -549,7 +567,13 @@ fn share_confirmation(
     input: &mut dyn io::BufRead,
     output: &mut dyn io::Write,
 ) -> Result<Option<bool>> {
-    if !person_says_yes(input, output, "Copy these items to the tools above?")? {
+    let question = if plan.tools.is_empty() && plan.key_servers.is_empty() && !plan.rules.is_empty()
+    {
+        "Apply these rule choices?"
+    } else {
+        "Copy these items to the tools above?"
+    };
+    if !person_says_yes(input, output, question)? {
         return Ok(None);
     }
     let include_keys = if plan.key_servers.is_empty() {
@@ -652,9 +676,9 @@ impl StayReason {
     }
 }
 
-fn sharing_for_a_person(plan: &SharingPlan, details: bool) -> String {
+fn sharing_for_a_person(plan: &SharingPlan, details: bool, setup: bool) -> String {
     let mut out = String::new();
-    if plan.tools.is_empty() && plan.key_servers.is_empty() {
+    if !has_safe_share(plan) && plan.key_servers.is_empty() {
         out.push_str("Nothing to share.\n");
     } else {
         out.push_str("Share with your other tools\n");
@@ -666,10 +690,15 @@ fn sharing_for_a_person(plan: &SharingPlan, details: bool) -> String {
             ("subagent", &tool.subagents),
             ("MCP server", &tool.mcp_servers),
         ];
-        let counts = groups
-            .iter()
-            .filter(|(_, names)| !names.is_empty())
-            .map(|(word, names)| plural(names.len(), word))
+        let counts = (tool.rules > 0)
+            .then(|| plural(tool.rules, "rule"))
+            .into_iter()
+            .chain(
+                groups
+                    .iter()
+                    .filter(|(_, names)| !names.is_empty())
+                    .map(|(word, names)| plural(names.len(), word)),
+            )
             .collect::<Vec<_>>()
             .join(", ");
         writeln!(&mut out, "\n{}: {counts}", one_line(&tool.tool)).unwrap();
@@ -681,6 +710,7 @@ fn sharing_for_a_person(plan: &SharingPlan, details: bool) -> String {
             }
         }
     }
+    append_rule_preview(&mut out, plan, details, if setup { 79 } else { 100 });
     if plan.already_there > 0 {
         writeln!(
             &mut out,
@@ -802,18 +832,132 @@ fn sharing_for_a_person(plan: &SharingPlan, details: bool) -> String {
             .unwrap();
         }
     }
-    if !details && (!plan.tools.is_empty() || !plan.stays.is_empty()) {
+    if !details && (has_safe_share(plan) || !plan.stays.is_empty() || !plan.rule_stays.is_empty()) {
         out.push_str("\nAdd --details to see every item.\n");
     }
-    if !plan.tools.is_empty() && !plan.plan_id.is_empty() {
+    if has_safe_share(plan) && !plan.plan_id.is_empty() {
         writeln!(
             &mut out,
-            "\nPlan id: {} — to go ahead from an AI tool: wenlan rules share --confirm {}",
-            plan.plan_id, plan.plan_id
+            "\nPlan id: {}\nFrom an AI tool: wenlan rules share --confirm {}{}",
+            plan.plan_id,
+            plan.plan_id,
+            kept_rule_args(plan)
         )
         .unwrap();
     }
     out
+}
+
+fn append_rule_preview(out: &mut String, plan: &SharingPlan, details: bool, width: usize) {
+    let kept = plan.rules.iter().filter(|rule| rule.kept).count();
+    if kept > 0 {
+        writeln!(
+            out,
+            "\nKeep {} in {} own {}.",
+            plural(kept, "rule line"),
+            if kept == 1 { "its" } else { "their" },
+            if kept == 1 { "tool" } else { "tools" }
+        )
+        .unwrap();
+    }
+    if plan.tools.iter().all(|tool| tool.rules == 0) {
+        let moving = plan.rules.len() - kept;
+        if moving > 0 {
+            writeln!(
+                out,
+                "\nMove {} into the shared rules.",
+                plural(moving, "rule line")
+            )
+            .unwrap();
+        }
+    }
+    if details {
+        if !plan.rules.is_empty() {
+            out.push_str("\nNumbered rule lines\n");
+            for rule in &plan.rules {
+                writeln!(
+                    out,
+                    "  {}. {} [{}{}]",
+                    rule.number,
+                    one_line(&rule.line),
+                    rule.tools
+                        .iter()
+                        .map(|tool| one_line(tool))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if rule.kept { ", keep here" } else { "" }
+                )
+                .unwrap();
+            }
+            out.push_str("Use --keep-rule N[,N] to keep rule lines where they are.\n");
+        }
+        for stay in &plan.rule_stays {
+            let description = stay
+                .line
+                .as_deref()
+                .map_or_else(|| "a line that may hold a credential".into(), one_line);
+            if stay.line.is_some() {
+                writeln!(
+                    out,
+                    "Stays in {}: {description} ({})",
+                    one_line(&stay.tool),
+                    one_line(&stay.reason)
+                )
+                .unwrap();
+            } else {
+                writeln!(out, "Stays in {}: {description}.", one_line(&stay.tool)).unwrap();
+            }
+        }
+    } else {
+        if kept < plan.rules.len() {
+            out.push_str("\nRule lines to share\n");
+            for rule in plan.rules.iter().filter(|rule| !rule.kept) {
+                let line = format!("  {}. {}", rule.number, one_line(&rule.line));
+                writeln!(out, "{}", console::truncate_str(&line, width, "…")).unwrap();
+            }
+        }
+        if !plan.rule_stays.is_empty() {
+            let credentials = plan
+                .rule_stays
+                .iter()
+                .filter(|stay| stay.line.is_none())
+                .count();
+            let local = plan.rule_stays.len() - credentials;
+            let mut reasons = Vec::new();
+            if local > 0 {
+                reasons.push(format!("{local} tool-only"));
+            }
+            if credentials > 0 {
+                reasons.push(format!("{credentials} with possible credentials"));
+            }
+            let place = if plan.rule_stays.len() == 1 {
+                "stays in its own tool"
+            } else {
+                "stay in their own tools"
+            };
+            writeln!(
+                out,
+                "{} {place} ({}).",
+                plural(plan.rule_stays.len(), "rule line"),
+                reasons.join(", "),
+            )
+            .unwrap();
+        }
+    }
+}
+
+fn kept_rule_args(plan: &SharingPlan) -> String {
+    let numbers = plan
+        .rules
+        .iter()
+        .filter(|rule| rule.kept)
+        .map(|rule| rule.number.to_string())
+        .collect::<Vec<_>>();
+    if numbers.is_empty() {
+        String::new()
+    } else {
+        format!(" --keep-rule {}", numbers.join(","))
+    }
 }
 
 fn plural(count: usize, word: &str) -> String {
@@ -863,10 +1007,10 @@ pub(super) async fn adopt_during_setup(format: ResolvedFormat) -> bool {
     }
 }
 
-pub(super) async fn share_during_setup(details: bool) {
+pub(super) async fn share_during_setup(details: bool, keep_rule: &[usize]) {
     let result = async {
         let client = WenlanClient::for_local_rules_with_identity(None, None)?;
-        share_with_person(&client, details, None, true).await
+        share_with_person(&client, details, keep_rule, None, true).await
     }
     .await;
     match result {
@@ -1331,7 +1475,9 @@ pub(super) fn file_label(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wenlan_types::rulesync::{AdoptionChange, SharingStay, SharingTool};
+    use wenlan_types::rulesync::{
+        AdoptionChange, SharingRule, SharingRuleStay, SharingStay, SharingTool,
+    };
 
     #[test]
     fn ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no() {
@@ -1373,6 +1519,94 @@ mod tests {
                 .matches("Type y to go on:")
                 .count(),
             2
+        );
+    }
+
+    #[test]
+    fn ux_cli_8_setup_share_previews_numbered_rules_and_uses_one_yes() {
+        let plan = SharingPlan {
+            plan_id: "rule-plan".into(),
+            tools: vec![SharingTool {
+                tool: "Codex".into(),
+                rules: 1,
+                ..Default::default()
+            }],
+            rules: vec![
+                SharingRule {
+                    number: 1,
+                    line: "Run the release checklist.".into(),
+                    tools: vec!["Claude Code".into()],
+                    kept: false,
+                },
+                SharingRule {
+                    number: 2,
+                    line: "Review the logs.".into(),
+                    tools: vec!["Claude Code".into()],
+                    kept: true,
+                },
+            ],
+            rule_stays: vec![
+                SharingRuleStay {
+                    tool: "Claude Code".into(),
+                    line: Some("@./local.md".into()),
+                    reason: "Only Claude Code reads this import.".into(),
+                },
+                SharingRuleStay {
+                    tool: "Claude Code".into(),
+                    line: Some("Use CLAUDE.md here.".into()),
+                    reason: "This line names a tool-specific file.".into(),
+                },
+                SharingRuleStay {
+                    tool: "Claude Code".into(),
+                    line: None,
+                    reason: "This line may hold a credential.".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let short = sharing_for_a_person(&plan, false, false);
+        assert!(short.contains("Codex: 1 rule"), "{short}");
+        assert!(
+            short.contains(
+                "3 rule lines stay in their own tools (2 tool-only, 1 with possible credentials)."
+            ),
+            "{short}"
+        );
+        assert!(short.contains("1. Run the release checklist."), "{short}");
+        assert!(!short.contains("Review the logs."), "{short}");
+        let details = sharing_for_a_person(&plan, true, true);
+        assert!(
+            details.contains("1. Run the release checklist."),
+            "{details}"
+        );
+        assert!(
+            details.contains("2. Review the logs. [Claude Code, keep here]"),
+            "{details}"
+        );
+        assert!(
+            details.contains("a line that may hold a credential"),
+            "{details}"
+        );
+        assert!(
+            details.contains("wenlan rules share --confirm rule-plan --keep-rule 2"),
+            "{details}"
+        );
+        assert!(wrap_setup_text(&details)
+            .unwrap()
+            .lines()
+            .all(|line| line.len() < 80));
+
+        let mut output = Vec::new();
+        assert_eq!(
+            share_confirmation(&plan, &mut &b"y\n"[..], &mut output).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            String::from_utf8(output)
+                .unwrap()
+                .matches("Type y to go on:")
+                .count(),
+            1
         );
     }
 
@@ -1429,7 +1663,7 @@ mod tests {
             key_tools: vec!["Codex".into()],
             ..Default::default()
         };
-        let text = sharing_for_a_person(&plan, false);
+        let text = sharing_for_a_person(&plan, false, false);
         assert!(text.contains("Codex: 2 skills, 1 command"), "{text}");
         assert!(!text.contains("  + skill one"), "{text}");
         assert!(text.contains("3 items stay in their own tool"), "{text}");
@@ -1445,7 +1679,7 @@ mod tests {
         assert!(text.contains("  ? MCP server billing"), "{text}");
         assert!(text.contains("Add --details to see every item."), "{text}");
         assert!(text.contains("Plan id: plan-id"), "{text}");
-        let details = sharing_for_a_person(&plan, true);
+        let details = sharing_for_a_person(&plan, true, false);
         assert!(details.contains("  + skill one"), "{details}");
         assert_eq!(
             details

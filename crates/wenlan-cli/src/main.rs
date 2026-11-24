@@ -69,6 +69,14 @@ enum Commands {
         /// Show the full Codex hooks preview and share details.
         #[arg(long)]
         details: bool,
+        /// Keep numbered rule lines in their own tools during sharing.
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "N[,N]",
+            conflicts_with = "config_only"
+        )]
+        keep_rule: Vec<usize>,
         /// Write the settings only: connect no AI tool and ask nothing.
         #[arg(long)]
         config_only: bool,
@@ -764,6 +772,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             anthropic_api_key_env,
             yes,
             details,
+            keep_rule,
             config_only,
             finish,
         } => {
@@ -775,6 +784,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
                     anthropic_api_key_env,
                     yes,
                     details,
+                    keep_rule,
                     person: agent_name.is_none() && session.is_none(),
                     config_only,
                     finish,

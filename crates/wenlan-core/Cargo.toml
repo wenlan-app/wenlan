@@ -35,6 +35,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
+base64 = "0.22"
 dirs = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }

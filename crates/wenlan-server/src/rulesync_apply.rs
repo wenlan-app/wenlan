@@ -12,6 +12,7 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
+use wenlan_core::rulesync_adopt::SHARED_RULES;
 use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
 #[cfg(windows)]
 use wenlan_core::rulesync_personal::{
@@ -257,6 +258,7 @@ pub(crate) struct FileRoot {
     dir: Dir,
     harness: Option<HarnessGuard>,
     tool_home: bool,
+    shared_rule_source: bool,
     private_directories: bool,
     #[cfg(test)]
     pub(crate) simulate_cross_volume: bool,
@@ -281,6 +283,7 @@ impl FileRoot {
             dir: ambient_parent.open_dir_nofollow(Path::new(name))?,
             harness: None,
             tool_home: false,
+            shared_rule_source: false,
             private_directories: false,
             #[cfg(test)]
             simulate_cross_volume: false,
@@ -296,6 +299,24 @@ impl FileRoot {
         root.harness = Some(HarnessGuard::new(home)?);
         root.tool_home = true;
         Ok(root)
+    }
+
+    /// Only an approved rule share and its recorded undo use this view.
+    /// Other harness paths and aliases keep the normal protection.
+    pub(crate) fn with_shared_rule_source(&self) -> io::Result<Self> {
+        Ok(Self {
+            dir: self.dir.try_clone()?,
+            harness: self.harness,
+            tool_home: self.tool_home,
+            shared_rule_source: true,
+            private_directories: self.private_directories,
+            #[cfg(test)]
+            simulate_cross_volume: self.simulate_cross_volume,
+            #[cfg(test)]
+            fail_key_file_after_rename: self.fail_key_file_after_rename,
+            #[cfg(all(test, not(windows)))]
+            refuse_windows_acl_in_test: self.refuse_windows_acl_in_test,
+        })
     }
 
     pub(crate) fn open_data(home: &Path, path: &Path) -> io::Result<Self> {
@@ -1230,7 +1251,9 @@ impl FileRoot {
             }
             parent = directory;
             if let Some(guard) = &self.harness {
-                guard.check(&parent.dir_metadata()?)?;
+                if !(self.shared_rule_source && path == Path::new(".agents")) {
+                    guard.check(&parent.dir_metadata()?)?;
+                }
             }
             if self.private_directories {
                 require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
@@ -1240,7 +1263,10 @@ impl FileRoot {
     }
 
     fn check_tool_path(&self, path: &Path) -> io::Result<()> {
-        if self.tool_home && is_harness_path(path) {
+        if self.tool_home
+            && is_harness_path(path)
+            && !(self.shared_rule_source && is_shared_rule_source_path(path))
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "inside the read-only ~/.agents harness. Choose a path outside it",
@@ -1250,6 +1276,12 @@ impl FileRoot {
     }
 
     fn check_directory_leaf(&self, parent: &Dir, name: &Path) -> io::Result<()> {
+        if self.shared_rule_source
+            && name == Path::new(".agents")
+            && same_directory(parent, &self.dir)?
+        {
+            return Ok(());
+        }
         if let Some(guard) = &self.harness {
             match parent.symlink_metadata(name) {
                 Ok(metadata) if metadata.is_dir() => {
@@ -1278,6 +1310,10 @@ impl FileRoot {
         }
         Ok(())
     }
+}
+
+pub(crate) fn is_shared_rule_source_path(path: &Path) -> bool {
+    path == Path::new(SHARED_RULES) || path == Path::new(".agents")
 }
 
 fn invalid_path() -> io::Error {

@@ -365,6 +365,7 @@ Options:
 - `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
 - `-y, --yes`: Skip confirmation prompts where possible.
 - `--details`: Show the full Codex hooks preview and share details.
+- `--keep-rule <N[,N]>`: Keep numbered rule lines in their own tools during sharing.
 - `--config-only`: Write the settings only: connect no AI tool and ask nothing.
 
 ### `wenlan init`
@@ -559,7 +560,7 @@ Options:
 
 #### `wenlan rules share`
 
-Copy your existing skills, commands, subagents and MCP servers to every managed tool that supports them.
+Share your rule lines, skills, commands, subagents and MCP servers with every managed tool that supports them.
 
 ```text
 wenlan rules share [OPTIONS]
@@ -569,6 +570,7 @@ Options:
 
 - `--dry-run`: Preview what each tool would get.
 - `--details`: Show every item in the preview.
+- `--keep-rule <N[,N]>`: Keep numbered rule lines in their own tools.
 - `--confirm <CONFIRM>`: Confirm the plan shown to the person.
 - `--include-keys`: Also offer the MCP servers that may contain a key. You are still asked to type y or yes; an AI tool cannot share them.
 

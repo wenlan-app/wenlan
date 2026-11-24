@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan rules share`: offer each managed skill, command, subagent and MCP
-//! server to the other enrolled tools that support it. The writes use the
+//! `wenlan rules share`: offer portable rule lines, skills, commands, subagents
+//! and MCP servers to the other enrolled tools that support them. The writes use the
 //! same journal, backup and restore path as adding a tool to the setup.
 
 use super::key_shares::{plan_token, KeyDigests, KeyPreview, KeyShare, EXPIRED_KEY_PREVIEW};
@@ -11,7 +11,7 @@ use wenlan_core::rulesync_personal::{adoption_plan_id, reject_secret_lines};
 use wenlan_core::rulesync_personal_files::{sharing_paths, NO_PERSONAL_DESTINATION};
 use wenlan_types::rulesync::{SharingPlan, SharingStay, SharingTool};
 
-const SHARE_TOKEN_VERSION: &str = "share-1";
+const SHARE_TOKEN_VERSION: &str = "share-3";
 const NOTHING_TO_SHARE: &str = "Nothing to share";
 
 /// A skill folder a tool receives, recorded in the master after the write.
@@ -26,6 +26,7 @@ pub(super) struct Share {
     operations: Vec<Pending>,
     skills: Vec<SkillAddition>,
     settings: Vec<SettingAddition>,
+    rules: share_rules::RuleShares,
     /// Servers that may hold a key; written only with the person's yes.
     keys: Vec<KeyShare>,
     key_digests: KeyDigests,
@@ -35,7 +36,7 @@ pub(super) struct Share {
 
 impl Share {
     fn is_empty(&self) -> bool {
-        self.operations.is_empty() && self.settings.is_empty()
+        self.operations.is_empty() && self.settings.is_empty() && self.rules.lines.is_empty()
     }
 }
 
@@ -180,11 +181,12 @@ impl Setup {
     pub(super) fn preview_share(
         &self,
         expected_home: &Path,
+        keep_rule: Option<&[usize]>,
         key_consent: bool,
     ) -> Result<SharingPlan> {
         self.check_adoption_home(expected_home)?;
         let session = RenderSession::new(&self.binary);
-        self.build_share_preview(key_consent, |renderer, skills| {
+        self.build_share_preview(keep_rule, key_consent, |renderer, skills| {
             self.render_skills(&session, renderer, skills)
         })
     }
@@ -194,11 +196,12 @@ impl Setup {
         &self,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<SharingPlan> {
-        self.build_share_preview(true, render_skills)
+        self.build_share_preview(None, true, render_skills)
     }
 
     fn build_share_preview(
         &self,
+        keep_rule: Option<&[usize]>,
         key_consent: bool,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<SharingPlan> {
@@ -208,7 +211,7 @@ impl Setup {
             mut plan,
             key_digests,
             ..
-        } = self.plan_share(&root, &manifest, &render_skills)?;
+        } = self.plan_share(&root, &manifest, keep_rule, &render_skills)?;
         if key_consent {
             plan.token = KeyPreview::remember(self, plan.token, key_digests);
         }
@@ -217,14 +220,39 @@ impl Setup {
 
     /// `keys` is true only for the person's own second yes; the route
     /// decides it from the request (see `execute`).
-    pub(super) fn share(&self, request: &AdoptRequest, keys: KeyAnswer) -> Result<RulesSyncReport> {
-        if let Some(home) = &request.home {
+    pub(super) fn share(
+        &self,
+        request: &ShareRequest,
+        keys: KeyAnswer,
+        generated: &[String],
+    ) -> Result<RulesSyncReport> {
+        if let Some(home) = &request.approval.home {
             self.check_adoption_home(home)?;
         }
         let session = RenderSession::new(&self.binary);
-        self.share_with_keys(&request.token, keys, |renderer, skills| {
-            self.render_skills(&session, renderer, skills)
-        })
+        let layers = std::cell::OnceCell::new();
+        self.apply_share(
+            &request.approval.token,
+            keys,
+            request.keep_rule.as_deref(),
+            generated,
+            (
+                |target: &str, source: &str| {
+                    let layers = match layers.get() {
+                        Some(layers) => layers,
+                        None => {
+                            let settings = wenlan_core::shared_space::settings_path();
+                            let loaded = rulesync_team::load_layers(&settings)?;
+                            layers.get_or_init(|| loaded)
+                        }
+                    };
+                    self.render_member_rule(&session, target, source, layers)
+                },
+                |renderer: &str, skills: &SkillPackages| {
+                    self.render_skills(&session, renderer, skills)
+                },
+            ),
+        )
     }
 
     #[cfg(test)]
@@ -236,17 +264,38 @@ impl Setup {
         self.share_with_keys(token, KeyAnswer::No, render_skills)
     }
 
+    #[cfg(test)]
     pub(super) fn share_with_keys(
         &self,
         token: &str,
         answer: KeyAnswer,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<RulesSyncReport> {
+        self.apply_share(
+            token,
+            answer,
+            None,
+            &[],
+            (super::tests::fixture_rule_renderer, render_skills),
+        )
+    }
+
+    fn apply_share(
+        &self,
+        token: &str,
+        answer: KeyAnswer,
+        keep_rule: Option<&[usize]>,
+        generated: &[String],
+        (render_rule, render_skills): (
+            impl Fn(&str, &str) -> Result<SkillFiles>,
+            impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+        ),
+    ) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let mut manifest = self.share_manifest()?;
         let root = FileRoot::open_home(&self.home)?;
         self.claim_key_intents(&root, &mut manifest)?;
-        let share = self.plan_share(&root, &manifest, &render_skills)?;
+        let share = self.plan_share(&root, &manifest, keep_rule, &render_skills)?;
         ensure!(
             share.plan.token == plan_token(token),
             "The setup changed after the preview. Run `wenlan rules share --dry-run` again."
@@ -258,6 +307,12 @@ impl Setup {
         let empty = share.is_empty() && preview.is_none();
         let mut result = report(if empty {
             NOTHING_TO_SHARE
+        } else if share.operations.is_empty()
+            && share.settings.is_empty()
+            && share.rules.moving().next().is_none()
+            && preview.is_none()
+        {
+            "Kept the selected rule lines in their own tools"
         } else {
             "Shared existing items with the other tools"
         });
@@ -276,8 +331,11 @@ impl Setup {
             mut settings,
             worktree_writes,
             keys,
+            rules,
             ..
         } = share;
+        let rule_change =
+            self.stage_rule_shares(&root, &manifest, &rules, generated, &render_rule)?;
         // Import the sources through the ordinary adoption path before any
         // projected copies are enrolled. It re-reads and verifies each entry
         // and adds its normal backup operation to this same batch.
@@ -285,6 +343,9 @@ impl Setup {
         let source_paths: BTreeSet<_> = unmanaged.sources.keys().cloned().collect();
         let mut adopted =
             personal_settings::adopt(&self.home, &root, &manifest, unmanaged, &mut operations)?;
+        if let Some(change) = rule_change {
+            self.apply_rule_shares(&root, &mut manifest, change, &mut result)?;
+        }
         let outcomes = if operations.is_empty() {
             Vec::new()
         } else {
@@ -367,6 +428,7 @@ impl Setup {
         &self,
         root: &FileRoot,
         manifest: &Manifest,
+        keep_rule: Option<&[usize]>,
         render_skills: &impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<Share> {
         let enrolled: Vec<&'static PersonalTarget> = PERSONAL_TARGETS
@@ -377,6 +439,13 @@ impl Setup {
             })
             .collect();
         let mut listing = Listing::default();
+        let (rules, rule_additions) = match keep_rule {
+            Some(keep_rule) => share_rules::plan(&self.home, root, manifest, &enrolled, keep_rule)?,
+            None => Default::default(),
+        };
+        for (target, count) in rule_additions {
+            listing.tool(target).rules = count;
+        }
         let mut operations = Vec::new();
         let skills = self.plan_skill_shares(
             root,
@@ -436,6 +505,7 @@ impl Setup {
             &worktree_writes,
             &listing.stays,
             listing.already_there,
+            rules.approval(),
         ))?;
         Ok(Share {
             operations,
@@ -450,7 +520,10 @@ impl Setup {
                 already_there: listing.already_there,
                 key_servers: settings.keys.servers(),
                 key_tools: settings.keys.tools.clone(),
+                rules: rules.lines.clone(),
+                rule_stays: rules.stays.clone(),
             },
+            rules,
             keys: settings.keys.shares,
             key_digests: settings.keys.digests,
         })
@@ -952,6 +1025,652 @@ mod tests {
             .unwrap_or_else(|| panic!("{name}: {plan:?}"))
     }
 
+    const CLAUDE_RULES: &str = ".claude/CLAUDE.md";
+    const CODEX_RULES: &str = ".codex/AGENTS.md";
+    const GEMINI_RULES: &str = ".gemini/GEMINI.md";
+    const LOCAL_IMPORT: &str = "@./local-rules.md";
+    const CLAUDE_RULE: &str = "Use Claude Code for this workspace.";
+    const COMMON_RULE: &str = "Run the release checklist.";
+    const REVIEW_RULE: &str = "Read the test output.";
+
+    fn rule_fixture(f: &Fixture) {
+        write(
+            f,
+            &[
+                (".agents/AGENTS.md", "Already shared.\n"),
+                (
+                    CLAUDE_RULES,
+                    &format!("{COMMON_RULE}\n{CLAUDE_RULE}\n{LOCAL_IMPORT}\n"),
+                ),
+                (
+                    ".claude/local-rules.md",
+                    "These imported lines stay local.\n",
+                ),
+                (CODEX_RULES, &format!("{COMMON_RULE}\n{REVIEW_RULE}\n")),
+            ],
+        );
+        fs::create_dir_all(f.setup.home.join(".gemini")).unwrap();
+    }
+
+    fn preview_rules(f: &Fixture, keep: &[usize]) -> SharingPlan {
+        f.setup
+            .build_share_preview(Some(keep), false, fixture_skill_renderer)
+            .unwrap()
+    }
+
+    fn apply_rules(f: &Fixture, plan: &SharingPlan, keep: &[usize]) -> Result<RulesSyncReport> {
+        f.setup.apply_share(
+            &plan.token,
+            KeyAnswer::No,
+            Some(keep),
+            &[],
+            (fixture_rule_renderer, fixture_skill_renderer),
+        )
+    }
+
+    #[test]
+    fn rulesync_share_requires_a_client_that_can_preview_rule_lines() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        write(&f, &[(".codex/skills/codex-only/SKILL.md", SKILL)]);
+        adopt(&f);
+
+        let legacy: SharePreviewRequest = serde_json::from_value(serde_json::json!({
+            "home": f.setup.home,
+        }))
+        .unwrap();
+        let legacy_plan = f
+            .setup
+            .build_share_preview(legacy.keep_rule.as_deref(), false, fixture_skill_renderer)
+            .unwrap();
+        assert!(legacy_plan.rules.is_empty());
+        assert_eq!(tool(&legacy_plan, "Claude Code").skills, ["codex-only"]);
+        let current = preview_rules(&f, &[]);
+        assert_ne!(current.plan_id, legacy_plan.plan_id);
+        assert!(f
+            .setup
+            .share_using(&current.token, fixture_skill_renderer)
+            .is_err());
+        assert!(apply_rules(&f, &legacy_plan, &[]).is_err());
+        let before = f.text(CLAUDE_RULES);
+        let report = f
+            .setup
+            .share_using(&legacy_plan.token, fixture_skill_renderer)
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert_eq!(f.text(CLAUDE_RULES), before);
+        assert_eq!(f.text(".claude/skills/codex-only/SKILL.md"), SKILL);
+    }
+
+    #[test]
+    fn ux_skill_26_rulesync_share_moves_common_rules_and_preserves_tool_only_files() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let owner_items = [
+            (".codex/skills/codex-only/SKILL.md", SKILL),
+            (
+                ".claude/skills/style/SKILL.md",
+                "---\nname: style\ndescription: A fixture.\n---\nClaude style.\n",
+            ),
+            (
+                ".codex/skills/style/SKILL.md",
+                "---\nname: style\ndescription: A fixture.\n---\nCodex style.\n",
+            ),
+            (".claude/commands/hello.md", COMMAND),
+            (".codex/prompts/hello.md", "Different command in Codex.\n"),
+            (
+                ".claude/agents/review.md",
+                "---\nname: review\ndescription: Review changes.\n---\nCheck the changes.\n",
+            ),
+        ];
+        write(&f, &owner_items);
+        let before = tree(&f.setup.home);
+        adopt(&f);
+        let plan = preview_rules(&f, &[]);
+        assert_eq!(
+            plan.rules
+                .iter()
+                .map(|rule| rule.line.as_str())
+                .collect::<Vec<_>>(),
+            [COMMON_RULE, REVIEW_RULE]
+        );
+        assert_eq!(plan.rules[0].tools, ["Claude Code", "Codex"]);
+        assert_eq!(tool(&plan, "Claude Code").rules, 1);
+        assert_eq!(tool(&plan, "Gemini CLI").rules, 2);
+        assert!(plan
+            .rule_stays
+            .iter()
+            .any(|stay| stay.line.as_deref() == Some(LOCAL_IMPORT)
+                && stay.reason.contains("Only Claude Code")));
+        assert!(plan
+            .rule_stays
+            .iter()
+            .any(|stay| stay.line.as_deref() == Some(CLAUDE_RULE)
+                && stay.reason.contains("names a tool")));
+
+        let shared = apply_rules(&f, &plan, &[]).unwrap();
+        assert!(shared.blocked.is_empty(), "{shared:?}");
+        assert_eq!(
+            shared
+                .written
+                .iter()
+                .filter(|path| path.as_str() == GEMINI_RULES)
+                .count(),
+            1
+        );
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(
+            manifest.master.shared,
+            format!("Already shared.\n{COMMON_RULE}\n{REVIEW_RULE}\n")
+        );
+        for overlay in manifest.master.overlays.values() {
+            assert!(!overlay.contains(COMMON_RULE));
+            assert!(!overlay.contains(REVIEW_RULE));
+        }
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            let text = f.text(path);
+            assert!(text.contains("Already shared."));
+            assert_eq!(text.lines().filter(|line| *line == COMMON_RULE).count(), 1);
+            assert!(text.contains(REVIEW_RULE));
+            assert_eq!(text.contains(CLAUDE_RULE), path == CLAUDE_RULES);
+            assert_eq!(text.contains(LOCAL_IMPORT), path == CLAUDE_RULES);
+            assert!(!text.contains("These imported lines stay local."));
+        }
+        for (path, original) in owner_items {
+            assert_eq!(f.text(path), original, "{path}");
+        }
+        assert_eq!(f.text(".agents/AGENTS.md"), manifest.master.shared);
+        assert!(preview_rules(&f, &[]).rules.is_empty());
+
+        let after = tree(&f.setup.home);
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        assert_eq!(tree(&f.setup.home), after);
+        let restore = f.setup.restore().unwrap();
+        assert!(restore.blocked.is_empty(), "{restore:?}");
+        assert_eq!(tree(&f.setup.home), before);
+    }
+
+    #[test]
+    fn rulesync_share_keeps_numbered_rules_and_redacts_credentials() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        const SECRET: &str = "Claude PASSWORD=synthetic-rule-credential";
+        f.write(
+            CLAUDE_RULES,
+            &format!("{COMMON_RULE}\n{CLAUDE_RULE}\n{SECRET}\n"),
+        );
+        adopt(&f);
+
+        let all = preview_rules(&f, &[]);
+        let keep = preview_rules(&f, &[2]);
+        assert_ne!(all.plan_id, keep.plan_id);
+        assert_eq!(keep.rules[1].line, REVIEW_RULE);
+        assert!(keep.rules[1].kept);
+        assert!(keep
+            .rule_stays
+            .iter()
+            .any(|stay| stay.line.is_none() && stay.reason == "This line may hold a credential."));
+        assert!(!serde_json::to_string(&keep)
+            .unwrap()
+            .contains("synthetic-rule-credential"));
+        assert!(
+            apply_rules(&f, &keep, &[]).is_err(),
+            "keep choices must match the approval"
+        );
+        let report = apply_rules(&f, &keep, &[2]).unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(f.text(CLAUDE_RULES).contains(SECRET));
+        assert!(f.text(CODEX_RULES).contains(REVIEW_RULE));
+        assert!(!f.text(CODEX_RULES).contains(SECRET));
+        assert!(!f.text(GEMINI_RULES).contains(REVIEW_RULE));
+        assert!(!f.text(GEMINI_RULES).contains(SECRET));
+
+        let again = preview_rules(&f, &[]);
+        assert!(again.rules.is_empty());
+        assert!(again
+            .rule_stays
+            .iter()
+            .any(|stay| stay.line.as_deref() == Some(REVIEW_RULE)
+                && stay.reason.contains("You chose")));
+    }
+
+    #[test]
+    fn rulesync_share_redacts_http_credentials_before_building_approval() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let credentials = [
+            ("Authorization: Basic dGVzdDpwYXNz", "dGVzdDpwYXNz"),
+            ("Authorization: Bearer demo7", "demo7"),
+            ("Send Basic dXNlcjphYmM=", "dXNlcjphYmM="),
+            (
+                "Read https://synthetic:example@docs.invalid",
+                "synthetic:example",
+            ),
+            ("Use https://docs.invalid/?token=t1", "token=t1"),
+            ("Call the endpoint with api_key='k2'", "k2"),
+            ("Send secret=s3", "secret=s3"),
+        ];
+        let mut donor = f.text(CLAUDE_RULES);
+        for (line, _) in credentials {
+            donor.push_str(&format!("{line}\n"));
+        }
+        f.write(CLAUDE_RULES, &donor);
+        adopt(&f);
+
+        let manifest = f.setup.load().unwrap().unwrap();
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        let share = f
+            .setup
+            .plan_share(&root, &manifest, Some(&[]), &fixture_skill_renderer)
+            .unwrap();
+        let plan = share.plan;
+        let preview_json = serde_json::to_string(&plan).unwrap();
+        let approval_input = serde_json::to_string(&share.rules.approval()).unwrap();
+        assert_eq!(
+            plan.rule_stays
+                .iter()
+                .filter(|stay| {
+                    stay.line.is_none() && stay.reason == "This line may hold a credential."
+                })
+                .count(),
+            credentials.len()
+        );
+        apply_rules(&f, &plan, &[]).unwrap();
+        let saved = f.setup.load().unwrap().unwrap();
+        for (line, value) in credentials {
+            assert!(
+                f.text(CLAUDE_RULES).contains(line),
+                "donor lost its local line"
+            );
+            assert!(!preview_json.contains(value), "credential in JSON");
+            assert!(
+                !approval_input.contains(value),
+                "credential in approval input"
+            );
+            for path in [CODEX_RULES, GEMINI_RULES, ".agents/AGENTS.md"] {
+                assert!(!f.text(path).contains(value), "credential reached {path}");
+            }
+            assert!(
+                !saved.master.shared.contains(value),
+                "credential in the shared master"
+            );
+        }
+        assert!(f.text(GEMINI_RULES).contains(COMMON_RULE));
+    }
+
+    #[test]
+    fn rulesync_share_can_keep_every_numbered_rule_without_writing_tool_files() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let before = tree(&f.setup.home);
+        let plan = preview_rules(&f, &[1, 2]);
+        assert!(plan.tools.is_empty());
+        let report = apply_rules(&f, &plan, &[1, 2]).unwrap();
+        assert_eq!(
+            report.message,
+            "Kept the selected rule lines in their own tools"
+        );
+        assert!(
+            report.written.is_empty() && report.blocked.is_empty(),
+            "{report:?}"
+        );
+        assert_eq!(tree(&f.setup.home), before);
+        assert!(preview_rules(&f, &[]).rules.is_empty());
+    }
+
+    #[test]
+    fn rulesync_share_refuses_stale_rule_files_and_binds_the_line_set() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let old = preview_rules(&f, &[]);
+        f.write(CODEX_RULES, "Replaced after the preview.\n");
+        let changed = tree(&f.setup.home);
+        assert!(apply_rules(&f, &old, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("changed"));
+        assert_eq!(tree(&f.setup.home), changed);
+
+        // A later adopted setup has different offered content, not just a
+        // different on-disk snapshot of the original overlay.
+        let fresh = Fixture::new();
+        rule_fixture(&fresh);
+        fresh.write(CODEX_RULES, "Read the final test output.\n");
+        adopt(&fresh);
+        let new = preview_rules(&fresh, &[]);
+        assert_ne!(old.plan_id, new.plan_id);
+        assert!(apply_rules(&fresh, &old, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("--dry-run"));
+    }
+
+    #[test]
+    fn rulesync_share_reclassifies_accepted_edits_and_binds_the_donor_revision() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let original = f.text(CODEX_RULES);
+        f.write(CODEX_RULES, &format!("{original}PASSWORD=fixture-v1\n"));
+        adopt(&f);
+        let accept = |edited: &str| {
+            f.write(CODEX_RULES, edited);
+            let report = f.sync_with("");
+            let card = report
+                .proposals
+                .iter()
+                .find(|card| card.files == [CODEX_RULES])
+                .unwrap();
+            f.setup
+                .review_using(
+                    &PullbackDecision {
+                        id: card.id.clone(),
+                        action: PullbackAction::ToolOnly,
+                        file: None,
+                    },
+                    |root, manifest| f.sync_review(root, manifest),
+                )
+                .unwrap();
+        };
+        let old = preview_rules(&f, &[]);
+        accept(
+            &f.text(CODEX_RULES)
+                .replace("PASSWORD=fixture-v1", "PASSWORD=fixture-v2"),
+        );
+        let same_listing = preview_rules(&f, &[]);
+        assert_eq!(old.rules, same_listing.rules);
+        assert_eq!(old.rule_stays, same_listing.rule_stays);
+        assert_ne!(old.plan_id, same_listing.plan_id);
+        let error = apply_rules(&f, &old, &[]).unwrap_err();
+        assert!(
+            error.to_string().contains("changed after the preview"),
+            "{error:#}"
+        );
+
+        let edited = f
+            .text(CODEX_RULES)
+            .replace(REVIEW_RULE, &format!("```text\n{REVIEW_RULE}\n```"));
+        accept(&format!("{edited}Check the final exit status.\n"));
+        let current = preview_rules(&f, &[]);
+        assert!(current
+            .rule_stays
+            .iter()
+            .any(|stay| stay.line.as_deref() == Some(REVIEW_RULE)));
+        assert!(current
+            .rules
+            .iter()
+            .any(|rule| rule.line == "Check the final exit status."));
+        assert!(current.rules.iter().all(|rule| rule.line != REVIEW_RULE));
+        apply_rules(&f, &current, &[]).unwrap();
+        assert!(f
+            .text(CODEX_RULES)
+            .contains(&format!("```text\n{REVIEW_RULE}\n```")));
+        assert!(f
+            .text(GEMINI_RULES)
+            .contains("Check the final exit status."));
+        assert!(!f.text(GEMINI_RULES).contains(REVIEW_RULE));
+    }
+
+    #[test]
+    fn rulesync_share_mid_batch_conflict_restores_peers_and_keeps_the_old_receipts() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        write(
+            &f,
+            &[
+                (CLAUDE_RULES, CLAUDE_RULE),
+                (CODEX_RULES, "Use Codex for local work."),
+                (GEMINI_RULES, COMMON_RULE),
+            ],
+        );
+        adopt(&f);
+        let plan = preview_rules(&f, &[]);
+        let master_path = f.setup.data.join("personal.json");
+        let before = fs::read(&master_path).unwrap();
+        let original = f.setup.load().unwrap().unwrap();
+        let early_peer = f.setup.home.join(CLAUDE_RULES);
+        let donor = f.setup.home.join(GEMINI_RULES);
+        let newer = format!("{}Gemini CLI local edit.\n", f.text(GEMINI_RULES));
+        let edit = newer.clone();
+        share_rules::at_rule_share_write(GEMINI_RULES, move || {
+            assert!(fs::read_to_string(&early_peer)
+                .unwrap()
+                .contains(COMMON_RULE));
+            fs::write(donor, edit).unwrap();
+        });
+        let error = apply_rules(&f, &plan, &[]).unwrap_err();
+        assert!(
+            error.to_string().contains("changed while sharing rules"),
+            "{error:#}"
+        );
+        assert_eq!(fs::read(&master_path).unwrap(), before);
+        assert_eq!(f.text(GEMINI_RULES), newer);
+        f.sync_with("");
+        for peer in [CLAUDE_RULES, CODEX_RULES, ".agents/AGENTS.md"] {
+            assert!(!f.text(peer).contains(COMMON_RULE), "{peer}");
+        }
+        let after = f.setup.load().unwrap().unwrap();
+        assert_eq!(after.master.shared, original.master.shared);
+        assert_eq!(after.master.overlays, original.master.overlays);
+        assert_eq!(after.kept_share_rules, original.kept_share_rules);
+    }
+
+    #[test]
+    fn rulesync_share_keeps_scoped_sections_and_preserves_repeated_lines_in_order() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        const REPEATED: &str = "- Use the release checklist.";
+        let text = format!(
+            "For Claude Code preflight:\n- Check the local path.\n\n\
+             # For Claude Code release sessions only\n{REPEATED}\n\n## During signing\n- Verify the certificate.\n\n\
+             # For Claude Code packaging only\n{REPEATED}\n\n\
+             # Portable checks\n- Review the artifacts.\n"
+        );
+        f.write(CLAUDE_RULES, &text);
+        adopt(&f);
+        let plan = preview_rules(&f, &[]);
+        for scoped in [
+            REPEATED,
+            "## During signing",
+            "- Verify the certificate.",
+            "- Check the local path.",
+        ] {
+            assert!(
+                plan.rules.iter().all(|rule| rule.line != scoped),
+                "{scoped}"
+            );
+            assert!(
+                plan.rule_stays.iter().any(|stay| {
+                    stay.line.as_deref() == Some(scoped)
+                        && stay.reason == "Belongs to a section that stays in this tool"
+                }),
+                "{scoped}"
+            );
+        }
+        let heading = plan
+            .rules
+            .iter()
+            .find(|rule| rule.line == "# Portable checks")
+            .unwrap();
+        let keep = preview_rules(&f, &[heading.number]);
+        assert!(keep
+            .rules
+            .iter()
+            .all(|rule| rule.line != "- Review the artifacts."));
+        assert!(keep.rule_stays.iter().any(|stay| stay.line.as_deref()
+            == Some("- Review the artifacts.")
+            && stay.reason == "Belongs to a section that stays in this tool"));
+
+        let render = |target: &str, source: &str| {
+            fixture_rule_renderer(target, &source.replacen(REPEATED, "", 1))
+        };
+        let error = f
+            .setup
+            .apply_share(
+                &plan.token,
+                KeyAnswer::No,
+                Some(&[]),
+                &[],
+                (render, fixture_skill_renderer),
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("would change other rules"),
+            "{error:#}"
+        );
+        apply_rules(&f, &plan, &[]).unwrap();
+        assert_eq!(f.text(CLAUDE_RULES).matches(REPEATED).count(), 2);
+        assert!(!f.text(CODEX_RULES).contains(REPEATED));
+        assert!(f.text(CODEX_RULES).contains("- Review the artifacts."));
+    }
+
+    #[test]
+    fn rulesync_share_keeps_flattened_imports_local_with_or_without_saved_provenance() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        const ADAPTER: &str = ".agents/adapters/claude/CLAUDE.md";
+        const IMPORT: &str = ".agents/adapters/claude/release.md";
+        const IMPORTED: &str = "Use the internal release checklist.";
+        const NATIVE: &str = "Review the final changes.";
+        write(
+            &f,
+            &[
+                (ADAPTER, "@./release.md\n"),
+                (IMPORT, &format!("{IMPORTED}\n{NATIVE}\n")),
+                (CLAUDE_RULES, NATIVE),
+            ],
+        );
+        adopt(&f);
+        assert!(f.text(CLAUDE_RULES).contains(IMPORTED));
+        let check = |plan: &SharingPlan, line| {
+            assert!(plan.rules.iter().all(|rule| rule.line != line), "{line}");
+            assert!(
+                plan.rule_stays
+                    .iter()
+                    .any(|stay| stay.line.as_deref() == Some(line)
+                        && stay.reason == "Comes from a file Claude Code imports"),
+                "{line}"
+            );
+        };
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let provenance = manifest.master.claude_imported_rules.take().unwrap();
+        assert!(provenance.contains(IMPORTED));
+        f.setup.save(&manifest).unwrap(); // Load a pre-provenance manifest.
+        let legacy = preview_rules(&f, &[]);
+        check(&legacy, IMPORTED);
+        check(&legacy, NATIVE);
+        fs::remove_file(f.setup.home.join(IMPORT)).unwrap();
+        let unknown = preview_rules(&f, &[]);
+        assert!(unknown.rules.iter().all(|rule| rule.line != IMPORTED));
+        assert!(unknown.rule_stays.iter().any(|stay| {
+            stay.line.as_deref() == Some(IMPORTED) && stay.reason.starts_with("Could not verify")
+        }));
+        assert!(unknown.rules.iter().any(|rule| rule.line == NATIVE));
+
+        manifest.master.claude_imported_rules = Some(provenance);
+        f.setup.save(&manifest).unwrap();
+        let persisted = preview_rules(&f, &[]);
+        check(&persisted, IMPORTED);
+        check(&persisted, NATIVE);
+        apply_rules(&f, &persisted, &[]).unwrap();
+        assert!(!f.text(GEMINI_RULES).contains(IMPORTED));
+    }
+
+    #[test]
+    fn rulesync_share_updates_and_restores_the_shared_source() {
+        const SOURCE: &str = ".agents/AGENTS.md";
+        for existing in [true, false] {
+            let f = Fixture::new();
+            rule_fixture(&f);
+            if !existing {
+                fs::remove_file(f.setup.home.join(SOURCE)).unwrap();
+                fs::remove_dir(f.setup.home.join(".agents")).unwrap();
+            }
+            let before = tree(&f.setup.home);
+            adopt(&f);
+            let plan = preview_rules(&f, &[]);
+            let result = apply_rules(&f, &plan, &[]).unwrap();
+            assert!(
+                result.written.iter().any(|path| path == SOURCE),
+                "{result:?}"
+            );
+            let saved = f.setup.load().unwrap().unwrap();
+            assert_eq!(f.text(SOURCE), saved.master.shared);
+            assert!(f.text(SOURCE).contains(COMMON_RULE));
+            let result = f.setup.restore().unwrap();
+            assert!(result.blocked.is_empty(), "{result:?}");
+            assert_eq!(tree(&f.setup.home), before);
+        }
+    }
+
+    #[test]
+    fn rulesync_sync_keeps_the_saved_master_after_a_shared_source_edit() {
+        const SOURCE: &str = ".agents/AGENTS.md";
+        const EDIT: &str = "An edit made directly to the shared source.";
+        for share_first in [false, true] {
+            let f = Fixture::new();
+            rule_fixture(&f);
+            adopt(&f);
+            if share_first {
+                apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+            }
+            let source = f.text(SOURCE);
+            let edited = format!("{source}{EDIT}\n");
+            f.write(SOURCE, &edited);
+            let sync = f.sync_with("");
+            assert!(
+                sync.blocked.is_empty() && sync.proposals.is_empty(),
+                "{sync:?}"
+            );
+            assert_eq!(f.text(SOURCE), edited);
+            let saved = f.setup.load().unwrap().unwrap();
+            assert_eq!(saved.master.shared, source);
+            assert!(!f.text(GEMINI_RULES).contains(EDIT));
+            if !share_first {
+                let before = tree(&f.setup.home);
+                let error = apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap_err();
+                assert!(
+                    error.to_string().contains("differs from the shared rules"),
+                    "{error:#}"
+                );
+                assert_eq!(tree(&f.setup.home), before);
+            }
+        }
+    }
+
+    #[test]
+    fn rulesync_share_refuses_a_projection_that_drops_a_local_line() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let plan = preview_rules(&f, &[]);
+        let before = tree(&f.setup.home);
+        let render = |target: &str, source: &str| {
+            fixture_rule_renderer(target, &source.replace(CLAUDE_RULE, ""))
+        };
+        let error = f
+            .setup
+            .apply_share(
+                &plan.token,
+                KeyAnswer::No,
+                Some(&[]),
+                &[],
+                (render, fixture_skill_renderer),
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("would change other rules"),
+            "{error:#}"
+        );
+        assert_eq!(tree(&f.setup.home), before);
+        assert_eq!(preview_rules(&f, &[]).plan_id, plan.plan_id);
+    }
+
     /// Enroll three tools before adding the settings under test, so those
     /// entries are genuinely unmanaged when share discovers them.
     fn unmanaged_fixture() -> Fixture {
@@ -1085,7 +1804,7 @@ mod tests {
         let manifest = f.setup.load().unwrap().unwrap();
         let plan = f
             .setup
-            .plan_share(&root, &manifest, &fixture_skill_renderer)
+            .plan_share(&root, &manifest, None, &fixture_skill_renderer)
             .unwrap();
         let source = offered_unmanaged_sources(&plan.settings);
         assert!(!source.sources.is_empty());
@@ -2207,7 +2926,7 @@ mod tests {
         let mut manifest = f.setup.load().unwrap().unwrap();
         let share = f
             .setup
-            .plan_share(&root, &manifest, &fixture_skill_renderer)
+            .plan_share(&root, &manifest, None, &fixture_skill_renderer)
             .unwrap();
         assert_eq!(share.keys.len(), 1);
 
@@ -2245,7 +2964,7 @@ mod tests {
         let mut manifest = f.setup.load().unwrap().unwrap();
         let keys = f
             .setup
-            .plan_share(&root, &manifest, &fixture_skill_renderer)
+            .plan_share(&root, &manifest, None, &fixture_skill_renderer)
             .unwrap()
             .keys;
         assert_eq!(keys.len(), 1);

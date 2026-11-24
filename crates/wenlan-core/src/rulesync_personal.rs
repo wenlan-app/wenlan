@@ -752,8 +752,8 @@ mod windows_acl {
     }
 }
 
-/// The harness is a migration source. Personal delivery owns paths in the
-/// tools' own directories and never owns any part of the harness checkout.
+/// The harness is a migration source. Approved rule shares can update the
+/// shared rule file through their own write and restore path.
 pub fn is_harness_path(path: &Path) -> bool {
     matches!(path.components().next(), Some(Component::Normal(name))
         if name.as_encoded_bytes().eq_ignore_ascii_case(b".agents"))
@@ -761,6 +761,7 @@ pub fn is_harness_path(path: &Path) -> bool {
 
 /// Compare directory identities so aliases and case differences cannot turn
 /// the migration source into a write destination.
+#[derive(Clone, Copy)]
 pub struct HarnessGuard(Option<(u64, u64)>);
 
 impl HarnessGuard {
@@ -1606,6 +1607,9 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
+    /// None denotes a setup saved before Claude import provenance was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_imported_rules: Option<BTreeSet<String>>,
     pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill<Content>>,
     pub overrides: BTreeMap<String, LocalText>,
@@ -1630,6 +1634,7 @@ impl PersonalMaster {
         Self {
             shared: adoption.shared.clone(),
             overlays: adoption.overlays.clone(),
+            claude_imported_rules: adoption.claude_imported_rules.clone(),
             codex_sync_replaced: adoption.codex_sync_replaced,
             skills: adoption.skills.clone(),
             overrides: BTreeMap::new(),
@@ -1654,6 +1659,20 @@ impl PersonalMaster {
             base = join_text(&base, &addition);
         }
         base
+    }
+
+    /// Strip the delivered shared and generated layers by occurrence, while
+    /// retaining authored changes and their surrounding Markdown.
+    pub fn authored_overlay(&self, target: &str, delivered_base: &str, live: &str) -> String {
+        let shared = self.shared_rule_text(target);
+        let overlay = rulesync_adopt::without_shared(&shared, live);
+        let authored_base = self.base_rule_text(target, &[]);
+        let generated = delivered_base.strip_prefix(&authored_base).unwrap_or("");
+        rulesync_adopt::without_shared(generated, &overlay)
+    }
+
+    pub fn shared_rule_text(&self, target: &str) -> String {
+        rulesync_adopt::personal_rule_body(&self.shared, "", target, self.codex_sync_replaced)
     }
 
     pub fn rule_text(&self, target: &str, generated: &[String]) -> Result<String> {
@@ -1959,26 +1978,49 @@ pub fn write_named_root_rule(input: &Path, name: &str, text: &str) -> Result<()>
 /// Shared setup must never carry credential-like text. Error messages
 /// identify only the position so the suspected value is never echoed.
 pub fn reject_secret_lines(text: &str) -> Result<()> {
-    static TOKEN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+    use std::sync::LazyLock;
+
+    static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(concat!(
             r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----",
             r"|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}",
             r"|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}",
             r"|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|wlt_[a-f0-9]{64})\b",
             r"|(?i)\bbearer\s+[A-Za-z0-9_.~+/-]{20,}",
+            r#"|(?i)\b(?:proxy[-_])?authorization["']?\s*:\s*["']?\s*(?:basic|bearer)\s+[^\s"'\x60]+"#,
+            r#"|(?i)\b[a-z][a-z0-9+.-]*://[^:/@?#\s"'\x60]+:[^/@?#\s"'\x60]+@"#,
+            r#"|(?i)\b(?:token|api[_-]?key|secret)\b["']?\s*=\s*[^\s"'\x60&;,)]"#,
+            r#"|(?i)\b(?:token|api[_-]?key|secret)\b["']?\s*=\s*["'][^\s"']"#,
             r#"|(?i)\b(?:[a-z0-9_]*[_-])?(?:api[_-]?key|secret|token|password|access[_-]?key)\b["']?"#,
             r#"\s*[:=]\s*["']?[A-Za-z0-9_+/.-]{8,}"#,
         )).expect("credential detection pattern")
     });
+    static BASIC: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\bbasic\s+([a-z0-9+/]+={0,2})").expect("Basic credentials")
+    });
     for (index, line) in text.lines().enumerate() {
+        let basic = || {
+            BASIC.captures_iter(line).any(|capture| {
+                STANDARD_NO_PAD
+                    .decode(capture[1].trim_end_matches('='))
+                    .is_ok_and(|bytes| {
+                        bytes.contains(&b':')
+                            || (!bytes.is_empty() && bytes.iter().all(u8::is_ascii_graphic))
+                    })
+            })
+        };
         ensure!(
-            !TOKEN.is_match(line),
+            !TOKEN.is_match(line) && !basic(),
             "possible credential on line {}",
             index + 1
         );
     }
     Ok(())
 }
+
+#[path = "rulesync_personal_share.rs"]
+pub mod sharing;
 
 #[cfg(test)]
 mod tests {
@@ -2231,6 +2273,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Repeated rule.\n".into(),
             overlays: BTreeMap::from([("cursor".into(), "Repeated rule.\n".into())]),
+            claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2249,6 +2292,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Shared rule.\n".into(),
             overlays: BTreeMap::from([("codexcli".into(), "Codex rule.\n".into())]),
+            claude_imported_rules: None,
             codex_sync_replaced: true,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2268,6 +2312,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Shared rule.\n".into(),
             overlays: BTreeMap::from([("cursor".into(), "Cursor rule.\n".into())]),
+            claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2299,6 +2344,7 @@ mod tests {
                 "cursor".into(),
                 "First rule.\nMiddle rule.\nLast rule.\n".into(),
             )]),
+            claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
             overrides: BTreeMap::new(),

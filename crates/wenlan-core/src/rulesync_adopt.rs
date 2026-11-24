@@ -24,7 +24,7 @@ mod skill_origin;
 pub(crate) use skill_origin::checkout_update;
 pub(crate) use skill_origin::git_repository_name;
 
-const SHARED_RULES: &str = ".agents/AGENTS.md";
+pub const SHARED_RULES: &str = ".agents/AGENTS.md";
 pub(crate) const SHARED_SKILLS: &str = ".agents/skills";
 const CLAUDE_OVERLAY: &str = ".agents/adapters/claude/CLAUDE.md";
 const CODEX_OVERLAY: &str = ".agents/adapters/codex/AGENTS.codex.md";
@@ -77,6 +77,8 @@ impl AdoptionSkip {
 pub struct Adoption {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_imported_rules: Option<BTreeSet<String>>,
     pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill>,
     /// Paths relative to the adopted home, including resolved link targets.
@@ -291,14 +293,15 @@ fn discover_with_platform(
     let shared =
         saved_shared.unwrap_or_else(|| shared_file.as_ref().map_or("", |file| file.text.as_str()));
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
-    let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules) = discover_rules(
-        &home,
-        targets,
-        shared,
-        shared_path,
-        &mut sources,
-        is_windows,
-    )?;
+    let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules, claude_imported_rules) =
+        discover_rules(
+            &home,
+            targets,
+            shared,
+            shared_path,
+            &mut sources,
+            is_windows,
+        )?;
     let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links, is_windows);
     skills.scan(Path::new(SHARED_SKILLS), None)?;
     for target in targets {
@@ -315,6 +318,7 @@ fn discover_with_platform(
     Ok(Adoption {
         shared: shared.to_owned(),
         overlays,
+        claude_imported_rules,
         codex_sync_replaced,
         skills,
         sources,
@@ -1070,6 +1074,7 @@ type RuleDiscovery = (
     BTreeMap<PathBuf, AdoptionLink>,
     bool,
     BTreeMap<PathBuf, AdoptionSkip>,
+    Option<BTreeSet<String>>,
 );
 
 fn discover_rules(
@@ -1085,6 +1090,7 @@ fn discover_rules(
     let mut links = BTreeMap::new();
     let mut skipped_rules = BTreeMap::new();
     let mut codex_sync_replaced = false;
+    let mut claude_imported_rules = None;
     for target in targets {
         let Some(path) = &target.rules_path else {
             continue;
@@ -1149,9 +1155,21 @@ fn discover_rules(
             _ => None,
         };
         let claude = matches!(bootstrap, Some((_, true)));
+        let mut imported_rules = BTreeSet::new();
         let current_overlay = current
             .as_ref()
-            .map(|file| rule_overlay(home, path, file, claude, shared, shared_path, sources))
+            .map(|file| {
+                let imports = claude.then_some(ClaudeImports::KeepLocal);
+                rule_overlay(
+                    home,
+                    path,
+                    file,
+                    imports,
+                    (shared, shared_path),
+                    sources,
+                    &mut imported_rules,
+                )
+            })
             .transpose()?
             .unwrap_or_default();
         let mut overlay = current_overlay;
@@ -1161,11 +1179,24 @@ fn discover_rules(
                     .as_ref()
                     .is_none_or(|existing| existing.text != file.text)
                 {
-                    let adapter_overlay =
-                        rule_overlay(home, adapter, &file, claude, shared, shared_path, sources)?;
+                    let imports = claude.then_some(ClaudeImports::Expand);
+                    let adapter_overlay = rule_overlay(
+                        home,
+                        adapter,
+                        &file,
+                        imports,
+                        (shared, shared_path),
+                        sources,
+                        &mut imported_rules,
+                    )?;
                     overlay = merge_variants(&adapter_overlay, &overlay);
                 }
             }
+        }
+        if claude {
+            claude_imported_rules
+                .get_or_insert_with(BTreeSet::new)
+                .extend(imported_rules);
         }
         if matches!(target.tool.as_str(), "codexcli" | "codex") {
             overlay = overlay
@@ -1217,7 +1248,14 @@ fn discover_rules(
         };
         record_file(&mut files, path.clone(), AdoptionFile { before, after })?;
     }
-    Ok((overlays, files, links, codex_sync_replaced, skipped_rules))
+    Ok((
+        overlays,
+        files,
+        links,
+        codex_sync_replaced,
+        skipped_rules,
+        claude_imported_rules,
+    ))
 }
 
 fn symlink_replacement_supported(is_windows: bool) -> bool {
@@ -1240,26 +1278,34 @@ pub(super) fn personal_rule_body(
     text
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClaudeImports {
+    KeepLocal,
+    Expand,
+}
+
 fn rule_overlay(
     home: &Home,
     path: &Path,
     file: &LoadedText,
-    claude: bool,
-    shared: &str,
-    shared_path: Option<&Path>,
+    claude: Option<ClaudeImports>,
+    (shared, shared_path): (&str, Option<&Path>),
     sources: &mut BTreeSet<PathBuf>,
+    imported_rules: &mut BTreeSet<String>,
 ) -> Result<String> {
-    if !claude {
+    let Some(mode) = claude else {
         return Ok(without_shared(shared, &file.text));
-    }
+    };
     let mut imports = Imports {
         home,
         shared,
         shared_path,
         sources,
+        mode,
         stack: BTreeSet::new(),
         remaining: MAX_CLAUDE_IMPORTS,
         included_shared: false,
+        imported_rules,
     };
     let body = imports.expand(path, file, 0)?;
     Ok(if imports.included_shared {
@@ -1274,15 +1320,140 @@ struct Imports<'a> {
     shared: &'a str,
     shared_path: Option<&'a Path>,
     sources: &'a mut BTreeSet<PathBuf>,
+    mode: ClaudeImports,
     stack: BTreeSet<PathBuf>,
     remaining: usize,
     included_shared: bool,
+    imported_rules: &'a mut BTreeSet<String>,
+}
+
+fn claude_imports(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    use pulldown_cmark::{Event, Parser, Tag};
+
+    let literal = Parser::new(text)
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::CodeBlock(_))
+            | Event::Code(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_) => Some(range),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    crate::skill_grow::lines_outside_code_fences(text)
+        .into_iter()
+        .filter_map(|(range, line)| {
+            let import = line.trim().strip_prefix('@')?;
+            let offset = range.start + (line.len() - line.trim_start().len());
+            (!import.is_empty()
+                && !import.contains(char::is_whitespace)
+                && !literal.iter().any(|code| code.contains(&offset)))
+            .then_some((range, import))
+        })
+        .collect()
+}
+
+fn looks_like_import_path(import: &str) -> bool {
+    import.contains(['/', '\\']) || Path::new(import).extension().is_some()
+}
+
+fn import_path(path: &Path, import: &str) -> PathBuf {
+    match import.strip_prefix("~/") {
+        Some(path) => PathBuf::from(path),
+        None => path.parent().unwrap_or(Path::new("")).join(import),
+    }
+}
+
+fn remember_imported(rules: &mut BTreeSet<String>, text: &str) {
+    use crate::rulesync_personal::sharing::{overlay_lines, LocalReason};
+    rules.extend(
+        overlay_lines(text)
+            .into_iter()
+            .filter(|(_, reason)| *reason != Some(LocalReason::Credential))
+            .map(|(line, _)| line.to_owned()),
+    );
+}
+
+/// Older deliveries have no origin records. Recover whatever the original
+/// native directives and the current adapter can still prove came from imports.
+pub fn legacy_claude_imported_rules(
+    home: &Path,
+    native_path: &Path,
+    native: &str,
+    shared: &str,
+) -> BTreeSet<String> {
+    let mut rules = BTreeSet::new();
+    let Ok(home) = Home::open(home) else {
+        return rules;
+    };
+    let shared_path = home.resolve(Path::new(SHARED_RULES)).ok().flatten();
+    let adapter = Path::new(CLAUDE_OVERLAY);
+    let mut sources = BTreeSet::new();
+    let adapter_text = load_text(&home, adapter, &mut sources, false)
+        .ok()
+        .flatten();
+    let mut imports = Imports {
+        home: &home,
+        shared,
+        shared_path: shared_path.as_ref().map(|node| node.path.as_path()),
+        sources: &mut sources,
+        mode: ClaudeImports::Expand,
+        stack: BTreeSet::new(),
+        remaining: MAX_CLAUDE_IMPORTS,
+        included_shared: false,
+        imported_rules: &mut rules,
+    };
+    for (path, text) in [
+        (native_path, native),
+        (adapter, adapter_text.as_ref().map_or("", |file| &file.text)),
+    ] {
+        for (_, import) in claude_imports(text).into_iter().take(MAX_CLAUDE_IMPORTS) {
+            let path = import_path(path, import);
+            let Ok(Some(file)) = load_text(&home, &path, imports.sources, false) else {
+                continue;
+            };
+            if imports.shared_path == Some(&file.node.path) {
+                remember_imported(imports.imported_rules, &without_shared(shared, &file.text));
+            } else if let Ok(expanded) = imports.expand(&path, &file, 1) {
+                remember_imported(imports.imported_rules, &expanded);
+            } else {
+                imports.stack.clear();
+                // Even when a nested import is unavailable, these lines
+                // are known to occur in a file that the tool imports.
+                remember_imported(imports.imported_rules, &file.text);
+            }
+        }
+    }
+    rules
+}
+
+/// The checkout render sits outside the tool home. Anchor paths that were
+/// relative to Claude's native rule file so they still refer to that source.
+pub fn checkout_claude_imports(home: &Path, overlay: &str, source: &str) -> Result<String> {
+    let home = Home::open(home)?;
+    let native: BTreeSet<_> = claude_imports(overlay)
+        .into_iter()
+        .map(|(_, import)| import)
+        .filter(|import| {
+            !import.starts_with("~/")
+                && !Path::new(import).is_absolute()
+                && home
+                    .resolve_checked(&Path::new(".claude").join(import), ensure_rule_source)
+                    .is_ok_and(|node| node.is_some_and(|node| node.metadata.is_file()))
+        })
+        .collect();
+    let mut result = source.to_owned();
+    for (range, import) in claude_imports(source).into_iter().rev() {
+        if native.contains(import) {
+            let start = range.start + source[range.clone()].find('@').expect("import marker") + 1;
+            result.insert_str(start, "~/.claude/");
+        }
+    }
+    Ok(result)
 }
 
 impl Imports<'_> {
     fn expand(&mut self, path: &Path, file: &LoadedText, depth: usize) -> Result<String> {
-        use pulldown_cmark::{Event, Parser, Tag};
-
         ensure!(
             depth <= 5,
             "Claude rule imports exceed five levels at {}",
@@ -1293,47 +1464,20 @@ impl Imports<'_> {
             "Claude rule import cycle at {}",
             path.display()
         );
-        let literal = Parser::new(&file.text)
-            .into_offset_iter()
-            .filter_map(|(event, range)| match event {
-                Event::Start(Tag::CodeBlock(_))
-                | Event::Code(_)
-                | Event::Html(_)
-                | Event::InlineHtml(_) => Some(range),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let imports = crate::skill_grow::lines_outside_code_fences(&file.text)
-            .into_iter()
-            .filter_map(|(range, line)| {
-                let import = line.trim().strip_prefix('@')?;
-                let offset = range.start + (line.len() - line.trim_start().len());
-                if import.is_empty()
-                    || import.contains(char::is_whitespace)
-                    || literal.iter().any(|code| code.contains(&offset))
-                {
-                    None
-                } else {
-                    Some((range, import))
-                }
-            });
         let mut body = String::new();
         let mut copied_to = 0;
-        for (range, import) in imports {
+        for (range, import) in claude_imports(&file.text) {
             ensure!(
                 self.remaining > 0,
                 "too many Claude rule imports in {}",
                 path.display()
             );
             self.remaining -= 1;
-            let imported_path = match import.strip_prefix("~/") {
-                Some(path) => PathBuf::from(path),
-                None => path.parent().unwrap_or(Path::new("")).join(import),
-            };
+            let imported_path = import_path(path, import);
             let Some(imported) = load_text(self.home, &imported_path, self.sources, false)? else {
                 // A bare @mention can be plain prose. A path-shaped directive must resolve.
                 ensure!(
-                    !import.contains(['/', '\\']) && Path::new(import).extension().is_none(),
+                    !looks_like_import_path(import),
                     "Claude rule import {} is missing",
                     imported_path.display()
                 );
@@ -1351,15 +1495,28 @@ impl Imports<'_> {
             if self.shared_path == Some(&imported.node.path) {
                 self.included_shared = true;
                 let extra = without_shared(self.shared, &imported.text);
+                if depth == 0 {
+                    remember_imported(self.imported_rules, &extra);
+                }
                 body.push_str(&extra);
                 if !extra.is_empty() && !extra.ends_with('\n') {
                     body.push_str(ending);
                 }
             } else {
                 let expanded = self.expand(&imported_path, &imported, depth + 1)?;
-                body.push_str(&expanded);
-                if !expanded.ends_with('\n') {
+                if self.mode == ClaudeImports::KeepLocal && depth == 0 {
+                    // The native file stays at this path, so Claude can
+                    // continue reading the import in place.
+                    body.push_str(&file.text[range.clone()]);
                     body.push_str(ending);
+                } else {
+                    if depth == 0 {
+                        remember_imported(self.imported_rules, &expanded);
+                    }
+                    body.push_str(&expanded);
+                    if !expanded.ends_with('\n') {
+                        body.push_str(ending);
+                    }
                 }
             }
             ensure!(
@@ -1396,7 +1553,7 @@ fn line_key(line: &str) -> &str {
 /// Remove a copied shared block by occurrence. If an older generated file
 /// includes hand edits in the block, align nonblank lines in sequence and keep
 /// the unmatched ones. A repeated line outside that alignment survives.
-fn without_shared(shared: &str, tool: &str) -> String {
+pub fn without_shared(shared: &str, tool: &str) -> String {
     let shared = shared
         .split_inclusive('\n')
         .map(line_key)
@@ -2293,7 +2450,7 @@ mod tests {
             &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
         )
         .unwrap();
-        let overlay = "# Claude\nAdapter line\nActual line\nExtra\nTail without a newline\nRepeated\n```md\n@./literal.md\n```\n";
+        let overlay = "# Claude\nAdapter line\nActual line\n@parts/more.md\nRepeated\n```md\n@./literal.md\n```\n";
         assert_eq!(adoption.shared, shared);
         assert_eq!(adoption.overlays["claudecode"], overlay);
         assert_eq!(adoption.files.len(), 1);
@@ -2315,6 +2472,33 @@ mod tests {
             actual
         );
         assert!(!home.join(".rulesync").exists());
+    }
+
+    #[test]
+    fn rulesync_checkout_anchors_relative_native_claude_imports() {
+        let home = tempfile::tempdir().unwrap();
+        put(home.path(), ".claude/my-rules.md", "Native guidance.");
+        let local = "@./my-rules.md\n@~/existing.md\n```markdown\n@./example.md\n```\n";
+        let shared = "@./shared.md\n";
+        assert_eq!(
+            checkout_claude_imports(home.path(), local, &format!("{shared}{local}")).unwrap(),
+            format!(
+                "{shared}{}",
+                local.replace("@./my-rules.md", "@~/.claude/./my-rules.md")
+            )
+        );
+    }
+
+    #[test]
+    fn rulesync_checkout_anchors_a_resolved_extensionless_import() {
+        let home = tempfile::tempdir().unwrap();
+        put(home.path(), ".claude/RULES", "Native guidance.");
+        let native = "@RULES\n@someone\n";
+        let source = format!("@somebody\n{native}");
+        assert_eq!(
+            checkout_claude_imports(home.path(), native, &source).unwrap(),
+            "@somebody\n@~/.claude/RULES\n@someone\n"
+        );
     }
 
     #[test]
@@ -2542,7 +2726,10 @@ mod tests {
             &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
         )
         .unwrap();
-        assert_eq!(adoption.overlays["claudecode"], format!("{json}{toml}"));
+        assert_eq!(
+            adoption.overlays["claudecode"],
+            "@~/terms.JsOn\n@~/terms.ToMl\n"
+        );
     }
 
     #[test]

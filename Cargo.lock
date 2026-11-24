@@ -10168,6 +10168,7 @@ version = "0.22.7"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
  "chrono",

@@ -18,6 +18,7 @@ pub struct SetupArgs {
     pub anthropic_api_key_env: Option<String>,
     pub yes: bool,
     pub details: bool,
+    pub keep_rule: Vec<usize>,
     /// A named agent or session must never make the person's share decision.
     pub person: bool,
     /// Write the settings and stop: no AI tool is connected, nothing is asked.
@@ -144,7 +145,7 @@ impl RerankerModeArg {
 
 pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result<()> {
     if args.finish {
-        return finish(client, args.yes, args.details, args.person, args.format).await;
+        return finish(client, &args).await;
     }
     if let Some(note) = super::home_bin::refresh_for_setup() {
         println!("{note}");
@@ -154,12 +155,12 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
         println!("Wenlan is set up for local memory.");
         println!("Storage, search, recall, and MCP memory work without a local model or API key.");
         println!("Steep (background upkeep) is off.");
-    } else if let Some(model_id) = args.model {
-        install_model(&model_id, args.yes).await?;
+    } else if let Some(model_id) = args.model.as_deref() {
+        install_model(model_id, args.yes).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("on-device");
-    } else if let Some(env_name) = args.anthropic_api_key_env {
-        let key = std::env::var(&env_name)
+    } else if let Some(env_name) = args.anthropic_api_key_env.as_deref() {
+        let key = std::env::var(env_name)
             .map_err(|_| anyhow::anyhow!("environment variable {} is not set", env_name))?;
         set_anthropic_key(key).await?;
         mark_setup_completed()?;
@@ -169,7 +170,7 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
     }
     print_browser_address();
     if !args.config_only {
-        finish(client, args.yes, args.details, args.person, args.format).await?;
+        finish(client, &args).await?;
     }
     Ok(())
 }
@@ -179,13 +180,7 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
 /// computer, offer Codex's user hooks and one folder, and say what to try. The
 /// installer (`npx wenlan setup`) runs this as its own step, after Wenlan has started,
 /// because bringing a folder in needs it running.
-async fn finish(
-    client: &WenlanClient,
-    yes: bool,
-    details: bool,
-    person: bool,
-    format: crate::output::ResolvedFormat,
-) -> anyhow::Result<()> {
+async fn finish(client: &WenlanClient, args: &SetupArgs) -> anyhow::Result<()> {
     println!();
     let tools = super::init::connect_tools(client, super::init::Connect::All).await?;
     tools.print();
@@ -193,19 +188,19 @@ async fn finish(
         println!("Restart them to pick Wenlan up. `wenlan connect --help` lists more tools.");
     }
     if tools.has_codex() {
-        offer_codex_hooks(yes, details)?;
+        offer_codex_hooks(args.yes, args.details)?;
     }
 
     let running = client.health().await.is_ok();
     if running {
-        let adopted = super::rulesync::adopt_during_setup(format).await;
+        let adopted = super::rulesync::adopt_during_setup(args.format).await;
         if should_offer_setup_share(
             adopted,
-            person,
+            args.person,
             io::stdin().is_terminal(),
             io::stdout().is_terminal(),
         ) {
-            super::rulesync::share_during_setup(details).await;
+            super::rulesync::share_during_setup(args.details, &args.keep_rule).await;
         }
     }
     let asked = running && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();

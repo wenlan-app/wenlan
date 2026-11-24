@@ -893,7 +893,7 @@ impl WenlanClient {
 
     pub(crate) async fn preview_share_as_person(
         &self,
-        request: &AdoptPreviewRequest,
+        request: &wenlan_types::rulesync::SharePreviewRequest,
     ) -> Result<SharingPlan> {
         self.post_rules_adoption("/api/rules/setup/share/preview", request)
             .await
@@ -901,7 +901,7 @@ impl WenlanClient {
 
     pub(crate) async fn share_rules_as_person(
         &self,
-        request: &AdoptRequest,
+        request: &wenlan_types::rulesync::ShareRequest,
     ) -> Result<RulesSyncReport> {
         self.post_rules_adoption("/api/rules/setup/share", request)
             .await

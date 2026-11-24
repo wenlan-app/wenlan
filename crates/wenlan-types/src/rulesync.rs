@@ -284,6 +284,23 @@ pub struct AdoptRequest {
     pub include_keys: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharePreviewRequest {
+    pub home: std::path::PathBuf,
+    /// An empty list includes rule lines with no opt-outs. An omitted field
+    /// keeps the item-only preview for clients that cannot display rule lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_rule: Option<Vec<usize>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareRequest {
+    #[serde(flatten)]
+    pub approval: AdoptRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_rule: Option<Vec<usize>>,
+}
+
 /// What `wenlan rules share` would copy into the other managed tools.
 /// Approval binds to `token`; an AI session confirms with `plan_id`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +313,11 @@ pub struct SharingPlan {
     /// Items that stay where they are, one plain reason each.
     #[serde(default)]
     pub stays: Vec<SharingStay>,
+    /// Numbered rule lines, including any the person chose to keep in place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<SharingRule>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_stays: Vec<SharingRuleStay>,
     /// Copies another tool already has with the same content.
     #[serde(default)]
     pub already_there: usize,
@@ -312,6 +334,8 @@ pub struct SharingPlan {
 pub struct SharingTool {
     pub tool: String,
     #[serde(default)]
+    pub rules: usize,
+    #[serde(default)]
     pub skills: Vec<String>,
     #[serde(default)]
     pub commands: Vec<String>,
@@ -319,6 +343,23 @@ pub struct SharingTool {
     pub subagents: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingRule {
+    pub number: usize,
+    pub line: String,
+    pub tools: Vec<String>,
+    pub kept: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingRuleStay {
+    pub tool: String,
+    /// Omitted for a possible credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

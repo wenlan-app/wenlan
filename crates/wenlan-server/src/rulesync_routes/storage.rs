@@ -212,6 +212,7 @@ fn map_contents<From, To>(
         master: PersonalMaster {
             shared: master.shared.clone(),
             overlays: master.overlays.clone(),
+            claude_imported_rules: master.claude_imported_rules.clone(),
             codex_sync_replaced: master.codex_sync_replaced,
             skills,
             overrides: master.overrides.clone(),
@@ -239,6 +240,7 @@ fn map_contents<From, To>(
                             .transpose()?,
                         reviewed: delivery.reviewed,
                         at: delivery.at,
+                        rule_revision: delivery.rule_revision.clone(),
                     },
                 ))
             })
@@ -257,6 +259,7 @@ fn map_contents<From, To>(
             })
             .collect::<Result<_>>()?,
         stages: manifest.stages.clone(),
+        rule_share: manifest.rule_share.clone(),
         recovery_issues: manifest.recovery_issues.clone(),
         adopted: manifest.adopted,
         extension_paths: manifest.extension_paths.clone(),
@@ -270,6 +273,7 @@ fn map_contents<From, To>(
         scope_reviews: manifest.scope_reviews.clone(),
         scope_review_heads: manifest.scope_review_heads.clone(),
         dismissed_skill_updates: manifest.dismissed_skill_updates.clone(),
+        kept_share_rules: manifest.kept_share_rules.clone(),
         delivery_issues: manifest.delivery_issues.clone(),
         keys: manifest.keys.clone(),
     })

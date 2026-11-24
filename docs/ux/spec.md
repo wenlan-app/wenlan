@@ -1474,9 +1474,28 @@ and wait for evidence that people need them.
   Tests `UX-SKILL-25: names and orders the setup actions` and
   `ux_skill_25_rulesync_action_hints_parse_with_the_real_cli`.
 
-- **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` copies the
-  skills, commands, subagents and MCP servers a person already had in one tool
-  to every other managed tool that supports that kind. Safe personal MCP
+- **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` offers rule
+  lines, skills, commands, subagents and MCP servers a person already had in
+  one tool to every managed tool that supports that kind. Sharing keeps
+  existing skills, commands and subagents intact, including different items
+  with the same name. Portable overlay lines move to the end of the shared
+  rules and leave each overlay that held them. Each distinct line is offered
+  once, and lines already shared are left in place. The preview reads the
+  current reviewed rule files. Each tool keeps imported Claude Code content,
+  its tool-specific lines and the sections under a local heading or lead-in.
+  The short preview shows each moving line, shortened when needed to fit
+  100 columns, and summarizes lines that stay. `--details` explains each
+  line that stays. A line that may hold a credential stays local and the
+  preview shows only that reason.
+  `--details` numbers portable lines. The person can keep any of those lines
+  locally with `--keep-rule N[,N]` in the same preview and confirmation.
+  The plan ID binds the numbered lines, the keep choices and the reviewed
+  versions of the rule files. The same batch updates `~/.agents/AGENTS.md`
+  and the tool copies. A conflict leaves the previous shared master and
+  receipts in force. Sync keeps the shared rules and each tool's local
+  lines. Restore uses the adoption backups for tool copies and the pre-share
+  backup for the shared source file.
+  Safe personal MCP
   servers in managed tools are offered even if Wenlan does not yet manage the
   entry; on confirmation they are first adopted with the usual receipts and
   backups. Project-scoped servers stay out of this share. The preview lists each
@@ -1506,6 +1525,22 @@ and wait for evidence that people need them.
   `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `ux_skill_26_rulesync_share_moves_common_rules_and_preserves_tool_only_files`,
+  `rulesync_share_classifies_imports_tool_references_and_empty_headings`,
+  `rulesync_share_redacts_a_credential_even_in_a_tool_line_or_key_block`,
+  `rulesync_share_requires_a_client_that_can_preview_rule_lines`,
+  `rulesync_share_keeps_numbered_rules_and_redacts_credentials`,
+  `rulesync_share_can_keep_every_numbered_rule_without_writing_tool_files`,
+  `rulesync_share_refuses_stale_rule_files_and_binds_the_line_set`,
+  `rulesync_share_refuses_a_projection_that_drops_a_local_line`,
+  `rulesync_share_redacts_http_credentials_before_building_approval`,
+  `rulesync_share_reclassifies_accepted_edits_and_binds_the_donor_revision`,
+  `rulesync_share_mid_batch_conflict_restores_peers_and_keeps_the_old_receipts`,
+  `rulesync_share_keeps_scoped_sections_and_preserves_repeated_lines_in_order`,
+  `rulesync_share_keeps_flattened_imports_local_with_or_without_saved_provenance`,
+  `rulesync_share_updates_and_restores_the_shared_source`,
+  `rules_share_short_preview_shows_each_moving_line_at_terminal_width`,
+  `ux_skill_26_rules_share_keep_rule_reaches_preview_and_confirm`,
   `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,
   `ux_skill_26_rulesync_share_names_an_unmanaged_unsafe_server`,
   `ux_skill_26_rulesync_share_names_refused_servers_without_exposing_unsafe_names`,
@@ -1643,7 +1678,9 @@ and wait for evidence that people need them.
   separately, and an absent rule file is not created for empty content. An
   already-adopted setup is skipped silently. After adoption and sync, setup
   presents the same short share preview as `wenlan rules share` to a person
-  in a terminal. A yes shares the offered items; key servers need their own
+  in a terminal. `--details` shows the numbered rule lines and
+  `--keep-rule N[,N]` keeps selected lines in their own tools. A yes shares
+  the remaining lines and offered items. Key servers need their own
   second yes (UX-SKILL-27). A no leaves sharing for `wenlan rules share` and
   setup continues. AI and non-interactive setup never share, including with
   `--yes`. A plan that
@@ -1659,6 +1696,7 @@ and wait for evidence that people need them.
   Tests `ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts`,
   `ux_cli_8_setup_report_counts_and_preview_wrap_without_splitting_words`,
   `ux_cli_8_setup_share_requires_person_tty_and_successful_adoption`,
+  `ux_cli_8_setup_share_previews_numbered_rules_and_uses_one_yes`,
   `ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no`,
   `ux_cli_8_setup_noninteractive_yes_never_requests_share`,
   `ux_cli_8_adoption_does_not_create_an_empty_rule_file_for_an_installed_tool`,
