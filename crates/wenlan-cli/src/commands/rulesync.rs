@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Preview and manage the personal tool setup on this computer.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -44,6 +45,9 @@ pub enum RulesSetupCmd {
         /// Preview what each tool would get.
         #[arg(long)]
         dry_run: bool,
+        /// Show every item in the preview.
+        #[arg(long)]
+        details: bool,
         /// Confirm the plan shown to the person.
         #[arg(long, conflicts_with = "dry_run")]
         confirm: Option<String>,
@@ -163,11 +167,18 @@ async fn run_inner(
         }
         return show(format, quiet, &adoption_plan()?, plan_for_a_person);
     }
-    if matches!(command, RulesSetupCmd::Share { dry_run: true, .. }) {
+    if let RulesSetupCmd::Share {
+        dry_run: true,
+        details,
+        ..
+    } = command
+    {
         let client =
             WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
         let plan = client.preview_share_as_person(&home_request()?).await?;
-        return show(format, quiet, &plan, sharing_for_a_person);
+        return show(format, quiet, &plan, |plan| {
+            sharing_for_a_person(plan, *details)
+        });
     }
     let confirmed_adopt = matches!(
         command,
@@ -242,7 +253,9 @@ async fn run_inner(
                 .await?
         }
         RulesSetupCmd::Share {
-            confirm: confirmed, ..
+            confirm: confirmed,
+            details,
+            ..
         } => {
             let expected = home_request()?;
             let plan = client.preview_share_as_person(&expected).await?;
@@ -251,7 +264,7 @@ async fn run_inner(
                 ensure!(plan.plan_id == *id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
             } else {
                 // The person must see the same plan even with --quiet or --format json.
-                print!("{}", sharing_for_a_person(&plan));
+                print!("{}", sharing_for_a_person(&plan, *details));
                 if !plan.tools.is_empty()
                     && !confirm("Copy these items to the tools listed above?")?
                 {
@@ -517,7 +530,64 @@ fn home_request() -> Result<AdoptPreviewRequest> {
     })
 }
 
-fn sharing_for_a_person(plan: &SharingPlan) -> String {
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StayReason {
+    Credentials,
+    Placeholders,
+    Directives,
+    Format,
+    Conflict,
+    Other,
+}
+
+impl StayReason {
+    fn from_reason(reason: &str) -> Self {
+        let reason = reason.to_ascii_lowercase();
+        if reason.contains("credential") || reason.contains("may contain a key") {
+            Self::Credentials
+        } else if reason.contains("'$'") || reason.contains("$ placeholder") {
+            Self::Placeholders
+        } else if reason.contains("'!'") {
+            Self::Directives
+        } else if reason.contains("format")
+            || reason.contains("frontmatter")
+            || reason.contains("cannot read")
+            || reason.contains("cannot represent")
+            || reason.contains("could not be converted")
+            || reason.contains("do not interpret")
+        {
+            Self::Format
+        } else if reason.contains("same name")
+            || reason.contains("different file")
+            || reason.contains("conflict")
+            || (reason.contains("different") && reason.contains("name"))
+            || reason.contains("own version")
+        {
+            Self::Conflict
+        } else {
+            Self::Other
+        }
+    }
+
+    fn summary(self, count: usize) -> String {
+        let plural = count != 1;
+        let words = match self {
+            Self::Credentials => "may hold credentials",
+            Self::Placeholders if plural => "use $ placeholders",
+            Self::Placeholders => "uses $ placeholders",
+            Self::Directives if plural => "use ! directives",
+            Self::Directives => "uses ! directives",
+            Self::Format if plural => "use a format other tools can't read",
+            Self::Format => "uses a format other tools can't read",
+            Self::Conflict if plural => "have a conflicting item in another tool",
+            Self::Conflict => "has a conflicting item in another tool",
+            Self::Other => "can't be copied for other reasons",
+        };
+        format!("{count} {words}")
+    }
+}
+
+fn sharing_for_a_person(plan: &SharingPlan, details: bool) -> String {
     let mut out = String::new();
     if plan.tools.is_empty() {
         out.push_str("Nothing to share.\n");
@@ -538,9 +608,11 @@ fn sharing_for_a_person(plan: &SharingPlan) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         writeln!(&mut out, "\n{}: {counts}", one_line(&tool.tool)).unwrap();
-        for (word, names) in groups {
-            for name in names {
-                writeln!(&mut out, "  + {word} {}", one_line(name)).unwrap();
+        if details {
+            for (word, names) in groups {
+                for name in names {
+                    writeln!(&mut out, "  + {word} {}", one_line(name)).unwrap();
+                }
             }
         }
     }
@@ -582,16 +654,91 @@ fn sharing_for_a_person(plan: &SharingPlan) -> String {
     }
     if !plan.stays.is_empty() {
         out.push('\n');
-        for stay in &plan.stays {
+        if details {
+            let mut seen = BTreeSet::new();
+            for stay in &plan.stays {
+                if !stay.item.starts_with("subagent ") {
+                    writeln!(
+                        &mut out,
+                        "Stays in {}: {}: {}",
+                        one_line(&stay.tool),
+                        one_line(&stay.item),
+                        one_line(&stay.reason)
+                    )
+                    .unwrap();
+                    continue;
+                }
+                if !seen.insert((&stay.tool, &stay.item)) {
+                    continue;
+                }
+                let mut reasons = BTreeSet::new();
+                let mut tools = BTreeSet::new();
+                for same in plan
+                    .stays
+                    .iter()
+                    .filter(|other| other.tool == stay.tool && other.item == stay.item)
+                {
+                    let (reason, destinations) = same
+                        .reason
+                        .rsplit_once(" Not copied to ")
+                        .unwrap_or((&same.reason, ""));
+                    reasons.insert(one_line(reason.trim_end_matches('.')).replace(". ", "; "));
+                    tools.extend(
+                        destinations
+                            .trim_end_matches('.')
+                            .split(", ")
+                            .filter(|tool| !tool.is_empty())
+                            .map(one_line),
+                    );
+                }
+                let mut reason = reasons.into_iter().collect::<Vec<_>>().join("; ");
+                if !tools.is_empty() {
+                    write!(
+                        &mut reason,
+                        "; not copied to {}",
+                        tools.into_iter().collect::<Vec<_>>().join(", ")
+                    )
+                    .unwrap();
+                }
+                writeln!(
+                    &mut out,
+                    "Stays in {}: {}: {reason}.",
+                    one_line(&stay.tool),
+                    one_line(&stay.item)
+                )
+                .unwrap();
+            }
+        } else {
+            let mut items = BTreeMap::new();
+            for stay in &plan.stays {
+                let reason = StayReason::from_reason(&stay.reason);
+                items
+                    .entry((&stay.tool, &stay.item))
+                    .and_modify(|old: &mut StayReason| *old = (*old).min(reason))
+                    .or_insert(reason);
+            }
+            let mut counts = BTreeMap::new();
+            for reason in items.values() {
+                *counts.entry(*reason).or_insert(0) += 1;
+            }
+            let count = items.len();
             writeln!(
                 &mut out,
-                "Stays in {}: {}: {}",
-                one_line(&stay.tool),
-                one_line(&stay.item),
-                one_line(&stay.reason)
+                "{} {} in {} own tool: {}.",
+                plural(count, "item"),
+                if count == 1 { "stays" } else { "stay" },
+                if count == 1 { "its" } else { "their" },
+                counts
+                    .into_iter()
+                    .map(|(reason, count)| reason.summary(count))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
             .unwrap();
         }
+    }
+    if !details && (!plan.tools.is_empty() || !plan.stays.is_empty()) {
+        out.push_str("\nAdd --details to see every item.\n");
     }
     if !plan.tools.is_empty() && !plan.plan_id.is_empty() {
         writeln!(
@@ -932,13 +1079,13 @@ fn status_for_a_person(status: &RulesSetupStatus) -> String {
         let counts = &row.counts;
         writeln!(
             out,
-            "{} — {state} — {} rules, {} skills, {} commands, {} subagents, {} MCP",
+            "{} — {state} — {}, {}, {}, {}, {}",
             one_line(&row.tool.name),
-            counts.rules,
-            counts.skills,
-            counts.commands,
-            counts.subagents,
-            counts.mcp
+            plural(counts.rules, "rule"),
+            plural(counts.skills, "skill"),
+            plural(counts.commands, "command"),
+            plural(counts.subagents, "subagent"),
+            plural(counts.mcp, "MCP server")
         )
         .unwrap();
     }
@@ -1046,7 +1193,104 @@ pub(super) fn file_label(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wenlan_types::rulesync::AdoptionChange;
+    use wenlan_types::rulesync::{AdoptionChange, SharingStay, SharingTool};
+
+    #[test]
+    fn ux_skill_26_rules_share_short_preview_summarizes_distinct_stays() {
+        let plan = SharingPlan {
+            plan_id: "plan-id".into(),
+            tools: vec![SharingTool {
+                tool: "Codex".into(),
+                skills: vec!["one".into(), "two".into()],
+                commands: vec!["hello".into()],
+                ..Default::default()
+            }],
+            stays: vec![
+                SharingStay { tool: "Claude Code".into(), item: "subagent review".into(), reason: "The tools use different subagent formats. Not copied to Codex.".into() },
+                SharingStay { tool: "Claude Code".into(), item: "subagent review".into(), reason: "The subagent's frontmatter is specific to its tool. Not copied to Cursor.".into() },
+                SharingStay { tool: "Claude Code".into(), item: "command args".into(), reason: "'$' can introduce argument placeholders. The command stays in its originating tool. Not copied to Codex.".into() },
+                SharingStay { tool: "Codex".into(), item: "MCP server docs".into(), reason: ".claude.json: MCP server docs conflicts with a separate entry.".into() },
+            ],
+            key_servers: vec!["billing".into()],
+            key_tools: vec!["Codex".into()],
+            ..Default::default()
+        };
+        let text = sharing_for_a_person(&plan, false);
+        assert!(text.contains("Codex: 2 skills, 1 command"), "{text}");
+        assert!(!text.contains("  + skill one"), "{text}");
+        assert!(text.contains("3 items stay in their own tool"), "{text}");
+        assert!(
+            text.contains("1 uses a format other tools can't read"),
+            "{text}"
+        );
+        assert!(text.contains("1 uses $ placeholders"), "{text}");
+        assert!(
+            text.contains("1 has a conflicting item in another tool"),
+            "{text}"
+        );
+        assert!(text.contains("  ? MCP server billing"), "{text}");
+        assert!(text.contains("Add --details to see every item."), "{text}");
+        assert!(text.contains("Plan id: plan-id"), "{text}");
+        let details = sharing_for_a_person(&plan, true);
+        assert!(details.contains("  + skill one"), "{details}");
+        assert_eq!(
+            details
+                .matches("Stays in Claude Code: subagent review:")
+                .count(),
+            1,
+            "{details}"
+        );
+        assert!(details.contains("not copied to Codex, Cursor"), "{details}");
+        assert!(!details.contains("Add --details"), "{details}");
+    }
+
+    #[test]
+    fn rules_status_uses_singular_and_plural_counts() {
+        use wenlan_types::rulesync::{RulesSetupTool, RulesToolCounts, RulesToolStatus};
+        let status = RulesSetupStatus {
+            enabled: true,
+            tools: vec![
+                RulesToolStatus {
+                    tool: RulesSetupTool {
+                        id: "one".into(),
+                        name: "One".into(),
+                    },
+                    state: RulesToolState::UpToDate,
+                    counts: RulesToolCounts {
+                        rules: 1,
+                        skills: 1,
+                        commands: 1,
+                        subagents: 1,
+                        mcp: 1,
+                    },
+                },
+                RulesToolStatus {
+                    tool: RulesSetupTool {
+                        id: "two".into(),
+                        name: "Two".into(),
+                    },
+                    state: RulesToolState::UpToDate,
+                    counts: RulesToolCounts {
+                        rules: 2,
+                        skills: 2,
+                        commands: 2,
+                        subagents: 2,
+                        mcp: 2,
+                    },
+                },
+            ],
+            ..Default::default()
+        };
+        let output = status_for_a_person(&status);
+        assert!(
+            output.contains("1 rule, 1 skill, 1 command, 1 subagent, 1 MCP server"),
+            "{output}"
+        );
+        assert!(
+            output.contains("2 rules, 2 skills, 2 commands, 2 subagents, 2 MCP servers"),
+            "{output}"
+        );
+    }
 
     #[test]
     fn rulesync_review_displays_the_selected_plan_before_asking_for_yes() {

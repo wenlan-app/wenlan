@@ -1476,10 +1476,15 @@ and wait for evidence that people need them.
 - **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` copies the
   skills, commands, subagents and MCP servers a person already had in one tool
   to every other managed tool that supports that kind. The preview lists each
-  tool with its counts and item names, counts items every tool already has,
-  and gives a line "Stays in <tool>: <item>: <reason>" for each item that
-  cannot travel: a same-name item with different content (never replaced),
-  a command with `$` or `!`, or an MCP server a tool cannot represent.
+  tool with its counts, counts items every tool already has, and summarizes
+  items that stay by reason. `--details` lists the item names and a line
+  "Stays in <tool>: <item>: <reason>" for each item that cannot travel;
+  a subagent with several reasons has one line with the affected tools.
+  JSON retains the full list. Items stay for reasons including a same-name
+  item with different content (never replaced), a command with `$` or `!`,
+  or an MCP server a tool cannot represent. A refused MCP server is named
+  when its name passes the safety check, with its file when another file has
+  the same name; a key-looking name is never shown.
   Kinds a tool has no place for are left out without a line. An MCP server
   travels only when it passes the safety check and refers to keys through
   environment variables; Wenlan rewrites a reference into each tool's own
@@ -1494,6 +1499,8 @@ and wait for evidence that people need them.
   as adoption, so `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `ux_skill_26_rulesync_share_names_refused_servers_without_exposing_unsafe_names`,
+  `ux_skill_26_rules_share_short_preview_summarizes_distinct_stays`,
   `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
   `rulesync_share_leaves_a_different_item_with_the_same_name`,
   `rulesync_status_counts_mcp_servers_adopted_in_place`,

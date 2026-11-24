@@ -407,6 +407,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// A server name is displayable only when the same name check used by
+    /// the MCP safety check accepts every part of its path.
+    pub fn mcp_name(&self, tool: &str) -> Option<&str> {
+        (self.key.feature == Mcp
+            && self.key.member.is_none()
+            && self.container.iter().all(|name| name_safe(tool, name)))
+        .then(|| self.key.name.last().map(String::as_str))
+        .flatten()
+    }
+
     pub fn label(&self) -> String {
         let name = self.key.name.join(".");
         let name = if let Some(member) = self
@@ -864,18 +874,24 @@ impl Document {
             })
     }
 
-    /// The servers that stay in their own tool, by 1-based position as in
-    /// `refused_entries`, with the reason.
-    pub fn refused_servers<'a>(
-        &'a self,
-        tool: &'a str,
-    ) -> impl Iterator<Item = (usize, &'a Entry, Refusal)> + 'a {
+    /// Safe-to-display server names, including servers whose values are refused.
+    pub fn mcp_server_names<'a>(&'a self, tool: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.entries
             .values()
             .flatten()
-            .enumerate()
-            .filter_map(move |(index, (entry, _))| {
-                mcp_refusal(tool, entry).map(|refusal| (index + 1, entry, refusal))
+            .filter_map(move |(entry, _)| entry.mcp_name(tool))
+    }
+
+    /// The servers that stay in their own tool and, when safe to show, their names.
+    pub fn refused_servers<'a>(
+        &'a self,
+        tool: &'a str,
+    ) -> impl Iterator<Item = (Option<&'a str>, &'a Entry, Refusal)> + 'a {
+        self.entries
+            .values()
+            .flatten()
+            .filter_map(move |(entry, _)| {
+                mcp_refusal(tool, entry).map(|refusal| (entry.mcp_name(tool), entry, refusal))
             })
     }
 
@@ -2719,7 +2735,7 @@ pub fn mcp_refusal(tool: &str, entry: &Entry) -> Option<Refusal> {
         return None;
     }
     // The name is stored and shown, so it must not look like a key.
-    if entry.key.member.is_some() || !entry.container.iter().all(|name| name_safe(tool, name)) {
+    if entry.mcp_name(tool).is_none() {
         return Some(Refusal::Unsafe("its name may contain a key"));
     }
     if mcp_form(tool, &entry.value, true).is_none() {

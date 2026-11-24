@@ -812,7 +812,7 @@ fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, S
         "plan_id": "0123456789ab",
         "token": "fixture-token",
         "tools": [{"tool": "Codex", "skills": [], "commands": ["hello"], "subagents": [], "mcp_servers": ["docs"]}],
-        "stays": [{"tool": "Claude Code", "item": "MCP server (entry 1 in .claude.json)", "reason": "its name may contain a key"}],
+        "stays": [{"tool": "Claude Code", "item": "an MCP server in .claude.json", "reason": "its name may contain a key"}],
         "already_there": 2,
         "key_servers": ["billing", "search"],
         "key_tools": ["Codex", "Cursor"]
@@ -868,18 +868,36 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .success()
         .stdout(predicate::str::contains("Share with your other tools"))
         .stdout(predicate::str::contains("Codex: 1 command, 1 MCP server"))
-        .stdout(predicate::str::contains("  + command hello"))
+        .stdout(predicate::str::contains("  + command hello").not())
         .stdout(predicate::str::contains("2 items already in every tool"))
         .stdout(predicate::str::contains(
-            "Stays in Claude Code: MCP server (entry 1 in .claude.json): its name may contain a key",
+            "1 item stays in its own tool: 1 may hold credentials.",
         ))
         .stdout(predicate::str::contains(
             "These 2 servers may contain a key. Sharing copies the key into: Codex, Cursor.",
         ))
         .stdout(predicate::str::contains("  ? MCP server billing"))
+        .stdout(predicate::str::contains("Add --details to see every item."))
         .stdout(predicate::str::contains(
             "wenlan rules share --confirm 0123456789ab",
         ));
+    assert!(shared(&requests).is_none());
+
+    let (mut cmd, requests) = share_fixture(state.path());
+    cmd.args([
+        "rules",
+        "share",
+        "--dry-run",
+        "--details",
+        "--format",
+        "table",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("  + command hello"))
+    .stdout(predicate::str::contains(
+        "Stays in Claude Code: an MCP server in .claude.json: its name may contain a key",
+    ));
     assert!(shared(&requests).is_none());
 
     let (mut cmd, requests) = share_fixture(state.path());

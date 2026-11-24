@@ -294,6 +294,27 @@ pub(super) struct View {
 }
 
 impl View {
+    pub(super) fn mcp_label(&self, location: &Location, name: Option<&str>) -> String {
+        match name {
+            Some(name) => {
+                let duplicate = self.files.iter().any(|(other, file)| {
+                    other.path != location.path
+                        && file.as_ref().is_ok_and(|file| {
+                            file.doc
+                                .mcp_server_names(other.tool)
+                                .any(|other| other == name)
+                        })
+                });
+                if duplicate {
+                    format!("MCP server {name} in {}", location.display())
+                } else {
+                    format!("MCP server {name}")
+                }
+            }
+            None => format!("an MCP server in {}", location.display()),
+        }
+    }
+
     pub(super) fn read(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Self> {
         let mut catalog = Catalog::read(home)?;
         catalog.retain_managed_locations(manifest.personal_settings.keys().map(PathBuf::as_path));
@@ -614,6 +635,7 @@ pub(super) struct SettingAddition {
     pub(super) from_tool: &'static str,
     pub(super) to_tool: &'static str,
     pub(super) name: String,
+    item: String,
     destination: Destination,
 }
 
@@ -683,7 +705,7 @@ impl Setup {
                 continue;
             };
             let enrolled = view.enrolled.contains(&location.path);
-            for (number, entry, refusal) in file.doc.refused_servers(location.tool) {
+            for (name, entry, refusal) in file.doc.refused_servers(location.tool) {
                 // Servers that may hold a key in a managed tool form the key
                 // group; a copy Wenlan made is not listed again.
                 let reason = match refusal {
@@ -694,11 +716,8 @@ impl Setup {
                 if manifest.keys.covers(&location.path, &entry.key) {
                     continue;
                 }
-                shares.stays.push((
-                    location.tool,
-                    format!("MCP server (entry {number} in {})", location.display()),
-                    reason.into(),
-                ));
+                let item = view.mcp_label(location, name);
+                shares.stays.push((location.tool, item, reason.into()));
             }
             let Some(managed) = manifest.personal_settings.get(&location.path) else {
                 continue;
@@ -724,7 +743,7 @@ impl Setup {
                 let Some(name) = state.key.name.last().cloned() else {
                     continue;
                 };
-                let item = format!("MCP server {name}");
+                let item = view.mcp_label(location, Some(&name));
                 let mut unrepresentable = BTreeSet::new();
                 for (to, other) in &view.files {
                     if to.tool == location.tool || !view.enrolled.contains(&to.path) {
@@ -788,6 +807,7 @@ impl Setup {
                             from_tool: location.tool,
                             to_tool,
                             name: name.clone(),
+                            item: item.clone(),
                             destination,
                         });
                 }
@@ -807,7 +827,7 @@ impl Setup {
             for addition in std::iter::once(first).chain(candidates) {
                 shares.stays.push((
                     addition.from_tool,
-                    format!("MCP server {}", addition.name),
+                    addition.item,
                     format!(
                         "another tool has a different MCP server with this name for {}",
                         tool_name(addition.to_tool)
@@ -874,17 +894,16 @@ impl Setup {
                 }
             };
             // A server the person shared, and its copies, are not skipped.
-            let shared: BTreeSet<usize> = file
+            let shared = file
                 .doc
                 .refused_servers(location.tool)
                 .filter(|(_, entry, _)| manifest.keys.covers(path, &entry.key))
-                .map(|(number, ..)| number)
-                .collect();
+                .count();
             let refused = file
                 .doc
                 .refused_entries(location.tool)
-                .filter(|(number, ..)| !shared.contains(number))
-                .count();
+                .count()
+                .saturating_sub(shared);
             if refused > 0 {
                 *kept_in_place.entry(location.tool.to_owned()).or_default() += refused;
             }

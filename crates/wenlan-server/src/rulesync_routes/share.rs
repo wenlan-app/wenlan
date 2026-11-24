@@ -1037,6 +1037,94 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ux_skill_26_rulesync_share_names_refused_servers_without_exposing_unsafe_names() {
+        const SECRET_NAME: &str = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+        let f = Fixture::new();
+        let codex = format!(
+            "[mcp_servers.unique]\ncommand = 'server'\nunexpected = true\n\n\
+             [mcp_servers.duplicate]\ncommand = 'server'\nunexpected = true\n\n\
+             [mcp_servers.{SECRET_NAME}]\ncommand = 'server'\n"
+        );
+        let claude = r#"{"mcpServers":{"duplicate":{"command":"server","unexpected":true}}}"#;
+        write(
+            &f,
+            &[(".codex/config.toml", &codex), (".claude.json", claude)],
+        );
+        adopt(&f);
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        let labels: Vec<_> = plan.stays.iter().map(|stay| stay.item.as_str()).collect();
+        assert!(labels.contains(&"MCP server unique"), "{labels:?}");
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("MCP server duplicate")
+                    && label.contains(".codex/config.toml")),
+            "{labels:?}"
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("MCP server duplicate")
+                    && label.contains(".claude.json")),
+            "{labels:?}"
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("an MCP server in .codex/config.toml")),
+            "{labels:?}"
+        );
+        let shown = serde_json::to_string(&plan).unwrap();
+        assert!(!shown.contains(SECRET_NAME), "{shown}");
+        assert!(!shown.contains("entry "), "{shown}");
+    }
+
+    #[test]
+    fn ux_skill_26_rulesync_share_disambiguates_conflicting_server_names() {
+        let f = Fixture::new();
+        write(
+            &f,
+            &[
+                (
+                    ".codex/config.toml",
+                    "[mcp_servers.same]\ncommand = 'codex-server'\n\n[mcp_servers.keyed]\ncommand = 'codex-key'\nenv = { API_KEY = 'fixture-key-one' }\n",
+                ),
+                (
+                    ".claude.json",
+                    r#"{"mcpServers":{"same":{"command":"claude-server"},"keyed":{"command":"claude-key","env":{"API_KEY":"fixture-key-two"}}}}"#,
+                ),
+            ],
+        );
+        adopt(&f);
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        for name in ["same", "keyed"] {
+            for file in [".codex/config.toml", ".claude.json"] {
+                assert!(
+                    plan.stays
+                        .iter()
+                        .any(|stay| stay.item == format!("MCP server {name} in {file}")),
+                    "{name} in {file}: {:?}",
+                    plan.stays
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rulesync_adopt_uses_singular_and_plural_personal_settings() {
+        for (config, expected) in [
+            ("[mcp_servers.one]\ncommand = 'server-one'\n", "Imported 1 personal setting."),
+            ("[mcp_servers.one]\ncommand = 'server-one'\n[mcp_servers.two]\ncommand = 'server-two'\n", "Imported 2 personal settings."),
+        ] {
+            let f = Fixture::new();
+            write(&f, &[(".codex/config.toml", config)]);
+            let preview = f.setup.preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer).unwrap();
+            let report = f.setup.adopt_using(&preview.token, fixture_rule_renderer, fixture_skill_renderer).unwrap();
+            assert!(report.message.contains(expected), "{report:?}");
+        }
+    }
+
     /// Whether any file under a folder holds these bytes.
     fn holds(dir: &Path, needle: &[u8]) -> bool {
         tree(dir).into_iter().any(|(_, (bytes, _))| {

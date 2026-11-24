@@ -104,13 +104,23 @@ describe("ServiceStatus", () => {
     expect(row()).toHaveAttribute("data-kind", "notAnswering");
   });
 
-  it("names both versions when the service is out of date", () => {
+  it("shows one short sentence when the service is out of date", () => {
+    setVersionReport(OUT_OF_DATE);
+    renderStatus(<ServiceStatus />);
+    const popover = screen.getByTestId("service-status-popover");
+    expect(popover.querySelectorAll(".mem-daemon-startup-body")).toHaveLength(1);
+    expect(popover).toHaveTextContent(SERVICE.body);
+    expect(popover).not.toHaveTextContent("0.19.3");
+    expect(popover).not.toHaveTextContent("0.20.0");
+  });
+
+  it("does not show the program path for a service from another copy", () => {
     setVersionReport({ ...OUT_OF_DATE, program: "/opt/homebrew/bin/wenlan-server" });
     renderStatus(<ServiceStatus />);
     const popover = screen.getByTestId("service-status-popover");
-    expect(popover).toHaveTextContent("0.19.3");
-    expect(popover).toHaveTextContent("0.20.0");
-    expect(popover).toHaveTextContent("/opt/homebrew/bin/wenlan-server");
+    expect(popover.querySelectorAll(".mem-daemon-startup-body")).toHaveLength(1);
+    expect(popover.querySelector(".mem-daemon-startup-body")).toHaveTextContent(SERVICE.outsideBundle);
+    expect(popover).not.toHaveTextContent("/opt/homebrew/bin/wenlan-server");
   });
 
   it("shows an automatic recovery failure and leaves the retry action available", () => {

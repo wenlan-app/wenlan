@@ -1683,9 +1683,10 @@ impl Setup {
             }
         }
         if setting_count != 0 {
-            result
-                .message
-                .push_str(&format!(". Imported {setting_count} personal setting(s)."));
+            result.message.push_str(&format!(
+                ". Imported {setting_count} personal setting{}.",
+                if setting_count == 1 { "" } else { "s" }
+            ));
         }
         if let Some(master) = extension {
             manifest.unmanaged_personal_files.retain(|path, _| {

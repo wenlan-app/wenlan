@@ -274,7 +274,7 @@ pub(super) fn plan(
             let Some(name) = source.key.name.last().cloned() else {
                 continue;
             };
-            let item = format!("MCP server {name}");
+            let item = view.mcp_label(location, Some(&name));
             let mut candidates = BTreeMap::<&str, Vec<_>>::new();
             for (to, other) in &view.files {
                 if to.tool == location.tool || !view.enrolled.contains(&to.path) {
@@ -405,9 +405,15 @@ pub(super) fn plan(
             continue;
         }
         for (share, from, ..) in std::iter::once((first, from, to, source)).chain(candidates) {
+            let location = view
+                .files
+                .iter()
+                .find(|(location, _)| location.path == share.source)
+                .map(|(location, _)| location)
+                .context("a settings source disappeared")?;
             group.stays.push((
                 from,
-                format!("MCP server {}", server_name(&share)),
+                view.mcp_label(location, Some(&server_name(&share))),
                 format!(
                     "another tool has a different MCP server with this name for {}",
                     tool_name(to)
