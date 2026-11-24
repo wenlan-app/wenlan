@@ -12,7 +12,7 @@ use wenlan_core::rulesync_personal::personal_target;
 use wenlan_core::rulesync_personal::{check_delivery_paths, fingerprint, DeliveryWorktrees};
 use wenlan_core::rulesync_settings::personal::{
     enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Feature, Key,
-    Location, RecordedEntry, Refusal,
+    Location, ReceiptLayoutError, RecordedEntry, Refusal,
 };
 use wenlan_types::rulesync::{
     KeptInPlace, PullbackAction, PullbackCard, PullbackDecision, PullbackKind,
@@ -519,6 +519,16 @@ fn proposal(
                 ));
                 continue;
             }
+            if current.is_none() {
+                let refusal = to
+                    .edit_recorded(None, snapshot_bytes(&file.snapshot), wanted)
+                    .err()
+                    .and_then(|error| error.downcast::<ReceiptLayoutError>().ok());
+                if let Some(reason) = refusal {
+                    blocked.push(format!("{display}: {reason}."));
+                    continue;
+                }
+            }
             destinations.push(Destination {
                 path: to.path.clone(),
                 before: current.cloned(),
@@ -637,8 +647,9 @@ pub(super) struct SettingAddition {
     pub(super) name: String,
     item: String,
     destination: Destination,
+    source: (PathBuf, Entry),
     /// A safe source to adopt before projecting it, if not yet managed.
-    unmanaged: Option<(PathBuf, Entry)>,
+    unmanaged: bool,
 }
 
 #[derive(Default)]
@@ -661,9 +672,15 @@ pub(super) fn tool_name(id: &str) -> &'static str {
     personal_target(id).map_or("this tool", |target| target.tool.display_name())
 }
 
+pub(super) type ShareDestinations = BTreeMap<PathBuf, BTreeSet<Key>>;
+
 /// Record approved additions as entries waiting for their first write, the
 /// same state an all-tools review leaves for `sync_personal_settings`.
-pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddition>) {
+pub(super) fn enroll_shares(
+    manifest: &mut Manifest,
+    additions: Vec<SettingAddition>,
+) -> ShareDestinations {
+    let mut approved = ShareDestinations::new();
     for addition in additions {
         let Destination {
             path,
@@ -673,6 +690,10 @@ pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddit
         } = addition.destination;
         let entries = manifest.personal_settings.entry(path.clone()).or_default();
         let key = wanted.key.clone();
+        approved
+            .entry(path.clone())
+            .or_default()
+            .insert(key.clone());
         if let Some(current) = entries.iter_mut().find(|entry| entry.key == key) {
             current.before = before;
             current.wanted = Some(wanted);
@@ -688,12 +709,7 @@ pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddit
             manifest.worktree_writes.insert(path, worktree);
         }
     }
-}
-
-impl SettingAddition {
-    pub(super) fn path(&self) -> &Path {
-        &self.destination.path
-    }
+    approved
 }
 
 /// Adopt only unmanaged sources that actually won a destination in the plan.
@@ -701,7 +717,8 @@ pub(super) fn offered_unmanaged_sources(additions: &[SettingAddition]) -> Adopti
     let mut source = Adoption::default();
     for (path, entry) in additions
         .iter()
-        .filter_map(|addition| addition.unmanaged.as_ref())
+        .filter(|addition| addition.unmanaged)
+        .map(|addition| &addition.source)
     {
         let entries = source.sources.entry(path.clone()).or_default();
         if !entries.contains(entry) {
@@ -709,6 +726,52 @@ pub(super) fn offered_unmanaged_sources(additions: &[SettingAddition]) -> Adopti
         }
     }
     source
+}
+
+/// Recheck each approved donor after the file batch, including donors that
+/// could only be adopted in place and had no compare-and-swap operation.
+pub(super) fn recheck_share_sources(
+    home: &Path,
+    root: &FileRoot,
+    additions: &mut Vec<SettingAddition>,
+    adopted: &mut Source,
+    result: &mut RulesSyncReport,
+) -> Result<()> {
+    if additions.is_empty() {
+        return Ok(());
+    }
+    let catalog = Catalog::read(home)?;
+    let mut live = BTreeMap::new();
+    let mut stale = BTreeSet::new();
+    additions.retain(|addition| {
+        let (path, approved) = &addition.source;
+        let file = live.entry(path.clone()).or_insert_with(|| {
+            let location = catalog
+                .locations
+                .iter()
+                .find(|location| location.path == *path)?;
+            read(home, root, location).ok()
+        });
+        if file.as_ref().and_then(|file| file.doc.entry(&approved.key)) == Some(approved) {
+            return true;
+        }
+        if stale.insert((path.clone(), approved.key.clone())) {
+            result.block(
+                Code::ReviewNeeded,
+                format!(
+                    "{}: {} changed after the settings preview. Review the plan again.",
+                    path.display(),
+                    approved.label()
+                ),
+            );
+        }
+        false
+    });
+    adopted.retain(|path, entries| {
+        entries.retain(|entry| !stale.contains(&(path.clone(), entry.key.clone())));
+        !entries.is_empty()
+    });
+    Ok(())
 }
 
 /// Find only unique, reviewable MCP entries in enrolled tools. Reuse the
@@ -880,9 +943,9 @@ impl Setup {
                             name: name.clone(),
                             item: item.clone(),
                             destination,
+                            source: (location.path.clone(), current.clone()),
                             unmanaged: managed_entry(manifest, &location.path, &state.key)
-                                .is_none()
-                                .then(|| (location.path.clone(), current.clone())),
+                                .is_none(),
                         });
                 }
             }
@@ -948,6 +1011,7 @@ impl Setup {
         root: &FileRoot,
         manifest: &mut Manifest,
         result: &mut RulesSyncReport,
+        approved: Option<&ShareDestinations>,
     ) -> Result<()> {
         let view = View::read(&self.home, root, manifest)?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
@@ -957,11 +1021,13 @@ impl Setup {
         let mut kept_in_place = BTreeMap::<String, usize>::new();
         for (location, file) in &view.files {
             let path = &location.path;
+            let keys = approved.and_then(|approved| approved.get(path));
+            let included = approved.is_none() || keys.is_some();
             let display = location.display();
             let file = match file {
                 Ok(file) => file,
                 Err(reason) => {
-                    if manifest.personal_settings.contains_key(path) {
+                    if included && manifest.personal_settings.contains_key(path) {
                         result.block(Code::ReviewNeeded, format!("{display}: {reason}."));
                     }
                     continue;
@@ -981,6 +1047,9 @@ impl Setup {
             if refused > 0 {
                 *kept_in_place.entry(location.tool.to_owned()).or_default() += refused;
             }
+            if !included {
+                continue;
+            }
             // A file that holds, or will hold, a key is never copied whole:
             // each entry is written in place with its own receipt.
             let in_place = !file.safe || manifest.keys.targets(path);
@@ -997,6 +1066,9 @@ impl Setup {
             let mut next = None;
             let mut updates = Vec::new();
             for state in managed {
+                if keys.is_some_and(|keys| !keys.contains(&state.key)) {
+                    continue;
+                }
                 let current = file.doc.entry(&state.key);
                 if current.is_some_and(|entry| !reviewable(location.tool, entry)) {
                     continue;
@@ -1039,15 +1111,7 @@ impl Setup {
                         continue;
                     }
                     let previous = next.as_deref().or_else(|| snapshot_bytes(&file.snapshot));
-                    match location.edit(previous, wanted).and_then(|bytes| {
-                        let receipt = location.record_write(
-                            state.receipt.as_ref(),
-                            previous,
-                            &bytes,
-                            wanted,
-                        )?;
-                        Ok((bytes, receipt))
-                    }) {
+                    match location.edit_recorded(state.receipt.as_ref(), previous, wanted) {
                         Ok((bytes, receipt)) => {
                             next = Some(bytes);
                             updates.push(Update {
@@ -1055,12 +1119,13 @@ impl Setup {
                                 receipt,
                             });
                         }
-                        Err(_) => result.block(
-                            Code::ReviewNeeded,
-                            format!(
-                            "{display}: {label} conflicts with a native entry or settings shape."
-                        ),
-                        ),
+                        Err(error) => {
+                            let message = match error.downcast_ref::<ReceiptLayoutError>() {
+                                Some(reason) => format!("{display}: {label} stayed in place because {reason}."),
+                                None => format!("{display}: {label} conflicts with a native entry or settings shape."),
+                            };
+                            result.block(Code::ReviewNeeded, message);
+                        }
                     }
                 } else {
                     let proposal =

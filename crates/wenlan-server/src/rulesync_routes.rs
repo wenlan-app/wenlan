@@ -218,18 +218,21 @@ async fn share_preview(
             "WENLAN_RULESYNC is off".into(),
         ));
     }
-    tokio::task::spawn_blocking(move || Setup::system_ready()?.preview_share(&request.home))
-        .await
-        .map_err(|error| ServerError::Internal(error.to_string()))?
-        .map(Json)
-        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+    let key_consent = !ai_caller(&headers);
+    tokio::task::spawn_blocking(move || {
+        Setup::system_ready()?.preview_share(&request.home, key_consent)
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
 fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Result<()> {
     ensure!(
         !plan.plan_id.is_empty()
             && request.confirmed_plan_id.as_deref() == Some(plan.plan_id.as_str())
-            && request.token == plan.token,
+            && key_shares::plan_token(&request.token) == key_shares::plan_token(&plan.token),
         "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list."
     );
     Ok(())
@@ -354,7 +357,7 @@ async fn execute(
                         .home
                         .as_deref()
                         .context("A confirmed share needs the tool home")?;
-                    let plan = setup.preview_share(home)?;
+                    let plan = setup.preview_share(home, false)?;
                     validate_confirmed_share(&request, &plan)?;
                 }
                 setup.share(&request, share::KeyAnswer::of(ai_caller, &request))
@@ -2979,7 +2982,7 @@ impl Setup {
         }
         let saved = rulesync_registry::saved_skill_deliveries(&self.data)?;
         self.sync_skills(root, manifest, blocked, result, &saved, render_skills)?;
-        self.sync_personal_settings(root, manifest, result)?;
+        self.sync_personal_settings(root, manifest, result, None)?;
         self.sync_registry(root, manifest, blocked, result, &saved, render_skills)?;
         Ok(())
     }

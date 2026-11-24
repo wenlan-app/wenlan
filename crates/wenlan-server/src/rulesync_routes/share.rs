@@ -3,7 +3,7 @@
 //! server to the other enrolled tools that support it. The writes use the
 //! same journal, backup and restore path as adding a tool to the setup.
 
-use super::key_shares::KeyShare;
+use super::key_shares::{plan_token, KeyDigests, KeyPreview, KeyShare, EXPIRED_KEY_PREVIEW};
 use super::personal_files::{choose_destination, file_bytes};
 use super::personal_settings::{enroll_shares, offered_unmanaged_sources, SettingAddition};
 use super::*;
@@ -28,6 +28,7 @@ pub(super) struct Share {
     settings: Vec<SettingAddition>,
     /// Servers that may hold a key; written only with the person's yes.
     keys: Vec<KeyShare>,
+    key_digests: KeyDigests,
     worktree_writes: BTreeMap<PathBuf, PathBuf>,
     pub(super) plan: SharingPlan,
 }
@@ -176,19 +177,42 @@ impl Setup {
         Ok(manifest)
     }
 
-    pub(super) fn preview_share(&self, expected_home: &Path) -> Result<SharingPlan> {
+    pub(super) fn preview_share(
+        &self,
+        expected_home: &Path,
+        key_consent: bool,
+    ) -> Result<SharingPlan> {
         self.check_adoption_home(expected_home)?;
         let session = RenderSession::new(&self.binary);
-        self.preview_share_using(|renderer, skills| self.render_skills(&session, renderer, skills))
+        self.build_share_preview(key_consent, |renderer, skills| {
+            self.render_skills(&session, renderer, skills)
+        })
     }
 
+    #[cfg(test)]
     pub(super) fn preview_share_using(
         &self,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<SharingPlan> {
+        self.build_share_preview(true, render_skills)
+    }
+
+    fn build_share_preview(
+        &self,
+        key_consent: bool,
+        render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    ) -> Result<SharingPlan> {
         let manifest = self.share_manifest()?;
         let root = FileRoot::open_home(&self.home)?;
-        Ok(self.plan_share(&root, &manifest, &render_skills)?.plan)
+        let Share {
+            mut plan,
+            key_digests,
+            ..
+        } = self.plan_share(&root, &manifest, &render_skills)?;
+        if key_consent {
+            plan.token = KeyPreview::remember(self, plan.token, key_digests);
+        }
+        Ok(plan)
     }
 
     /// `keys` is true only for the person's own second yes; the route
@@ -224,17 +248,23 @@ impl Setup {
         self.claim_key_intents(&root, &mut manifest)?;
         let share = self.plan_share(&root, &manifest, &render_skills)?;
         ensure!(
-            share.plan.token == token,
-            "The setup changed since that preview. Run `wenlan rules share --dry-run` again."
+            share.plan.token == plan_token(token),
+            "The setup changed after the preview. Run `wenlan rules share --dry-run` again."
         );
-        let (keys, left) = if answer == KeyAnswer::Yes {
-            (share.keys.clone(), 0)
+        let key_yes = answer == KeyAnswer::Yes && !share.keys.is_empty();
+        let preview = key_yes.then(|| KeyPreview::take(self, token)).flatten();
+        let left = (!key_yes && !share.plan.key_servers.is_empty())
+            .then(|| keys_left_message(share.plan.key_servers.len(), answer));
+        let empty = share.is_empty() && preview.is_none();
+        let mut result = report(if empty {
+            NOTHING_TO_SHARE
         } else {
-            (Vec::new(), share.plan.key_servers.len())
-        };
-        let left = (left != 0).then(|| keys_left_message(left, answer));
-        if share.is_empty() && keys.is_empty() {
-            let mut result = report(NOTHING_TO_SHARE);
+            "Shared existing items with the other tools"
+        });
+        if key_yes && preview.is_none() {
+            result.block(Code::ReviewNeeded, EXPIRED_KEY_PREVIEW);
+        }
+        if empty {
             if let Some(left) = left {
                 result.message = format!("{NOTHING_TO_SHARE}.\n{left}");
             }
@@ -243,8 +273,9 @@ impl Setup {
         let Share {
             mut operations,
             skills,
-            settings,
+            mut settings,
             worktree_writes,
+            keys,
             ..
         } = share;
         // Import the sources through the ordinary adoption path before any
@@ -252,9 +283,8 @@ impl Setup {
         // and adds its normal backup operation to this same batch.
         let unmanaged = offered_unmanaged_sources(&settings);
         let source_paths: BTreeSet<_> = unmanaged.sources.keys().cloned().collect();
-        let adopted =
+        let mut adopted =
             personal_settings::adopt(&self.home, &root, &manifest, unmanaged, &mut operations)?;
-        let mut result = report("Shared existing items with the other tools");
         let outcomes = if operations.is_empty() {
             Vec::new()
         } else {
@@ -278,6 +308,15 @@ impl Setup {
                 result.written.push(path.display().to_string());
             }
         }
+        #[cfg(test)]
+        tests::before_share_enrollment();
+        personal_settings::recheck_share_sources(
+            &self.home,
+            &root,
+            &mut settings,
+            &mut adopted,
+            &mut result,
+        )?;
         // One checkpoint enrolls the copies, as for a tool addition. Recovery
         // before this point rolls back the journaled copies.
         for addition in skills {
@@ -292,40 +331,31 @@ impl Setup {
         manifest.extension_paths.clear();
         manifest.worktree_writes.extend(worktree_writes);
         personal_settings::enroll(&mut manifest, adopted);
-        let destinations: BTreeSet<_> = settings
-            .iter()
-            .map(|addition| addition.path().to_owned())
-            .collect();
-        enroll_shares(&mut manifest, settings);
+        let destinations = enroll_shares(&mut manifest, settings);
         // Files about to hold a key take their safe additions in place too.
         let at = chrono::Utc::now().timestamp();
-        manifest
-            .keys
-            .intents
-            .extend(keys.iter().cloned().map(|mut share| {
-                share.at = at;
-                share
-            }));
+        if preview.is_some() {
+            manifest
+                .keys
+                .intents
+                .extend(keys.iter().cloned().map(|mut share| {
+                    share.at = at;
+                    share
+                }));
+        }
         self.save(&manifest)?;
         if !destinations.is_empty() {
             let mut written = report("");
-            self.sync_personal_settings(&root, &mut manifest, &mut written)?;
+            self.sync_personal_settings(&root, &mut manifest, &mut written, Some(&destinations))?;
             result.written.extend(written.written);
             result.kept_in_place.extend(written.kept_in_place);
-            for (line, code) in written.blocked.into_iter().zip(written.blocked_codes) {
-                if destinations
-                    .iter()
-                    .any(|path| line.starts_with(&format!("~/{}", path.display())))
-                {
-                    result.blocked.push(line);
-                    result.blocked_codes.push(code);
-                }
-            }
+            result.blocked.extend(written.blocked);
+            result.blocked_codes.extend(written.blocked_codes);
         }
-        if !keys.is_empty() {
+        if let Some(preview) = preview {
             manifest.keys.intents.clear();
             manifest.keys.notes.clear();
-            self.apply_key_shares(&root, &mut manifest, keys, &mut result)?;
+            self.apply_key_shares(&root, &mut manifest, keys, &preview, &mut result)?;
         }
         if let Some(left) = left {
             result.message = format!("{}.\n{left}", result.message);
@@ -390,6 +420,10 @@ impl Setup {
                 names.dedup();
             }
         }
+        settings.unmanaged_refusals.sort_unstable();
+        listing.stays.sort_unstable_by(|left, right| {
+            (&left.tool, &left.item, &left.reason).cmp(&(&right.tool, &right.item, &right.reason))
+        });
         // The key group enters the token by place and name only.
         let token = fingerprint(&(
             SHARE_TOKEN_VERSION,
@@ -418,6 +452,7 @@ impl Setup {
                 key_tools: settings.keys.tools.clone(),
             },
             keys: settings.keys.shares,
+            key_digests: settings.keys.digests,
         })
     }
 
@@ -841,6 +876,21 @@ impl Setup {
 mod tests {
     use super::*;
     use crate::rulesync_routes::tests::{fixture_rule_renderer, fixture_skill_renderer, Fixture};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static BEFORE_SHARE_ENROLLMENT: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn before_share_enrollment() {
+        if let Some(hook) = BEFORE_SHARE_ENROLLMENT.with(|cell| cell.take()) {
+            hook();
+        }
+    }
+
+    fn edit_before_share_enrollment(edit: impl FnOnce() + 'static) {
+        BEFORE_SHARE_ENROLLMENT.with(|cell| cell.replace(Some(Box::new(edit))));
+    }
 
     const SKILL: &str = "---\nname: codex-only\ndescription: A fixture skill.\n---\nUse it.\n";
     const COMMAND: &str = "---\ndescription: Greet.\n---\nSay hello.\n";
@@ -1058,6 +1108,197 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_share_rereads_unmanaged_donor_before_enrolling_copies() {
+        let f = unmanaged_fixture();
+        let donor = f.setup.home.join(".codex/config.toml");
+        fs::write(&donor, keyed_codex()).unwrap();
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(tool(&plan, "Claude Code").mcp_servers, ["safe"]);
+        edit_before_share_enrollment(move || {
+            fs::write(donor, keyed_codex().replace("safe-server", "edited-server")).unwrap();
+        });
+
+        let result = f
+            .setup
+            .share_using(&plan.token, fixture_skill_renderer)
+            .unwrap();
+        assert!(result.written.is_empty(), "{result:?}");
+        assert!(
+            result.blocked.iter().any(|line| {
+                line.contains(".codex/config.toml")
+                    && line.contains("changed after the settings preview")
+            }),
+            "{result:?}"
+        );
+        assert_eq!(f.text(".claude.json"), EMPTY_CLAUDE);
+        assert_eq!(f.text(".gemini/settings.json"), "{\"mcpServers\":{}}\n");
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(!manifest
+            .personal_settings
+            .contains_key(Path::new(".codex/config.toml")));
+    }
+
+    #[test]
+    fn rulesync_share_confirm_writes_only_approved_entries_in_the_destination() {
+        const A: &str = "[mcp_servers.alpha]\ncommand = 'alpha-server'\n";
+        const B: &str = "[mcp_servers.bravo]\ncommand = 'bravo-server'\n";
+        let f = Fixture::new();
+        write(
+            &f,
+            &[(".codex/config.toml", ""), (".claude.json", EMPTY_CLAUDE)],
+        );
+        adopt(&f);
+        f.write(".codex/config.toml", A);
+        let first = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        let target = f.setup.home.join(".claude.json");
+        edit_before_share_enrollment(move || {
+            fs::write(target, r#"{"mcpServers":{"alpha":{"command":"occupied"}}}"#).unwrap();
+        });
+        f.setup
+            .share_using(&first.token, fixture_skill_renderer)
+            .unwrap();
+        assert!(f.text(".claude.json").contains("occupied"));
+        let alpha_pending = || {
+            let manifest = f.setup.load().unwrap().unwrap();
+            manifest.personal_settings[Path::new(".claude.json")]
+                .iter()
+                .any(|state| {
+                    state.key.name.last().is_some_and(|name| name == "alpha")
+                        && state.before.is_none()
+                })
+        };
+        assert!(alpha_pending());
+
+        write(
+            &f,
+            &[
+                (".claude.json", EMPTY_CLAUDE),
+                (".codex/config.toml", &format!("{A}\n{B}")),
+            ],
+        );
+        let second = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(tool(&second, "Claude Code").mcp_servers, ["bravo"]);
+        let request = AdoptRequest {
+            confirmed_plan_id: Some(second.plan_id.clone()),
+            token: second.token.clone(),
+            home: Some(f.setup.home.clone()),
+            include_keys: false,
+        };
+        super::super::validate_confirmed_share(&request, &second).unwrap();
+        let result = f
+            .setup
+            .share_with_keys(
+                &request.token,
+                KeyAnswer::of(true, &request),
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        let contents = f.text(".claude.json");
+        assert!(
+            contents.contains("bravo-server") && !contents.contains("alpha-server"),
+            "{contents}"
+        );
+        assert!(alpha_pending());
+
+        let synced = f.sync_with("");
+        assert!(synced.blocked.is_empty(), "{synced:?}");
+        let contents = f.text(".claude.json");
+        assert!(
+            contents.contains("alpha-server") && contents.contains("bravo-server"),
+            "{contents}"
+        );
+    }
+
+    #[test]
+    fn rulesync_share_jsonc_comment_never_enters_a_restore_receipt() {
+        const COMMENT: &str = "sk-commentFixtureSentinel0123456789abcdef";
+        let f = unmanaged_fixture();
+        let refused = format!(
+            "{{\"mcpServers\":{{\"wenlan\":{{\"command\":\"wenlan-mcp\"}} // {COMMENT}\n}}}}\n"
+        );
+        // An existing separator lets the insertion leave this comment in place
+        // without spanning it.
+        let allowed = refused.replace("} //", "}, //");
+        write(
+            &f,
+            &[
+                (
+                    ".codex/config.toml",
+                    "[mcp_servers.safe]\ncommand = 'safe-server'\n",
+                ),
+                (".claude.json", &refused),
+                (".gemini/settings.json", &allowed),
+            ],
+        );
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        let request = AdoptRequest {
+            confirmed_plan_id: Some(plan.plan_id.clone()),
+            token: plan.token.clone(),
+            home: Some(f.setup.home.clone()),
+            include_keys: false,
+        };
+        super::super::validate_confirmed_share(&request, &plan).unwrap();
+        let result = f
+            .setup
+            .share_with_keys(
+                &request.token,
+                KeyAnswer::of(true, &request),
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        let manifest = f.setup.load().unwrap().unwrap();
+        for path in [".gemini/settings.json", ".claude.json"] {
+            let receipt = manifest
+                .personal_settings
+                .get(Path::new(path))
+                .and_then(|states| states.iter().find_map(|state| state.receipt.as_ref()));
+            if path == ".gemini/settings.json" {
+                assert!(
+                    receipt.is_some(),
+                    "the safe insertion should have a receipt"
+                );
+            }
+            if let Some(receipt) = receipt {
+                let encoded = serde_json::to_value(receipt).unwrap();
+                for fragment in [
+                    &encoded["delivered"],
+                    &encoded["original"]["Inserted"]["prefix"],
+                    &encoded["original"]["Inserted"]["suffix"],
+                    &encoded["original"]["Inserted"]["replaced"],
+                ] {
+                    let decoded: Vec<u8> = serde_json::from_value(fragment.clone()).unwrap();
+                    assert!(
+                        !decoded
+                            .windows(COMMENT.len())
+                            .any(|part| part == COMMENT.as_bytes()),
+                        "{path} kept comment bytes in its restore receipt"
+                    );
+                }
+            }
+        }
+        assert!(
+            plan.stays.iter().any(|stay| {
+                stay.item == "MCP server safe"
+                    && stay.reason.contains(".claude.json")
+                    && stay.reason.contains("comments")
+            }),
+            "{plan:?}"
+        );
+        assert_eq!(
+            fs::read(f.setup.home.join(".claude.json")).unwrap(),
+            refused.as_bytes()
+        );
+        assert!(f.text(".gemini/settings.json").contains(COMMENT));
+        assert!(f.text(".gemini/settings.json").contains("safe-server"));
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(".gemini/settings.json"), allowed);
+    }
+
+    #[test]
     fn ux_skill_26_rulesync_share_names_an_unmanaged_unsafe_server() {
         let f = unmanaged_fixture();
         write(
@@ -1116,6 +1357,30 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_share_sorts_refusals_after_redacting_names() {
+        let f = unmanaged_fixture();
+        let settings = |name: &str| {
+            format!(
+                "[mcp_servers.{name}]\ncommand = 'server'\n\n\
+             [mcp_servers.refused]\ncommand = 'server'\nunexpected = true\n"
+            )
+        };
+        f.write(
+            ".codex/config.toml",
+            &settings("ghp_redactedFixture0123456789abcdef"),
+        );
+        let first = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(first.stays.len(), 2);
+        f.write(
+            ".codex/config.toml",
+            &settings("sk-redactedFixture0123456789abcdef"),
+        );
+        let second = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        assert_eq!(first.plan_id, second.plan_id);
+        assert_eq!(first.stays, second.stays);
+    }
+
+    #[test]
     fn ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores() {
         let f = Fixture::new();
         let home = f.setup.home.clone();
@@ -1135,7 +1400,7 @@ mod tests {
         let adopted = tree(&home);
 
         let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
-        assert_eq!(plan.plan_id, adoption_plan_id(&plan.token));
+        assert_eq!(plan.plan_id, adoption_plan_id(plan_token(&plan.token)));
         let claude = tool(&plan, "Claude Code");
         assert_eq!(claude.skills, ["codex-only"]);
         assert_eq!(claude.mcp_servers, ["safe"]);
@@ -1644,6 +1909,74 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_share_refuses_a_keyed_endpoint_changed_after_the_person_preview() {
+        const BEFORE: &str = "https://one.example.invalid/mcp";
+        const AFTER: &str = "https://two.example.invalid/mcp";
+        let f = unmanaged_fixture();
+        let donor = |endpoint: &str| {
+            format!(
+                "[mcp_servers.keyed]\nurl = '{endpoint}'\nhttp_headers = {{ 'Authorization' = 'Bearer {KEY_SECRET}' }}\n"
+            )
+        };
+        let preview = || f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        let entry_hash = || {
+            let root = FileRoot::open_home(&f.setup.home).unwrap();
+            let manifest = f.setup.load().unwrap().unwrap();
+            let view = personal_settings::View::read(&f.setup.home, &root, &manifest).unwrap();
+            let (location, file) = view
+                .files
+                .iter()
+                .find(|(location, _)| location.path == Path::new(".codex/config.toml"))
+                .unwrap();
+            let (_, entry, _) = file
+                .as_ref()
+                .unwrap()
+                .doc
+                .refused_servers(location.tool)
+                .next()
+                .unwrap();
+            fingerprint(entry).unwrap()
+        };
+
+        f.write(".codex/config.toml", &donor(BEFORE));
+        let original = preview();
+        let first_hash = entry_hash();
+        assert_eq!(original.key_servers, ["keyed"]);
+        f.write(".codex/config.toml", &donor(AFTER));
+        let fresh = preview();
+        let second_hash = entry_hash();
+        assert_eq!(original.plan_id, fresh.plan_id);
+
+        let result = f
+            .setup
+            .share_with_keys(&original.token, KeyAnswer::Yes, fixture_skill_renderer)
+            .unwrap();
+        assert!(result.written.is_empty(), "{result:?}");
+        assert!(
+            result
+                .blocked
+                .iter()
+                .any(|line| line.contains("changed after the preview")),
+            "{result:?}"
+        );
+        assert_eq!(f.text(".claude.json"), EMPTY_CLAUDE);
+        assert_eq!(f.text(".gemini/settings.json"), "{\"mcpServers\":{}}\n");
+        let shown = serde_json::to_string(&[original, fresh]).unwrap();
+        let secret_hash = fingerprint(&KEY_SECRET).unwrap();
+        for needle in [
+            KEY_SECRET,
+            BEFORE,
+            AFTER,
+            &first_hash,
+            &second_hash,
+            &secret_hash,
+        ] {
+            assert!(!shown.contains(needle));
+            assert!(!holds(&f.setup.data, needle.as_bytes()));
+        }
+    }
+
+    #[test]
     fn ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it() {
         let (f, before) = key_fixture();
         let claude = f.setup.home.join(".claude.json");
@@ -1879,8 +2212,10 @@ mod tests {
         assert_eq!(share.keys.len(), 1);
 
         let mut result = report("share key fixture");
+        let token = KeyPreview::remember(&f.setup, share.plan.token, share.key_digests);
+        let preview = KeyPreview::take(&f.setup, &token).unwrap();
         f.setup
-            .apply_key_shares(&root, &mut manifest, share.keys, &mut result)
+            .apply_key_shares(&root, &mut manifest, share.keys, &preview, &mut result)
             .unwrap();
         assert!(
             result

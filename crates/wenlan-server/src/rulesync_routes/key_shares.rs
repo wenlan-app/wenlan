@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! MCP servers that may hold a key. Only the person can share them, after a
-//! second yes. Wenlan keeps no copy of such a server anywhere: no value, no
-//! hash and no whole-file backup of a file that holds one. It records only
-//! where a copy went, by name, and reads the live source again whenever it
-//! writes, claims or takes a copy out.
+//! second yes. Wenlan persists only where a copy went, by name. The preview
+//! holds a short-lived digest in memory. Wenlan reads the live source again
+//! whenever it writes, claims or takes a copy out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wenlan_core::rulesync_personal::DeliveryWorktrees;
+use uuid::Uuid;
+use wenlan_core::rulesync_personal::{fingerprint, DeliveryWorktrees};
 use wenlan_core::rulesync_settings::personal::{
     mcp_refusal, project_key, same_key_server, Catalog, Entry, Feature, Key, Location, Refusal,
 };
@@ -24,6 +26,111 @@ use super::personal_settings::{
 };
 use super::{with_bytes, Kind, Manifest, Setup};
 use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
+
+const KEY_PREVIEW_LIFETIME: Duration = Duration::from_secs(5 * 60);
+const MAX_KEY_PREVIEWS: usize = 32;
+pub(super) const EXPIRED_KEY_PREVIEW: &str =
+    "The preview for servers that may hold a key expired. Run `wenlan rules share` again.";
+
+pub(super) type KeyDigests = BTreeMap<(PathBuf, Key), String>;
+
+static KEY_PREVIEWS: Mutex<BTreeMap<Uuid, KeyPreview>> = Mutex::new(BTreeMap::new());
+
+/// A person's key approval identifies this particular preview. Only its
+/// random id leaves memory. The plan fingerprint still binds places and names.
+pub(super) struct KeyPreview {
+    home: PathBuf,
+    data: PathBuf,
+    token: String,
+    created: Instant,
+    digests: KeyDigests,
+    eviction: Option<tokio::task::AbortHandle>,
+}
+
+pub(super) fn plan_token(token: &str) -> &str {
+    token.split_once('.').map_or(token, |(plan, _)| plan)
+}
+
+impl KeyPreview {
+    pub(super) fn remember(setup: &Setup, token: String, digests: KeyDigests) -> String {
+        if digests.is_empty() {
+            return token;
+        }
+        let mut previews = KEY_PREVIEWS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        previews.retain(|_, preview| preview.fresh());
+        if previews.len() >= MAX_KEY_PREVIEWS {
+            if let Some(id) = previews
+                .iter()
+                .min_by_key(|(_, preview)| preview.created)
+                .map(|(id, _)| *id)
+            {
+                previews.remove(&id);
+            }
+        }
+        let id = Uuid::new_v4();
+        let created = Instant::now();
+        let eviction = tokio::runtime::Handle::try_current().ok().map(|runtime| {
+            runtime
+                .spawn(async move {
+                    tokio::time::sleep_until((created + KEY_PREVIEW_LIFETIME).into()).await;
+                    KEY_PREVIEWS
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .remove(&id);
+                })
+                .abort_handle()
+        });
+        let reference = format!("{token}.{}", id.simple());
+        previews.insert(
+            id,
+            Self {
+                home: setup.home.clone(),
+                data: setup.data.clone(),
+                token,
+                created,
+                digests,
+                eviction,
+            },
+        );
+        reference
+    }
+
+    pub(super) fn take(setup: &Setup, token: &str) -> Option<Self> {
+        let (plan, id) = token.split_once('.')?;
+        let id = Uuid::parse_str(id).ok()?;
+        let mut previews = KEY_PREVIEWS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        previews.retain(|_, preview| preview.fresh());
+        let preview = previews.get(&id)?;
+        if preview.token != plan || preview.home != setup.home || preview.data != setup.data {
+            return None;
+        }
+        previews.remove(&id)
+    }
+
+    fn fresh(&self) -> bool {
+        self.created.elapsed() < KEY_PREVIEW_LIFETIME
+    }
+
+    fn matches(&self, share: &KeyShare, source: &Entry) -> Result<bool> {
+        let current = fingerprint(source)?;
+        Ok(self
+            .digests
+            .get(&(share.source.clone(), share.source_key.clone()))
+            == Some(&current))
+    }
+}
+
+impl Drop for KeyPreview {
+    fn drop(&mut self) {
+        if let Some(task) = &self.eviction {
+            task.abort();
+        }
+    }
+}
 
 /// Where one shared copy went. An intent is saved before the write and
 /// becomes a receipt once the write is known to have landed.
@@ -224,6 +331,7 @@ fn cleanup_share_temp(root: &FileRoot, share: &KeyShare) -> Result<()> {
 #[derive(Default)]
 pub(super) struct KeyGroup {
     pub(super) shares: Vec<KeyShare>,
+    pub(super) digests: KeyDigests,
     /// Display names of the tools that would receive a copy.
     pub(super) tools: Vec<String>,
     /// (tool id, item, reason)
@@ -401,6 +509,12 @@ pub(super) fn plan(
             if !group.tools.contains(&name) {
                 group.tools.push(name);
             }
+            let identity = (first.source.clone(), first.source_key.clone());
+            if let std::collections::btree_map::Entry::Vacant(digest) =
+                group.digests.entry(identity)
+            {
+                digest.insert(fingerprint(source)?);
+            }
             group.shares.push(first);
             continue;
         }
@@ -430,6 +544,11 @@ struct Live {
     to: Location,
     source: Option<Entry>,
     destination: Result<LiveFile, &'static str>,
+}
+
+enum ShareOutcome {
+    Applied,
+    Stayed(&'static str),
 }
 
 impl Live {
@@ -613,6 +732,7 @@ impl Setup {
         root: &FileRoot,
         manifest: &mut Manifest,
         shares: Vec<KeyShare>,
+        preview: &KeyPreview,
         result: &mut RulesSyncReport,
     ) -> Result<()> {
         let at = chrono::Utc::now().timestamp();
@@ -623,22 +743,22 @@ impl Setup {
             }
             manifest.keys.intents.push(share.clone());
             self.save(manifest)?;
-            let outcome = self.write_key_share(root, &share);
+            let outcome = self.write_key_share(root, &share, preview);
             let display = format!("~/{}", share.destination.display());
             match outcome {
-                Ok(true) => {
+                Ok(ShareOutcome::Applied) => {
                     cleanup_share_temp(root, &share)?;
                     manifest.keys.intents.retain(|intent| *intent != share);
                     result.written.push(share.destination.display().to_string());
                     manifest.keys.shares.push(share);
                 }
-                Ok(false) => {
+                Ok(ShareOutcome::Stayed(reason)) => {
                     cleanup_share_temp(root, &share)?;
                     manifest.keys.intents.retain(|intent| *intent != share);
                     result.block(
                         Code::ReviewNeeded,
                         format!(
-                            "{display}: {} was not shared because a file changed while sharing.",
+                            "{display}: {} was not shared. {reason}",
                             server_name(&share)
                         ),
                     );
@@ -653,13 +773,29 @@ impl Setup {
         Ok(())
     }
 
-    fn write_key_share(&self, root: &FileRoot, share: &KeyShare) -> Result<bool> {
+    fn write_key_share(
+        &self,
+        root: &FileRoot,
+        share: &KeyShare,
+        preview: &KeyPreview,
+    ) -> Result<ShareOutcome> {
         anyhow::ensure!(
             share.temp == key_share_temp(share)?,
             "the key-share temp does not match its stable intent"
         );
+        if !preview.fresh() {
+            return Ok(ShareOutcome::Stayed(EXPIRED_KEY_PREVIEW));
+        }
         let live = Live::read(&self.home, root, share)?;
-        let source = live.source.as_ref().context("the source server changed")?;
+        let changed = ShareOutcome::Stayed(
+            "The source server changed after the preview. Run `wenlan rules share` again.",
+        );
+        let Some(source) = live.source.as_ref() else {
+            return Ok(changed);
+        };
+        if !preview.matches(share, source)? {
+            return Ok(changed);
+        }
         let file = live
             .destination
             .as_ref()
@@ -674,9 +810,14 @@ impl Setup {
         );
         let next = live.to.insert_key(bytes, &copy)?;
         let desired = with_bytes(&file.snapshot, next);
+        if !preview.fresh() {
+            return Ok(ShareOutcome::Stayed(EXPIRED_KEY_PREVIEW));
+        }
         Ok(
-            root.apply_key_file(&share.destination, &share.temp, &file.snapshot, &desired)?
-                == ApplyOutcome::Applied,
+            match root.apply_key_file(&share.destination, &share.temp, &file.snapshot, &desired)? {
+                ApplyOutcome::Applied => ShareOutcome::Applied,
+                _ => ShareOutcome::Stayed("A file changed while sharing."),
+            },
         )
     }
 
@@ -898,6 +1039,27 @@ impl Setup {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rulesync_key_preview_expires_with_its_token() {
+        let f = super::super::tests::Fixture::new();
+        let key: Key = serde_json::from_value(serde_json::json!({
+            "feature": "Mcp", "name": ["mcp_servers", "fixture"]
+        }))
+        .unwrap();
+        let digests = KeyDigests::from([(
+            (PathBuf::from(".codex/config.toml"), key),
+            "fixture-digest".into(),
+        )]);
+        let expired = KeyPreview::remember(&f.setup, "plan".into(), digests.clone());
+        let fresh = KeyPreview::remember(&f.setup, "plan".into(), digests);
+        let id = Uuid::parse_str(expired.split_once('.').unwrap().1).unwrap();
+        KEY_PREVIEWS.lock().unwrap().get_mut(&id).unwrap().created -= KEY_PREVIEW_LIFETIME;
+
+        assert!(KeyPreview::take(&f.setup, &expired).is_none());
+        assert!(KeyPreview::take(&f.setup, &fresh).is_some());
+        assert!(KeyPreview::take(&f.setup, &fresh).is_none());
+    }
 
     #[test]
     fn key_temp_path_is_deterministic_for_the_same_intent() {

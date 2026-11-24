@@ -1486,7 +1486,8 @@ and wait for evidence that people need them.
   a subagent with several reasons has one line with the affected tools.
   JSON retains the full list. Items stay for reasons including a same-name
   item with different content (never replaced), a command with `$` or `!`,
-  or an MCP server a tool cannot represent. A refused MCP server is named
+  an MCP server a tool cannot represent, or a settings layout that would
+  retain a nearby comment in a restore record. A refused MCP server is named
   when its name passes the safety check, with its file when another file has
   the same name; a key-looking name is never shown.
   Kinds a tool has no place for are left out without a line. An MCP server
@@ -1499,13 +1500,19 @@ and wait for evidence that people need them.
   The person types `y` or `yes`; an AI session shows the person
   `wenlan rules share --dry-run` and runs
   `wenlan rules share --confirm <plan id>` after they agree, and a plan id
-  from an older preview is refused. Other copies go through the same backup
-  as adoption, so `wenlan rules restore` removes them. A second run says
+  from an older preview is refused. Confirmation applies the destination
+  entries in the approved plan. An entry whose source changed stays in its
+  own tool. Other copies go through the same backup as adoption, so
+  `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
   `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,
   `ux_skill_26_rulesync_share_names_an_unmanaged_unsafe_server`,
   `ux_skill_26_rulesync_share_names_refused_servers_without_exposing_unsafe_names`,
+  `rulesync_share_jsonc_comment_never_enters_a_restore_receipt`,
+  `rulesync_share_rereads_unmanaged_donor_before_enrolling_copies`,
+  `rulesync_share_confirm_writes_only_approved_entries_in_the_destination`,
+  `rulesync_share_sorts_refusals_after_redacting_names`,
   `ux_skill_26_rules_share_short_preview_summarizes_distinct_stays`,
   `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
   `rulesync_share_leaves_a_different_item_with_the_same_name`,
@@ -1536,9 +1543,12 @@ and wait for evidence that people need them.
   a "no" does the same. This tells the AI tools' normal route from the
   person's and is not a security boundary: a program under the same account
   can leave those markers out.
-  Wenlan stores no value and no hash of such a server anywhere. It records
-  only where each copy went (destination file and server name, source tool,
-  file and server name, time). It reads the live source and writes the copy
+  The second yes binds to the server shown in that preview for up to five minutes.
+  Before copying, Wenlan compares the live server with a digest held in
+  memory. A changed server or expired preview requires a fresh preview.
+  Wenlan records where each copy went (destination file and server name,
+  source tool, file and server name, time). The digest stays in daemon
+  memory. Wenlan writes the copy
   into the destination one entry at a time, never through a whole-file backup,
   and saves an intent first. A file that holds or will hold such a server
   gets every other Wenlan edit one entry at a time too. After a crash, an
@@ -1550,6 +1560,8 @@ and wait for evidence that people need them.
   file; otherwise it says "kept <server> in <tool>: changed since sharing;
   remove it by hand if you don't want it".
   Tests `rulesync_share_previews_key_servers_by_name_and_tool_only`,
+  `rulesync_share_refuses_a_keyed_endpoint_changed_after_the_person_preview`,
+  `rulesync_key_preview_expires_with_its_token`,
   `ux_skill_27_rulesync_share_unmanaged_key_requires_person_and_stores_no_value_or_hash`,
   `ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
   `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
