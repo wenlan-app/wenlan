@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.7](https://github.com/wenlan-app/wenlan/compare/v0.22.6...v0.22.7) (2026-11-24)
+
+
+### Features
+
+* **rules:** let an AI tool adopt the previewed setup after the person says yes ([#1382](https://github.com/wenlan-app/wenlan/issues/1382)) ([f071fc0](https://github.com/wenlan-app/wenlan/commit/f071fc0f02bdefeec2f62742e27145ec47a412a3))
+* **rules:** share skills, commands, subagents and safe MCP servers with every tool ([#1387](https://github.com/wenlan-app/wenlan/issues/1387)) ([afa852c](https://github.com/wenlan-app/wenlan/commit/afa852cc707614aaad95446e7ee0b6c1263b81f3))
+* **setup:** turn on tool sync and bring the setup in on first run ([#1383](https://github.com/wenlan-app/wenlan/issues/1383)) ([405f94a](https://github.com/wenlan-app/wenlan/commit/405f94a87179dab4c8da67f4ca94ec45a9c4f4e4))
+
+
+### Bug Fixes
+
+* **rules:** fetch the pinned rulesync binary on first need so a fresh setup can adopt ([#1385](https://github.com/wenlan-app/wenlan/issues/1385)) ([e45c426](https://github.com/wenlan-app/wenlan/commit/e45c4265424a821590bc87f5cb21e6841456308e))
+* **rules:** fetch the pinned rulesync binary on first use and name only managed tools in the setup report ([e45c426](https://github.com/wenlan-app/wenlan/commit/e45c4265424a821590bc87f5cb21e6841456308e))
+
 ## [0.22.6](https://github.com/wenlan-app/wenlan/compare/v0.22.5...v0.22.6) (2026-11-22)
 
 
