@@ -21,16 +21,28 @@ impl Batch {
         tool: &FileRoot,
         root: &FileRoot,
         operations: &[Pending],
+        reserve_undo: bool,
     ) -> Result<Option<Self>> {
         for op in operations {
             preflight(tool, root, op)?;
         }
-        let files: BTreeMap<_, _> = operations
+        let mut files: BTreeMap<_, _> = operations
             .iter()
             .enumerate()
             .filter(|(_, op)| displaces_file(op))
             .map(|(index, op)| (index, op.path.clone()))
             .collect();
+        if reserve_undo {
+            files.extend(
+                operations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, op)| {
+                        op.seen != op.desired && matches!(op.desired, Snapshot::File { .. })
+                    })
+                    .map(|(index, op)| (index + operations.len(), op.path.clone())),
+            );
+        }
         if files.is_empty() {
             return Ok(None);
         }

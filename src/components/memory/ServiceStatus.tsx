@@ -97,8 +97,7 @@ function warningCopy(kind: WarningKind, { version }: ServiceNotices, t: TFunctio
       return {
         label: t("daemonService.label"),
         body: [
-          t("daemonService.body", { daemon: version?.daemon, app: version?.app }),
-          ...(version?.program ? [t("daemonService.outsideBundle", { program: version.program })] : []),
+          version?.program ? t("daemonService.outsideBundle") : t("daemonService.body"),
         ],
         action: t("daemonService.restart"),
         busy: t("boot.starting"),

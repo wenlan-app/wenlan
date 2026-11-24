@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, BufWriter, Write};
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -22,6 +23,10 @@ use wenlan_types::rulesync_skill::SavedSkillTool;
 use crate::rulesync_adopt::{
     self, AdoptedSkill, Adoption, AdoptionEntry, AdoptionLink, AdoptionSkip, AdoptionTarget,
 };
+
+#[path = "rulesync_credentials.rs"]
+pub mod credentials;
+pub use credentials::reject_secret_lines;
 
 #[path = "rulesync_delivery_worktrees.rs"]
 mod delivery_worktrees;
@@ -752,8 +757,8 @@ mod windows_acl {
     }
 }
 
-/// The harness is a migration source. Personal delivery owns paths in the
-/// tools' own directories and never owns any part of the harness checkout.
+/// The harness is a migration source. Approved rule shares can update the
+/// shared rule file through their own write and restore path.
 pub fn is_harness_path(path: &Path) -> bool {
     matches!(path.components().next(), Some(Component::Normal(name))
         if name.as_encoded_bytes().eq_ignore_ascii_case(b".agents"))
@@ -761,6 +766,7 @@ pub fn is_harness_path(path: &Path) -> bool {
 
 /// Compare directory identities so aliases and case differences cannot turn
 /// the migration source into a write destination.
+#[derive(Clone, Copy)]
 pub struct HarnessGuard(Option<(u64, u64)>);
 
 impl HarnessGuard {
@@ -1025,6 +1031,7 @@ pub fn additional_targets(
 pub fn discover_additional_adoption(
     home: &Path,
     master: &PersonalMaster,
+    shared: &str,
     known_files: &BTreeSet<PathBuf>,
 ) -> Result<Adoption> {
     let installed = additional_targets(home, master)?;
@@ -1034,7 +1041,7 @@ pub fn discover_additional_adoption(
         .map(String::as_str)
         .chain(installed.iter().map(|target| target.id));
     let files = rulesync_adopt::discover_personal_files(home, tools, known_files)?;
-    let mut adoption = discover_targets(home, &installed, Some(master), Some(files))?;
+    let mut adoption = discover_targets(home, &installed, Some(shared), Some(files))?;
     adoption.settings = crate::rulesync_settings::personal::Adoption::discover(home)?;
     adoption.added_tools = installed
         .iter()
@@ -1127,19 +1134,19 @@ fn new_file_unit(path: &Path) -> PathBuf {
 fn discover_targets(
     home: &Path,
     installed: &[&PersonalTarget],
-    master: Option<&PersonalMaster>,
+    shared: Option<&str>,
     personal_files: Option<rulesync_adopt::PersonalFileDiscovery>,
 ) -> Result<Adoption> {
     let targets: Vec<_> = installed
         .iter()
         .map(|target| target.adoption_input())
         .collect();
-    let mut adoption = if let Some(master) = master {
-        rulesync_adopt::discover_with_shared(home, &targets, &master.shared)?
+    let mut adoption = if let Some(shared) = shared {
+        rulesync_adopt::discover_with_shared(home, &targets, shared)?
     } else {
         rulesync_adopt::discover(home, &targets)?
     };
-    if master.is_some() {
+    if shared.is_some() {
         adoption.skills.retain(|skill| !skill.locations.is_empty());
         adoption.skipped.retain(|path, _| !is_harness_path(path));
     }
@@ -1249,6 +1256,7 @@ fn adoption_digests(adoption: &Adoption) -> Result<[String; ADOPTION_FIELDS.len(
             &adoption.skipped_rules,
             &adoption.skipped_tools,
             &adoption.added_tools,
+            &adoption.credentials,
         ))?,
         fingerprint(&(
             &adoption.shared,
@@ -1355,6 +1363,11 @@ fn display_entry(entry: &AdoptionEntry) -> (Option<Code>, &str) {
 pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     let mut files = Vec::new();
     for (path, file) in &adoption.files {
+        if matches!(file.before, AdoptionEntry::Missing)
+            && matches!(file.after, AdoptionEntry::Missing)
+        {
+            continue;
+        }
         let personal_source = adoption.personal_files.contains_key(path);
         let personal_note = adoption.personal_file_notes.get(path);
         let tool = adoption_tool(path);
@@ -1515,7 +1528,9 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     // A new skill copy counts once per folder, not once per file inside it.
     let mut created = BTreeMap::<String, BTreeSet<PathBuf>>::new();
     for (path, file) in &adoption.files {
-        if matches!(file.before, AdoptionEntry::Missing) {
+        if matches!(file.before, AdoptionEntry::Missing)
+            && !matches!(file.after, AdoptionEntry::Missing)
+        {
             if let Some(tool) = adoption_tool(path) {
                 created
                     .entry(tool.name)
@@ -1525,6 +1540,13 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         }
     }
     Ok(AdoptionPlan {
+        rule_lines: Some(
+            std::iter::once(&adoption.shared)
+                .chain(adoption.overlays.values())
+                .flat_map(|text| text.lines())
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+        ),
         new_files: created
             .into_iter()
             .map(|(tool, units)| AdoptionNewFiles {
@@ -1557,7 +1579,8 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                 let rules = usize::from(
                     adoption
                         .files
-                        .contains_key(Path::new(target.rules.destination)),
+                        .get(Path::new(target.rules.destination))
+                        .is_some_and(|file| !matches!(file.after, AdoptionEntry::Missing)),
                 );
                 let skills = adoption
                     .skill_locations
@@ -1572,12 +1595,13 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                             .is_some_and(|location| location.tool == target.id)
                     })
                     .count();
-                (rules + skills + other_files > 0).then(|| AdoptionTool {
-                    name: target.tool.display_name().into(),
-                    rule_files: rules,
-                    skills,
-                    other_files,
-                })
+                (adoption.overlays.contains_key(target.id) || rules + skills + other_files > 0)
+                    .then(|| AdoptionTool {
+                        name: target.tool.display_name().into(),
+                        rule_files: rules,
+                        skills,
+                        other_files,
+                    })
             })
             .collect(),
     })
@@ -1590,6 +1614,9 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
+    /// None denotes a setup saved before Claude import provenance was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_imported_rules: Option<BTreeSet<String>>,
     pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill<Content>>,
     pub overrides: BTreeMap<String, LocalText>,
@@ -1614,6 +1641,7 @@ impl PersonalMaster {
         Self {
             shared: adoption.shared.clone(),
             overlays: adoption.overlays.clone(),
+            claude_imported_rules: adoption.claude_imported_rules.clone(),
             codex_sync_replaced: adoption.codex_sync_replaced,
             skills: adoption.skills.clone(),
             overrides: BTreeMap::new(),
@@ -1638,6 +1666,20 @@ impl PersonalMaster {
             base = join_text(&base, &addition);
         }
         base
+    }
+
+    /// Strip the delivered shared and generated layers by occurrence, while
+    /// retaining authored changes and their surrounding Markdown.
+    pub fn authored_overlay(&self, target: &str, delivered_base: &str, live: &str) -> String {
+        let shared = self.shared_rule_text(target);
+        let overlay = rulesync_adopt::without_shared(&shared, live);
+        let authored_base = self.base_rule_text(target, &[]);
+        let generated = delivered_base.strip_prefix(&authored_base).unwrap_or("");
+        rulesync_adopt::without_shared(generated, &overlay)
+    }
+
+    pub fn shared_rule_text(&self, target: &str) -> String {
+        rulesync_adopt::personal_rule_body(&self.shared, "", target, self.codex_sync_replaced)
     }
 
     pub fn rule_text(&self, target: &str, generated: &[String]) -> Result<String> {
@@ -1693,11 +1735,21 @@ fn bounded_lines(before: &[&str], after: &[&str]) -> bool {
 pub fn line_changes(before: &str, after: &str) -> Result<Vec<LineChange>> {
     let before: Vec<_> = before.split_inclusive('\n').collect();
     let after: Vec<_> = after.split_inclusive('\n').collect();
-    let prefix = before
-        .iter()
-        .zip(&after)
-        .take_while(|(a, b)| a == b)
-        .count();
+    Ok(changed_line_ranges(&before, &after)?
+        .into_iter()
+        .map(|(old, new)| LineChange {
+            start: old.start,
+            removed: before[old].iter().map(ToString::to_string).collect(),
+            added: after[new].iter().map(ToString::to_string).collect(),
+        })
+        .collect())
+}
+
+fn changed_line_ranges(
+    before: &[&str],
+    after: &[&str],
+) -> Result<Vec<(Range<usize>, Range<usize>)>> {
+    let prefix = before.iter().zip(after).take_while(|(a, b)| a == b).count();
     let suffix = before[prefix..]
         .iter()
         .rev()
@@ -1718,17 +1770,10 @@ pub fn line_changes(before: &str, after: &str) -> Result<Vec<LineChange>> {
         .chain(std::iter::once((old.len(), new.len())))
     {
         if (i, j) != (previous_old, previous_new) {
-            changes.push(LineChange {
-                start: prefix + previous_old,
-                removed: old[previous_old..i]
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                added: new[previous_new..j]
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-            });
+            changes.push((
+                prefix + previous_old..prefix + i,
+                prefix + previous_new..prefix + j,
+            ));
         }
         previous_old = i + 1;
         previous_new = j + 1;
@@ -1798,9 +1843,81 @@ fn describe_line_changes(path: &str, changes: Vec<LineChange>) -> (usize, usize,
     (added, removed, diff)
 }
 
+/// Both sides changed the same lines in different ways.
+#[derive(Debug, thiserror::Error)]
+#[error("the master and this tool changed the same lines")]
+pub struct RuleTextConflict;
+
 /// Apply both sets of changes to a common ancestor. Overlapping changes
 /// require consent when they disagree rather than guessing how to combine them.
 pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
+    merge_rule_text_inner(base, left, right, false)
+}
+
+/// Prepare a source with credential locations removed from its text. An
+/// opaque line cannot be evidence that the rules in its edit hunk were deleted.
+pub fn preserve_rules_at_credential_lines(
+    base: &str,
+    safe_source: &str,
+    credential_lines: &[usize],
+) -> Result<String> {
+    if credential_lines.is_empty() {
+        return Ok(safe_source.to_owned());
+    }
+    let base_lines: Vec<_> = base.split_inclusive('\n').collect();
+    let mut safe_lines = safe_source.split_inclusive('\n');
+    let mut locations = credential_lines.iter().copied().peekable();
+    let mut source: Vec<_> = (1..=safe_lines.clone().count() + credential_lines.len())
+        .map(|number| {
+            if locations.next_if_eq(&number).is_some() {
+                Ok(None)
+            } else {
+                safe_lines
+                    .next()
+                    .map(Some)
+                    .context("invalid shared source line locations")
+            }
+        })
+        .collect::<Result<_>>()?;
+    // Match lines across newline changes. The marker cannot equal any line
+    // after its ending is removed, including a blank line.
+    let base_content: Vec<_> = base_lines
+        .iter()
+        .map(|line| rule_line_content(line))
+        .collect();
+    let source_content: Vec<_> = source
+        .iter()
+        .map(|line| line.map_or("\n", rule_line_content))
+        .collect();
+    let ranges = changed_line_ranges(&base_content, &source_content)?;
+    for (old, new) in ranges.into_iter().rev() {
+        if old.len() == new.len() {
+            for (line, &previous) in source[new].iter_mut().zip(&base_lines[old]) {
+                // Only the opaque replacement is inherited. The safe
+                // replacements at the other positions are source edits.
+                line.get_or_insert(previous);
+            }
+        } else if let Some(offset) = source[new.clone()].iter().position(Option::is_none) {
+            // Keep possibly replaced rules at the masked position, so that
+            // adjacent safe insertions retain their order on the next read.
+            let index = new.start + offset;
+            source.splice(index..=index, base_lines[old].iter().copied().map(Some));
+        }
+    }
+    let mut result = String::new();
+    for line in source.into_iter().flatten() {
+        rulesync_adopt::append_text(&mut result, line);
+    }
+    Ok(result)
+}
+
+/// Merge a person's shared source with approved master changes, coalescing
+/// independent additions of the same new line at the source's position.
+pub fn merge_shared_rule_text(base: &str, source: &str, master: &str) -> Result<String> {
+    merge_rule_text_inner(base, source, master, true)
+}
+
+fn merge_rule_text_inner(base: &str, left: &str, right: &str, deduplicate: bool) -> Result<String> {
     if left == base || left == right {
         return Ok(right.into());
     }
@@ -1808,7 +1925,11 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
         return Ok(left.into());
     }
     let mut changes = line_changes(base, left)?;
-    for change in line_changes(base, right)? {
+    let mut right = line_changes(base, right)?;
+    if deduplicate {
+        coalesce_shared_insertions(base, &changes, &mut right);
+    }
+    for change in right {
         if changes.contains(&change) {
             continue;
         }
@@ -1817,20 +1938,65 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
             let earlier_end = earlier.start + earlier.removed.len();
             earlier.start < end && change.start < earlier_end || earlier.start == change.start
         }) {
-            bail!("the master and this tool changed the same lines");
+            return Err(RuleTextConflict.into());
         }
         changes.push(change);
     }
     changes.sort_by_key(|change| change.start);
+    Ok(apply_rule_text_changes(base, changes))
+}
+
+fn coalesce_shared_insertions(base: &str, source: &[LineChange], master: &mut Vec<LineChange>) {
+    let existing: BTreeSet<_> = base.lines().collect();
+    let mut source_insertions = BTreeMap::new();
+    for change in source {
+        if master.contains(change) {
+            continue;
+        }
+        for line in &change.added {
+            let line = rule_line_content(line);
+            if !line.trim().is_empty() && !existing.contains(line) {
+                *source_insertions.entry(line).or_insert(0usize) += 1;
+            }
+        }
+    }
+    master.retain_mut(|change| {
+        if !change.removed.is_empty() || source.contains(change) {
+            return true;
+        }
+        change.added.retain(|line| {
+            let line = rule_line_content(line);
+            let Some(count) = source_insertions.get_mut(line).filter(|count| **count > 0) else {
+                return true;
+            };
+            *count -= 1;
+            false
+        });
+        !change.added.is_empty()
+    });
+}
+
+fn rule_line_content(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+fn apply_rule_text_changes(base: &str, changes: Vec<LineChange>) -> String {
     let lines: Vec<_> = base.split_inclusive('\n').collect();
     let (mut result, mut at) = (String::new(), 0);
     for change in changes {
-        result.extend(lines[at..change.start].iter().copied());
-        result.extend(change.added);
+        for line in lines[at..change.start]
+            .iter()
+            .copied()
+            .chain(change.added.iter().map(String::as_str))
+        {
+            rulesync_adopt::append_text(&mut result, line);
+        }
         at = change.start + change.removed.len();
     }
-    result.extend(lines[at..].iter().copied());
-    Ok(result)
+    for line in &lines[at..] {
+        rulesync_adopt::append_text(&mut result, line);
+    }
+    result
 }
 
 fn promote_changes(
@@ -1940,29 +2106,8 @@ pub fn write_named_root_rule(input: &Path, name: &str, text: &str) -> Result<()>
     Ok(())
 }
 
-/// Shared setup must never carry credential-like text. Error messages
-/// identify only the position so the suspected value is never echoed.
-pub fn reject_secret_lines(text: &str) -> Result<()> {
-    static TOKEN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(concat!(
-            r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----",
-            r"|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}",
-            r"|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}",
-            r"|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|wlt_[a-f0-9]{64})\b",
-            r"|(?i)\bbearer\s+[A-Za-z0-9_.~+/-]{20,}",
-            r#"|(?i)\b(?:[a-z0-9_]*[_-])?(?:api[_-]?key|secret|token|password|access[_-]?key)\b["']?"#,
-            r#"\s*[:=]\s*["']?[A-Za-z0-9_+/.-]{8,}"#,
-        )).expect("credential detection pattern")
-    });
-    for (index, line) in text.lines().enumerate() {
-        ensure!(
-            !TOKEN.is_match(line),
-            "possible credential on line {}",
-            index + 1
-        );
-    }
-    Ok(())
-}
+#[path = "rulesync_personal_share.rs"]
+pub mod sharing;
 
 #[cfg(test)]
 mod tests {
@@ -1971,7 +2116,7 @@ mod tests {
     #[test]
     fn rulesync_preview_names_tools_that_get_new_files() {
         let home = tempfile::tempdir().unwrap();
-        for (path, text) in [(".claude/CLAUDE.md", "Rule.\n"), (".gemini/note", "x")] {
+        for (path, text) in [(".agents/AGENTS.md", "Rule.\n"), (".gemini/note", "x")] {
             let path = home.path().join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
@@ -2017,6 +2162,8 @@ mod tests {
             ])
         );
         let plan = adoption_plan(&adoption).unwrap();
+        // The shared line is counted once, and each tool-only line once.
+        assert_eq!(plan.rule_lines, Some(4));
         assert_eq!(plan.files.len(), 3);
         assert_eq!(plan.notes.len(), plan.note_codes.len());
         assert_eq!(plan.skipped_tools.len(), plan.skipped_tool_codes.len());
@@ -2043,6 +2190,34 @@ mod tests {
         }
         assert!(!home.path().join(".cursor").exists());
         assert!(!home.path().join(".config").exists());
+    }
+
+    #[test]
+    fn ux_cli_8_adoption_does_not_create_an_empty_rule_file_for_an_installed_tool() {
+        for shared in ["", "\n \t\n", "\u{2003}\n"] {
+            let home = tempfile::tempdir().unwrap();
+            fs::create_dir_all(home.path().join(".claude")).unwrap();
+            fs::create_dir_all(home.path().join(".agents")).unwrap();
+            fs::write(home.path().join(".agents/AGENTS.md"), shared).unwrap();
+
+            let adoption = discover_adoption(home.path()).unwrap();
+            let no_op = &adoption.files[Path::new(".claude/CLAUDE.md")];
+            assert!(matches!(no_op.before, AdoptionEntry::Missing));
+            assert!(matches!(no_op.after, AdoptionEntry::Missing), "{shared:?}");
+            assert!(adoption.overlays.contains_key("claudecode"));
+
+            let plan = adoption_plan(&adoption).unwrap();
+            assert_eq!(plan.rule_lines, Some(0));
+            assert!(!plan
+                .files
+                .iter()
+                .any(|file| file.path == ".claude/CLAUDE.md"));
+            assert!(plan.new_files.is_empty());
+            assert!(plan
+                .tools
+                .iter()
+                .any(|tool| tool.name == "Claude Code" && tool.rule_files == 0));
+        }
     }
 
     #[test]
@@ -2165,6 +2340,16 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_merge_separates_a_new_line_after_a_removed_final_newline() {
+        let merged = merge_rule_text(
+            "Shared rule.\n",
+            "Shared rule.",
+            "Shared rule.\nAdded rule.\n",
+        );
+        assert_eq!(merged.unwrap(), "Shared rule.\nAdded rule.\n");
+    }
+
+    #[test]
     fn promotion_uses_edit_position_to_disambiguate_repeated_rules() {
         assert_eq!(
             promote_changes("cursor", false, "x\nx\n", "", "x\nx\n", "y\nx\n").unwrap(),
@@ -2185,6 +2370,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Repeated rule.\n".into(),
             overlays: BTreeMap::from([("cursor".into(), "Repeated rule.\n".into())]),
+            claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2203,6 +2389,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Shared rule.\n".into(),
             overlays: BTreeMap::from([("codexcli".into(), "Codex rule.\n".into())]),
+            claude_imported_rules: None,
             codex_sync_replaced: true,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2222,6 +2409,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Shared rule.\n".into(),
             overlays: BTreeMap::from([("cursor".into(), "Cursor rule.\n".into())]),
+            claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2253,6 +2441,7 @@ mod tests {
                 "cursor".into(),
                 "First rule.\nMiddle rule.\nLast rule.\n".into(),
             )]),
+            claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
             overrides: BTreeMap::new(),
@@ -2316,6 +2505,6 @@ mod tests {
         let error = reject_secret_lines(&format!("ordinary rule\nBearer {fixture}")).unwrap_err();
         assert_eq!(error.to_string(), "possible credential on line 2");
         assert!(reject_secret_lines("Read API keys from the system keychain.").is_ok());
-        assert!(reject_secret_lines("SERVICE_TOKEN=fixture-value").is_err());
+        assert!(reject_secret_lines("SERVICE_TOKEN=w79wxza928af410e9c4f36xdpycb01h6").is_err());
     }
 }

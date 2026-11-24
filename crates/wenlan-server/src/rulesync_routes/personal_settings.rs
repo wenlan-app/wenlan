@@ -12,7 +12,7 @@ use wenlan_core::rulesync_personal::personal_target;
 use wenlan_core::rulesync_personal::{check_delivery_paths, fingerprint, DeliveryWorktrees};
 use wenlan_core::rulesync_settings::personal::{
     enrolled, equivalent, project, reviewable, Adoption, Catalog, Document, Entry, Feature, Key,
-    Location, RecordedEntry, Refusal,
+    Location, ReceiptLayoutError, RecordedEntry, Refusal,
 };
 use wenlan_types::rulesync::{
     KeptInPlace, PullbackAction, PullbackCard, PullbackDecision, PullbackKind,
@@ -294,6 +294,27 @@ pub(super) struct View {
 }
 
 impl View {
+    pub(super) fn mcp_label(&self, location: &Location, name: Option<&str>) -> String {
+        match name {
+            Some(name) => {
+                let duplicate = self.files.iter().any(|(other, file)| {
+                    other.path != location.path
+                        && file.as_ref().is_ok_and(|file| {
+                            file.doc
+                                .mcp_server_names(other.tool)
+                                .any(|other| other == name)
+                        })
+                });
+                if duplicate {
+                    format!("MCP server {name} in {}", location.display())
+                } else {
+                    format!("MCP server {name}")
+                }
+            }
+            None => format!("an MCP server in {}", location.display()),
+        }
+    }
+
     pub(super) fn read(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Self> {
         let mut catalog = Catalog::read(home)?;
         catalog.retain_managed_locations(manifest.personal_settings.keys().map(PathBuf::as_path));
@@ -498,6 +519,16 @@ fn proposal(
                 ));
                 continue;
             }
+            if current.is_none() {
+                let refusal = to
+                    .edit_recorded(None, snapshot_bytes(&file.snapshot), wanted)
+                    .err()
+                    .and_then(|error| error.downcast::<ReceiptLayoutError>().ok());
+                if let Some(reason) = refusal {
+                    blocked.push(format!("{display}: {reason}."));
+                    continue;
+                }
+            }
             destinations.push(Destination {
                 path: to.path.clone(),
                 before: current.cloned(),
@@ -608,18 +639,28 @@ pub(super) fn managed_mcp_counts(
     Ok(counts)
 }
 
-/// A managed MCP server another enrolled tool can receive unchanged.
+/// An MCP server another enrolled tool can receive unchanged.
 #[derive(Clone, Serialize)]
 pub(super) struct SettingAddition {
     pub(super) from_tool: &'static str,
     pub(super) to_tool: &'static str,
     pub(super) name: String,
+    item: String,
     destination: Destination,
+    source: (PathBuf, Entry),
+    /// A safe source to adopt before projecting it, if not yet managed.
+    unmanaged: bool,
 }
 
 #[derive(Default)]
 pub(super) struct SettingShares {
     pub(super) additions: Vec<SettingAddition>,
+    /// All safe unmanaged sources bind the preview, including those already
+    /// present at every destination or blocked by a conflict.
+    pub(super) unmanaged: Adoption,
+    /// Refused unmanaged entries bind by path and safe-to-show name only.
+    /// A redacted name contributes only its presence, never a secret or hash.
+    pub(super) unmanaged_refusals: Vec<(PathBuf, Option<String>, &'static str)>,
     /// (tool id, item, reason)
     pub(super) stays: Vec<(&'static str, String, String)>,
     pub(super) already_there: usize,
@@ -631,9 +672,15 @@ pub(super) fn tool_name(id: &str) -> &'static str {
     personal_target(id).map_or("this tool", |target| target.tool.display_name())
 }
 
+pub(super) type ShareDestinations = BTreeMap<PathBuf, BTreeSet<Key>>;
+
 /// Record approved additions as entries waiting for their first write, the
 /// same state an all-tools review leaves for `sync_personal_settings`.
-pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddition>) {
+pub(super) fn enroll_shares(
+    manifest: &mut Manifest,
+    additions: Vec<SettingAddition>,
+) -> ShareDestinations {
+    let mut approved = ShareDestinations::new();
     for addition in additions {
         let Destination {
             path,
@@ -643,6 +690,10 @@ pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddit
         } = addition.destination;
         let entries = manifest.personal_settings.entry(path.clone()).or_default();
         let key = wanted.key.clone();
+        approved
+            .entry(path.clone())
+            .or_default()
+            .insert(key.clone());
         if let Some(current) = entries.iter_mut().find(|entry| entry.key == key) {
             current.before = before;
             current.wanted = Some(wanted);
@@ -658,17 +709,99 @@ pub(super) fn enroll_shares(manifest: &mut Manifest, additions: Vec<SettingAddit
             manifest.worktree_writes.insert(path, worktree);
         }
     }
+    approved
 }
 
-impl SettingAddition {
-    pub(super) fn path(&self) -> &Path {
-        &self.destination.path
+/// Adopt only unmanaged sources that actually won a destination in the plan.
+pub(super) fn offered_unmanaged_sources(additions: &[SettingAddition]) -> Adoption {
+    let mut source = Adoption::default();
+    for (path, entry) in additions
+        .iter()
+        .filter(|addition| addition.unmanaged)
+        .map(|addition| &addition.source)
+    {
+        let entries = source.sources.entry(path.clone()).or_default();
+        if !entries.contains(entry) {
+            entries.push(entry.clone());
+        }
     }
+    source
+}
+
+/// Recheck each approved donor after the file batch, including donors that
+/// could only be adopted in place and had no compare-and-swap operation.
+pub(super) fn recheck_share_sources(
+    home: &Path,
+    root: &FileRoot,
+    additions: &mut Vec<SettingAddition>,
+    adopted: &mut Source,
+    result: &mut RulesSyncReport,
+) -> Result<()> {
+    if additions.is_empty() {
+        return Ok(());
+    }
+    let catalog = Catalog::read(home)?;
+    let mut live = BTreeMap::new();
+    let mut stale = BTreeSet::new();
+    additions.retain(|addition| {
+        let (path, approved) = &addition.source;
+        let file = live.entry(path.clone()).or_insert_with(|| {
+            let location = catalog
+                .locations
+                .iter()
+                .find(|location| location.path == *path)?;
+            read(home, root, location).ok()
+        });
+        if file.as_ref().and_then(|file| file.doc.entry(&approved.key)) == Some(approved) {
+            return true;
+        }
+        if stale.insert((path.clone(), approved.key.clone())) {
+            result.block(
+                Code::ReviewNeeded,
+                format!(
+                    "{}: {} changed after the settings preview. Review the plan again.",
+                    path.display(),
+                    approved.label()
+                ),
+            );
+        }
+        false
+    });
+    adopted.retain(|path, entries| {
+        entries.retain(|entry| !stale.contains(&(path.clone(), entry.key.clone())));
+        !entries.is_empty()
+    });
+    Ok(())
+}
+
+/// Find only unique, reviewable MCP entries in enrolled tools. Reuse the
+/// adoption safety check, which also excludes Wenlan's own server.
+fn unmanaged_mcp_sources(view: &View, manifest: &Manifest) -> Adoption {
+    let mut sources = Adoption::default();
+    for (location, file) in &view.files {
+        if !view.enrolled.contains(&location.path) || reserved(manifest, &location.path) {
+            continue;
+        }
+        let Ok(file) = file else { continue };
+        let entries: Vec<_> = file
+            .doc
+            .reviewable_entries(location.tool)
+            .filter(|entry| {
+                entry.key.feature == Feature::Mcp
+                    && managed_entry(manifest, &location.path, &entry.key).is_none()
+            })
+            .cloned()
+            .collect();
+        if !entries.is_empty() {
+            sources.sources.insert(location.path.clone(), entries);
+        }
+    }
+    sources
 }
 
 impl Setup {
-    /// Managed MCP servers that are in sync, offered to every other enrolled
-    /// tool through the same projection an all-tools review uses.
+    /// In-sync managed and safe unmanaged MCP servers offered through the
+    /// same projection an all-tools review uses.
     pub(super) fn plan_setting_shares(
         &self,
         root: &FileRoot,
@@ -676,14 +809,30 @@ impl Setup {
     ) -> Result<SettingShares> {
         let view = View::read(&self.home, root, manifest)?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
-        let mut shares = SettingShares::default();
+        let mut shares = SettingShares {
+            unmanaged: unmanaged_mcp_sources(&view, manifest),
+            ..Default::default()
+        };
         let mut wanted = BTreeMap::<(PathBuf, Key), Vec<SettingAddition>>::new();
         for (location, file) in &view.files {
             let Ok(file) = file else {
                 continue;
             };
             let enrolled = view.enrolled.contains(&location.path);
-            for (number, entry, refusal) in file.doc.refused_servers(location.tool) {
+            for (name, entry, refusal) in file.doc.refused_servers(location.tool) {
+                if enrolled
+                    && managed_entry(manifest, &location.path, &entry.key).is_none()
+                    && !manifest.keys.covers(&location.path, &entry.key)
+                {
+                    shares.unmanaged_refusals.push((
+                        location.path.clone(),
+                        name.map(str::to_owned),
+                        match refusal {
+                            Refusal::MayHoldKey => "may hold a key",
+                            Refusal::Unsafe(reason) => reason,
+                        },
+                    ));
+                }
                 // Servers that may hold a key in a managed tool form the key
                 // group; a copy Wenlan made is not listed again.
                 let reason = match refusal {
@@ -694,19 +843,23 @@ impl Setup {
                 if manifest.keys.covers(&location.path, &entry.key) {
                     continue;
                 }
-                shares.stays.push((
-                    location.tool,
-                    format!("MCP server (entry {number} in {})", location.display()),
-                    reason.into(),
-                ));
+                let item = view.mcp_label(location, name);
+                shares.stays.push((location.tool, item, reason.into()));
             }
-            let Some(managed) = manifest.personal_settings.get(&location.path) else {
-                continue;
-            };
             if reserved(manifest, &location.path) {
                 continue;
             }
-            for state in managed {
+            let unmanaged: Vec<_> = shares
+                .unmanaged
+                .sources
+                .get(&location.path)
+                .into_iter()
+                .flatten()
+                .cloned()
+                .map(|entry| Managed::kept(entry, None))
+                .collect();
+            let managed = manifest.personal_settings.get(&location.path);
+            for state in managed.into_iter().flatten().chain(&unmanaged) {
                 if state.key.feature != Feature::Mcp || state.before != state.wanted {
                     continue;
                 }
@@ -724,7 +877,7 @@ impl Setup {
                 let Some(name) = state.key.name.last().cloned() else {
                     continue;
                 };
-                let item = format!("MCP server {name}");
+                let item = view.mcp_label(location, Some(&name));
                 let mut unrepresentable = BTreeSet::new();
                 for (to, other) in &view.files {
                     if to.tool == location.tool || !view.enrolled.contains(&to.path) {
@@ -788,7 +941,11 @@ impl Setup {
                             from_tool: location.tool,
                             to_tool,
                             name: name.clone(),
+                            item: item.clone(),
                             destination,
+                            source: (location.path.clone(), current.clone()),
+                            unmanaged: managed_entry(manifest, &location.path, &state.key)
+                                .is_none(),
                         });
                 }
             }
@@ -807,7 +964,7 @@ impl Setup {
             for addition in std::iter::once(first).chain(candidates) {
                 shares.stays.push((
                     addition.from_tool,
-                    format!("MCP server {}", addition.name),
+                    addition.item,
                     format!(
                         "another tool has a different MCP server with this name for {}",
                         tool_name(addition.to_tool)
@@ -854,6 +1011,7 @@ impl Setup {
         root: &FileRoot,
         manifest: &mut Manifest,
         result: &mut RulesSyncReport,
+        approved: Option<&ShareDestinations>,
     ) -> Result<()> {
         let view = View::read(&self.home, root, manifest)?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
@@ -863,30 +1021,34 @@ impl Setup {
         let mut kept_in_place = BTreeMap::<String, usize>::new();
         for (location, file) in &view.files {
             let path = &location.path;
+            let keys = approved.and_then(|approved| approved.get(path));
+            let included = approved.is_none() || keys.is_some();
             let display = location.display();
             let file = match file {
                 Ok(file) => file,
                 Err(reason) => {
-                    if manifest.personal_settings.contains_key(path) {
+                    if included && manifest.personal_settings.contains_key(path) {
                         result.block(Code::ReviewNeeded, format!("{display}: {reason}."));
                     }
                     continue;
                 }
             };
             // A server the person shared, and its copies, are not skipped.
-            let shared: BTreeSet<usize> = file
+            let shared = file
                 .doc
                 .refused_servers(location.tool)
                 .filter(|(_, entry, _)| manifest.keys.covers(path, &entry.key))
-                .map(|(number, ..)| number)
-                .collect();
+                .count();
             let refused = file
                 .doc
                 .refused_entries(location.tool)
-                .filter(|(number, ..)| !shared.contains(number))
-                .count();
+                .count()
+                .saturating_sub(shared);
             if refused > 0 {
                 *kept_in_place.entry(location.tool.to_owned()).or_default() += refused;
+            }
+            if !included {
+                continue;
             }
             // A file that holds, or will hold, a key is never copied whole:
             // each entry is written in place with its own receipt.
@@ -904,6 +1066,9 @@ impl Setup {
             let mut next = None;
             let mut updates = Vec::new();
             for state in managed {
+                if keys.is_some_and(|keys| !keys.contains(&state.key)) {
+                    continue;
+                }
                 let current = file.doc.entry(&state.key);
                 if current.is_some_and(|entry| !reviewable(location.tool, entry)) {
                     continue;
@@ -946,15 +1111,7 @@ impl Setup {
                         continue;
                     }
                     let previous = next.as_deref().or_else(|| snapshot_bytes(&file.snapshot));
-                    match location.edit(previous, wanted).and_then(|bytes| {
-                        let receipt = location.record_write(
-                            state.receipt.as_ref(),
-                            previous,
-                            &bytes,
-                            wanted,
-                        )?;
-                        Ok((bytes, receipt))
-                    }) {
+                    match location.edit_recorded(state.receipt.as_ref(), previous, wanted) {
                         Ok((bytes, receipt)) => {
                             next = Some(bytes);
                             updates.push(Update {
@@ -962,12 +1119,13 @@ impl Setup {
                                 receipt,
                             });
                         }
-                        Err(_) => result.block(
-                            Code::ReviewNeeded,
-                            format!(
-                            "{display}: {label} conflicts with a native entry or settings shape."
-                        ),
-                        ),
+                        Err(error) => {
+                            let message = match error.downcast_ref::<ReceiptLayoutError>() {
+                                Some(reason) => format!("{display}: {label} stayed in place because {reason}."),
+                                None => format!("{display}: {label} conflicts with a native entry or settings shape."),
+                            };
+                            result.block(Code::ReviewNeeded, message);
+                        }
                     }
                 } else {
                     let proposal =

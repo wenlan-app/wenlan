@@ -24,6 +24,18 @@ pub(super) enum Format {
     CommandRules,
 }
 
+pub(super) struct Edit {
+    pub(super) bytes: Vec<u8>,
+    pub(super) json_insertion: Option<JsonInsertion>,
+}
+
+/// The bytes the JSON editor inserted, in the edited document. An added
+/// separator can precede existing whitespace between the two insertions.
+pub(super) struct JsonInsertion {
+    pub(super) addition: Range<usize>,
+    pub(super) comma: Option<usize>,
+}
+
 pub(super) fn read(format: Format, bytes: &[u8]) -> Result<Value> {
     let value = match format {
         Format::Json => parse_jsonc_value(bytes)?,
@@ -48,18 +60,16 @@ pub(super) fn read(format: Format, bytes: &[u8]) -> Result<Value> {
     Ok(value)
 }
 
-pub(super) fn edit(
-    format: Format,
-    bytes: &[u8],
-    path: &[Part<'_>],
-    value: Value,
-) -> Result<Vec<u8>> {
-    match format {
+pub(super) fn edit(format: Format, bytes: &[u8], path: &[Part<'_>], value: Value) -> Result<Edit> {
+    let bytes = match format {
         Format::Json => {
             let tree = json_tree(bytes)?;
             let mut next = bytes.to_vec();
-            tree.edit(&mut next, path, value, 0)?;
-            Ok(next)
+            let json_insertion = tree.edit(&mut next, path, value, 0)?;
+            return Ok(Edit {
+                bytes: next,
+                json_insertion,
+            });
         }
         Format::Toml => {
             let text = std::str::from_utf8(bytes)?;
@@ -71,7 +81,7 @@ pub(super) fn edit(
                 Err(_) => bail!("the settings entry cannot be expressed in TOML"),
             };
             edit_toml(doc.as_item_mut(), path, native)?;
-            Ok(keep_toml_line_endings(text, doc.to_string())?.into_bytes())
+            keep_toml_line_endings(text, doc.to_string())?.into_bytes()
         }
         Format::CommandRules => {
             let [Part::Key("rules"), Part::Index(index)] = path else {
@@ -96,9 +106,13 @@ pub(super) fn edit(
                 next.extend_from_slice(line.as_bytes());
                 next.push(b'\n');
             }
-            Ok(next)
+            next
         }
-    }
+    };
+    Ok(Edit {
+        bytes,
+        json_insertion: None,
+    })
 }
 
 /// Undo `edit`'s insertion of one named member at `path`, from its layout
@@ -445,10 +459,10 @@ impl Node {
         path: &[Part<'_>],
         value: Value,
         depth: usize,
-    ) -> Result<()> {
+    ) -> Result<Option<JsonInsertion>> {
         let Some((first, rest)) = path.split_first() else {
             bytes.splice(self.span.clone(), serde_json::to_vec(&value)?);
-            return Ok(());
+            return Ok(None);
         };
         let (last, mut addition) = match (first, &self.items) {
             (Part::Key(key), Items::Object(entries)) => {
@@ -474,21 +488,26 @@ impl Node {
         addition.insert_str(0, &format!("\n{indent}"));
         addition.push_str(&serde_json::to_string(&nested(rest, value)?)?);
         addition.push_str(&format!("\n{}", "  ".repeat(depth)));
-        if let Some(last) = last {
+        let comma = if let Some(last) = last {
             let mut scanner = Scanner {
                 bytes,
                 at: last.span.end,
             };
             scanner.layout()?;
-            let needs_comma = scanner.at == close;
-            bytes.splice(close..close, addition.bytes());
-            if needs_comma {
-                bytes.insert(last.span.end, b',');
-            }
+            (scanner.at == close).then_some(last.span.end)
         } else {
-            bytes.splice(close..close, addition.bytes());
+            None
+        };
+        let len = addition.len();
+        bytes.splice(close..close, addition.bytes());
+        if let Some(comma) = comma {
+            bytes.insert(comma, b',');
         }
-        Ok(())
+        let start = close + usize::from(comma.is_some());
+        Ok(Some(JsonInsertion {
+            addition: start..start + len,
+            comma,
+        }))
     }
 }
 

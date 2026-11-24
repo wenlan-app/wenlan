@@ -17,6 +17,10 @@ pub struct SetupArgs {
     pub model: Option<String>,
     pub anthropic_api_key_env: Option<String>,
     pub yes: bool,
+    pub details: bool,
+    pub keep_rule: Vec<usize>,
+    /// A named agent or session must never make the person's share decision.
+    pub person: bool,
     /// Write the settings and stop: no AI tool is connected, nothing is asked.
     pub config_only: bool,
     /// Skip the settings and do only what follows them (see [`finish`]).
@@ -141,7 +145,7 @@ impl RerankerModeArg {
 
 pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result<()> {
     if args.finish {
-        return finish(client, args.yes, args.format).await;
+        return finish(client, &args).await;
     }
     if let Some(note) = super::home_bin::refresh_for_setup() {
         println!("{note}");
@@ -151,12 +155,12 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
         println!("Wenlan is set up for local memory.");
         println!("Storage, search, recall, and MCP memory work without a local model or API key.");
         println!("Steep (background upkeep) is off.");
-    } else if let Some(model_id) = args.model {
-        install_model(&model_id, args.yes).await?;
+    } else if let Some(model_id) = args.model.as_deref() {
+        install_model(model_id, args.yes).await?;
         mark_setup_completed()?;
         print_enrichment_opt_in("on-device");
-    } else if let Some(env_name) = args.anthropic_api_key_env {
-        let key = std::env::var(&env_name)
+    } else if let Some(env_name) = args.anthropic_api_key_env.as_deref() {
+        let key = std::env::var(env_name)
             .map_err(|_| anyhow::anyhow!("environment variable {} is not set", env_name))?;
         set_anthropic_key(key).await?;
         mark_setup_completed()?;
@@ -166,7 +170,7 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
     }
     print_browser_address();
     if !args.config_only {
-        finish(client, args.yes, args.format).await?;
+        finish(client, &args).await?;
     }
     Ok(())
 }
@@ -176,11 +180,7 @@ pub async fn run_setup(client: &WenlanClient, args: SetupArgs) -> anyhow::Result
 /// computer, offer Codex's user hooks and one folder, and say what to try. The
 /// installer (`npx wenlan setup`) runs this as its own step, after Wenlan has started,
 /// because bringing a folder in needs it running.
-async fn finish(
-    client: &WenlanClient,
-    yes: bool,
-    format: crate::output::ResolvedFormat,
-) -> anyhow::Result<()> {
+async fn finish(client: &WenlanClient, args: &SetupArgs) -> anyhow::Result<()> {
     println!();
     let tools = super::init::connect_tools(client, super::init::Connect::All).await?;
     tools.print();
@@ -188,12 +188,20 @@ async fn finish(
         println!("Restart them to pick Wenlan up. `wenlan connect --help` lists more tools.");
     }
     if tools.has_codex() {
-        offer_codex_hooks(yes)?;
+        offer_codex_hooks(args.yes, args.details)?;
     }
 
     let running = client.health().await.is_ok();
     if running {
-        super::rulesync::adopt_during_setup(format).await;
+        let adopted = super::rulesync::adopt_during_setup(args.format).await;
+        if should_offer_setup_share(
+            adopted,
+            args.person,
+            io::stdin().is_terminal(),
+            io::stdout().is_terminal(),
+        ) {
+            super::rulesync::share_during_setup(args.details, &args.keep_rule).await;
+        }
     }
     let asked = running && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     if asked {
@@ -215,10 +223,8 @@ async fn finish(
     }
 
     if let Some(tool) = tools.first_label() {
-        println!(
-            "Try it: open a new session in {tool} and say \"remember this in Wenlan: …\", \
-             or ask \"what does Wenlan know about …?\""
-        );
+        println!("Try it: open a new session in {tool}.");
+        println!("Say \"remember this in Wenlan: …\" or ask \"what does Wenlan know?\"");
     }
     let in_repository = std::env::current_dir()
         .is_ok_and(|cwd| wenlan_core::repo_wiki::repository_top_level(&cwd).is_ok());
@@ -228,7 +234,16 @@ async fn finish(
     Ok(())
 }
 
-fn offer_codex_hooks(yes: bool) -> anyhow::Result<()> {
+fn should_offer_setup_share(
+    adopted: bool,
+    person: bool,
+    stdin_tty: bool,
+    stdout_tty: bool,
+) -> bool {
+    adopted && person && stdin_tty && stdout_tty
+}
+
+fn offer_codex_hooks(yes: bool, details: bool) -> anyhow::Result<()> {
     let Some(codex_home) = super::init::codex_home(dirs::home_dir().as_deref()) else {
         return Ok(());
     };
@@ -239,11 +254,11 @@ fn offer_codex_hooks(yes: bool) -> anyhow::Result<()> {
     }
 
     println!();
-    println!(
-        "Codex hook preview — exact contents for {}:",
-        codex_home.join("hooks.json").display()
-    );
-    print!("{}", plan.merged_json);
+    println!("{}", codex_hooks_summary(&plan));
+    if details {
+        println!("Codex hook preview — exact contents:");
+        print!("{}", plan.merged_json);
+    }
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
     let approved = yes
         || (interactive
@@ -255,11 +270,26 @@ fn offer_codex_hooks(yes: bool) -> anyhow::Result<()> {
                 "y" | "yes"
             ));
     if super::codex_hooks::apply_if_approved(&plan, approved)? {
-        println!("Added Wenlan's Codex hooks. Codex will ask you to trust each hook on first use.");
+        println!("Added Wenlan's Codex hooks.");
+        println!("Codex will ask you to trust each hook on first use.");
     } else {
-        println!("Codex hooks were not changed. Run `wenlan setup --finish --yes` to add them.");
+        println!("Codex hooks were not changed.");
+        println!("Run `wenlan setup --finish --yes` to add them.");
     }
     Ok(())
+}
+
+fn codex_hooks_summary(plan: &super::codex_hooks::HookPlan) -> String {
+    if plan.added_events.is_empty() {
+        "Codex: update Wenlan's hook scripts.".to_string()
+    } else {
+        let count = plan.added_events.len();
+        format!(
+            "Codex: add {count} Wenlan hook{} ({}).",
+            if count == 1 { "" } else { "s" },
+            plan.added_events.join(", ")
+        )
+    }
 }
 
 /// One question, answered with a path or with Enter to skip.
@@ -534,9 +564,9 @@ async fn interactive_setup() -> anyhow::Result<()> {
     println!("1) Local Memory");
     println!("   Store, search, recall, and MCP memory. No local model or API key.");
     println!("2) Local Model");
-    println!("   Download a local model for private distill cycles.");
+    println!("   Download a model for writing notes on this computer.");
     println!("3) Anthropic Key");
-    println!("   Use your Anthropic API key for stronger distill cycles. Memory stays local.");
+    println!("   Write notes with your Anthropic key. Memory stays local.");
     println!();
 
     let choice = prompt_line("Choose 1, 2, or 3 [1]: ")?;
@@ -593,15 +623,10 @@ fn print_model_list() {
             Some(on_device_models::ModelFit::MaybeSlow) => " - may be slow",
             _ => "",
         };
+        println!("{} {} ({})", marker, model.id, model.display_name);
         println!(
-            "{} {} ({}, {:.1}GB download, needs {:.0}GB RAM) - {}{}",
-            marker,
-            model.id,
-            model.display_name,
-            model.file_size_gb,
-            model.ram_required_gb,
-            cached,
-            note
+            "  {:.1}GB download, {:.0}GB RAM - {}{}",
+            model.file_size_gb, model.ram_required_gb, cached, note
         );
     }
 }
@@ -1353,7 +1378,7 @@ fn prompt_secret(prompt: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod finish_tests {
-    use super::folder_answer;
+    use super::{codex_hooks_summary, folder_answer, should_offer_setup_share};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -1371,6 +1396,50 @@ mod finish_tests {
         assert_eq!(
             folder_answer("'/Users/me/My Notes'\n", home),
             Some(PathBuf::from("/Users/me/My Notes"))
+        );
+    }
+
+    #[test]
+    fn ux_cli_8_setup_share_requires_person_tty_and_successful_adoption() {
+        assert!(should_offer_setup_share(true, true, true, true));
+        for flags in [
+            (false, true, true, true),
+            (true, false, true, true),
+            (true, true, false, true),
+            (true, true, true, false),
+        ] {
+            assert!(!should_offer_setup_share(
+                flags.0, flags.1, flags.2, flags.3
+            ));
+        }
+    }
+
+    #[test]
+    fn ux_cli_6_setup_hooks_summary_names_only_hooks_actually_added() {
+        let (_temp, home) = super::super::codex_hooks::fake_codex_home();
+        let plan = super::super::codex_hooks::plan(&home).unwrap();
+        assert_eq!(
+            codex_hooks_summary(&plan),
+            "Codex: add 2 Wenlan hooks (session start, stop)."
+        );
+        super::super::codex_hooks::apply(&plan).unwrap();
+        let hooks_path = home.join("hooks.json");
+        let mut hooks: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&hooks_path).unwrap()).unwrap();
+        hooks["hooks"].as_object_mut().unwrap().remove("Stop");
+        std::fs::write(&hooks_path, serde_json::to_vec(&hooks).unwrap()).unwrap();
+        let one_missing = super::super::codex_hooks::plan(&home).unwrap();
+        assert_eq!(
+            codex_hooks_summary(&one_missing),
+            "Codex: add 1 Wenlan hook (stop)."
+        );
+        super::super::codex_hooks::apply(&one_missing).unwrap();
+        let scripts = home.join("wenlan-hooks");
+        std::fs::remove_file(scripts.join("brief-context.sh")).unwrap();
+        let update = super::super::codex_hooks::plan(&home).unwrap();
+        assert_eq!(
+            codex_hooks_summary(&update),
+            "Codex: update Wenlan's hook scripts."
         );
     }
 }

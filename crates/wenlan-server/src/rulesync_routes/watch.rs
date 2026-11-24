@@ -12,8 +12,9 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use fs2::FileExt;
 
+use super::shared_source::SharedSourceBlocked;
 use super::{
-    group_drafts, inspect_rule, needs_conflict_card, record_scope_review,
+    group_drafts, inspect_rule, needs_conflict_card, record_scope_review, snapshot_has_credentials,
     storage::{save_manifest, BlobHash, StoredSetup, MANIFEST},
     Code, Kind, Manifest, Setup,
 };
@@ -34,6 +35,7 @@ pub(super) fn last_checked_at() -> Option<i64> {
 #[derive(Default)]
 pub struct RulesWatch {
     rules: BTreeMap<PathBuf, WatchedRule>,
+    shared_source_blocked: bool,
     #[cfg(test)]
     reads: usize,
 }
@@ -108,7 +110,7 @@ impl RulesWatch {
         match fs::symlink_metadata(data.join(MANIFEST)) {
             Ok(_) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                self.rules.clear();
+                *self = Self::default();
                 return Ok(false);
             }
             Err(error) => return Err(error).context("check for rules setup"),
@@ -132,7 +134,7 @@ impl RulesWatch {
             .context("read rules setup manifest")?
             .filter(|stored| stored.state.adopted && !stored.state.settings_only)
         else {
-            self.rules.clear();
+            *self = Self::default();
             return Ok(false);
         };
         // Leave interrupted operations to the existing Sync/review recovery path.
@@ -149,6 +151,20 @@ impl RulesWatch {
             .guard_data(&home, data)
             .context("validate rules setup directory")?;
         let root = FileRoot::open_home(&home).context("open tool home")?;
+        let setup = Setup::new(home, data.to_owned());
+        let mut manifest = stored
+            .load_contents(&data_root)
+            .context("load rules setup receipts")?;
+        match setup.follow_shared_source(&mut manifest) {
+            Ok(()) => self.shared_source_blocked = false,
+            Err(error) if error.is::<SharedSourceBlocked>() => {
+                if !std::mem::replace(&mut self.shared_source_blocked, true) {
+                    tracing::warn!("{error}");
+                }
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        }
         self.rules
             .retain(|path, _| stored.state.delivered.contains_key(path));
         let mut changed = Vec::new();
@@ -170,9 +186,6 @@ impl RulesWatch {
                 changed.push(path);
             }
         }
-        let mut manifest = stored
-            .load_contents(&data_root)
-            .context("load rules setup receipts")?;
         let mut blocked = BTreeMap::new();
         let mut drafts = Vec::new();
         for path in changed {
@@ -202,7 +215,6 @@ impl RulesWatch {
         if changed {
             save_manifest(&data_root, &manifest).context("save scope reviews")?;
         }
-        let setup = Setup::new(home, data.to_owned());
         deliver(&setup, &root, &mut manifest)?;
         Ok(true)
     }
@@ -230,6 +242,12 @@ impl RulesWatch {
                 stamp()? == Some(current_stamp),
                 "delivered rule changed during read"
             );
+            if snapshot_has_credentials(&content) {
+                // The delivery check records the location. Do not hash or
+                // cache this text as an observed rules edit.
+                self.rules.remove(path);
+                return Ok(None);
+            }
             let Snapshot::File { bytes, mode } = &content else {
                 bail!("delivered rule was replaced during read");
             };
@@ -259,23 +277,21 @@ mod tests {
     };
     use std::{collections::BTreeMap, fs, path::PathBuf, time::SystemTime};
 
-    fn round(watch: &mut RulesWatch, f: &Fixture) -> Result<()> {
-        watch
-            .round(
-                true,
-                &f.setup.data,
-                || Ok(f.setup.home.clone()),
-                |setup, root, manifest| {
-                    setup.watch_delivery(
-                        root,
-                        manifest,
-                        &[],
-                        fixture_rule_renderer,
-                        fixture_skill_renderer,
-                    )
-                },
-            )
-            .map(|_| ())
+    fn round(watch: &mut RulesWatch, f: &Fixture) -> Result<bool> {
+        watch.round(
+            true,
+            &f.setup.data,
+            || Ok(f.setup.home.clone()),
+            |setup, root, manifest| {
+                setup.watch_delivery(
+                    root,
+                    manifest,
+                    &[],
+                    fixture_rule_renderer,
+                    fixture_skill_renderer,
+                )
+            },
+        )
     }
 
     fn edit(f: &Fixture) {
@@ -328,6 +344,68 @@ mod tests {
         accept_rule(&f);
         round(&mut RulesWatch::default(), &f).unwrap();
         assert_delivered(&f);
+    }
+
+    #[test]
+    fn rulesync_watch_delivers_shared_source_edits_without_review() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let source = f
+            .text(super::super::SHARED_RULES)
+            .replace("One rule.", "Edited in the shared source.");
+        f.write(super::super::SHARED_RULES, &source);
+
+        round(&mut RulesWatch::default(), &f).unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(manifest.master.shared, source);
+        assert!(f
+            .text(CLAUDE)
+            .contains("Edited in the shared source.\nSecond rule.\nClaude only."));
+        assert!(f
+            .text(CODEX)
+            .contains("Edited in the shared source.\nSecond rule.\nCodex only."));
+        assert_eq!(f.text(super::super::SHARED_RULES), source);
+        assert!(f.setup.status().unwrap().proposals.is_empty());
+    }
+
+    #[test]
+    fn rulesync_watch_stops_on_a_shared_source_conflict() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let path = super::super::SHARED_RULES;
+        let original = f.text(path);
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        manifest.master.shared = original.replace("One rule.", "Changed in Wenlan.");
+        f.setup.save(&manifest).unwrap();
+        f.write(
+            path,
+            &original.replace("One rule.", "Inserted in the source.\nOne rule."),
+        );
+        let before = files(&f.setup.home);
+        let before_data = files(&f.setup.data);
+        let mut watch = RulesWatch::default();
+
+        for _ in 0..2 {
+            assert!(!round(&mut watch, &f).unwrap());
+            assert!(watch.shared_source_blocked);
+            let status = f.setup.status().unwrap();
+            assert!(!status.in_sync);
+            assert_eq!(status.notes.len(), 1, "{status:?}");
+            let note = &status.notes[0];
+            assert!(
+                note.contains("paused") && note.contains("Edit either side"),
+                "{note}"
+            );
+            assert!(note.contains(super::super::SYNC_COMMAND), "{note}");
+            assert_eq!(files(&f.setup.home), before);
+            assert_eq!(files(&f.setup.data), before_data);
+        }
+        f.write(path, &original);
+        assert!(round(&mut watch, &f).unwrap());
+        assert!(!watch.shared_source_blocked);
+        assert!(f.text(CODEX).contains("Changed in Wenlan."));
+        let status = f.setup.status().unwrap();
+        assert!(status.notes.is_empty() && status.proposals.is_empty());
     }
 
     #[cfg(unix)]

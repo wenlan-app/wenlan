@@ -479,6 +479,14 @@ async fn rules_delivery_needs_the_person_key() {
 
 #[tokio::test]
 async fn rulesync_router_rejects_session_on_person_only_routes() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::rulesync_router_rejects_session_on_person_only_routes",
+        &[],
+        scratch.path(),
+    ) {
+        return;
+    }
     let app = crate::router::build_router(state());
     // Adopt is not person-only: an AI session may adopt a confirmed preview
     // (rulesync_ai_adoption_requires_the_current_confirmed_plan).
@@ -510,8 +518,41 @@ async fn rulesync_router_rejects_session_on_person_only_routes() {
     }
 }
 
+/// Run one test of this file again in a child process whose data root and
+/// tool-state folder are scratch, so the tool-sync switch never comes from
+/// the machine's real data root. Returns false in the parent after the child
+/// passed; true means "this is the child, run the body".
+fn in_isolated_child(test: &str, envs: &[(&str, &str)], scratch: &std::path::Path) -> bool {
+    if std::env::var_os("WENLAN_RULESYNC_ISOLATED_CHILD").is_some() {
+        return true;
+    }
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", test, "--nocapture"])
+        .env("WENLAN_RULESYNC_ISOLATED_CHILD", "1")
+        .env("WENLAN_DATA_DIR", scratch.join("data"))
+        .env("WENLAN_DEV_STATE_DIR", scratch)
+        .env_remove("WENLAN_RULESYNC");
+    command.envs(envs.iter().copied());
+    let child = command.output().unwrap();
+    assert!(
+        child.status.success(),
+        "{test} {envs:?}: {}",
+        String::from_utf8_lossy(&child.stdout)
+    );
+    false
+}
+
 #[tokio::test]
 async fn rulesync_router_refuses_session_when_feature_off() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::rulesync_router_refuses_session_when_feature_off",
+        &[],
+        scratch.path(),
+    ) {
+        return;
+    }
     assert!(!wenlan_core::rulesync_personal::enabled());
     let app = crate::router::build_router(state());
     for (method, path) in [
@@ -541,25 +582,13 @@ async fn rulesync_router_refuses_session_when_feature_off() {
 
 #[tokio::test]
 async fn rulesync_router_session_access_matrix() {
-    if std::env::var_os("WENLAN_RULESYNC_MATRIX_CHILD").is_none() {
+    if std::env::var_os("WENLAN_RULESYNC_ISOLATED_CHILD").is_none() {
         let scratch = tempfile::tempdir().unwrap();
         for bind in ["127.0.0.1:17917", "0.0.0.0:17917"] {
-            let child = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "person_key::person_key_test::rulesync_router_session_access_matrix",
-                    "--nocapture",
-                ])
-                .env("WENLAN_RULESYNC_MATRIX_CHILD", "1")
-                .env("WENLAN_RULESYNC", "1")
-                .env("WENLAN_BIND_ADDR", bind)
-                .env("WENLAN_DEV_STATE_DIR", scratch.path())
-                .output()
-                .unwrap();
-            assert!(
-                child.status.success(),
-                "{bind}: {}",
-                String::from_utf8_lossy(&child.stdout)
+            in_isolated_child(
+                "person_key::person_key_test::rulesync_router_session_access_matrix",
+                &[("WENLAN_RULESYNC", "1"), ("WENLAN_BIND_ADDR", bind)],
+                scratch.path(),
             );
         }
         return;

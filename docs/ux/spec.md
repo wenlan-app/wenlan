@@ -1047,7 +1047,8 @@ and wait for evidence that people need them.
   away. They do it in the app, or in their own terminal: `wenlan skills
   install` shows every file, the safety checks and the files that can run,
   then asks; `wenlan skills import` lists what it would take in, then asks;
-  `wenlan skills remove` names the skill, then asks. Only a typed `yes` goes
+  `wenlan skills remove` names the skill, then asks. A typed `y` or `yes`
+  (ignoring case and surrounding whitespace) goes
   on, a skill that has not passed its checks asks once more first, and no
   flag answers for the person; from a pipe, a script or an AI tool's shell
   the command stops before asking. A skill cannot keep text from the person:
@@ -1143,6 +1144,15 @@ and wait for evidence that people need them.
   directory modes, and says why. Skills with internal symlinks stay unmanaged.
   Unsafe paths and links stay in place with a reason in the plan. Adoption
   stages the files again and checks their bytes against the approved plan before writing.
+  When a tool rule file holds text that looks like a key, Wenlan records the
+  tool, path and line positions and leaves the file in place. Adoption,
+  sync, review and restore keep those values out of previews and backups.
+  Wenlan also leaves a skill package in place if one of its files holds
+  text that looks like a key, and records the tool and affected file paths.
+  Tests `rulesync_leaves_rule_credentials_at_their_original_locations`,
+  `rulesync_pullback_refuses_a_rule_edit_with_credentials_before_review`,
+  `rulesync_keeps_key_shaped_skill_assets_and_accepts_code_references`,
+  and `rulesync_skill_sync_keeps_an_asset_that_newly_contains_a_key`.
   On Windows, the plan lists linked rule files and skill folders as unmanaged.
   On Windows, a replacement keeps the destination's access rules, including
   custom rules. New entries inherit permissions from their folder. A different
@@ -1189,8 +1199,14 @@ and wait for evidence that people need them.
   `rulesync_confirmed_adoption_writes_previewed_files_and_links`,
   `rules_restore_refused_in_session`, and `rules_review_answer_refused_in_session`.
   `wenlan rules restore` asks the person again and uses that backup to
-  restore the original bytes and link targets. It keeps any destination
-  that has changed since delivery available for review.
+  restore the original bytes and link targets. A rule file keeps the
+  original text followed by rules added in that tool, in their authored
+  order. When someone shared a rule from one tool, it stays in the tool
+  where they wrote it. Copies sent only by Wenlan are removed. Bringing
+  in the setup again reads the retained rules from the tool files.
+  Restore leaves a file in place with a reason if it cannot separate the
+  original text and later edits safely, including a rewrite of an original
+  rule. The backup stays available for review.
   Restore keeps the backup when an unreviewed spelling differs at any point
   in the path or when a needed parent disappeared outside an approved change.
   On Windows, restore keeps the backup when it cannot verify its recorded owner
@@ -1198,6 +1214,11 @@ and wait for evidence that people need them.
   原文（2026-11-22）：「有 CLI，那你就能幫我執行，只在 AI 也要能支援」
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
   Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
+  Tests `rulesync_restore_keeps_accepted_tool_only_lines_in_byte_order`,
+  `rulesync_restore_blocks_a_settled_rewrite_of_an_original_rule`,
+  `rulesync_restore_then_adopt_keeps_the_rule_tool_only`,
+  `rulesync_restore_rechecks_rule_additions_on_retry`, and
+  `rulesync_restore_keeps_a_shared_addition_only_in_its_donor`.
 
 - **UX-SKILL-16** `shipped` `save_skill` in a local AI tool proposes the
   skill's text and files. `wenlan skills save` saves the source directly when
@@ -1205,7 +1226,7 @@ and wait for evidence that people need them.
   Wenlan also detects a new or edited skill
   in a tool's folder. It offers that content for the current tool or all
   supported tools. The person's terminal shows the complete proposal and
-  asks for typed `yes` before accepting it. The review for an edited skill
+  asks for typed `y` or `yes` before accepting it. The review for an edited skill
   shows the changed files and lists the removed files. A changed adopted
   file that is too large to preview shows its size and SHA-256 before and
   after the edit. Existing invisible characters on unchanged lines appear
@@ -1406,7 +1427,8 @@ and wait for evidence that people need them.
   remove with its permissions, and why each other enrolled tool is skipped.
   It spells out when an all-tools review only affects the source tool.
   Restore uses the original bytes, modes, and link targets and removes empty
-  directories created for delivery. A retry compares already-restored originals
+  directories created for delivery. A native skill, command, or subagent that
+  exists only in one tool stays there. A retry compares already-restored originals
   with the backup and retains it if anything differs. If an interrupted deletion
   displaced a file with changed bytes, permissions, or links, recovery reports a
   conflict and puts the file back when the destination is vacant. The plan reports
@@ -1460,8 +1482,28 @@ and wait for evidence that people need them.
   interrupted stage, or blocking skill proposal stops all tool writes in that
   round. Changed receipts surface for review. A clear round delivers approved
   content through the same writer as Sync now.
+  Sync now and the background check follow the person's edits and deletions in
+  `~/.agents/AGENTS.md` without a review card. Wenlan merges these edits with
+  the saved shared rules using the last text it read or wrote as the common
+  version. Older setups without a common version keep approved edits in Wenlan
+  and start tracking the source from its current text. When both sides insert
+  the same new rule, the source's position is used once. Each tool keeps its
+  own rule lines. A possible credential stays in the source. Wenlan records
+  its line number and protects any saved rules that the line might have
+  replaced. If both sides change the same lines differently, or a previously
+  populated source is missing or empty, delivery pauses. Status shows one
+  message with the reason and how to retry. The background check leaves the
+  last successful check time, saved rules and tool copies in place.
   Tests `rulesync_watch_delivery_open_card`, `rulesync_watch_delivery_busy_lock`,
   `rulesync_watch_delivery_receipt_mismatch`, and `rulesync_watch_delivery_positive`.
+  Tests `rulesync_watch_delivers_shared_source_edits_without_review`,
+  `rulesync_watch_stops_on_a_shared_source_conflict`,
+  `rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays`,
+  `rulesync_sync_keeps_approved_shared_edits_without_source_history`,
+  `rulesync_sync_retains_shared_rules_under_credentials_and_accepts_version_tags`,
+  `rulesync_sync_pauses_for_missing_or_empty_shared_rules_source`,
+  `rulesync_sync_merges_a_shared_line_inserted_on_both_sides_only_once`, and
+  `rulesync_shared_source_conflict_reports_once_and_leaves_files_intact`.
 - **UX-SKILL-25** `shipped` Local rules setup uses the same four action names
   in the app, CLI help and command hints. In order they are Bring in, Status,
   To review, and Restore (搬進來、狀態、待確認、還原 in Traditional Chinese and
@@ -1473,13 +1515,50 @@ and wait for evidence that people need them.
   Tests `UX-SKILL-25: names and orders the setup actions` and
   `ux_skill_25_rulesync_action_hints_parse_with_the_real_cli`.
 
-- **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` copies the
-  skills, commands, subagents and MCP servers a person already had in one tool
-  to every other managed tool that supports that kind. The preview lists each
-  tool with its counts and item names, counts items every tool already has,
-  and gives a line "Stays in <tool>: <item>: <reason>" for each item that
-  cannot travel: a same-name item with different content (never replaced),
-  a command with `$` or `!`, or an MCP server a tool cannot represent.
+- **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` offers rule
+  lines, skills, commands, subagents and MCP servers a person already had in
+  one tool to every managed tool that supports that kind. Sharing keeps
+  existing skills, commands and subagents intact, including different items
+  with the same name. Portable overlay lines move to the end of the shared
+  rules and leave each overlay that held them. Each distinct line is offered
+  once, and lines already shared are left in place. The preview reads the
+  current reviewed rule files. Each tool keeps imported Claude Code content,
+  its tool-specific lines and the sections under a local heading or lead-in.
+  The short preview shows each moving line, shortened when needed to fit
+  100 columns, and summarizes lines that stay. `--details` explains each
+  line that stays. A line that may hold a credential stays local. Details show
+  its tool or source file and line number. Wenlan can share lines from the
+  other tools while a rule file waits for the person to move the credential
+  out and review the file.
+  `--details` numbers portable lines. The person can keep any of those lines
+  locally with `--keep-rule N[,N]` in the same preview and confirmation.
+  The preview accounts for edits to `~/.agents/AGENTS.md` before choosing
+  which lines to move. When the shared file is safe to write, the short,
+  detailed, and JSON previews say “Also adds N lines to ~/.agents/AGENTS.md.”
+  The plan ID binds the safe shared text, credential locations, numbered
+  lines, keep choices, and reviewed versions of the tool files. On
+  confirmation, Wenlan appends only the selected lines to that file and
+  delivers them to the tool copies. If the shared file may hold a credential,
+  the preview explains that confirmation updates the tool copies and tells
+  the person how to include the shared file before confirming. A conflict
+  leaves the previous shared master and receipts in force. The person's
+  confirmed Restore uses the adoption backups and preserves added rules in
+  their originating tools. It restores `~/.agents/AGENTS.md` from its backup
+  only when the file remains as Wenlan last wrote it and it had no intervening edits.
+  Safe personal MCP
+  servers in managed tools are offered even if Wenlan does not yet manage the
+  entry; on confirmation they are first adopted with the usual receipts and
+  backups. Project-scoped servers stay out of this share. The preview lists each
+  tool with its counts, counts items every tool already has, and summarizes
+  items that stay by reason. `--details` lists the item names and a line
+  "Stays in <tool>: <item>: <reason>" for each item that cannot travel;
+  a subagent with several reasons has one line with the affected tools.
+  JSON retains the full list. Items stay for reasons including a same-name
+  item with different content (never replaced), a command with `$` or `!`,
+  an MCP server a tool cannot represent, or a settings layout that would
+  retain a nearby comment in a restore record. A refused MCP server is named
+  when its name passes the safety check, with its file when another file has
+  the same name; a key-looking name is never shown.
   Kinds a tool has no place for are left out without a line. An MCP server
   travels only when it passes the safety check and refers to keys through
   environment variables; Wenlan rewrites a reference into each tool's own
@@ -1487,13 +1566,43 @@ and wait for evidence that people need them.
   `env_http_headers` and `bearer_token_env_var`). A server that may hold a
   key joins the key group of UX-SKILL-27 instead. Wenlan never edits a shell
   profile. Only files Wenlan may write receive copies.
-  The person types `yes`; an AI session shows the person
+  The person types `y` or `yes`; an AI session shows the person
   `wenlan rules share --dry-run` and runs
   `wenlan rules share --confirm <plan id>` after they agree, and a plan id
-  from an older preview is refused. Other copies go through the same backup
-  as adoption, so `wenlan rules restore` removes them. A second run says
+  from an older preview is refused. Confirmation applies the destination
+  entries in the approved plan. An entry whose source changed stays in its
+  own tool. Other copies go through the same backup as adoption, so
+  `wenlan rules restore` removes them. A second run says
   "Nothing to share". The app has no Share action yet.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `ux_skill_26_rulesync_share_moves_common_rules_and_preserves_tool_only_files`,
+  `rulesync_share_offers_other_tools_rules_when_a_live_tool_file_holds_a_key`,
+  `rulesync_share_offers_rules_when_the_shared_source_holds_a_key`,
+  `rulesync_adoption_does_not_duplicate_shared_rules_via_a_protected_claude_import`,
+  `rulesync_share_classifies_imports_tool_references_and_empty_headings`,
+  `rulesync_share_redacts_a_credential_even_in_a_tool_line_or_key_block`,
+  `rulesync_share_requires_a_client_that_can_preview_rule_lines`,
+  `rulesync_share_keeps_numbered_rules_and_redacts_credentials`,
+  `rulesync_share_can_keep_every_numbered_rule_without_writing_tool_files`,
+  `rulesync_share_refuses_stale_rule_files_and_binds_the_line_set`,
+  `rulesync_share_refuses_a_projection_that_drops_a_local_line`,
+  `rulesync_share_redacts_http_credentials_before_building_approval`,
+  `rulesync_share_reclassifies_accepted_edits_and_binds_the_donor_revision`,
+  `rulesync_share_mid_batch_conflict_restores_peers_and_keeps_the_old_receipts`,
+  `rulesync_share_keeps_scoped_sections_and_preserves_repeated_lines_in_order`,
+  `rulesync_share_keeps_flattened_imports_local_with_or_without_saved_provenance`,
+  `rulesync_share_updates_and_restores_the_shared_source`,
+  `rulesync_share_plans_against_an_edited_source_and_appends_only_approved_lines`,
+  `rules_share_short_preview_shows_each_moving_line_at_terminal_width`,
+  `ux_skill_26_rules_share_keep_rule_reaches_preview_and_confirm`,
+  `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,
+  `ux_skill_26_rulesync_share_names_an_unmanaged_unsafe_server`,
+  `ux_skill_26_rulesync_share_names_refused_servers_without_exposing_unsafe_names`,
+  `rulesync_share_jsonc_comment_never_enters_a_restore_receipt`,
+  `rulesync_share_rereads_unmanaged_donor_before_enrolling_copies`,
+  `rulesync_share_confirm_writes_only_approved_entries_in_the_destination`,
+  `rulesync_share_sorts_refusals_after_redacting_names`,
+  `ux_skill_26_rules_share_short_preview_summarizes_distinct_stays`,
   `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
   `rulesync_share_leaves_a_different_item_with_the_same_name`,
   `rulesync_status_counts_mcp_servers_adopted_in_place`,
@@ -1505,24 +1614,30 @@ and wait for evidence that people need them.
   `rulesync_share_never_copies_a_server_url_with_a_key_in_its_path`,
   `rulesync_share_stores_no_password_from_a_permission_rule`,
   `rulesync_share_backs_up_no_codex_file_with_a_literal_password` and
-  `personal_rules_setup_requires_interactive_confirmation`.
+  `personal_rules_setup_requires_interactive_confirmation` and
+  `ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no`.
 
 - **UX-SKILL-27** `shipped` MCP servers that may hold a key (a value written
   in the entry rather than an environment variable reference) form one key
-  group in `wenlan rules share`. Hooks, permissions and other settings stay
+  group in `wenlan rules share`, including entries not yet managed by Wenlan.
+  Hooks, permissions and other settings stay
   in their own tool. The preview names the servers and the tools only:
   "These N servers may contain a key. Sharing copies the key into: <tools>."
   A server the check cannot copy safely keeps its "Stays in <tool>: <reason>"
-  line. Only the person can share the key group: after the first `yes`, a
-  second typed `yes` in their own terminal. `--include-keys` still asks. The
+  line. Only the person can share the key group: after the first `y` or `yes`, a
+  second typed `y` or `yes` in their own terminal, even when the key group is
+  the only group offered. `--include-keys` still asks. The
   `--confirm <plan id>` route and any request that names an AI session or an
   agent leave the group where it is with a plain line, and the rest applies;
   a "no" does the same. This tells the AI tools' normal route from the
   person's and is not a security boundary: a program under the same account
   can leave those markers out.
-  Wenlan stores no value and no hash of such a server anywhere. It records
-  only where each copy went (destination file and server name, source tool,
-  file and server name, time). It reads the live source and writes the copy
+  The second yes binds to the server shown in that preview for up to five minutes.
+  Before copying, Wenlan compares the live server with a digest held in
+  memory. A changed server or expired preview requires a fresh preview.
+  Wenlan records where each copy went (destination file and server name,
+  source tool, file and server name, time). The digest stays in daemon
+  memory. Wenlan writes the copy
   into the destination one entry at a time, never through a whole-file backup,
   and saves an intent first. A file that holds or will hold such a server
   gets every other Wenlan edit one entry at a time too. After a crash, an
@@ -1534,6 +1649,9 @@ and wait for evidence that people need them.
   file; otherwise it says "kept <server> in <tool>: changed since sharing;
   remove it by hand if you don't want it".
   Tests `rulesync_share_previews_key_servers_by_name_and_tool_only`,
+  `rulesync_share_refuses_a_keyed_endpoint_changed_after_the_person_preview`,
+  `rulesync_key_preview_expires_with_its_token`,
+  `ux_skill_27_rulesync_share_unmanaged_key_requires_person_and_stores_no_value_or_hash`,
   `ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
   `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
   `rulesync_share_refuses_key_servers_for_an_ai_caller`,
@@ -1588,7 +1706,11 @@ and wait for evidence that people need them.
   AI tools. A tool that already has Wenlan, through its plugin or an earlier
   run, is left as it is. It works the same outside a repository; inside one
   it names `wenlan init` and ties nothing. `--config-only` connects nothing
-  and asks nothing.
+  and asks nothing. Codex hooks are summarized by the hooks actually added,
+  or as script updates when already installed; `--details` shows the full
+  JSON. The hook question accepts `y` or `yes`. The usual setup text uses
+  short lines that fit within 80 columns. Test
+  `ux_cli_6_setup_hooks_summary_names_only_hooks_actually_added`.
   原文：「裝完的流程，是要那些需要人手動做，哪些是自動設好，要絲滑的體驗 dx ux」（2026-11-17 06:11Z）；「要的，另外想問如果不在 repo 內的情況，不知是否已考慮過」（2026-11-17 06:24Z）。
 - **UX-CLI-7** `shipped` In a repository Wenlan does not know, the terminal
   asks only when the command cannot do its work without setup:
@@ -1603,10 +1725,19 @@ and wait for evidence that people need them.
   Wenlan answers, setup turns tool sync on, previews the person's AI-tool
   setup, brings it in and syncs once; running setup is the consent, so it asks
   nothing, needs no terminal and works when an AI tool runs it. It ends with
-  a short report: which tools, how many rules and skills (how many follow
-  their source, how many are copies), how many are left as they are, and
+  a short report: which tools, how many nonempty rule lines and skills,
+  how many are left as they are, and
   `To undo: wenlan rules restore`. No paths or ids. `--format json` carries
-  the same counts. An already-adopted setup is skipped silently. A plan that
+  the same counts. The shared rules count once, each tool's own overlay counts
+  separately, and an absent rule file is not created for empty content. An
+  already-adopted setup is skipped silently. After adoption and sync, setup
+  presents the same short share preview as `wenlan rules share` to a person
+  in a terminal. `--details` shows the numbered rule lines and
+  `--keep-rule N[,N]` keeps selected lines in their own tools. A yes shares
+  the remaining lines and offered items. Key servers need their own
+  second yes (UX-SKILL-27). A no leaves sharing for `wenlan rules share` and
+  setup continues. AI and non-interactive setup never share, including with
+  `--yes`. A plan that
   cannot be previewed completely, or that Wenlan refuses to adopt, is left
   alone with one line saying so and setup still succeeds. The switch is a
   `rulesync.on` file in the data root, so the daemon and the CLI agree and a
@@ -1616,7 +1747,20 @@ and wait for evidence that people need them.
   shows the preview and runs `wenlan rules adopt --confirm <plan id>` only
   after a yes.
   原文（2026-11-22）：「第一次用戶體驗就是，只要設置跑一次，就全部都弄好，看到一個同步好的簡短報告。」
-  Tests `ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts`, `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`, `setup_leaves_a_blocked_plan_alone_and_still_succeeds`, `rules_switch_persists_and_environment_overrides_it` and `rules_switch_survives_a_service_reinstall`.
+  Tests `ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts`,
+  `ux_cli_8_setup_report_counts_and_preview_wrap_without_splitting_words`,
+  `ux_cli_8_setup_share_requires_person_tty_and_successful_adoption`,
+  `ux_cli_8_setup_share_previews_numbered_rules_and_uses_one_yes`,
+  `ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no`,
+  `ux_cli_8_setup_noninteractive_yes_never_requests_share`,
+  `ux_cli_8_adoption_does_not_create_an_empty_rule_file_for_an_installed_tool`,
+  `ux_cli_8_empty_rule_target_is_journaled_without_creating_a_file_then_delivered_and_restored`,
+  `ux_cli_8_empty_rule_target_preserves_a_user_created_file_for_review`,
+  `ux_cli_8_whitespace_only_shared_rules_leave_missing_files_absent`,
+  `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`,
+  `setup_leaves_a_blocked_plan_alone_and_still_succeeds`,
+  `rules_switch_persists_and_environment_overrides_it` and
+  `rules_switch_survives_a_service_reinstall`.
 
 ## Adding to Wenlan
 

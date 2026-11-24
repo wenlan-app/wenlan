@@ -18,7 +18,13 @@ use axum::{
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wenlan_core::rulesync_adopt::{AdoptedSkill, Adoption, AdoptionEntry};
+use wenlan_core::rulesync_adopt::{
+    AdoptedSkill, Adoption, AdoptionEntry, CredentialLocations, RuleCredentialLocation,
+    SHARED_RULES,
+};
+use wenlan_core::rulesync_personal::credentials::{
+    contains_credential_bytes, credential_line_numbers, CREDENTIAL_FILE_REASON,
+};
 use wenlan_core::rulesync_personal::{
     additional_personal_files, additional_targets, adoption_plan, adoption_token, adoption_tool,
     check_delivery_paths, check_skill_frontmatter, describe_change, discover_additional_adoption,
@@ -35,7 +41,8 @@ use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, KeptInPlace,
     PullbackAction, PullbackCard, PullbackDecision, PullbackKind, PullbackPreview,
     RulesSetupCode as Code, RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport,
-    RulesToolCounts, RulesToolState, RulesToolStatus, SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
+    RulesToolCounts, RulesToolState, RulesToolStatus, SharePreviewRequest, ShareRequest,
+    SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -43,7 +50,9 @@ use wenlan_types::rulesync_skill::{
 
 use crate::error::ServerError;
 use crate::route_registry::{get, post, TrackedRouter};
-use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot};
+use crate::rulesync_apply::{
+    is_shared_rule_source_path, ApplyOptions, ApplyOutcome, FileMode, FileRoot, Snapshot,
+};
 use crate::rulesync_layers;
 use crate::rulesync_registry::{
     self, ApprovedSkills, ManagedSkill, SavedSkillDeliveries, SkillHome, SkillModes,
@@ -54,9 +63,12 @@ mod displaced;
 mod key_shares;
 mod personal_files;
 mod personal_settings;
+mod restore_rules;
 mod review_list;
 mod settings;
 mod share;
+mod share_rules;
+mod shared_source;
 mod storage;
 pub(super) mod watch;
 
@@ -210,7 +222,7 @@ async fn adopt(
 
 async fn share_preview(
     headers: HeaderMap,
-    Json(request): Json<AdoptPreviewRequest>,
+    Json(request): Json<SharePreviewRequest>,
 ) -> Result<Json<SharingPlan>, ServerError> {
     require_local_rules_access(&headers)?;
     if !wenlan_core::rulesync_personal::enabled() {
@@ -218,19 +230,26 @@ async fn share_preview(
             "WENLAN_RULESYNC is off".into(),
         ));
     }
-    tokio::task::spawn_blocking(move || Setup::system_ready()?.preview_share(&request.home))
-        .await
-        .map_err(|error| ServerError::Internal(error.to_string()))?
-        .map(Json)
-        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+    let key_consent = !ai_caller(&headers);
+    tokio::task::spawn_blocking(move || {
+        Setup::system_ready()?.preview_share(
+            &request.home,
+            request.keep_rule.as_deref(),
+            key_consent,
+        )
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
 fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Result<()> {
     ensure!(
         !plan.plan_id.is_empty()
             && request.confirmed_plan_id.as_deref() == Some(plan.plan_id.as_str())
-            && request.token == plan.token,
-        "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list."
+            && key_shares::plan_token(&request.token) == key_shares::plan_token(&plan.token),
+        "The setup changed after the preview. Run `wenlan rules share --dry-run` again and show the person the new list."
     );
     Ok(())
 }
@@ -238,7 +257,7 @@ fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Resul
 async fn share_items(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Json(request): Json<AdoptRequest>,
+    Json(request): Json<ShareRequest>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
     execute(state, headers, Operation::Share(request)).await
 }
@@ -291,7 +310,7 @@ async fn review_preview(
 
 enum Operation {
     Adopt(AdoptRequest),
-    Share(AdoptRequest),
+    Share(ShareRequest),
     Restore(RestoreOptions),
     Sync,
     Review(PullbackDecision),
@@ -325,7 +344,10 @@ async fn execute(
         require_personal_rules_writer(&headers)?;
     }
     let ai_caller = ai_caller(&headers);
-    let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
+    let generated = if matches!(
+        operation,
+        Operation::Sync | Operation::Review(_) | Operation::Share(_)
+    ) {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
         Vec::new()
@@ -349,15 +371,20 @@ async fn execute(
                 setup.adopt(&request)
             }
             Operation::Share(request) => {
-                if ai_caller || request.confirmed_plan_id.is_some() {
-                    let home = request
+                let approval = &request.approval;
+                if ai_caller || approval.confirmed_plan_id.is_some() {
+                    let home = approval
                         .home
                         .as_deref()
                         .context("A confirmed share needs the tool home")?;
-                    let plan = setup.preview_share(home)?;
-                    validate_confirmed_share(&request, &plan)?;
+                    let plan = setup.preview_share(home, request.keep_rule.as_deref(), false)?;
+                    validate_confirmed_share(approval, &plan)?;
                 }
-                setup.share(&request, share::KeyAnswer::of(ai_caller, &request))
+                setup.share(
+                    &request,
+                    share::KeyAnswer::of(ai_caller, approval),
+                    &generated,
+                )
             }
             Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
@@ -527,7 +554,20 @@ impl Setup {
             drafts,
             cards,
             blocked,
+            credentials,
         } = inspect(&self.home, &root, &manifest)?;
+        status.notes.extend(
+            credentials
+                .keys()
+                .chain(
+                    manifest
+                        .credentials
+                        .skills
+                        .keys()
+                        .filter(|path| kept_skill_asset(&root, path)),
+                )
+                .map(|path| credential_note(path)),
+        );
         status.in_sync = manifest.adopted
             && drafts.is_empty()
             && blocked.is_empty()
@@ -536,6 +576,12 @@ impl Setup {
             && manifest.delivery_issues.is_empty()
             && manifest.scope_reviews.is_empty();
         status.in_sync &= !stale_key_receipt;
+        if manifest.adopted && !manifest.settings_only {
+            if let Err(error) = shared_source::SharedSource::read(&self.home, &manifest) {
+                status.in_sync = false;
+                status.notes.push(error.to_string());
+            }
+        }
         status
             .proposals
             .extend(cards.into_iter().map(|card| card.wire));
@@ -856,7 +902,11 @@ enum Kind {
         target: String,
         source: String,
         base: String,
+        /// Byte offsets in base at the end of the shared and authored text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authored_ends: Option<[usize; 2]>,
     },
+    SharedRuleSource,
     Skill,
     PersonalFile,
     Directory,
@@ -880,6 +930,20 @@ enum Kind {
     },
 }
 
+impl Kind {
+    fn rule(master: &PersonalMaster, target: &str, generated: &[String], source: String) -> Self {
+        Self::Rule {
+            target: target.to_owned(),
+            source,
+            base: master.base_rule_text(target, generated),
+            authored_ends: Some([
+                master.shared_rule_text(target).len(),
+                master.base_rule_text(target, &[]).len(),
+            ]),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Delivery<Content = Vec<u8>> {
     kind: Kind,
@@ -889,6 +953,18 @@ struct Delivery<Content = Vec<u8>> {
     // fresh decision while delivery of the reviewed version is outstanding.
     reviewed: bool,
     at: i64,
+    /// Binds share approval to a rule version without hashing its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule_revision: Option<String>,
+}
+
+impl Delivery {
+    fn observe(&mut self, current: Snapshot) {
+        self.observed = Some(current);
+        if matches!(self.kind, Kind::Rule { .. }) {
+            self.rule_revision = Some(uuid::Uuid::new_v4().simple().to_string());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -907,6 +983,7 @@ enum BatchMode {
     Restore,
     SealRestore { extension_only: bool },
     Review,
+    ShareRules(share_rules::RuleShareUpdate),
     Settings,
 }
 
@@ -914,6 +991,13 @@ enum BatchMode {
 struct PendingStage {
     id: String,
     displaced: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuleShareJournal {
+    new_backups: BTreeSet<PathBuf>,
+    undo_stages: BTreeMap<PathBuf, PendingStage>,
+    attempted: usize,
 }
 
 impl PendingStage {
@@ -940,11 +1024,19 @@ struct BatchDirectories {
 
 impl BatchDirectories {
     fn record(&mut self, operation: &Pending) {
-        if operation.seen != operation.desired {
+        self.record_change(&operation.path, &operation.seen, &operation.desired);
+    }
+
+    fn record_reverse(&mut self, operation: &Pending) {
+        self.record_change(&operation.path, &operation.desired, &operation.seen);
+    }
+
+    fn record_change(&mut self, path: &Path, seen: &Snapshot, desired: &Snapshot) {
+        if seen != desired {
             self.parents
-                .extend(operation.path.ancestors().skip(1).map(Path::to_owned));
-            if operation.seen.is_directory() && !operation.desired.is_directory() {
-                self.replaced.insert(operation.path.clone());
+                .extend(path.ancestors().skip(1).map(Path::to_owned));
+            if seen.is_directory() && !desired.is_directory() {
+                self.replaced.insert(path.to_owned());
             }
         }
     }
@@ -961,12 +1053,35 @@ impl BatchDirectories {
     }
 }
 
+fn is_shared_source_receipt(manifest: &Manifest, path: &Path) -> bool {
+    is_shared_rule_source_path(path)
+        && manifest
+            .delivered
+            .get(path)
+            .is_some_and(|receipt| matches!(receipt.kind, Kind::SharedRuleSource))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(bound(deserialize = "Content: Deserialize<'de>"))]
 struct Manifest<Content = Vec<u8>> {
     master: PersonalMaster<Content>,
+    /// The last credential-free text read from or written to the shared source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shared_source_base: Option<String>,
+    /// An older share backup cannot undo a later share across a source edit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    shared_source_restore_blocked: bool,
     /// Every destination's original bytes, mode or exact link value. This
     /// whole map reaches disk before the first tool file changes.
     backup: BTreeMap<PathBuf, Snapshot<Content>>,
+    /// Authored additions whose ownership would be lost when they move into shared rules.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    authored_rules: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
+    #[serde(default)]
+    rule_origins_tracked: bool,
+    /// A completed rule restore can differ from its immutable adoption snapshot.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    restored_rules: BTreeMap<PathBuf, Snapshot<Content>>,
     /// The verified owner of each backed-up Windows entry. Older receipts
     /// without an owner keep their original bytes available for manual restore.
     #[cfg(windows)]
@@ -975,6 +1090,8 @@ struct Manifest<Content = Vec<u8>> {
     delivered: BTreeMap<PathBuf, Delivery<Content>>,
     pending: Vec<Pending<Content>>,
     stages: BTreeMap<PathBuf, PendingStage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule_share: Option<RuleShareJournal>,
     recovery_issues: BTreeMap<PathBuf, String>,
     adopted: bool,
     /// Journaled destinations of an addition that has not enrolled yet.
@@ -996,6 +1113,12 @@ struct Manifest<Content = Vec<u8>> {
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     dismissed_skill_updates: BTreeMap<String, String>,
+    /// Rule lines the person chose to keep in their existing overlays.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    kept_share_rules: BTreeSet<String>,
+    /// Locations we can report without retaining the original text or its hash.
+    #[serde(default, skip_serializing_if = "CredentialLocations::is_empty")]
+    credentials: CredentialLocations,
     /// Servers that may hold a key, shared by name only. No value or hash.
     #[serde(default, skip_serializing_if = "key_shares::KeyState::is_empty")]
     keys: key_shares::KeyState,
@@ -1043,12 +1166,18 @@ impl Manifest {
     fn new(master: PersonalMaster, backup: BTreeMap<PathBuf, Snapshot>) -> Self {
         Self {
             master,
+            shared_source_base: None,
+            shared_source_restore_blocked: false,
             backup,
+            authored_rules: BTreeMap::new(),
+            rule_origins_tracked: true,
+            restored_rules: BTreeMap::new(),
             #[cfg(windows)]
             windows_backup_owners: BTreeMap::new(),
             delivered: BTreeMap::new(),
             pending: Vec::new(),
             stages: BTreeMap::new(),
+            rule_share: None,
             recovery_issues: BTreeMap::new(),
             adopted: false,
             extension_paths: BTreeSet::new(),
@@ -1063,6 +1192,8 @@ impl Manifest {
             scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
             dismissed_skill_updates: BTreeMap::new(),
+            kept_share_rules: BTreeSet::new(),
+            credentials: CredentialLocations::default(),
             keys: key_shares::KeyState::default(),
         }
     }
@@ -1350,10 +1481,14 @@ impl Setup {
     }
 
     fn discover_for_adoption(&self, manifest: Option<&Manifest>) -> Result<Adoption> {
-        let mut adoption = if let Some(manifest) = manifest.filter(|manifest| manifest.adopted) {
+        let mut adoption = if let Some(manifest) =
+            manifest.filter(|manifest| manifest.adopted && !manifest.settings_only)
+        {
+            let source = shared_source::SharedSource::read(&self.home, manifest)?;
             discover_additional_adoption(
                 &self.home,
                 &manifest.master,
+                &source.merged,
                 &personal_files::known_paths(manifest),
             )
         } else {
@@ -1545,6 +1680,12 @@ impl Setup {
                 );
             }
             let desired = match change.after {
+                AdoptionEntry::Missing
+                    if rules.contains_key(path.as_path())
+                        && matches!(change.before, AdoptionEntry::Missing) =>
+                {
+                    Snapshot::Absent
+                }
                 AdoptionEntry::File(bytes) => match linked {
                     Some((ancestor, link)) => {
                         let mode = link
@@ -1567,11 +1708,7 @@ impl Setup {
                 _ => bail!("unexpected adoption output at {}", path.display()),
             };
             let kind = match rules.get(path.as_path()) {
-                Some(tool) => Kind::Rule {
-                    target: (*tool).into(),
-                    source: master.rule_text(tool, &[])?,
-                    base: master.base_rule_text(tool, &[]),
-                },
+                Some(tool) => Kind::rule(&master, tool, &[], master.rule_text(tool, &[])?),
                 None if personal_file => Kind::PersonalFile,
                 None if desired.is_directory() => Kind::Directory,
                 None => Kind::Skill,
@@ -1603,12 +1740,22 @@ impl Setup {
                 manifest.master = master;
                 (manifest, None)
             } else {
-                (manifest, Some(master))
+                let source = shared_source::SharedSource::read(&self.home, &manifest)?;
+                ensure!(
+                    master.shared == source.merged,
+                    "~/.agents/AGENTS.md changed during Bring in. Run Bring in again."
+                );
+                (manifest, Some((master, source)))
             }
         } else {
             (Manifest::new(master, BTreeMap::new()), None)
         };
         let extending = extension.is_some();
+        if !extending {
+            manifest.shared_source_base = Some(adoption.shared.clone());
+            manifest.credentials = adoption.credentials.clone();
+            manifest.rule_origins_tracked = true;
+        }
         let mut skipped = adoption.skipped.into_keys().collect::<BTreeSet<_>>();
         let skipped_skills = !skipped.is_empty();
         let mut skipped_personal: BTreeMap<_, _> = adoption
@@ -1643,6 +1790,13 @@ impl Setup {
             adoption.settings,
             &mut operations,
         )?;
+        let no_op_paths = operations
+            .iter()
+            .filter(|operation| {
+                operation.seen == Snapshot::Absent && operation.desired == Snapshot::Absent
+            })
+            .map(|operation| operation.path.clone())
+            .collect::<BTreeSet<_>>();
         let setting_count: usize = settings.values().map(Vec::len).sum();
         let mut result = if !adoption.added_tools.is_empty() {
             report(&format!(
@@ -1678,16 +1832,17 @@ impl Setup {
                     path.display()
                 );
             }
-            if !existing_settings.contains(&path) {
+            if !existing_settings.contains(&path) && !no_op_paths.contains(&path) {
                 result.written.push(path.display().to_string());
             }
         }
         if setting_count != 0 {
-            result
-                .message
-                .push_str(&format!(". Imported {setting_count} personal setting(s)."));
+            result.message.push_str(&format!(
+                ". Imported {setting_count} personal setting{}.",
+                if setting_count == 1 { "" } else { "s" }
+            ));
         }
-        if let Some(master) = extension {
+        if let Some((master, source)) = extension {
             manifest.unmanaged_personal_files.retain(|path, _| {
                 !adoption
                     .personal_files
@@ -1700,6 +1855,15 @@ impl Setup {
             extend_personal_master(&mut manifest.master, master);
             manifest.unmanaged_skills.append(&mut skipped);
             manifest.worktree_writes.append(&mut worktree_writes);
+            manifest
+                .credentials
+                .rules
+                .extend(adoption.credentials.rules.clone());
+            manifest
+                .credentials
+                .skills
+                .extend(adoption.credentials.skills.clone());
+            source.record(&mut manifest);
             manifest.extension_paths.clear();
         }
         // Enroll the settings in the same final checkpoint as the new tool
@@ -1718,6 +1882,7 @@ impl Setup {
                 " The command and subagent paths marked unmanaged in the plan stayed in place.",
             );
         }
+        append_credential_notes(&mut result, &adoption.credentials);
         append_skipped_tools(&mut result, &adoption.skipped_tools);
         Ok(result)
     }
@@ -1751,9 +1916,19 @@ impl Setup {
     }
 
     fn recover_pending(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
+        if manifest.rule_share.is_some() {
+            return self.rollback_rule_share(root, manifest);
+        }
         if manifest.pending.is_empty() {
             return Ok(());
         }
+        let source_root = manifest
+            .pending
+            .iter()
+            .any(|op| is_shared_source_receipt(manifest, &op.path))
+            .then(|| root.with_shared_rule_source())
+            .transpose()?;
+        let root = source_root.as_ref().unwrap_or(root);
         let data = self.data_files()?;
         let pending = std::mem::take(&mut manifest.pending);
         // Child entries are not reachable while a journaled directory link
@@ -1795,6 +1970,85 @@ impl Setup {
             }
         }
         directories.sync(root)?;
+        self.save(manifest)
+    }
+
+    /// Until the final checkpoint, the old master and deliveries own the
+    /// setup. Undo only the writes that may have started and still match
+    /// the batch, leaving later user edits for ordinary sync review.
+    fn rollback_rule_share(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<()> {
+        let journal = manifest
+            .rule_share
+            .as_ref()
+            .context("missing rule share journal")?;
+        ensure!(
+            journal.attempted <= manifest.pending.len(),
+            "invalid rule share journal"
+        );
+        let source_root = root.with_shared_rule_source()?;
+        let data = self.data_files()?;
+        let mut directories = BatchDirectories::default();
+        for op in manifest.pending.iter().take(journal.attempted).rev() {
+            if op.seen == op.desired {
+                continue;
+            }
+            let path = &op.path;
+            let stage = manifest
+                .stages
+                .get(path)
+                .context("missing rule share stage")?;
+            let undo = journal
+                .undo_stages
+                .get(path)
+                .context("missing rule share undo stage")?;
+            let verify = || {
+                source_root
+                    .restore_leaf_alias(path, |_| op.seen == Snapshot::Absent)
+                    .map(|alias| alias.is_none())
+            };
+            ensure!(
+                verify()?,
+                "{} changed spelling during rule share recovery",
+                path.display()
+            );
+            let live = source_root.read(path, false)?;
+            source_root.recover_stage(
+                path,
+                &op.seen,
+                &op.desired,
+                &live,
+                stage.options(&data, false, None),
+            )?;
+            let live = source_root.read(path, false)?;
+            source_root.recover_stage(
+                path,
+                &op.desired,
+                &op.seen,
+                &live,
+                undo.options(&data, false, None),
+            )?;
+            let live = source_root.read(path, false)?;
+            if live == op.desired
+                && source_root.apply_with(
+                    path,
+                    &op.desired,
+                    &op.seen,
+                    undo.options(&data, false, Some(&verify)),
+                )? == ApplyOutcome::Applied
+            {
+                directories.record_reverse(op);
+            }
+        }
+        directories.sync(&source_root)?;
+        let journal = manifest.rule_share.take().expect("rule share journal");
+        for path in journal.new_backups {
+            manifest.backup.remove(&path);
+            #[cfg(windows)]
+            manifest.windows_backup_owners.remove(&path);
+        }
+        for op in manifest.pending.drain(..) {
+            manifest.stages.remove(&op.path);
+        }
         self.save(manifest)
     }
 
@@ -1877,7 +2131,8 @@ impl Setup {
     ) -> Result<Vec<(PathBuf, ApplyOutcome)>> {
         let adopting = matches!(mode, BatchMode::Adopt);
         let extending = matches!(mode, BatchMode::Extend);
-        let reviewing = matches!(mode, BatchMode::Review);
+        let sharing_rules = matches!(mode, BatchMode::ShareRules(_));
+        let reviewing = sharing_rules || matches!(mode, BatchMode::Review);
         let restoring = matches!(mode, BatchMode::Restore | BatchMode::SealRestore { .. });
         let stop_on_conflict = !restoring && !matches!(mode, BatchMode::Continue);
         if operations.is_empty() {
@@ -1894,10 +2149,42 @@ impl Setup {
         } else {
             with_missing_parents(root, operations, extending.then_some(&manifest.backup))?
         };
-        check_delivery_paths(&self.home, operations.iter().map(|op| op.path.as_path()))?;
+        let shared_source = |op: &Pending| {
+            is_shared_rule_source_path(&op.path)
+                && (sharing_rules && matches!(op.kind, Some(Kind::SharedRuleSource))
+                    || restoring && is_shared_source_receipt(manifest, &op.path))
+        };
+        check_delivery_paths(
+            &self.home,
+            operations
+                .iter()
+                .filter(|op| !shared_source(op))
+                .map(|op| op.path.as_path()),
+        )?;
+        let shared_source_paths: BTreeSet<_> = operations
+            .iter()
+            .filter(|op| shared_source(op))
+            .map(|op| op.path.clone())
+            .collect();
+        let source_root = (!shared_source_paths.is_empty())
+            .then(|| root.with_shared_rule_source())
+            .transpose()?;
+        let root = source_root.as_ref().unwrap_or(root);
         let mut outcomes = Vec::with_capacity(operations.len());
         let mut ready: Vec<Pending> = Vec::with_capacity(operations.len());
         for op in operations {
+            if op.kind.as_ref().is_some_and(is_rule_or_skill)
+                || manifest
+                    .delivered
+                    .get(&op.path)
+                    .is_some_and(|record| is_rule_or_skill(&record.kind))
+            {
+                ensure!(
+                    !snapshot_has_credentials(&op.seen) && !snapshot_has_credentials(&op.desired),
+                    "{}",
+                    credential_note(&op.path)
+                );
+            }
             let settings_path =
                 wenlan_core::rulesync_settings::personal::is_settings_path(&op.path);
             let personal_file = settings_path
@@ -1935,6 +2222,9 @@ impl Setup {
                 }
             }
             if changed
+                || sharing_rules
+                    && shared_source_paths.contains(&op.path)
+                    && !matches!(root.restore_leaf_alias(&op.path, |_| true), Ok(None))
                 || manifest.pending.iter().any(|pending| {
                     op.path.starts_with(&pending.path) || pending.path.starts_with(&op.path)
                 })
@@ -1947,9 +2237,16 @@ impl Setup {
         if ready.is_empty() || stop_on_conflict && !outcomes.is_empty() {
             return Ok(outcomes);
         }
+        let new_backups = sharing_rules.then(|| {
+            ready
+                .iter()
+                .filter(|op| !manifest.backup.contains_key(&op.path))
+                .map(|op| op.path.clone())
+                .collect()
+        });
         record_originals(root, manifest, &ready, adopting || extending)?;
         let data = self.data_files()?;
-        let displaced = displaced::Batch::prepare(root, &data, &ready)?;
+        let displaced = displaced::Batch::prepare(root, &data, &ready, sharing_rules)?;
         let batch_paths = ready.iter().map(|op| op.path.clone()).collect::<Vec<_>>();
         manifest.stages.extend(
             ready
@@ -1970,6 +2267,30 @@ impl Setup {
             manifest.extension_paths.extend(batch_paths.iter().cloned());
         }
         let first = manifest.pending.len();
+        if let Some(new_backups) = new_backups {
+            ensure!(first == 0, "a rule share requires a settled setup");
+            let undo_stages = ready
+                .iter()
+                .enumerate()
+                .filter(|(_, op)| op.seen != op.desired)
+                .map(|(index, op)| {
+                    (
+                        op.path.clone(),
+                        PendingStage {
+                            id: uuid::Uuid::new_v4().simple().to_string(),
+                            displaced: displaced
+                                .as_ref()
+                                .and_then(|batch| batch.location(index + ready.len())),
+                        },
+                    )
+                })
+                .collect();
+            manifest.rule_share = Some(RuleShareJournal {
+                new_backups,
+                undo_stages,
+                attempted: 0,
+            });
+        }
         manifest.pending.append(&mut ready);
         self.save(manifest)?;
         #[cfg(test)]
@@ -1980,8 +2301,28 @@ impl Setup {
         }
         let mut directories = BatchDirectories::default();
         let mut failed = BTreeSet::new();
-        for operation in manifest.pending.split_off(first) {
+        let operations = if sharing_rules {
+            manifest.pending.clone()
+        } else {
+            manifest.pending.split_off(first)
+        };
+        for (index, operation) in operations.into_iter().enumerate() {
             let path = operation.path.clone();
+            if let Some(journal) = &mut manifest.rule_share {
+                if operation.seen == Snapshot::Absent {
+                    if let Some(undo) = journal
+                        .undo_stages
+                        .get(&path)
+                        .and_then(|stage| stage.displaced.as_deref())
+                    {
+                        root.check_recovery_volume(&path, &data, undo)?;
+                    }
+                }
+                journal.attempted = index + 1;
+                self.save(manifest)?;
+                #[cfg(test)]
+                share_rules::before_rule_share_write(&path);
+            }
             // Keep the receipt if closing this directory would prevent a
             // later retry from restoring a descendant that is still managed.
             let unfinished_children = match (&mode, &operation.desired) {
@@ -1998,7 +2339,8 @@ impl Setup {
                 }
                 _ => false,
             };
-            let wrong_spelling = restoring
+            let verify_spelling = restoring || shared_source_paths.contains(&path);
+            let wrong_spelling = verify_spelling
                 && operation.seen != operation.desired
                 && !matches!(root.restore_leaf_alias(&path, |_| false), Ok(None));
             let status = if path_blocked(&failed, &path) || unfinished_children || wrong_spelling {
@@ -2008,11 +2350,17 @@ impl Setup {
                     let link = links.and_then(|links| links.get(&path));
                     let removal = operation.desired == Snapshot::Absent;
                     let verify = || {
-                        if restoring {
-                            return Ok(matches!(
-                                root.restore_leaf_alias(&path, |_| false),
-                                Ok(None)
-                            ));
+                        if verify_spelling {
+                            let proper_spelling =
+                                matches!(root.restore_leaf_alias(&path, |_| false), Ok(None));
+                            // A skill folder may still contain a local file
+                            // we refused to remove. Leave that folder in
+                            // place even when replacing an original link.
+                            let replacing_directory = restoring
+                                && operation.seen.is_directory()
+                                && !operation.desired.is_directory();
+                            return Ok(proper_spelling
+                                && (!replacing_directory || root.children(&path)?.is_empty()));
                         }
                         if removal && skill_case_alias(root, &path)?.is_some() {
                             return Ok(false);
@@ -2023,7 +2371,7 @@ impl Setup {
                     let options = stage.options(
                         &data,
                         operation.allow_link,
-                        (link.is_some() || removal || restoring).then_some(&verify as _),
+                        (link.is_some() || removal || verify_spelling).then_some(&verify as _),
                     );
                     root.apply_with(&path, &operation.seen, &operation.desired, options)
                         .with_context(|| format!("write {}", path.display()))?
@@ -2049,10 +2397,17 @@ impl Setup {
             outcomes.push((path.clone(), status));
             if status == ApplyOutcome::Applied {
                 directories.record(&operation);
-                settle(manifest, operation)?;
+                if !sharing_rules {
+                    settle(manifest, operation)?;
+                }
             } else {
                 failed.insert(path);
                 if stop_on_conflict {
+                    if let Some(journal) = &mut manifest.rule_share {
+                        // The writer cleaned its stage without applying this operation.
+                        journal.attempted = index;
+                        self.save(manifest)?;
+                    }
                     break;
                 }
             }
@@ -2060,6 +2415,27 @@ impl Setup {
         directories.sync(root)?;
         if let Some(batch) = displaced {
             batch.sync(&data)?;
+        }
+        if let BatchMode::ShareRules(update) = mode {
+            if failed.is_empty() {
+                if let Some(op) = manifest.pending.iter().find(|op| {
+                    !root
+                        .read(&op.path, false)
+                        .is_ok_and(|actual| actual == op.desired)
+                }) {
+                    failed.insert(op.path.clone());
+                    outcomes.push((op.path.clone(), ApplyOutcome::ChangedSincePlan));
+                }
+            }
+            if !failed.is_empty() {
+                self.rollback_rule_share(root, manifest)?;
+                return Ok(outcomes);
+            }
+            for op in std::mem::take(&mut manifest.pending) {
+                settle(manifest, op)?;
+            }
+            update.commit(manifest);
+            manifest.rule_share = None;
         }
         if adopting {
             manifest.adopted = failed.is_empty();
@@ -2104,36 +2480,56 @@ impl Setup {
         }
         self.restore_deliveries(&root, &mut manifest, &mut result, false, &in_place)?;
         for (path, original) in &manifest.backup {
+            let original = manifest.restored_rules.get(path).unwrap_or(original);
             if *original == Snapshot::Absent
                 || manifest.delivered.contains_key(path)
                 || manifest.pending.iter().any(|op| op.path == *path)
             {
                 continue;
             }
-            let current = if crate::rulesync_apply::is_personal_entry(path) {
+            let current = if is_shared_rule_source_path(path) {
+                // The successful restore has already retired the delivery.
+                root.with_shared_rule_source()
+                    .and_then(|root| root.read(path, false))
+            } else if crate::rulesync_apply::is_personal_entry(path) {
                 root.read_personal_file(path, true)
             } else {
                 root.read(path, true)
             };
+            let settled_rule = manifest.restored_rules.contains_key(path);
             match current {
                 Ok(snapshot) if *original == snapshot => (),
                 Ok(Snapshot::Absent) => block_path(
                     &mut result,
                     path,
                     Code::OriginalMissing,
-                    format!(
-                        "{}: The recorded original is missing after restore.",
-                        path.display()
-                    ),
+                    if settled_rule {
+                        format!(
+                            "{}: The rule file with your additions is missing after restore.",
+                            path.display()
+                        )
+                    } else {
+                        format!(
+                            "{}: The recorded original is missing after restore.",
+                            path.display()
+                        )
+                    },
                 ),
                 Ok(_) => block_path(
                     &mut result,
                     path,
                     Code::OriginalChanged,
-                    format!(
-                        "{}: The restored path no longer matches the saved original.",
-                        path.display()
-                    ),
+                    if settled_rule {
+                        format!(
+                            "{}: The rule file with your additions changed after restore.",
+                            path.display()
+                        )
+                    } else {
+                        format!(
+                            "{}: The restored path no longer matches the saved original.",
+                            path.display()
+                        )
+                    },
                 ),
                 Err(error) => block_path(
                     &mut result,
@@ -2170,6 +2566,17 @@ impl Setup {
         extension_only: bool,
         in_place: &BTreeSet<PathBuf>,
     ) -> Result<()> {
+        let unknown_rule_origins =
+            !extension_only && restore_rules::unknown_shared_origins(root, manifest);
+        let source_root = (!extension_only
+            && !unknown_rule_origins
+            && manifest
+                .delivered
+                .keys()
+                .any(|path| is_shared_source_receipt(manifest, path)))
+        .then(|| root.with_shared_rule_source())
+        .transpose()?;
+        let root = source_root.as_ref().unwrap_or(root);
         let selected = |manifest: &Manifest, path: &Path| {
             (!extension_only || manifest.extension_paths.contains(path)) && !in_place.contains(path)
         };
@@ -2214,6 +2621,16 @@ impl Setup {
                 .all(|path| manifest.backup.contains_key(path)),
             "the backup is incomplete"
         );
+        let retained_skills = rulesync_registry::retained_new_skill_folders(
+            &self.data,
+            manifest.delivered.iter().filter_map(|(path, receipt)| {
+                let Kind::RegistryDirectory { name } = &receipt.kind else {
+                    return None;
+                };
+                (!extension_only && manifest.backup.get(path) == Some(&Snapshot::Absent))
+                    .then_some((path.as_path(), name.as_str()))
+            }),
+        )?;
         let mut operations = Vec::new();
         for path in originals {
             if manifest.recovery_issues.contains_key(&path) {
@@ -2224,7 +2641,28 @@ impl Setup {
             let Some(delivered) = manifest.delivered.get(&path) else {
                 continue;
             };
-            if is_harness_path(&path) {
+            let shared_source = is_shared_source_receipt(manifest, &path);
+            let restore_rule = !extension_only && matches!(delivered.kind, Kind::Rule { .. });
+            if path == Path::new(SHARED_RULES)
+                && shared_source
+                && manifest.shared_source_restore_blocked
+            {
+                block_path(
+                    result,
+                    &path,
+                    Code::RestoreBlocked,
+                    "Restoring ~/.agents/AGENTS.md would overwrite edits you made between shares. The current file is in place.".into(),
+                );
+                continue;
+            }
+            if unknown_rule_origins && (restore_rule || shared_source) {
+                block_path(result, &path, Code::RestoreBlocked, format!(
+                    "{}: The backup does not say which tool added the shared rules. The current file has been left in place.",
+                    path.display()
+                ));
+                continue;
+            }
+            if is_harness_path(&path) && !shared_source {
                 block_path(
                     result,
                     &path,
@@ -2292,15 +2730,25 @@ impl Setup {
                 if crate::rulesync_apply::is_personal_entry(&path) {
                     root.read_personal_file(&path, true)
                 } else {
-                    read_planned_path(root, &path, true, *expected == Snapshot::Absent)
+                    read_planned_path(root, &path, !shared_source, *expected == Snapshot::Absent)
                 }
             };
             let seen = match read_for_restore() {
+                Ok(current)
+                    if manifest
+                        .delivered
+                        .get(&path)
+                        .is_some_and(|record| is_rule_or_skill(&record.kind))
+                        && snapshot_has_credentials(&current) =>
+                {
+                    block_path(result, &path, Code::RestoreBlocked, credential_note(&path));
+                    continue;
+                }
                 Ok(current) if extension_only && original == current => {
                     manifest.delivered.remove(&path);
                     continue;
                 }
-                Ok(current) if *expected == current => current,
+                Ok(current) if restore_rule || *expected == current => current,
                 Err(error) => {
                     block_path(
                         result,
@@ -2320,6 +2768,24 @@ impl Setup {
                     continue;
                 }
             };
+            let desired = if path_blocked(&retained_skills, &path) && original == Snapshot::Absent {
+                seen.clone()
+            } else if restore_rule {
+                match restore_rules::restored_rule(manifest, &path, &seen) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        block_path(
+                            result,
+                            &path,
+                            Code::RestoreBlocked,
+                            format!("{} could not be restored. {error}", path.display()),
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                original.clone()
+            };
             #[cfg(windows)]
             if let Err(reason) = check_windows_restore(manifest, &path, &seen, &original) {
                 block_path(
@@ -2333,9 +2799,9 @@ impl Setup {
             operations.push(Pending {
                 path,
                 seen,
-                desired: original,
+                desired,
                 kind: None,
-                allow_link: true,
+                allow_link: !shared_source,
             });
         }
         // Descendants are restored before their parent's final mode or link.
@@ -2440,7 +2906,10 @@ impl Setup {
             (directories, BatchMode::SealRestore { extension_only }),
         ] {
             for (path, status) in self.apply_batch(root, manifest, operations, mode)? {
-                if status == ApplyOutcome::Applied && !kept_directories.contains(&path) {
+                if status == ApplyOutcome::Applied
+                    && !kept_directories.contains(&path)
+                    && !path_blocked(&retained_skills, &path)
+                {
                     result.written.push(path.display().to_string());
                 } else if status != ApplyOutcome::Applied {
                     kept_directories.remove(&path);
@@ -2606,6 +3075,10 @@ impl Setup {
         generated: &[String],
     ) -> Result<RulesSyncReport> {
         ensure!(manifest.adopted, "finish restoring the local setup first");
+        let mut result = report("Checked the local tool setup");
+        if !manifest.settings_only && !self.follow_source_for_sync(manifest, &mut result)? {
+            return Ok(result);
+        }
         let settings = wenlan_core::shared_space::settings_path();
         let layers = rulesync_team::load_layers(&settings)?;
         self.capture_team_edits(root, manifest, &settings, &layers)?;
@@ -2617,12 +3090,15 @@ impl Setup {
             Some(&manifest.master),
             generated,
         );
-        let mut result = self.sync_locked(
+        self.sync_deliveries(
             root,
             manifest,
             generated,
-            |target, source| self.render_member_rule(&session, target, source, &layers),
-            |renderer, skills| self.render_skills(&session, renderer, skills),
+            (
+                &|target, source| self.render_member_rule(&session, target, source, &layers),
+                &|renderer, skills| self.render_skills(&session, renderer, skills),
+            ),
+            &mut result,
         )?;
         result.written.extend(checkout_writes);
         result.extend_blocks(Code::CheckoutNeedsReview, checkout_conflicts);
@@ -2666,6 +3142,9 @@ impl Setup {
             let Ok(current) = root.read(path, false) else {
                 continue;
             };
+            if snapshot_has_credentials(&current) {
+                continue;
+            }
             let record = &manifest.delivered[path];
             let previous = record.observed.as_ref().unwrap_or(&record.delivered);
             let (Ok(before), Ok(delivered), Ok(after)) =
@@ -2715,6 +3194,9 @@ impl Setup {
             let Ok(current) = root.read(&path, false) else {
                 continue;
             };
+            if snapshot_has_credentials(&current) {
+                continue;
+            }
             let (Ok(before), Ok(after)) = (text(previous), text(&current)) else {
                 continue;
             };
@@ -2749,7 +3231,7 @@ impl Setup {
                         .delivered
                         .get_mut(&path)
                         .expect("managed rule")
-                        .observed = Some(current.clone());
+                        .observe(current.clone());
                     observed_edits = true;
                 }
             }
@@ -2760,6 +3242,7 @@ impl Setup {
         Ok(())
     }
 
+    #[cfg(test)]
     fn sync_locked(
         &self,
         root: &FileRoot,
@@ -2773,6 +3256,31 @@ impl Setup {
             "the previous adoption stopped early. Restore it first"
         );
         let mut result = report("Checked the local tool setup");
+        if !manifest.settings_only && !self.follow_source_for_sync(manifest, &mut result)? {
+            return Ok(result);
+        }
+        self.sync_deliveries(
+            root,
+            manifest,
+            generated,
+            (&render_rule, &render_skills),
+            &mut result,
+        )?;
+        Ok(result)
+    }
+
+    fn sync_deliveries<R, S>(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        generated: &[String],
+        renderers: (&R, &S),
+        result: &mut RulesSyncReport,
+    ) -> Result<()>
+    where
+        R: Fn(&str, &str) -> Result<SkillFiles>,
+        S: Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    {
         let added = additional_targets(&self.home, &manifest.master)?;
         if !added.is_empty() && manifest.extension_paths.is_empty() {
             let tools = added
@@ -2795,16 +3303,8 @@ impl Setup {
                 "\nFound {count} additional command or subagent file(s). Run `wenlan rules adopt` to review and add them."
             ));
         }
-        let blocked = self.pull_back(root, manifest, &mut result)?;
-        self.deliver_locked(
-            root,
-            manifest,
-            generated,
-            (&render_rule, &render_skills),
-            &blocked,
-            &mut result,
-        )?;
-        Ok(result)
+        let blocked = self.pull_back(root, manifest, result)?;
+        self.deliver_locked(root, manifest, generated, renderers, &blocked, result)
     }
 
     /// Background delivery shares the same receipt checks and writer as Sync.
@@ -2861,6 +3361,23 @@ impl Setup {
         R: Fn(&str, &str) -> Result<SkillFiles>,
         S: Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     {
+        self.deliver_rules(root, manifest, generated, render_rule, blocked, result)?;
+        let saved = rulesync_registry::saved_skill_deliveries(&self.data)?;
+        self.sync_skills(root, manifest, blocked, result, &saved, render_skills)?;
+        self.sync_personal_settings(root, manifest, result, None)?;
+        self.sync_registry(root, manifest, blocked, result, &saved, render_skills)?;
+        Ok(())
+    }
+
+    fn deliver_rules(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        generated: &[String],
+        render_rule: &impl Fn(&str, &str) -> Result<SkillFiles>,
+        blocked: &BTreeSet<PathBuf>,
+        result: &mut RulesSyncReport,
+    ) -> Result<()> {
         let had_issues = !std::mem::take(&mut manifest.delivery_issues).is_empty();
         let paths: Vec<_> = manifest
             .active_deliveries()
@@ -2922,6 +3439,13 @@ impl Setup {
                 );
                 continue;
             };
+            if seen == Snapshot::Absent
+                && std::str::from_utf8(bytes).is_ok_and(|text| text.trim().is_empty())
+            {
+                // An enrolled target can have no rules yet. Keep its absent
+                // receipt until shared, team, or generated content renders.
+                continue;
+            }
             let desired = with_bytes(&seen, bytes.clone());
             if desired == seen && delivery.observed.is_none() {
                 continue;
@@ -2930,11 +3454,7 @@ impl Setup {
                 path,
                 seen,
                 desired,
-                kind: Some(Kind::Rule {
-                    target: target.clone(),
-                    source,
-                    base: manifest.master.base_rule_text(target, generated),
-                }),
+                kind: Some(Kind::rule(&manifest.master, target, generated, source)),
                 allow_link: false,
             });
         }
@@ -2956,10 +3476,6 @@ impl Setup {
         if had_issues || !manifest.delivery_issues.is_empty() {
             self.save(manifest)?;
         }
-        let saved = rulesync_registry::saved_skill_deliveries(&self.data)?;
-        self.sync_skills(root, manifest, blocked, result, &saved, render_skills)?;
-        self.sync_personal_settings(root, manifest, result)?;
-        self.sync_registry(root, manifest, blocked, result, &saved, render_skills)?;
         Ok(())
     }
 
@@ -2982,15 +3498,22 @@ impl Setup {
             .filter(|target| manifest.master.enrolls_target(target.id))
             .map(|target| target.tool)
             .collect();
-        let pending_skills = rulesync_registry::collect_tool_proposals(
+        let skills = rulesync_registry::collect_tool_proposals(
             &self.home, &self.data, &skills, &unmanaged, &enrolled,
         )?;
         let Pullback {
             drafts,
             cards,
             mut blocked,
+            credentials,
         } = inspect(&self.home, root, manifest)?;
-        blocked.extend(pending_skills);
+        blocked.extend(skills.blocked);
+        let previous_credentials = manifest.credentials.clone();
+        manifest.credentials.rules = credentials;
+        manifest.credentials.skills.retain(|path, _| {
+            path_blocked(&manifest.unmanaged_skills, path) && kept_skill_asset(root, path)
+        });
+        manifest.credentials.skills.extend(skills.credentials);
         let previous = (
             manifest.scope_reviews.len(),
             manifest.scope_review_heads.len(),
@@ -3004,11 +3527,12 @@ impl Setup {
                 .scope_review_heads
                 .retain(|path, _| unchanged(path));
         }
-        let mut changed = previous
-            != (
-                manifest.scope_reviews.len(),
-                manifest.scope_review_heads.len(),
-            );
+        let mut changed = previous_credentials != manifest.credentials
+            || previous
+                != (
+                    manifest.scope_reviews.len(),
+                    manifest.scope_review_heads.len(),
+                );
         for draft in drafts
             .iter()
             .filter(|draft| !cards.iter().any(|card| card.paths.contains(&draft.path)))
@@ -3030,13 +3554,29 @@ impl Setup {
             }
             result.proposals.push(card.wire);
         }
-        result
-            .proposals
-            .extend(manifest.current_scope_reviews().map(ScopeReview::wire));
+        result.proposals.extend(
+            manifest
+                .current_scope_reviews()
+                .filter(|review| !blocked.contains_key(&review.path))
+                .map(ScopeReview::wire),
+        );
         for (path, (code, reason)) in &blocked {
             block_path(result, path, *code, format!("{}: {reason}", path.display()));
         }
-        Ok(blocked.into_keys().collect())
+        // Report paths omitted from adoption without turning them into review
+        // blockers for deliveries to the other tools.
+        let blocked = blocked.into_keys().collect();
+        let locations = &manifest.credentials;
+        for path in locations
+            .rules
+            .keys()
+            .chain(locations.skills.keys())
+            .filter(|path| !path_blocked(&blocked, path))
+        {
+            result.message.push('\n');
+            result.message.push_str(&credential_note(path));
+        }
+        Ok(blocked)
     }
 
     fn sync_registry(
@@ -3690,6 +4230,10 @@ impl Setup {
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
             );
+            ensure!(
+                !snapshot_has_credentials(&root.read(&scope.path, false)?),
+                CREDENTIAL_FILE_REASON
+            );
             return Ok(PullbackPreview {
                 diff: scope.card.diff.clone(),
                 plan: scope.card.reason.clone(),
@@ -3751,11 +4295,15 @@ impl Setup {
                 manifest.is_current_scope_review(scope),
                 "the proposal is no longer current"
             );
+            ensure!(
+                !snapshot_has_credentials(&root.read(&scope.path, false)?),
+                CREDENTIAL_FILE_REASON
+            );
             let scope = scope.clone();
             if action == PullbackAction::AllTools {
                 let delivery = manifest
                     .delivered
-                    .get_mut(&scope.path)
+                    .get(&scope.path)
                     .context("file is no longer managed")?;
                 let expected = delivery.observed.as_ref().unwrap_or(&delivery.delivered);
                 ensure!(
@@ -3766,32 +4314,46 @@ impl Setup {
                     target,
                     base,
                     source,
+                    ..
                 } = &delivery.kind
                 else {
                     bail!("the proposal no longer belongs to a managed rule");
                 };
-                if manifest
+                let authored = restore_rules::AuthoredRules::for_review(
+                    &manifest,
+                    &scope.path,
+                    expected,
+                    &scope.before,
+                    &scope.after,
+                )?;
+                manifest
                     .master
-                    .promote_tool_edit(target, &scope.before, &scope.after)?
-                {
-                    // Pull-back already kept this edit locally. Remove that
-                    // copy from the override now that the shared master has it.
-                    let local = current_rule_source(&manifest.master, target, base, source)?;
-                    let previous = merge_rule_text(&scope.after, &scope.before, &local)?;
-                    if previous == *base {
-                        manifest.master.overrides.remove(target);
-                    } else {
-                        manifest.master.overrides.insert(
-                            target.clone(),
-                            LocalText {
-                                base: base.clone(),
-                                edited: previous,
-                            },
-                        );
-                    }
+                    .promote_tool_edit(target, &scope.before, &scope.after)?;
+                // Pullback kept the reviewed edit locally. Once it is
+                // shared, remove only that edit from the local override.
+                let local = current_rule_source(&manifest.master, target, base, source)?;
+                let previous = merge_rule_text(&scope.after, &scope.before, &local)?;
+                if previous == *base {
+                    manifest.master.overrides.remove(target);
+                } else {
+                    manifest.master.overrides.insert(
+                        target.clone(),
+                        LocalText {
+                            base: base.clone(),
+                            edited: previous,
+                        },
+                    );
                 }
-                delivery.observed = Some(expected.clone());
+                let expected = expected.clone();
+                let delivery = manifest
+                    .delivered
+                    .get_mut(&scope.path)
+                    .expect("managed rule");
+                delivery.observe(expected);
                 delivery.reviewed = true;
+                if let Some(authored) = authored {
+                    manifest.authored_rules.insert(scope.path.clone(), authored);
+                }
             }
             manifest
                 .scope_reviews
@@ -3849,7 +4411,17 @@ impl Setup {
                                 delivery.observed.as_ref().unwrap_or(&delivery.delivered),
                             )?)?;
                             let after = rulesync_layers::only_personal(text(&draft.current)?)?;
+                            let authored = restore_rules::AuthoredRules::for_review(
+                                &manifest,
+                                &draft.path,
+                                &draft.current,
+                                &before,
+                                &after,
+                            )?;
                             manifest.master.promote_tool_edit(target, &before, &after)?;
+                            if let Some(authored) = authored {
+                                manifest.authored_rules.insert(draft.path.clone(), authored);
+                            }
                         }
                         _ => bail!("the proposal no longer belongs to a managed file"),
                     }
@@ -3862,7 +4434,7 @@ impl Setup {
                 .delivered
                 .get_mut(&draft.path)
                 .context("file is no longer managed")?;
-            delivery.observed = Some(draft.current.clone());
+            delivery.observe(draft.current.clone());
             delivery.reviewed |= all_tools;
         }
         self.save(&manifest)?;
@@ -4371,6 +4943,9 @@ fn registry_removals(
 
 fn extend_personal_master(master: &mut PersonalMaster, added: PersonalMaster) {
     master.overlays.extend(added.overlays);
+    if added.claude_imported_rules.is_some() {
+        master.claude_imported_rules = added.claude_imported_rules;
+    }
     master.codex_sync_replaced |= added.codex_sync_replaced;
     for skill in added.skills {
         let shared = master.skills.iter_mut().find(|current| {
@@ -4493,6 +5068,12 @@ fn render_personal_skills<'a>(
     let mut staged = BTreeMap::new();
     let mut candidates = Vec::new();
     for (name, files) in sources {
+        if let Some((path, _)) = files
+            .iter()
+            .find(|(_, bytes)| contains_credential_bytes(bytes))
+        {
+            bail!("{}", credential_note(&Path::new(name).join(path)));
+        }
         let source = files
             .get(entry)
             .context("missing SKILL.md in the skill master")?;
@@ -4866,6 +5447,7 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
         if let Some(observed) = &mut record.observed {
             *observed = without_revoked_rules(observed, accessible)?;
         }
+        record.rule_revision = Some(uuid::Uuid::new_v4().simple().to_string());
         return Ok(());
     }
     if let Some(kind) = operation.kind {
@@ -4887,6 +5469,8 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
             Kind::SettingsParent => return Ok(()),
             kind => (kind, operation.desired),
         };
+        let rule_revision =
+            matches!(kind, Kind::Rule { .. }).then(|| uuid::Uuid::new_v4().simple().to_string());
         manifest.delivered.insert(
             operation.path,
             Delivery {
@@ -4895,6 +5479,7 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
                 observed: None,
                 reviewed: false,
                 at: chrono::Utc::now().timestamp(),
+                rule_revision,
             },
         );
     } else if manifest
@@ -4904,6 +5489,16 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
     {
         personal_settings::forget_restore(manifest, &operation.path);
     } else {
+        if manifest
+            .delivered
+            .get(&operation.path)
+            .is_some_and(|receipt| matches!(receipt.kind, Kind::Rule { .. }))
+            && manifest.backup.get(&operation.path) != Some(&operation.desired)
+        {
+            manifest
+                .restored_rules
+                .insert(operation.path.clone(), operation.desired);
+        }
         manifest.delivered.remove(&operation.path);
     }
     Ok(())
@@ -4914,6 +5509,57 @@ pub(crate) fn text(snapshot: &Snapshot) -> Result<&str> {
         Snapshot::Absent => Ok(""),
         Snapshot::File { bytes, .. } => Ok(std::str::from_utf8(bytes)?),
         _ => bail!("this file has no text to pull back"),
+    }
+}
+
+fn is_rule_or_skill(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Rule { .. }
+            | Kind::SharedRuleSource
+            | Kind::RuleRevocation { .. }
+            | Kind::Skill
+            | Kind::RegistrySkill { .. }
+    )
+}
+
+fn snapshot_has_credentials(snapshot: &Snapshot) -> bool {
+    matches!(snapshot, Snapshot::File { bytes, .. } if contains_credential_bytes(bytes))
+}
+
+fn snapshot_credential_lines(snapshot: &Snapshot) -> Vec<usize> {
+    match snapshot {
+        Snapshot::File { bytes, .. } => credential_line_numbers(&String::from_utf8_lossy(bytes)),
+        _ => Vec::new(),
+    }
+}
+
+/// On an unreadable path retain the last observed line positions.
+fn read_credential_lines(root: &FileRoot, path: &Path) -> Option<Vec<usize>> {
+    let current = if is_shared_rule_source_path(path) {
+        root.with_shared_rule_source()
+            .and_then(|source| source.read(path, false))
+    } else {
+        root.read(path, false)
+    };
+    current
+        .ok()
+        .map(|snapshot| snapshot_credential_lines(&snapshot))
+}
+
+fn kept_skill_asset(root: &FileRoot, path: &Path) -> bool {
+    root.read(path, false)
+        .map_or(true, |snapshot| snapshot_has_credentials(&snapshot))
+}
+
+fn credential_note(path: &Path) -> String {
+    format!("{}: {CREDENTIAL_FILE_REASON}", path.display())
+}
+
+fn append_credential_notes(result: &mut RulesSyncReport, credentials: &CredentialLocations) {
+    for path in credentials.rules.keys().chain(credentials.skills.keys()) {
+        result.message.push('\n');
+        result.message.push_str(&credential_note(path));
     }
 }
 
@@ -4956,10 +5602,31 @@ struct Pullback {
     drafts: Vec<Draft>,
     cards: Vec<Card>,
     blocked: BTreeMap<PathBuf, (Code, String)>,
+    credentials: BTreeMap<PathBuf, RuleCredentialLocation>,
 }
 
 fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback> {
     let mut drafts = Vec::new();
+    let mut credentials = manifest
+        .credentials
+        .rules
+        .iter()
+        .filter(|(path, _)| {
+            path.as_path() == Path::new(SHARED_RULES) || !manifest.delivered.contains_key(*path)
+        })
+        .filter_map(|(path, marker)| {
+            let lines = read_credential_lines(root, path).unwrap_or_else(|| marker.lines.clone());
+            (!lines.is_empty()).then(|| {
+                (
+                    path.clone(),
+                    RuleCredentialLocation {
+                        tool: marker.tool.clone(),
+                        lines,
+                    },
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut blocked: BTreeMap<_, _> = manifest
         .recovery_issues
         .iter()
@@ -4971,6 +5638,9 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
             continue;
         }
         if is_harness_path(path) {
+            if is_shared_source_receipt(manifest, path) {
+                continue;
+            }
             blocked.insert(
                 path.clone(),
                 (Code::SharedReadOnly, HARNESS_READ_ONLY.into()),
@@ -5018,8 +5688,25 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                     );
                 }
             }
-        } else if let Some(draft) = inspect_rule(path, delivery, current, &mut blocked)? {
-            drafts.push(draft);
+        } else if let Kind::Rule { target, .. } = &delivery.kind {
+            let lines = snapshot_credential_lines(&current);
+            if lines.is_empty() {
+                if let Some(draft) = inspect_rule(path, delivery, current, &mut blocked)? {
+                    drafts.push(draft);
+                }
+            } else {
+                credentials.insert(
+                    path.clone(),
+                    RuleCredentialLocation {
+                        tool: Some(target.clone()),
+                        lines,
+                    },
+                );
+                blocked.insert(
+                    path.clone(),
+                    (Code::RuleUnavailable, CREDENTIAL_FILE_REASON.into()),
+                );
+            }
         }
     }
     let mut cards = Vec::new();
@@ -5106,6 +5793,7 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
         drafts,
         cards,
         blocked,
+        credentials,
     })
 }
 
@@ -5258,6 +5946,7 @@ fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
         target,
         source,
         base,
+        ..
     } = &delivery.kind
     else {
         bail!("a skill proposal must be resolved in the skill's source");
@@ -5281,7 +5970,7 @@ fn accept_tool_edit(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
             edited,
         },
     );
-    delivery.observed = Some(draft.current.clone());
+    delivery.observe(draft.current.clone());
     Ok(())
 }
 
@@ -5401,12 +6090,12 @@ mod tests {
             }
         }
 
-        pub(super) fn adopt_from_plan(&self) {
+        pub(super) fn adopt_from_plan(&self) -> RulesSyncReport {
             let adoption = discover_adoption(&self.setup.home).unwrap();
             let master = PersonalMaster::new(&adoption);
             let root = FileRoot::open_home(&self.setup.home).unwrap();
             let _lock = self.setup.lock().unwrap();
-            self.setup.apply_adoption(&root, adoption, master).unwrap();
+            self.setup.apply_adoption(&root, adoption, master).unwrap()
         }
 
         pub(super) fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
@@ -5428,6 +6117,29 @@ mod tests {
                     fixture_skill_renderer,
                 )
                 .unwrap()
+        }
+
+        pub(super) fn sync_generated(&self, generated: &[String]) -> RulesSyncReport {
+            let root = FileRoot::open_home(&self.setup.home).unwrap();
+            let _lock = self.setup.lock().unwrap();
+            let mut manifest = self.setup.load().unwrap().unwrap();
+            self.setup
+                .sync_locked(
+                    &root,
+                    &mut manifest,
+                    generated,
+                    fixture_rule_renderer,
+                    fixture_skill_renderer,
+                )
+                .unwrap()
+        }
+
+        pub(super) fn empty_rules() -> Self {
+            let fixture = Self::new();
+            fs::remove_file(fixture.setup.home.join(".agents/AGENTS.md")).unwrap();
+            fs::remove_file(fixture.setup.home.join(CLAUDE)).unwrap();
+            fs::remove_file(fixture.setup.home.join(CODEX)).unwrap();
+            fixture
         }
 
         pub(super) fn sync_review(
@@ -5478,6 +6190,424 @@ mod tests {
                     .map(move |(path, bytes)| (folder.join(path), bytes.clone()))
             })
             .collect())
+    }
+
+    const RULE_CREDENTIALS: [(&str, &str); 4] = [
+        (
+            "Authorization: Basic Zml4dHVyZTpydWxlLW9ubHk=",
+            "Zml4dHVyZTpydWxlLW9ubHk=",
+        ),
+        (
+            "Authorization: Bearer Z8sm1sFz7dJ5dKwS9E4nyP2g",
+            "Z8sm1sFz7dJ5dKwS9E4nyP2g",
+        ),
+        (
+            "Use example:rule-credential-fixture@localhost",
+            "rule-credential-fixture",
+        ),
+        (
+            "Use https://fixture.invalid/?token=rule-query-fixture",
+            "rule-query-fixture",
+        ),
+    ];
+
+    fn assert_no_fixture_keys(directory: &Path, excluded: &[&str], keys: &[&str]) {
+        let mut pending = vec![directory.to_owned()];
+        while let Some(path) = pending.pop() {
+            for entry in fs::read_dir(path).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    pending.push(entry.path());
+                } else if kind.is_file()
+                    && !excluded
+                        .iter()
+                        .any(|path| entry.path() == directory.join(path))
+                {
+                    let bytes = fs::read(entry.path()).unwrap();
+                    assert!(
+                        keys.iter().all(|key| !bytes
+                            .windows(key.len())
+                            .any(|part| part == key.as_bytes())),
+                        "credential fixture found in {}",
+                        entry.path().display()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rulesync_leaves_rule_credentials_at_their_original_locations() {
+        let f = Fixture::new();
+        let keys: Vec<_> = RULE_CREDENTIALS.iter().map(|(_, key)| *key).collect();
+        let claude = format!(
+            "Claude rule.\r\n{}\r\n{}\r\n",
+            RULE_CREDENTIALS[0].0, RULE_CREDENTIALS[1].0
+        );
+        let codex = format!(
+            "{}\nCodex rule.\n{}",
+            RULE_CREDENTIALS[2].0, RULE_CREDENTIALS[3].0
+        );
+        f.write(CLAUDE, &claude);
+        f.write(CODEX, &codex);
+        fs::create_dir(f.setup.home.join(".gemini")).unwrap();
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let preview = serde_json::to_string(&plan).unwrap();
+        assert!(
+            keys.iter().all(|key| !preview.contains(key)),
+            "adoption preview contained a credential"
+        );
+        assert!(preview.contains(CREDENTIAL_FILE_REASON.trim_end_matches('.')));
+        let rotated = codex.replace(RULE_CREDENTIALS[3].1, "rotated-query-fixture");
+        f.write(CODEX, &rotated);
+        let next_plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(
+            next_plan.plan_id, plan.plan_id,
+            "approval should depend only on the location"
+        );
+        f.write(CODEX, &codex);
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_no_fixture_keys(&f.setup.data, &[], &keys);
+        let manifest = f.setup.load().unwrap().unwrap();
+        for (path, tool, lines) in [(CLAUDE, "claudecode", [2, 3]), (CODEX, "codexcli", [1, 3])] {
+            let marker = &manifest.credentials.rules[Path::new(path)];
+            assert_eq!(marker.tool.as_deref(), Some(tool));
+            assert_eq!(marker.lines, lines);
+            assert!(!manifest.backup.contains_key(Path::new(path)));
+            assert!(!manifest.delivered.contains_key(Path::new(path)));
+        }
+
+        f.sync_generated(&["A safe generated rule.".into()]);
+        let gemini = personal_target("geminicli").unwrap().rules.destination;
+        assert!(f.text(gemini).contains("A safe generated rule."));
+        assert_eq!(
+            fs::read(f.setup.home.join(CLAUDE)).unwrap(),
+            claude.as_bytes()
+        );
+        assert_eq!(
+            fs::read(f.setup.home.join(CODEX)).unwrap(),
+            codex.as_bytes()
+        );
+        assert_no_fixture_keys(&f.setup.data, &[], &keys);
+        assert_no_fixture_keys(&f.setup.home, &[CLAUDE, CODEX], &keys);
+
+        f.setup.restore().unwrap();
+        assert_eq!(
+            fs::read(f.setup.home.join(CLAUDE)).unwrap(),
+            claude.as_bytes()
+        );
+        assert_eq!(
+            fs::read(f.setup.home.join(CODEX)).unwrap(),
+            codex.as_bytes()
+        );
+        assert_no_fixture_keys(&f.setup.data, &[], &keys);
+        assert_no_fixture_keys(&f.setup.home, &[CLAUDE, CODEX], &keys);
+    }
+
+    #[test]
+    fn rulesync_pullback_refuses_a_rule_edit_with_credentials_before_review() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let first = "changed-fixture-one";
+        let second = "changed-fixture-two";
+        f.write(
+            CLAUDE,
+            &format!(
+                "{}\nhttps://fixture.invalid/?token={first}\n",
+                f.text(CLAUDE)
+            ),
+        );
+        f.sync_generated(&[]);
+        let first_state = fs::read(f.setup.data.join(storage::MANIFEST)).unwrap();
+        let edited = f.text(CLAUDE).replace(first, second);
+        f.write(CLAUDE, &edited);
+        // An unrelated safe change still appears in review.
+        f.write(CODEX, &format!("{}\nA new safe rule.\n", f.text(CODEX)));
+        let status = f.setup.status().unwrap();
+        let cards = serde_json::to_string(&status.proposals).unwrap();
+        assert!(cards.contains("A new safe rule."));
+        assert!(
+            !cards.contains(first) && !cards.contains(second),
+            "review leaked a credential"
+        );
+        assert!(status
+            .notes
+            .iter()
+            .any(|note| note == &credential_note(Path::new(CLAUDE))));
+        let report = f.sync_generated(&[]);
+        assert!(report
+            .blocked
+            .iter()
+            .any(|reason| reason.contains(CLAUDE) && reason.contains("looks like a key")));
+        assert!(first_state
+            .windows(first.len())
+            .all(|part| part != first.as_bytes()));
+        assert_no_fixture_keys(&f.setup.data, &[], &[first, second]);
+        f.setup.restore().unwrap();
+        assert_eq!(f.text(CLAUDE), edited);
+        assert_no_fixture_keys(&f.setup.data, &[], &[first, second]);
+        assert_no_fixture_keys(&f.setup.home, &[CLAUDE], &[first, second]);
+    }
+
+    #[test]
+    fn rulesync_keeps_key_shaped_skill_assets_and_accepts_code_references() {
+        let f = Fixture::new();
+        let bearer = "zn7SpKc2bVT9jpD4RfyK2Hwg4zfcQFtQ29xwBwC2enAZpx3sY5hcpTMcqdX";
+        let api_key = "w79wxza928af410e9c4f36xdpycb01h6";
+        let samples = [
+            (
+                ".claude/skills/vendor",
+                "dist/bundle.js",
+                format!("const headers = {{ Authorization: 'Bearer {bearer}' }};\n"),
+            ),
+            (
+                ".codex/skills/docs",
+                "readme.md",
+                format!("api-key: {api_key}\n"),
+            ),
+            (
+                ".claude/skills/plain-code",
+                "main.py",
+                "token = data.get(\"token\")\napi_key = os.getenv(\"KEY\")\n".into(),
+            ),
+        ];
+        for (folder, file, contents) in &samples {
+            let path = f.setup.home.join(folder).join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let name = folder.rsplit('/').next().unwrap();
+            f.write(
+                &format!("{folder}/SKILL.md"),
+                &format!("---\nname: {name}\ndescription: A fixture\n---\nExample skill.\n"),
+            );
+            fs::write(path, contents).unwrap();
+        }
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_no_fixture_keys(&f.setup.data, &[], &[bearer, api_key]);
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(manifest
+            .master
+            .skills
+            .iter()
+            .any(|skill| skill.name == "plain-code"));
+        let flags = [
+            ".claude/skills/vendor/dist/bundle.js",
+            ".codex/skills/docs/readme.md",
+        ];
+        assert_eq!(
+            manifest.credentials.skills,
+            BTreeMap::from([
+                (PathBuf::from(flags[0]), Some("claudecode".into())),
+                (PathBuf::from(flags[1]), Some("codexcli".into())),
+            ])
+        );
+        let report = f.sync_generated(&[]);
+        for path in flags {
+            assert!(report.message.contains(&credential_note(Path::new(path))));
+        }
+        for (folder, file, contents) in &samples {
+            assert_eq!(
+                fs::read(f.setup.home.join(folder).join(file)).unwrap(),
+                contents.as_bytes()
+            );
+        }
+        assert_no_fixture_keys(&f.setup.data, &[], &[bearer, api_key]);
+        assert_no_fixture_keys(&f.setup.home, &flags, &[bearer, api_key]);
+        f.setup.restore().unwrap();
+        for (folder, file, contents) in &samples {
+            assert_eq!(
+                fs::read(f.setup.home.join(folder).join(file)).unwrap(),
+                contents.as_bytes()
+            );
+        }
+        assert_no_fixture_keys(&f.setup.home, &flags, &[bearer, api_key]);
+    }
+
+    #[test]
+    fn rulesync_clears_credential_markers_after_the_person_removes_the_keys() {
+        let f = Fixture::new();
+        let asset = ".codex/skills/example/readme.md";
+        fs::create_dir_all(f.setup.home.join(".codex/skills/example")).unwrap();
+        f.write(".codex/skills/example/SKILL.md", "A skill with examples.\n");
+        f.write(asset, RULE_CREDENTIALS[1].0);
+        f.write(CLAUDE, RULE_CREDENTIALS[0].0);
+        f.adopt_from_plan();
+        assert_eq!(f.setup.status().unwrap().notes.len(), 2);
+
+        f.write(CLAUDE, "The person's clean rules.\n");
+        f.write(asset, "The person's clean examples.\n");
+        assert!(f.setup.status().unwrap().notes.is_empty());
+        f.sync_generated(&["Safe new rule.".into()]);
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(manifest.credentials.is_empty());
+        assert_eq!(f.text(CLAUDE), "The person's clean rules.\n");
+        assert_eq!(f.text(asset), "The person's clean examples.\n");
+    }
+
+    #[test]
+    fn rulesync_skill_sync_keeps_an_asset_that_newly_contains_a_key() {
+        let f = Fixture::new();
+        let folder = ".claude/skills/notes";
+        let asset = ".claude/skills/notes/example.js";
+        fs::create_dir_all(f.setup.home.join(folder)).unwrap();
+        f.write(
+            &format!("{folder}/SKILL.md"),
+            "---\nname: notes\ndescription: A fixture\n---\nRead the examples.\n",
+        );
+        f.write(asset, "const example = 'fixture';\n");
+        f.adopt_from_plan();
+
+        let key = RULE_CREDENTIALS[1].1;
+        let contents = format!("const authorization = 'Bearer {key}';\r\n");
+        f.write(asset, &contents);
+        let report = f.sync_generated(&[]);
+        assert_block(&report, CREDENTIAL_FILE_REASON, Code::SkillUnreadable);
+        assert!(rulesync_registry::pending_skill_reviews(&f.setup.data)
+            .unwrap()
+            .is_empty());
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(
+            manifest.credentials.skills[Path::new(asset)].as_deref(),
+            Some("claudecode")
+        );
+        assert_no_fixture_keys(&f.setup.data, &[], &[key]);
+        assert_eq!(f.text(asset), contents);
+
+        f.setup.restore().unwrap();
+        assert_eq!(f.text(asset), contents);
+        assert_no_fixture_keys(&f.setup.data, &[], &[key]);
+        assert_no_fixture_keys(&f.setup.home, &[asset], &[key]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_restore_does_not_displace_a_linked_skill_with_a_local_key() {
+        let f = Fixture::new();
+        let source = ".agents/skills/notes";
+        let installed = ".claude/skills/notes";
+        let asset = ".claude/skills/notes/local.txt";
+        fs::create_dir_all(f.setup.home.join(source)).unwrap();
+        fs::create_dir(f.setup.home.join(".claude/skills")).unwrap();
+        f.write(
+            &format!("{source}/SKILL.md"),
+            "---\nname: notes\ndescription: A fixture\n---\nRead the examples.\n",
+        );
+        std::os::unix::fs::symlink("../../.agents/skills/notes", f.setup.home.join(installed))
+            .unwrap();
+        f.adopt_from_plan();
+        assert!(!fs::symlink_metadata(f.setup.home.join(installed))
+            .unwrap()
+            .is_symlink());
+
+        let (contents, key) = RULE_CREDENTIALS[1];
+        f.write(asset, contents);
+        let report = f.setup.restore().unwrap();
+        assert!(!report.blocked.is_empty());
+        assert_eq!(f.text(asset), contents);
+        assert_no_fixture_keys(&f.setup.data, &[], &[key]);
+        assert_no_fixture_keys(&f.setup.home, &[asset], &[key]);
+    }
+
+    #[test]
+    fn rulesync_legacy_rule_credentials_leave_the_saved_setup_in_place() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let path = f.setup.data.join(storage::MANIFEST);
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        state["state"]["master"]["shared"] = RULE_CREDENTIALS[0].0.into();
+        let legacy_bytes = serde_json::to_vec(&state).unwrap();
+        fs::write(&path, &legacy_bytes).unwrap();
+
+        let failure = f.setup.status().unwrap_err().to_string();
+        assert!(failure.contains("holds text that looks like a key"));
+        assert!(!failure.contains(RULE_CREDENTIALS[0].1));
+        assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
+    }
+
+    #[test]
+    fn ux_cli_8_empty_rule_target_is_journaled_without_creating_a_file_then_delivered_and_restored()
+    {
+        let fixture = Fixture::empty_rules();
+        let path = fixture.setup.home.join(CLAUDE);
+
+        let adopted = fixture.adopt_from_plan();
+        assert!(!adopted.written.iter().any(|written| written == CLAUDE));
+        assert!(!path.exists());
+        let immediate = fixture.sync_generated(&[]);
+        assert!(!path.exists());
+        assert!(immediate.blocked.is_empty(), "{immediate:?}");
+        assert_eq!(
+            fixture
+                .setup
+                .load()
+                .unwrap()
+                .unwrap()
+                .delivered
+                .get(Path::new(CLAUDE))
+                .map(|delivery| &delivery.delivered),
+            Some(&Snapshot::Absent)
+        );
+
+        let later = fixture.sync_generated(&["Generated later.".into()]);
+        assert!(
+            later.written.iter().any(|written| written == CLAUDE),
+            "{later:?}"
+        );
+        assert_eq!(
+            fixture.text(CLAUDE),
+            "\n## How I work\n\n- Generated later.\n"
+        );
+
+        let restored = fixture.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn ux_cli_8_empty_rule_target_preserves_a_user_created_file_for_review() {
+        let fixture = Fixture::empty_rules();
+        fixture.adopt_from_plan();
+        fixture.write(CLAUDE, "User-created rule.\n");
+
+        let result = fixture.sync_generated(&["Generated later.".into()]);
+
+        assert!(
+            result
+                .blocked
+                .iter()
+                .any(|blocked| blocked.contains(CLAUDE)),
+            "{result:?}"
+        );
+        assert_eq!(fixture.text(CLAUDE), "User-created rule.\n");
+    }
+
+    #[test]
+    fn ux_cli_8_whitespace_only_shared_rules_leave_missing_files_absent() {
+        let fixture = Fixture::empty_rules();
+        fixture.write(".agents/AGENTS.md", "\u{2003}\n");
+        fixture.adopt_from_plan();
+
+        let report = fixture.sync_generated(&[]);
+
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(!fixture.setup.home.join(CLAUDE).exists());
+        assert!(!fixture.setup.home.join(CODEX).exists());
     }
 
     fn render_fixture_tree(
@@ -6813,9 +7943,14 @@ mod tests {
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
         for (path, before) in originals {
+            let additions = match path.to_str().unwrap() {
+                ".gemini/config/GEMINI.md" => "Antigravity local addition.\n",
+                ".config/muse/AGENTS.md" => "Shared from Muse Code.\n",
+                _ => "",
+            };
             assert_eq!(
                 fs::read(f.setup.home.join(&path)).unwrap(),
-                before,
+                [before.as_slice(), additions.as_bytes()].concat(),
                 "{}",
                 path.display()
             );
@@ -6931,6 +8066,167 @@ mod tests {
             },
             |root, manifest| f.sync_review(root, manifest),
         )
+    }
+
+    pub(super) fn accept_local_rule_additions(f: &Fixture, additions: &str) {
+        f.write(CODEX, &format!("{}{additions}", f.text(CODEX)));
+        let card = pullback_file(&f.sync_with(""), CODEX);
+        let accepted = review_file(f, &card, PullbackAction::ToolOnly, None).unwrap();
+        assert!(accepted.blocked.is_empty(), "{accepted:?}");
+        let settled = f.sync_with("");
+        assert!(
+            settled.written.is_empty() && settled.proposals.is_empty(),
+            "{settled:?}"
+        );
+    }
+
+    #[test]
+    fn rulesync_restore_keeps_accepted_tool_only_lines_in_byte_order() {
+        let f = Fixture::new();
+        let original = "# Codex notes\r\n\r\nAn original rule.  \r\n";
+        let additions = "\r\nSecond rule added.  \r\nFirst rule added.\nSecond rule added.\r\n";
+        f.write(CODEX, original);
+        f.adopt_from_plan();
+        accept_local_rule_additions(&f, additions);
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(CODEX), format!("{original}{additions}"));
+    }
+
+    #[test]
+    fn rulesync_restore_blocks_a_settled_rewrite_of_an_original_rule() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let edited = f
+            .text(CODEX)
+            .replace("Codex only.", "Reviewed local rewrite.");
+        f.write(CODEX, &edited);
+        let card = pullback_file(&f.sync_with(""), CODEX);
+        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
+        assert!(f.sync_with("").proposals.is_empty());
+
+        let restored = f.setup.restore().unwrap();
+        assert_block(&restored, "original rule", Code::RestoreBlocked);
+        assert_eq!(f.text(CODEX), edited);
+        assert!(f.setup.load().unwrap().is_some());
+    }
+
+    #[test]
+    fn rulesync_restore_then_adopt_keeps_the_rule_tool_only() {
+        let f = Fixture::new();
+        let addition = "This rule belongs to this tool.\n";
+        f.adopt_from_plan();
+        accept_local_rule_additions(&f, addition);
+        let path = f.setup.data.join(storage::MANIFEST);
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy["state"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rule_origins_tracked");
+        fs::write(path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(f.setup.load().unwrap().is_none());
+
+        let plan = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        let adopted = f
+            .setup
+            .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert!(adopted.blocked.is_empty(), "{adopted:?}");
+        let master = f.setup.load().unwrap().unwrap().master;
+        assert!(master.overlays["codexcli"].ends_with(addition));
+        assert!(!master.shared.contains(addition));
+        assert!(!f.text(CLAUDE).contains(addition));
+    }
+
+    #[test]
+    fn rulesync_restore_rechecks_rule_additions_on_retry() {
+        let f = Fixture::new();
+        let original = f.text(CODEX);
+        let addition = "Remember this on the next run.\n";
+        f.adopt_from_plan();
+        accept_local_rule_additions(&f, addition);
+        let claude_delivered = f.text(CLAUDE);
+        f.write(
+            CLAUDE,
+            &claude_delivered.replace("Claude only.", "The person rewrote this."),
+        );
+
+        let partial = f.setup.restore().unwrap();
+        assert_block(&partial, "original rule", Code::RestoreBlocked);
+        let merged = format!("{original}{addition}");
+        assert_eq!(f.text(CODEX), merged);
+        fs::remove_file(f.setup.home.join(CODEX)).unwrap();
+        f.write(CLAUDE, &claude_delivered);
+
+        let retry = f.setup.restore().unwrap();
+        assert_block(
+            &retry,
+            "rule file with your additions is missing",
+            Code::OriginalMissing,
+        );
+        assert!(f.setup.load().unwrap().is_some());
+
+        f.write(CODEX, &merged);
+        let completed = f.setup.restore().unwrap();
+        assert!(completed.blocked.is_empty(), "{completed:?}");
+        assert_eq!(f.text(CODEX), merged);
+        assert!(f.setup.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn rulesync_restore_keeps_unreviewed_additions_in_a_new_native_rule_file() {
+        let f = Fixture::new();
+        fs::remove_file(f.setup.home.join(CODEX)).unwrap();
+        f.adopt_from_plan();
+        let addition = "Keep this line without a final newline.";
+        f.write(CODEX, &format!("{}{addition}", f.text(CODEX)));
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(CODEX), addition);
+        assert!(f.setup.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn rulesync_restore_leaves_new_tool_only_skills_commands_and_subagents() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let skill = write_step1d_skill(&f, ".claude", "A local skill.", "# Local helper\n");
+        f.sync_with("");
+        let approved =
+            rulesync_registry::accept_only_tool_proposal(&f.setup, None, fixture_skill_renderer)
+                .unwrap();
+        assert_eq!(
+            approved.scope,
+            wenlan_types::rulesync_skill::SavedSkillScope::Tool {
+                tool: SavedSkillTool::ClaudeCode
+            }
+        );
+        let command = ".claude/commands/local.md";
+        let subagent = ".claude/agents/local.md";
+        for path in [command, subagent] {
+            fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
+            f.write(path, "Only in the original tool.\n");
+        }
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(skill.join("SKILL.md").is_file());
+        assert_eq!(
+            fs::read_to_string(skill.join("helper.py")).unwrap(),
+            "# Local helper\n"
+        );
+        for path in [command, subagent] {
+            assert_eq!(f.text(path), "Only in the original tool.\n");
+        }
+        assert!(f.setup.load().unwrap().is_none());
     }
 
     #[test]
@@ -8504,10 +9800,15 @@ mod tests {
         assert_eq!(f.text(paths[0]), expected);
         assert_eq!(f.text(paths[1]), expected);
 
-        assert!(f.setup.restore().unwrap().blocked.is_empty());
-        for path in paths {
-            assert_eq!(f.text(path), original);
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        for target in &paths[..2] {
+            assert_eq!(f.text(target), original);
         }
+        assert_eq!(
+            f.text(path),
+            format!("{original}Keep this rule for Antigravity.\n")
+        );
     }
     #[test]
     fn rulesync_personal_commands_and_subagents_round_trip_through_review() {
@@ -9218,8 +10519,14 @@ mod tests {
         let restore = f.setup.restore().unwrap();
         assert!(restore.blocked.is_empty(), "{restore:?}");
         assert_eq!(f.text(CLAUDE), original_claude);
-        assert_eq!(f.text(CODEX), original_codex);
-        assert_eq!(f.text(cursor), original_cursor);
+        assert_eq!(
+            f.text(CODEX),
+            format!("{original_codex}Later shared rule.\n")
+        );
+        assert_eq!(
+            f.text(cursor),
+            format!("{original_cursor}\nCursor edit to keep.\n")
+        );
         assert_eq!(f.text(skill), original_skill);
     }
 
@@ -9399,7 +10706,7 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_added_tool_keeps_rules_written_since_adoption() {
+    fn rulesync_added_tool_receives_source_edits_without_duplicating_them() {
         let f = Fixture::new();
         f.adopt_from_plan();
         let cursor = ".cursor/AGENTS.md";
@@ -9422,14 +10729,15 @@ mod tests {
             "{}",
             f.text(cursor)
         );
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, harness);
         let report = f.sync_with("");
         assert!(
-            report.written.is_empty() && report.blocked.is_empty(),
+            report.blocked.is_empty() && report.proposals.is_empty(),
             "{report:?}"
         );
-        assert_eq!(f.text(cursor).matches(later_rule).count(), 1);
-        assert!(!f.text(CLAUDE).contains(later_rule));
-        assert!(!f.text(CODEX).contains(later_rule));
+        for path in [CLAUDE, CODEX, cursor] {
+            assert_eq!(f.text(path).matches(later_rule).count(), 1, "{path}");
+        }
         assert_eq!(f.text(".agents/AGENTS.md"), harness);
     }
 
@@ -9979,11 +11287,11 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_step1f_restores_adoption_tree_after_a_new_skill_is_renamed() {
+    fn rulesync_restore_keeps_a_new_native_skill_shared_with_no_other_tool() {
         let f = Fixture::new();
         fs::remove_dir_all(f.setup.home.join(".codex")).unwrap();
         fs::create_dir(f.setup.home.join(".claude/skills")).unwrap();
-        let before = step1e_tree(&f.setup.home);
+        let original_rule = f.text(CLAUDE);
         f.adopt_from_plan();
         allow_fixture_tool_folders(&f);
         let skill = write_step1d_skill(&f, ".claude", "New skill.", "# New helper\n");
@@ -9993,7 +11301,13 @@ mod tests {
 
         let restored = f.setup.restore().unwrap();
         assert!(restored.blocked.is_empty(), "{restored:?}");
-        assert_eq!(step1e_tree(&f.setup.home), before);
+        assert_eq!(f.text(CLAUDE), original_rule);
+        assert!(skill.join("SKILL.md").is_file());
+        assert_eq!(
+            fs::read_to_string(skill.join("renamed.py")).unwrap(),
+            "# New helper\n"
+        );
+        assert!(!skill.join("helper.py").exists());
     }
 
     #[cfg(unix)]
@@ -10794,6 +12108,13 @@ mod tests {
                         assert!(accepted.blocked.is_empty(), "{preview:?}\n{accepted:?}");
                     }
                 }
+                let created = created.strip_prefix(home).unwrap();
+                let mut expected = before;
+                expected.extend(
+                    step1e_tree(home)
+                        .into_iter()
+                        .filter(|(path, _)| path.starts_with(created)),
+                );
                 let restored = f.setup.restore().unwrap();
                 assert!(restored.blocked.is_empty(), "{restored:?}");
                 let after = step1e_tree(home);
@@ -10802,9 +12123,9 @@ mod tests {
                 }
                 assert_eq!(
                     after.keys().collect::<Vec<_>>(),
-                    before.keys().collect::<Vec<_>>()
+                    expected.keys().collect::<Vec<_>>()
                 );
-                assert_eq!(after, before);
+                assert_eq!(after, expected);
             });
             assert!(result.is_ok(), "restore property failed for seed {seed}");
         }
@@ -10852,6 +12173,8 @@ mod tests {
     #[test]
     fn rulesync_more_tools_share_an_edited_overlay_rule() {
         let f = Fixture::new();
+        let original_claude = f.text(CLAUDE);
+        let original_codex = f.text(CODEX);
         let edited = ".config/opencode/AGENTS.md";
         let uninstalled = ".config/muse";
         fs::create_dir_all(f.setup.home.join(edited).parent().unwrap()).unwrap();
@@ -10887,8 +12210,13 @@ mod tests {
             assert_eq!(f.text(path).contains("Keep this local."), path == edited);
         }
         assert!(!f.setup.home.join(uninstalled).exists());
-        assert!(f.setup.restore().unwrap().blocked.is_empty());
-        assert_eq!(f.text(edited), "OpenCode only.\nKeep this local.\n");
+        let current = f.text(edited);
+        let restored = f.setup.restore().unwrap();
+        assert_eq!(restored.blocked.len(), 1, "{restored:?}");
+        assert_block(&restored, "original rule", Code::RestoreBlocked);
+        assert_eq!(f.text(edited), current);
+        assert_eq!(f.text(CLAUDE), original_claude);
+        assert_eq!(f.text(CODEX), original_codex);
     }
 
     #[cfg(unix)]
@@ -11686,13 +13014,24 @@ mod tests {
         }
         assert_eq!(harness_state(), source_before);
 
+        let current_codex = f.text(CODEX);
         let restored = f.setup.restore().unwrap();
-        assert!(restored.blocked.is_empty(), "{restored:?}");
-        assert_eq!(restored.written.len(), adopted.written.len());
+        assert_eq!(restored.blocked.len(), 1, "{restored:?}");
+        assert_block(
+            &restored,
+            "Restoring the original link would remove rules",
+            Code::RestoreBlocked,
+        );
+        assert_eq!(f.text(CODEX), current_codex);
+        assert!(!fs::symlink_metadata(home.join(CODEX)).unwrap().is_symlink());
+        assert_eq!(restored.written.len(), adopted.written.len() - 1);
         for path in &restored.written {
             check_before_or_restored_path(Path::new(path));
         }
         for (path, target) in original_links {
+            if path == Path::new(CODEX) {
+                continue;
+            }
             assert_eq!(
                 fs::read_link(home.join(path)).unwrap().as_os_str(),
                 target.as_os_str()
@@ -11752,6 +13091,7 @@ mod tests {
                 observed: None,
                 reviewed: false,
                 at: 0,
+                rule_revision: None,
             },
         );
         f.setup.save(&manifest).unwrap();
@@ -12295,6 +13635,7 @@ mod tests {
                     target: "cursor".into(),
                     source: String::new(),
                     base: String::new(),
+                    authored_ends: None,
                 }),
                 allow_link: false,
             });
@@ -13440,6 +14781,7 @@ mod tests {
                 observed: None,
                 reviewed: false,
                 at: 1,
+                rule_revision: None,
             },
         );
         f.setup.save(&manifest).unwrap();

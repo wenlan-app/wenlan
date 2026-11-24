@@ -1776,17 +1776,13 @@ const en = {
   },
   daemonService: {
     label: "Service out of date",
-    body: "The service is running {{daemon}} while the app is {{app}}. Restart it so pages and topics load correctly.",
-    outsideBundle:
-      "The service is started from {{program}}. Update that install (Homebrew or npm), or turn Run in background off and on again to switch to the app's copy.",
+    body: "The background service is older than the app. Restart it to finish updating.",
+    outsideBundle: "The background service runs from another copy of Wenlan. In Settings, turn “Run Wenlan in background at login” off and on to use this one.",
     restart: "Restart service",
     errors: {
-      notOwned:
-        "This service was not started by this app, so it cannot be restarted from here. Quit the other copy of Wenlan or stop that service, then reopen Wenlan.",
-      isolated:
-        "This run uses a separate data directory, so the service is left alone. Restart it yourself.",
-      stillMismatched:
-        "The service restarted but still reports an older version. Check how the service is installed, then try again.",
+      notOwned: "This service belongs to another Wenlan app and can't be restarted here.",
+      isolated: "This run uses a separate data folder, so restart the service yourself.",
+      stillMismatched: "Still out of date after restarting.",
       sidecarStopUnconfirmed:
         "Wenlan couldn't confirm the background service stopped. Try again to finish restarting it.",
     },
@@ -5445,17 +5441,13 @@ const zhHans = {
   },
   daemonService: {
     label: "后台服务版本过旧",
-    body: "服务运行的是 {{daemon}} 版本，而应用是 {{app}} 版本。请重启服务，笔记与主题才能正确加载。",
-    outsideBundle:
-      "服务是从 {{program}} 启动的。请更新该安装（Homebrew 或 npm），或将“登录时在后台运行”关闭再打开，以切换为应用自带的版本。",
+    body: "后台服务版本比应用旧。请重启服务以完成更新。",
+    outsideBundle: "后台服务来自文澜的另一个副本。请在设置中关闭再开启“登录时在后台运行文澜”，以使用此副本。",
     restart: "重启服务",
     errors: {
-      notOwned:
-        "该服务不是由本应用启动的，无法在此重启。请退出另一个文澜副本或停止该服务，然后重新打开文澜。",
-      isolated:
-        "本次运行使用了单独的数据目录，因此不会改动该服务。请自行重启它。",
-      stillMismatched:
-        "服务已重启，但仍报告较旧的版本。请检查服务的安装方式，然后再试一次。",
+      notOwned: "该服务属于另一个文澜应用，无法在此重启。",
+      isolated: "本次运行使用了单独的数据目录，请自行重启服务。",
+      stillMismatched: "重启后仍未更新。",
       sidecarStopUnconfirmed:
         "文澜无法确认后台服务已经停止。请再试一次，完成服务重启。",
     },
@@ -9081,17 +9073,13 @@ const zhHant = {
   },
   daemonService: {
     label: "背景服務版本過舊",
-    body: "服務執行的是 {{daemon}} 版本，而應用程式是 {{app}} 版本。請重新啟動服務，筆記與主題才能正確載入。",
-    outsideBundle:
-      "服務是從 {{program}} 啟動的。請更新該安裝（Homebrew 或 npm），或將「登入時在背景執行」關閉再開啟，以切換為應用程式內附的版本。",
+    body: "背景服務版本比應用程式舊。請重新啟動服務以完成更新。",
+    outsideBundle: "背景服務來自文瀾的另一個副本。請在設定中關閉再開啟「登入時在背景執行文瀾」，以使用此副本。",
     restart: "重新啟動服務",
     errors: {
-      notOwned:
-        "此服務並非由本應用程式啟動，無法在此重新啟動。請結束另一個文瀾副本或停止該服務，然後重新開啟文瀾。",
-      isolated:
-        "本次執行使用了獨立的資料目錄，因此不會更動該服務。請自行重新啟動它。",
-      stillMismatched:
-        "服務已重新啟動，但仍回報較舊的版本。請檢查服務的安裝方式，然後再試一次。",
+      notOwned: "此服務屬於另一個文瀾應用程式，無法在此重新啟動。",
+      isolated: "本次執行使用了獨立的資料目錄，請自行重新啟動服務。",
+      stillMismatched: "重新啟動後仍未更新。",
       sidecarStopUnconfirmed:
         "無法確認文瀾的背景服務已停止。請再試一次，以完成服務重新啟動。",
     },

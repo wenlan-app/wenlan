@@ -407,6 +407,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// A server name is displayable only when the same name check used by
+    /// the MCP safety check accepts every part of its path.
+    pub fn mcp_name(&self, tool: &str) -> Option<&str> {
+        (self.key.feature == Mcp
+            && self.key.member.is_none()
+            && self.container.iter().all(|name| name_safe(tool, name)))
+        .then(|| self.key.name.last().map(String::as_str))
+        .flatten()
+    }
+
     pub fn label(&self) -> String {
         let name = self.key.name.join(".");
         let name = if let Some(member) = self
@@ -470,7 +480,19 @@ enum OriginalEntry {
         prefix: Vec<u8>,
         suffix: Vec<u8>,
         replaced: Vec<u8>,
+        /// Distance from the insertion to a separately added JSON comma.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        comma_before: Option<usize>,
     },
+}
+
+/// Layout that cannot be restored with a receipt limited to the edit.
+#[derive(Debug, thiserror::Error)]
+pub enum ReceiptLayoutError {
+    #[error("its settings file has comments next to where this setting would go")]
+    JsonComments,
+    #[error("its settings file has surrounding content Wenlan cannot restore separately")]
+    SurroundingContent,
 }
 
 impl RecordedEntry {
@@ -530,6 +552,11 @@ impl Location {
     }
 
     pub fn edit(&self, bytes: Option<&[u8]>, entry: &Entry) -> Result<Vec<u8>> {
+        let (edit, _) = self.checked_edit(bytes.unwrap_or(self.initial.as_bytes()), entry)?;
+        Ok(edit.bytes)
+    }
+
+    fn checked_edit(&self, bytes: &[u8], entry: &Entry) -> Result<(document::Edit, Document)> {
         ensure!(
             entry.can_reapply(),
             "the native permission or approval hook can only be reviewed locally"
@@ -538,16 +565,15 @@ impl Location {
             reviewable(self.tool, entry),
             "the settings entry contains possible credentials"
         );
-        let bytes = bytes.unwrap_or(self.initial.as_bytes());
         let doc = self.document(Some(bytes))?;
         let path = doc.path_to(entry)?;
-        let next = document::edit(self.format, bytes, &path, entry.value.clone())?;
-        let checked = self.document(Some(&next))?;
+        let edit = document::edit(self.format, bytes, &path, entry.value.clone())?;
+        let checked = self.document(Some(&edit.bytes))?;
         ensure!(
             checked.entry(&entry.key) == Some(entry),
             "the native settings entry did not round trip"
         );
-        Ok(next)
+        Ok((edit, checked))
     }
 
     fn span(&self, bytes: &[u8], doc: &Document, entry: &Entry) -> Result<Range<usize>> {
@@ -580,19 +606,62 @@ impl Location {
         })
     }
 
-    pub fn record_write(
+    pub fn edit_recorded(
         &self,
         receipt: Option<&RecordedEntry>,
         before: Option<&[u8]>,
-        after: &[u8],
         entry: &Entry,
-    ) -> Result<RecordedEntry> {
-        let doc = self.document(Some(after))?;
-        if let Some(receipt) = receipt {
-            return self.record_review(receipt, after, &doc, entry);
-        }
+    ) -> Result<(Vec<u8>, RecordedEntry)> {
         let before = before.unwrap_or(self.initial.as_bytes());
-        let span = self.span(after, &doc, entry)?;
+        let (edit, doc) = self.checked_edit(before, entry)?;
+        let after = &edit.bytes;
+        let receipt = if let Some(receipt) = receipt {
+            self.record_review(receipt, after, &doc, entry)?
+        } else {
+            let span = self.span(after, &doc, entry)?;
+            let original = match edit.json_insertion {
+                Some(insertion) => {
+                    let addition = insertion.addition;
+                    ensure!(
+                        addition.start <= span.start && span.end <= addition.end,
+                        "the settings entry is outside the inserted bytes"
+                    );
+                    if let Some(comma) = insertion.comma {
+                        ensure!(
+                            after[comma + 1..addition.start]
+                                .iter()
+                                .all(u8::is_ascii_whitespace),
+                            ReceiptLayoutError::JsonComments
+                        );
+                    }
+                    OriginalEntry::Inserted {
+                        prefix: after[addition.start..span.start].to_vec(),
+                        suffix: after[span.end..addition.end].to_vec(),
+                        replaced: Vec::new(),
+                        comma_before: insertion.comma.map(|comma| addition.start - comma),
+                    }
+                }
+                None => {
+                    ensure!(
+                        self.format != Format::Json,
+                        "the settings entry already exists"
+                    );
+                    Self::record_native_insertion(before, after, &span)?
+                }
+            };
+            RecordedEntry {
+                original,
+                delivered: after[span].to_vec(),
+            }
+        };
+        Ok((edit.bytes, receipt))
+    }
+
+    fn record_native_insertion(
+        before: &[u8],
+        after: &[u8],
+        span: &Range<usize>,
+    ) -> Result<OriginalEntry> {
         let start = before
             .iter()
             .zip(after)
@@ -605,13 +674,16 @@ impl Location {
             .zip(after[span.end..].iter().rev())
             .take_while(|(a, b)| a == b)
             .count();
-        Ok(RecordedEntry {
-            original: OriginalEntry::Inserted {
-                prefix: after[start..span.start].to_vec(),
-                suffix: after[span.end..after.len() - tail].to_vec(),
-                replaced: before[start..before.len() - tail].to_vec(),
-            },
-            delivered: after[span].to_vec(),
+        let replaced = &before[start..before.len() - tail];
+        ensure!(
+            replaced.iter().all(u8::is_ascii_whitespace),
+            ReceiptLayoutError::SurroundingContent
+        );
+        Ok(OriginalEntry::Inserted {
+            prefix: after[start..span.start].to_vec(),
+            suffix: after[span.end..after.len() - tail].to_vec(),
+            replaced: replaced.to_vec(),
+            comma_before: None,
         })
     }
 
@@ -638,6 +710,7 @@ impl Location {
                 prefix,
                 suffix,
                 replaced,
+                comma_before,
             } => {
                 let start = span
                     .start
@@ -648,7 +721,24 @@ impl Location {
                     bytes[start..span.start] == *prefix && bytes.get(span.end..end) == Some(suffix),
                     "the entry layout changed"
                 );
+                let comma = if let Some(distance) = comma_before {
+                    let comma = start
+                        .checked_sub(*distance)
+                        .context("the entry layout changed")?;
+                    ensure!(
+                        bytes[comma..start]
+                            .strip_prefix(b",")
+                            .is_some_and(|gap| gap.iter().all(u8::is_ascii_whitespace)),
+                        "the entry layout changed"
+                    );
+                    Some(comma)
+                } else {
+                    None
+                };
                 bytes.splice(start..end, replaced.iter().copied());
+                if let Some(comma) = comma {
+                    bytes.remove(comma);
+                }
             }
         }
         Ok(())
@@ -675,7 +765,8 @@ impl Location {
             bytes,
             &doc.path_to(entry)?,
             entry.value.clone(),
-        )?;
+        )?
+        .bytes;
         let mut checked = self.document(Some(&next))?;
         ensure!(
             checked.entry(&entry.key) == Some(entry),
@@ -864,18 +955,24 @@ impl Document {
             })
     }
 
-    /// The servers that stay in their own tool, by 1-based position as in
-    /// `refused_entries`, with the reason.
-    pub fn refused_servers<'a>(
-        &'a self,
-        tool: &'a str,
-    ) -> impl Iterator<Item = (usize, &'a Entry, Refusal)> + 'a {
+    /// Safe-to-display server names, including servers whose values are refused.
+    pub fn mcp_server_names<'a>(&'a self, tool: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.entries
             .values()
             .flatten()
-            .enumerate()
-            .filter_map(move |(index, (entry, _))| {
-                mcp_refusal(tool, entry).map(|refusal| (index + 1, entry, refusal))
+            .filter_map(move |(entry, _)| entry.mcp_name(tool))
+    }
+
+    /// The servers that stay in their own tool and, when safe to show, their names.
+    pub fn refused_servers<'a>(
+        &'a self,
+        tool: &'a str,
+    ) -> impl Iterator<Item = (Option<&'a str>, &'a Entry, Refusal)> + 'a {
+        self.entries
+            .values()
+            .flatten()
+            .filter_map(move |(entry, _)| {
+                mcp_refusal(tool, entry).map(|refusal| (entry.mcp_name(tool), entry, refusal))
             })
     }
 
@@ -901,6 +998,7 @@ impl Document {
                 prefix,
                 suffix,
                 replaced,
+                ..
             } => vec![prefix, suffix, replaced, &receipt.delivered],
         };
         fragments.iter().all(|fragment| {
@@ -2719,7 +2817,7 @@ pub fn mcp_refusal(tool: &str, entry: &Entry) -> Option<Refusal> {
         return None;
     }
     // The name is stored and shown, so it must not look like a key.
-    if entry.key.member.is_some() || !entry.container.iter().all(|name| name_safe(tool, name)) {
+    if entry.mcp_name(tool).is_none() {
         return Some(Refusal::Unsafe("its name may contain a key"));
     }
     if mcp_form(tool, &entry.value, true).is_none() {

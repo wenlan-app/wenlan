@@ -141,7 +141,11 @@ fn setup_fixture_with(
 fn setup_home(state: &Path) -> AdoptionPlan {
     let home = state.join("ai-tools/home");
     fs::create_dir_all(home.join(".codex")).unwrap();
-    fs::write(home.join(".codex/AGENTS.md"), "Fixture rules.\n").unwrap();
+    fs::write(
+        home.join(".codex/AGENTS.md"),
+        "First fixture rule.\n\nSecond fixture rule.\nThird fixture rule.\n",
+    )
+    .unwrap();
     let skill = home.join(".codex/skills/example/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
     fs::write(
@@ -171,12 +175,9 @@ fn ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts() {
         .stdout
         .clone();
     let text = String::from_utf8(output).unwrap();
-    let copied = plan
-        .skills
-        .iter()
-        .filter(|skill| matches!(skill.outcome, AdoptionSkillOutcome::PlainCopy))
-        .count();
-    assert!(text.contains(&format!("{copied} copied)")), "{text}");
+    assert!(text.contains("3 rules, 1 skill."), "{text}");
+    assert!(!text.contains("follow their source"), "{text}");
+    assert!(!text.contains(" copied)"), "{text}");
     assert!(text.contains("To undo: wenlan rules restore"), "{text}");
     assert!(!text.contains(state.path().to_str().unwrap()), "{text}");
     assert!(state.path().join("unused-data-root/rulesync.on").is_file());
@@ -188,6 +189,7 @@ fn ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts() {
     ] {
         assert!(seen.iter().any(|seen| seen == route), "{route}: {seen:?}");
     }
+    assert!(seen.iter().all(|path| !path.contains("/share")), "{seen:?}");
 }
 
 #[cfg(unix)]
@@ -231,6 +233,20 @@ fn setup_in_an_ai_session_adopts_only_the_plan_it_previewed() {
         .expect("setup adopts");
     let request: wenlan_types::rulesync::AdoptRequest = serde_json::from_str(&adopt.1).unwrap();
     assert_eq!(request.confirmed_plan_id.as_deref(), Some("0123456789ab"));
+    assert!(requests
+        .try_iter()
+        .all(|(path, _)| !path.contains("/share")));
+}
+
+#[cfg(unix)]
+#[test]
+fn ux_cli_8_setup_noninteractive_yes_never_requests_share() {
+    let state = tempfile::tempdir().unwrap();
+    let plan = setup_home(state.path());
+    let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
+    cmd.arg("--yes").assert().success();
+    let seen = requested(&requests);
+    assert!(seen.iter().all(|path| !path.contains("/share")), "{seen:?}");
 }
 
 #[cfg(unix)]
@@ -257,6 +273,7 @@ fn setup_json_carries_the_same_counts() {
     ] {
         assert!(value.get(field).is_some(), "{field}: {value}");
     }
+    assert_eq!(value["rules"], 3);
 }
 
 #[cfg(unix)]
@@ -294,7 +311,10 @@ fn setup_leaves_a_blocked_plan_alone_and_still_succeeds() {
     let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
     let output = cmd.assert().success().get_output().stdout.clone();
     let text = String::from_utf8(output).unwrap();
-    assert!(text.contains("Your tool setup was left as it is"), "{text}");
+    assert!(
+        text.contains("Your tool setup could not be fully set up"),
+        "{text}"
+    );
     assert!(!text.contains("To undo"), "{text}");
     let seen = requested(&requests);
     assert!(
@@ -812,10 +832,20 @@ fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, S
         "plan_id": "0123456789ab",
         "token": "fixture-token",
         "tools": [{"tool": "Codex", "skills": [], "commands": ["hello"], "subagents": [], "mcp_servers": ["docs"]}],
-        "stays": [{"tool": "Claude Code", "item": "MCP server (entry 1 in .claude.json)", "reason": "its name may contain a key"}],
+        "stays": [{"tool": "Claude Code", "item": "an MCP server in .claude.json", "reason": "its name may contain a key"}],
         "already_there": 2,
         "key_servers": ["billing", "search"],
-        "key_tools": ["Codex", "Cursor"]
+        "key_tools": ["Codex", "Cursor"],
+        "shared_source_notice": "Also adds 2 lines to ~/.agents/AGENTS.md.",
+        "rules": [
+            {"number": 1, "line": "Run the release checklist.", "tools": ["Claude Code"], "kept": false},
+            {"number": 2, "line": format!("Review {} for changes.", "規".repeat(60)), "tools": ["Claude Code"], "kept": false},
+            {"number": 3, "line": "Keep the draft checklist here.", "tools": ["Claude Code"], "kept": true}
+        ],
+        "rule_stays": [
+            {"tool": "Claude Code", "reason": "This line may hold a credential."},
+            {"tool": "Codex", "line": "Use Codex for local work.", "reason": "This line names a tool."}
+        ]
     });
     let (base, requests) = spawn_stub(vec![
         ("GET /api/health", "{}".into()),
@@ -858,6 +888,9 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .success()
         .stdout(predicate::str::contains("\"plan_id\": \"0123456789ab\""))
         .stdout(predicate::str::contains("its name may contain a key"))
+        .stdout(predicate::str::contains(
+            "\"shared_source_notice\": \"Also adds 2 lines to ~/.agents/AGENTS.md.\"",
+        ))
         .stdout(predicate::str::contains("\"key_servers\""));
     assert!(shared(&requests).is_none());
 
@@ -867,19 +900,43 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Share with your other tools"))
+        .stdout(predicate::str::contains(
+            "Also adds 2 lines to ~/.agents/AGENTS.md.",
+        ))
         .stdout(predicate::str::contains("Codex: 1 command, 1 MCP server"))
-        .stdout(predicate::str::contains("  + command hello"))
+        .stdout(predicate::str::contains("  + command hello").not())
         .stdout(predicate::str::contains("2 items already in every tool"))
         .stdout(predicate::str::contains(
-            "Stays in Claude Code: MCP server (entry 1 in .claude.json): its name may contain a key",
+            "1 item stays in its own tool: 1 may hold credentials.",
         ))
         .stdout(predicate::str::contains(
             "These 2 servers may contain a key. Sharing copies the key into: Codex, Cursor.",
         ))
         .stdout(predicate::str::contains("  ? MCP server billing"))
+        .stdout(predicate::str::contains("Add --details to see every item."))
         .stdout(predicate::str::contains(
             "wenlan rules share --confirm 0123456789ab",
         ));
+    assert!(shared(&requests).is_none());
+
+    let (mut cmd, requests) = share_fixture(state.path());
+    cmd.args([
+        "rules",
+        "share",
+        "--dry-run",
+        "--details",
+        "--format",
+        "table",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("  + command hello"))
+    .stdout(predicate::str::contains(
+        "Also adds 2 lines to ~/.agents/AGENTS.md.",
+    ))
+    .stdout(predicate::str::contains(
+        "Stays in Claude Code: an MCP server in .claude.json: its name may contain a key",
+    ));
     assert!(shared(&requests).is_none());
 
     let (mut cmd, requests) = share_fixture(state.path());
@@ -899,12 +956,81 @@ fn rules_share_in_session_applies_the_confirmed_plan() {
     for_agent_session(cmd.args(["rules", "share", "--confirm", "0123456789ab"]))
         .assert()
         .success();
-    let request: wenlan_types::rulesync::AdoptRequest =
+    let request: wenlan_types::rulesync::ShareRequest =
         serde_json::from_str(&shared(&requests).unwrap()).unwrap();
-    assert_eq!(request.confirmed_plan_id.as_deref(), Some("0123456789ab"));
-    assert_eq!(request.token, "fixture-token");
+    assert_eq!(
+        request.approval.confirmed_plan_id.as_deref(),
+        Some("0123456789ab")
+    );
+    assert_eq!(request.approval.token, "fixture-token");
+    assert_eq!(request.keep_rule, Some(vec![]));
     // The AI confirm route never asks for the servers that may hold a key.
-    assert!(!request.include_keys);
+    assert!(!request.approval.include_keys);
+}
+
+#[test]
+fn rules_share_short_preview_shows_each_moving_line_at_terminal_width() {
+    let state = tempfile::tempdir().unwrap();
+    let (mut cmd, requests) = share_fixture(state.path());
+    let assertion =
+        for_agent_session(cmd.args(["rules", "share", "--dry-run", "--format", "table"]))
+            .assert()
+            .success();
+    let output = std::str::from_utf8(&assertion.get_output().stdout).unwrap();
+    let lines: Vec<_> = output.lines().collect();
+    assert!(
+        lines.contains(&"  1. Run the release checklist."),
+        "{output}"
+    );
+    let long = lines
+        .iter()
+        .find(|line| line.starts_with("  2. Review "))
+        .unwrap();
+    assert!(
+        long.ends_with('…') && console::measure_text_width(long) <= 100,
+        "{long}"
+    );
+    assert!(
+        lines.contains(
+            &"2 rule lines stay in their own tools (1 tool-only, 1 with possible credentials)."
+        ),
+        "{output}"
+    );
+    assert!(
+        !output.contains("Keep the draft checklist here."),
+        "{output}"
+    );
+    assert!(!output.contains("Use Codex for local work."), "{output}");
+    assert!(shared(&requests).is_none());
+}
+
+#[test]
+fn ux_skill_26_rules_share_keep_rule_reaches_preview_and_confirm() {
+    let state = tempfile::tempdir().unwrap();
+    let (mut cmd, requests) = share_fixture(state.path());
+    cmd.args([
+        "--session",
+        "claude-code:synthetic-rule-share",
+        "rules",
+        "share",
+        "--confirm",
+        "0123456789ab",
+        "--keep-rule",
+        "1,3",
+    ])
+    .assert()
+    .success();
+    let requests: Vec<_> = requests.try_iter().collect();
+    for endpoint in [
+        "POST /api/rules/setup/share/preview",
+        "POST /api/rules/setup/share",
+    ] {
+        let (_, body) = requests.iter().find(|(path, _)| path == endpoint).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(body).unwrap()["keep_rule"],
+            json!([1, 3])
+        );
+    }
 }
 
 #[test]

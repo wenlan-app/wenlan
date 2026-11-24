@@ -9763,7 +9763,7 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_TEST_SKILL_REVIEW_ROOT", // test-only skill review subprocess fixture root
     "WENLAN_TEST_SKILL_REVIEW_TOKEN", // test-only skill review subprocess approval token
     "WENLAN_RULESYNC_GUARD_CHILD",   // test-only rulesync guard subprocess marker
-    "WENLAN_RULESYNC_MATRIX_CHILD",  // test-only rulesync matrix subprocess marker
+    "WENLAN_RULESYNC_ISOLATED_CHILD", // test-only isolated rulesync subprocess marker
 ];
 
 /// BASELINE: behavioral flags undocumented when this contract was introduced

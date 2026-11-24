@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSetupNotice, SkillUpstream};
 
+use crate::rulesync_personal::credentials::{
+    contains_credential_bytes, credential_line_numbers, scanned_lines, CREDENTIAL_FILE_REASON,
+};
 use crate::rulesync_personal_files::{
     directory_entry_identity, location_of, require_ascii_entry_name,
     require_plain_personal_directory, PersonalFileLocation, LOCATIONS, MAX_FILE_BYTES,
@@ -24,7 +27,7 @@ mod skill_origin;
 pub(crate) use skill_origin::checkout_update;
 pub(crate) use skill_origin::git_repository_name;
 
-const SHARED_RULES: &str = ".agents/AGENTS.md";
+pub const SHARED_RULES: &str = ".agents/AGENTS.md";
 pub(crate) const SHARED_SKILLS: &str = ".agents/skills";
 const CLAUDE_OVERLAY: &str = ".agents/adapters/claude/CLAUDE.md";
 const CODEX_OVERLAY: &str = ".agents/adapters/codex/AGENTS.codex.md";
@@ -73,10 +76,51 @@ impl AdoptionSkip {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CredentialLocations {
+    pub rules: BTreeMap<PathBuf, RuleCredentialLocation>,
+    /// Path and tool, or no tool for a source in the shared harness.
+    pub skills: BTreeMap<PathBuf, Option<String>>,
+}
+
+impl CredentialLocations {
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty() && self.skills.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleCredentialLocation {
+    pub tool: Option<String>,
+    /// One-based positions in the file as read.
+    pub lines: Vec<usize>,
+}
+
+fn record_rule_credentials(
+    locations: &mut BTreeMap<PathBuf, RuleCredentialLocation>,
+    path: &Path,
+    tool: Option<&str>,
+    text: &str,
+) -> bool {
+    let lines = credential_line_numbers(text);
+    if lines.is_empty() {
+        return false;
+    }
+    locations
+        .entry(path.to_owned())
+        .or_insert_with(|| RuleCredentialLocation {
+            tool: tool.map(str::to_owned),
+            lines,
+        });
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Adoption {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_imported_rules: Option<BTreeSet<String>>,
     pub codex_sync_replaced: bool,
     pub skills: Vec<AdoptedSkill>,
     /// Paths relative to the adopted home, including resolved link targets.
@@ -92,8 +136,9 @@ pub struct Adoption {
     pub settings: crate::rulesync_settings::personal::Adoption,
     /// Existing skill locations that will stay in place outside delivery.
     pub skipped: BTreeMap<PathBuf, AdoptionSkip>,
-    /// Linked rule files that stay in place outside delivery.
+    /// Rule sources that stay in place outside delivery.
     pub skipped_rules: BTreeMap<PathBuf, AdoptionSkip>,
+    pub credentials: CredentialLocations,
     pub skipped_tools: Vec<String>,
     #[serde(skip)]
     pub skipped_tool_codes: Vec<RulesSetupNotice>,
@@ -224,6 +269,9 @@ impl AdoptionLink {
                 else {
                     return Ok(false);
                 };
+                if contains_credential_bytes(file.text.as_bytes()) {
+                    return Ok(false);
+                }
                 Self::rule(file.text.as_bytes(), file.mode, file.node.symlink_hops)
             }
             ResolvedLink::PersonalFile { .. } => {
@@ -243,7 +291,7 @@ impl AdoptionLink {
                     return Ok(false);
                 };
                 let tree = SkillTree::read(&home, &node, "", false)?;
-                if tree.nested_link {
+                if tree.nested_link || !tree.credential_files.is_empty() {
                     return Ok(false);
                 }
                 tree.link(&node)
@@ -267,6 +315,28 @@ pub(super) fn discover_with_shared(
     discover_with_platform(home, targets, Some(shared), cfg!(windows))
 }
 
+/// Read the person's shared file using the same checks as adoption.
+pub fn read_shared_rule_source(home: &Path) -> Result<(String, Vec<usize>)> {
+    let home = Home::open(home)?;
+    let file = load_text(&home, Path::new(SHARED_RULES), &mut BTreeSet::new(), false)?;
+    Ok(shared_rule_lines(
+        file.as_ref().map_or("", |file| &file.text),
+    ))
+}
+
+fn shared_rule_lines(text: &str) -> (String, Vec<usize>) {
+    let mut safe = String::new();
+    let mut credentials = Vec::new();
+    for (number, line, has_key) in scanned_lines(text) {
+        if has_key {
+            credentials.push(number);
+        } else {
+            safe.push_str(line);
+        }
+    }
+    (safe, credentials)
+}
+
 fn discover_with_platform(
     home: &Path,
     targets: &[AdoptionTarget],
@@ -287,18 +357,28 @@ fn discover_with_platform(
     }
     let home = Home::open(home)?;
     let mut sources = BTreeSet::new();
-    let shared_file = load_text(&home, Path::new(SHARED_RULES), &mut sources, false)?;
-    let shared =
-        saved_shared.unwrap_or_else(|| shared_file.as_ref().map_or("", |file| file.text.as_str()));
+    let mut credentials = CredentialLocations::default();
+    let shared_source = Path::new(SHARED_RULES);
+    let shared_file = load_text(&home, shared_source, &mut sources, false)?;
+    let (source, lines) = shared_rule_lines(shared_file.as_ref().map_or("", |file| &file.text));
+    if !lines.is_empty() {
+        credentials.rules.insert(
+            shared_source.into(),
+            RuleCredentialLocation { tool: None, lines },
+        );
+    }
+    let shared = saved_shared.map_or(source, |saved| shared_rule_lines(saved).0);
     let shared_path = shared_file.as_ref().map(|file| file.node.path.as_path());
-    let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules) = discover_rules(
-        &home,
-        targets,
-        shared,
-        shared_path,
-        &mut sources,
-        is_windows,
-    )?;
+    let (overlays, mut files, mut links, codex_sync_replaced, skipped_rules, claude_imported_rules) =
+        discover_rules(
+            &home,
+            targets,
+            &shared,
+            shared_path,
+            &mut sources,
+            is_windows,
+            &mut credentials.rules,
+        )?;
     let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links, is_windows);
     skills.scan(Path::new(SHARED_SKILLS), None)?;
     for target in targets {
@@ -311,10 +391,12 @@ fn discover_with_platform(
         }
     }
     let skill_locations = std::mem::take(&mut skills.locations);
+    credentials.skills = std::mem::take(&mut skills.credentials);
     let (skills, skipped) = skills.finish();
     Ok(Adoption {
-        shared: shared.to_owned(),
+        shared,
         overlays,
+        claude_imported_rules,
         codex_sync_replaced,
         skills,
         sources,
@@ -330,6 +412,7 @@ fn discover_with_platform(
         settings: Default::default(),
         skipped,
         skipped_rules,
+        credentials,
         skipped_tools: Vec::new(),
         skipped_tool_codes: Default::default(),
         added_tools: Vec::new(),
@@ -1070,6 +1153,7 @@ type RuleDiscovery = (
     BTreeMap<PathBuf, AdoptionLink>,
     bool,
     BTreeMap<PathBuf, AdoptionSkip>,
+    Option<BTreeSet<String>>,
 );
 
 fn discover_rules(
@@ -1079,12 +1163,14 @@ fn discover_rules(
     shared_path: Option<&Path>,
     sources: &mut BTreeSet<PathBuf>,
     is_windows: bool,
+    credentials: &mut BTreeMap<PathBuf, RuleCredentialLocation>,
 ) -> Result<RuleDiscovery> {
     let mut overlays = BTreeMap::new();
     let mut previous = BTreeMap::new();
     let mut links = BTreeMap::new();
     let mut skipped_rules = BTreeMap::new();
     let mut codex_sync_replaced = false;
+    let mut claude_imported_rules = None;
     for target in targets {
         let Some(path) = &target.rules_path else {
             continue;
@@ -1143,29 +1229,75 @@ fn discover_rules(
             }
         }
         let current = current?;
+        if current.as_ref().is_some_and(|file| {
+            record_rule_credentials(credentials, path, Some(&target.tool), &file.text)
+        }) {
+            // Replacing this file would rewrite and back up the protected lines.
+            // Enroll the tool so it can still manage its other files.
+            skipped_rules.insert(path.clone(), credential_rule_skip());
+            overlays.entry(target.tool.clone()).or_default();
+            continue;
+        }
         let bootstrap = match target.tool.as_str() {
             "claudecode" | "claude-code" => Some((Path::new(CLAUDE_OVERLAY), true)),
             "codexcli" | "codex" => Some((Path::new(CODEX_OVERLAY), false)),
             _ => None,
         };
         let claude = matches!(bootstrap, Some((_, true)));
+        let mut imported_rules = BTreeSet::new();
+        let mut provenance = RuleProvenance {
+            tool: &target.tool,
+            imported: &mut imported_rules,
+            credentials,
+        };
         let current_overlay = current
             .as_ref()
-            .map(|file| rule_overlay(home, path, file, claude, shared, shared_path, sources))
+            .map(|file| {
+                let imports = claude.then_some(ClaudeImports::KeepLocal);
+                rule_overlay(
+                    home,
+                    path,
+                    file,
+                    imports,
+                    (shared, shared_path),
+                    sources,
+                    &mut provenance,
+                )
+            })
             .transpose()?
             .unwrap_or_default();
         let mut overlay = current_overlay;
         if let Some((adapter, _)) = bootstrap {
             if let Some(file) = load_text(home, adapter, sources, false)? {
-                if current
+                if record_rule_credentials(
+                    provenance.credentials,
+                    adapter,
+                    Some(&target.tool),
+                    &file.text,
+                ) {
+                    skipped_rules.insert(adapter.to_owned(), credential_rule_skip());
+                } else if current
                     .as_ref()
                     .is_none_or(|existing| existing.text != file.text)
                 {
-                    let adapter_overlay =
-                        rule_overlay(home, adapter, &file, claude, shared, shared_path, sources)?;
+                    let imports = claude.then_some(ClaudeImports::Expand);
+                    let adapter_overlay = rule_overlay(
+                        home,
+                        adapter,
+                        &file,
+                        imports,
+                        (shared, shared_path),
+                        sources,
+                        &mut provenance,
+                    )?;
                     overlay = merge_variants(&adapter_overlay, &overlay);
                 }
             }
+        }
+        if claude {
+            claude_imported_rules
+                .get_or_insert_with(BTreeSet::new)
+                .extend(imported_rules);
         }
         if matches!(target.tool.as_str(), "codexcli" | "codex") {
             overlay = overlay
@@ -1205,19 +1337,38 @@ fn discover_rules(
             }),
         );
     }
+    for path in credentials.keys() {
+        skipped_rules
+            .entry(path.clone())
+            .or_insert_with(credential_rule_skip);
+    }
     let mut files = BTreeMap::new();
     for ((tool, path), before) in previous {
         let after = personal_rule_body(shared, &overlays[tool], tool, codex_sync_replaced);
-        record_file(
-            &mut files,
-            path.clone(),
-            AdoptionFile {
-                before,
-                after: AdoptionEntry::File(after.into_bytes()),
-            },
-        )?;
+        let after = if matches!(before, AdoptionEntry::Missing) && after.trim().is_empty() {
+            // Keep an absent-to-absent rule delivery in the plan so the
+            // server can journal this enrolled target for future rules.
+            AdoptionEntry::Missing
+        } else {
+            AdoptionEntry::File(after.into_bytes())
+        };
+        record_file(&mut files, path.clone(), AdoptionFile { before, after })?;
     }
-    Ok((overlays, files, links, codex_sync_replaced, skipped_rules))
+    Ok((
+        overlays,
+        files,
+        links,
+        codex_sync_replaced,
+        skipped_rules,
+        claude_imported_rules,
+    ))
+}
+
+fn credential_rule_skip() -> AdoptionSkip {
+    AdoptionSkip::new(
+        Code::RuleUnavailable,
+        CREDENTIAL_FILE_REASON.trim_end_matches('.'),
+    )
 }
 
 fn symlink_replacement_supported(is_windows: bool) -> bool {
@@ -1240,26 +1391,41 @@ pub(super) fn personal_rule_body(
     text
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClaudeImports {
+    KeepLocal,
+    Expand,
+}
+
+struct RuleProvenance<'a> {
+    tool: &'a str,
+    imported: &'a mut BTreeSet<String>,
+    credentials: &'a mut BTreeMap<PathBuf, RuleCredentialLocation>,
+}
+
 fn rule_overlay(
     home: &Home,
     path: &Path,
     file: &LoadedText,
-    claude: bool,
-    shared: &str,
-    shared_path: Option<&Path>,
+    claude: Option<ClaudeImports>,
+    (shared, shared_path): (&str, Option<&Path>),
     sources: &mut BTreeSet<PathBuf>,
+    provenance: &mut RuleProvenance<'_>,
 ) -> Result<String> {
-    if !claude {
+    let Some(mode) = claude else {
         return Ok(without_shared(shared, &file.text));
-    }
+    };
     let mut imports = Imports {
         home,
         shared,
         shared_path,
         sources,
+        mode,
         stack: BTreeSet::new(),
         remaining: MAX_CLAUDE_IMPORTS,
         included_shared: false,
+        imported_rules: provenance.imported,
+        credentials: Some((provenance.tool, provenance.credentials)),
     };
     let body = imports.expand(path, file, 0)?;
     Ok(if imports.included_shared {
@@ -1274,15 +1440,142 @@ struct Imports<'a> {
     shared: &'a str,
     shared_path: Option<&'a Path>,
     sources: &'a mut BTreeSet<PathBuf>,
+    mode: ClaudeImports,
     stack: BTreeSet<PathBuf>,
     remaining: usize,
     included_shared: bool,
+    imported_rules: &'a mut BTreeSet<String>,
+    credentials: Option<(&'a str, &'a mut BTreeMap<PathBuf, RuleCredentialLocation>)>,
+}
+
+fn claude_imports(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    use pulldown_cmark::{Event, Parser, Tag};
+
+    let literal = Parser::new(text)
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::CodeBlock(_))
+            | Event::Code(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_) => Some(range),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    crate::skill_grow::lines_outside_code_fences(text)
+        .into_iter()
+        .filter_map(|(range, line)| {
+            let import = line.trim().strip_prefix('@')?;
+            let offset = range.start + (line.len() - line.trim_start().len());
+            (!import.is_empty()
+                && !import.contains(char::is_whitespace)
+                && !literal.iter().any(|code| code.contains(&offset)))
+            .then_some((range, import))
+        })
+        .collect()
+}
+
+fn looks_like_import_path(import: &str) -> bool {
+    import.contains(['/', '\\']) || Path::new(import).extension().is_some()
+}
+
+fn import_path(path: &Path, import: &str) -> PathBuf {
+    match import.strip_prefix("~/") {
+        Some(path) => PathBuf::from(path),
+        None => path.parent().unwrap_or(Path::new("")).join(import),
+    }
+}
+
+fn remember_imported(rules: &mut BTreeSet<String>, text: &str) {
+    use crate::rulesync_personal::sharing::{overlay_lines, LocalReason};
+    rules.extend(
+        overlay_lines(text)
+            .into_iter()
+            .filter(|(_, reason)| *reason != Some(LocalReason::Credential))
+            .map(|(line, _)| line.to_owned()),
+    );
+}
+
+/// Older deliveries have no origin records. Recover whatever the original
+/// native directives and the current adapter can still prove came from imports.
+pub fn legacy_claude_imported_rules(
+    home: &Path,
+    native_path: &Path,
+    native: &str,
+    shared: &str,
+) -> BTreeSet<String> {
+    let mut rules = BTreeSet::new();
+    let Ok(home) = Home::open(home) else {
+        return rules;
+    };
+    let shared_path = home.resolve(Path::new(SHARED_RULES)).ok().flatten();
+    let adapter = Path::new(CLAUDE_OVERLAY);
+    let mut sources = BTreeSet::new();
+    let adapter_text = load_text(&home, adapter, &mut sources, false)
+        .ok()
+        .flatten();
+    let mut imports = Imports {
+        home: &home,
+        shared,
+        shared_path: shared_path.as_ref().map(|node| node.path.as_path()),
+        sources: &mut sources,
+        mode: ClaudeImports::Expand,
+        stack: BTreeSet::new(),
+        remaining: MAX_CLAUDE_IMPORTS,
+        included_shared: false,
+        imported_rules: &mut rules,
+        credentials: None,
+    };
+    for (path, text) in [
+        (native_path, native),
+        (adapter, adapter_text.as_ref().map_or("", |file| &file.text)),
+    ] {
+        for (_, import) in claude_imports(text).into_iter().take(MAX_CLAUDE_IMPORTS) {
+            let path = import_path(path, import);
+            let Ok(Some(file)) = load_text(&home, &path, imports.sources, false) else {
+                continue;
+            };
+            if imports.shared_path == Some(&file.node.path) {
+                remember_imported(imports.imported_rules, &without_shared(shared, &file.text));
+            } else if let Ok(expanded) = imports.expand(&path, &file, 1) {
+                remember_imported(imports.imported_rules, &expanded);
+            } else {
+                imports.stack.clear();
+                // Even when a nested import is unavailable, these lines
+                // are known to occur in a file that the tool imports.
+                remember_imported(imports.imported_rules, &file.text);
+            }
+        }
+    }
+    rules
+}
+
+/// The checkout render sits outside the tool home. Anchor paths that were
+/// relative to Claude's native rule file so they still refer to that source.
+pub fn checkout_claude_imports(home: &Path, overlay: &str, source: &str) -> Result<String> {
+    let home = Home::open(home)?;
+    let native: BTreeSet<_> = claude_imports(overlay)
+        .into_iter()
+        .map(|(_, import)| import)
+        .filter(|import| {
+            !import.starts_with("~/")
+                && !Path::new(import).is_absolute()
+                && home
+                    .resolve_checked(&Path::new(".claude").join(import), ensure_rule_source)
+                    .is_ok_and(|node| node.is_some_and(|node| node.metadata.is_file()))
+        })
+        .collect();
+    let mut result = source.to_owned();
+    for (range, import) in claude_imports(source).into_iter().rev() {
+        if native.contains(import) {
+            let start = range.start + source[range.clone()].find('@').expect("import marker") + 1;
+            result.insert_str(start, "~/.claude/");
+        }
+    }
+    Ok(result)
 }
 
 impl Imports<'_> {
     fn expand(&mut self, path: &Path, file: &LoadedText, depth: usize) -> Result<String> {
-        use pulldown_cmark::{Event, Parser, Tag};
-
         ensure!(
             depth <= 5,
             "Claude rule imports exceed five levels at {}",
@@ -1293,47 +1586,20 @@ impl Imports<'_> {
             "Claude rule import cycle at {}",
             path.display()
         );
-        let literal = Parser::new(&file.text)
-            .into_offset_iter()
-            .filter_map(|(event, range)| match event {
-                Event::Start(Tag::CodeBlock(_))
-                | Event::Code(_)
-                | Event::Html(_)
-                | Event::InlineHtml(_) => Some(range),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let imports = crate::skill_grow::lines_outside_code_fences(&file.text)
-            .into_iter()
-            .filter_map(|(range, line)| {
-                let import = line.trim().strip_prefix('@')?;
-                let offset = range.start + (line.len() - line.trim_start().len());
-                if import.is_empty()
-                    || import.contains(char::is_whitespace)
-                    || literal.iter().any(|code| code.contains(&offset))
-                {
-                    None
-                } else {
-                    Some((range, import))
-                }
-            });
         let mut body = String::new();
         let mut copied_to = 0;
-        for (range, import) in imports {
+        for (range, import) in claude_imports(&file.text) {
             ensure!(
                 self.remaining > 0,
                 "too many Claude rule imports in {}",
                 path.display()
             );
             self.remaining -= 1;
-            let imported_path = match import.strip_prefix("~/") {
-                Some(path) => PathBuf::from(path),
-                None => path.parent().unwrap_or(Path::new("")).join(import),
-            };
+            let imported_path = import_path(path, import);
             let Some(imported) = load_text(self.home, &imported_path, self.sources, false)? else {
                 // A bare @mention can be plain prose. A path-shaped directive must resolve.
                 ensure!(
-                    !import.contains(['/', '\\']) && Path::new(import).extension().is_none(),
+                    !looks_like_import_path(import),
                     "Claude rule import {} is missing",
                     imported_path.display()
                 );
@@ -1348,18 +1614,47 @@ impl Imports<'_> {
             } else {
                 ""
             };
+            let protected = if let Some((tool, locations)) = &mut self.credentials {
+                record_rule_credentials(locations, &imported_path, Some(tool), &imported.text)
+            } else {
+                !credential_line_numbers(&imported.text).is_empty()
+            };
             if self.shared_path == Some(&imported.node.path) {
                 self.included_shared = true;
-                let extra = without_shared(self.shared, &imported.text);
+                let extra = if protected {
+                    without_shared(self.shared, &shared_rule_lines(&imported.text).0)
+                } else {
+                    without_shared(self.shared, &imported.text)
+                };
+                if depth == 0 {
+                    remember_imported(self.imported_rules, &extra);
+                }
                 body.push_str(&extra);
                 if !extra.is_empty() && !extra.ends_with('\n') {
                     body.push_str(ending);
                 }
+            } else if protected {
+                // A native import still reads its own file. An adapter import
+                // cannot bring this file into the projected rule text.
+                if self.mode == ClaudeImports::KeepLocal && depth == 0 {
+                    body.push_str(&file.text[range.clone()]);
+                    body.push_str(ending);
+                }
             } else {
                 let expanded = self.expand(&imported_path, &imported, depth + 1)?;
-                body.push_str(&expanded);
-                if !expanded.ends_with('\n') {
+                if self.mode == ClaudeImports::KeepLocal && depth == 0 {
+                    // The native file stays at this path, so Claude can
+                    // continue reading the import in place.
+                    body.push_str(&file.text[range.clone()]);
                     body.push_str(ending);
+                } else {
+                    if depth == 0 {
+                        remember_imported(self.imported_rules, &expanded);
+                    }
+                    body.push_str(&expanded);
+                    if !expanded.ends_with('\n') {
+                        body.push_str(ending);
+                    }
                 }
             }
             ensure!(
@@ -1380,7 +1675,7 @@ impl Imports<'_> {
     }
 }
 
-fn append_text(out: &mut String, text: &str) {
+pub(super) fn append_text(out: &mut String, text: &str) {
     if !out.is_empty() && !out.ends_with('\n') && !text.is_empty() {
         out.push('\n');
     }
@@ -1396,7 +1691,7 @@ fn line_key(line: &str) -> &str {
 /// Remove a copied shared block by occurrence. If an older generated file
 /// includes hand edits in the block, align nonblank lines in sequence and keep
 /// the unmatched ones. A repeated line outside that alignment survives.
-fn without_shared(shared: &str, tool: &str) -> String {
+pub fn without_shared(shared: &str, tool: &str) -> String {
     let shared = shared
         .split_inclusive('\n')
         .map(line_key)
@@ -1507,6 +1802,7 @@ struct SkillDiscovery<'a> {
     skills: BTreeMap<(String, PathBuf), SkillTree>,
     locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     skipped: BTreeMap<PathBuf, AdoptionSkip>,
+    credentials: BTreeMap<PathBuf, Option<String>>,
 }
 
 impl<'a> SkillDiscovery<'a> {
@@ -1526,6 +1822,7 @@ impl<'a> SkillDiscovery<'a> {
             skills: BTreeMap::new(),
             locations: BTreeMap::new(),
             skipped: BTreeMap::new(),
+            credentials: BTreeMap::new(),
         }
     }
 
@@ -1637,10 +1934,33 @@ impl<'a> SkillDiscovery<'a> {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
                 let mut tree = SkillTree::read(self.home, &node, name, tool.is_some())?;
-                tree.skill.upstream = skill_origin::discover(self.home, &node.path);
+                if tree.credential_files.is_empty() {
+                    tree.skill.upstream = skill_origin::discover(self.home, &node.path);
+                }
                 entry.insert(tree)
             }
         };
+        if !tree.credential_files.is_empty() {
+            self.credentials.extend(
+                tree.credential_files
+                    .iter()
+                    .map(|file| (path.join(file), tool.map(str::to_owned))),
+            );
+            let files = tree
+                .credential_files
+                .iter()
+                .map(|file| file.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.skipped.insert(
+                path.to_owned(),
+                AdoptionSkip::new(
+                    Code::SkillUnreadable,
+                    format!("{CREDENTIAL_FILE_REASON} {files}"),
+                ),
+            );
+            return Ok(());
+        }
         self.sources.insert(path.to_owned());
         self.sources.extend(tree.sources.iter().cloned());
         let Some(tool) = tool else {
@@ -1724,6 +2044,7 @@ impl<'a> SkillDiscovery<'a> {
         let mut skills = self
             .skills
             .into_values()
+            .filter(|tree| tree.credential_files.is_empty())
             .map(|tree| tree.skill)
             .collect::<Vec<_>>();
         skills.sort_by(|left, right| {
@@ -1744,6 +2065,7 @@ struct SkillTree {
     remaining_bytes: u64,
     nested_link: bool,
     check_destination_access: bool,
+    credential_files: BTreeSet<PathBuf>,
 }
 
 impl SkillTree {
@@ -1763,14 +2085,17 @@ impl SkillTree {
             remaining_bytes: MAX_ADOPTED_SKILL_BYTES,
             nested_link: false,
             check_destination_access,
+            credential_files: BTreeSet::new(),
         };
         tree.visit(home, &node.path, node, Path::new(""), &mut BTreeSet::new())?;
-        let entry = tree
-            .skill
-            .files
-            .get(Path::new("SKILL.md"))
-            .context("missing regular SKILL.md")?;
-        std::str::from_utf8(entry).context("SKILL.md is not readable UTF-8")?;
+        if tree.credential_files.is_empty() {
+            let entry = tree
+                .skill
+                .files
+                .get(Path::new("SKILL.md"))
+                .context("missing regular SKILL.md")?;
+            std::str::from_utf8(entry).context("SKILL.md is not readable UTF-8")?;
+        }
         Ok(tree)
     }
 
@@ -1826,7 +2151,8 @@ impl SkillTree {
                 continue;
             }
             ensure!(
-                self.skill.files.len() + self.dirs.len() < MAX_ADOPTED_SKILL_ENTRIES,
+                self.skill.files.len() + self.dirs.len() + self.credential_files.len()
+                    < MAX_ADOPTED_SKILL_ENTRIES,
                 "skill exceeds the {MAX_ADOPTED_SKILL_ENTRIES} files and directories allowed for import"
             );
             let source = node.path.join(name);
@@ -1856,8 +2182,12 @@ impl SkillTree {
                     self.check_destination_access,
                 )?;
                 self.remaining_bytes -= bytes.len() as u64;
-                self.file_modes.insert(relative.clone(), mode);
-                self.skill.files.insert(relative, bytes);
+                if contains_credential_bytes(&bytes) {
+                    self.credential_files.insert(relative);
+                } else {
+                    self.file_modes.insert(relative.clone(), mode);
+                    self.skill.files.insert(relative, bytes);
+                }
             }
         }
         parents.remove(&node.path);
@@ -1915,6 +2245,27 @@ mod tests {
             rules_path: rules.map(PathBuf::from),
             skills_path: skills.map(PathBuf::from),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_linked_skill_approval_rejects_a_new_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let path = Path::new(".claude/skills/demo");
+        put(home, "demo/SKILL.md", "Clean skill.");
+        fs::create_dir_all(home.join(path.parent().unwrap())).unwrap();
+        std::os::unix::fs::symlink(home.join("demo"), home.join(path)).unwrap();
+        let adoption =
+            discover(home, &[target("claudecode", None, Some(".claude/skills"))]).unwrap();
+        let link = &adoption.links[path];
+        assert!(link.matches(home, path).unwrap());
+        put(
+            home,
+            "demo/token.txt",
+            "api-key: w79wxza928af410e9c4f36xdpycb01h6",
+        );
+        assert!(!link.matches(home, path).unwrap());
     }
 
     #[cfg(unix)]
@@ -2293,7 +2644,7 @@ mod tests {
             &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
         )
         .unwrap();
-        let overlay = "# Claude\nAdapter line\nActual line\nExtra\nTail without a newline\nRepeated\n```md\n@./literal.md\n```\n";
+        let overlay = "# Claude\nAdapter line\nActual line\n@parts/more.md\nRepeated\n```md\n@./literal.md\n```\n";
         assert_eq!(adoption.shared, shared);
         assert_eq!(adoption.overlays["claudecode"], overlay);
         assert_eq!(adoption.files.len(), 1);
@@ -2315,6 +2666,33 @@ mod tests {
             actual
         );
         assert!(!home.join(".rulesync").exists());
+    }
+
+    #[test]
+    fn rulesync_checkout_anchors_relative_native_claude_imports() {
+        let home = tempfile::tempdir().unwrap();
+        put(home.path(), ".claude/my-rules.md", "Native guidance.");
+        let local = "@./my-rules.md\n@~/existing.md\n```markdown\n@./example.md\n```\n";
+        let shared = "@./shared.md\n";
+        assert_eq!(
+            checkout_claude_imports(home.path(), local, &format!("{shared}{local}")).unwrap(),
+            format!(
+                "{shared}{}",
+                local.replace("@./my-rules.md", "@~/.claude/./my-rules.md")
+            )
+        );
+    }
+
+    #[test]
+    fn rulesync_checkout_anchors_a_resolved_extensionless_import() {
+        let home = tempfile::tempdir().unwrap();
+        put(home.path(), ".claude/RULES", "Native guidance.");
+        let native = "@RULES\n@someone\n";
+        let source = format!("@somebody\n{native}");
+        assert_eq!(
+            checkout_claude_imports(home.path(), native, &source).unwrap(),
+            "@somebody\n@~/.claude/RULES\n@someone\n"
+        );
     }
 
     #[test]
@@ -2542,7 +2920,10 @@ mod tests {
             &[target("claudecode", Some(".claude/CLAUDE.md"), None)],
         )
         .unwrap();
-        assert_eq!(adoption.overlays["claudecode"], format!("{json}{toml}"));
+        assert_eq!(
+            adoption.overlays["claudecode"],
+            "@~/terms.JsOn\n@~/terms.ToMl\n"
+        );
     }
 
     #[test]

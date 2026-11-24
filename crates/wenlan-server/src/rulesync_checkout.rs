@@ -864,7 +864,16 @@ impl Job<'_> {
             }
             skills.stage(&stage.path().join("project"))?;
             let personal = stage.path().join("personal");
-            write_root_rule(&personal, &master.rule_text(target, generated)?)?;
+            let mut source = master.rule_text(target, generated)?;
+            if target == "claudecode" {
+                let native = wenlan_core::rulesync_adopt::without_shared(&master.shared, &source);
+                source = wenlan_core::rulesync_adopt::checkout_claude_imports(
+                    &self.setup.home,
+                    &native,
+                    &source,
+                )?;
+            }
+            write_root_rule(&personal, &source)?;
             roots.push(personal);
             std::fs::create_dir(&output)?;
             self.session.render(
