@@ -1208,14 +1208,14 @@ fn discover_rules(
     let mut files = BTreeMap::new();
     for ((tool, path), before) in previous {
         let after = personal_rule_body(shared, &overlays[tool], tool, codex_sync_replaced);
-        record_file(
-            &mut files,
-            path.clone(),
-            AdoptionFile {
-                before,
-                after: AdoptionEntry::File(after.into_bytes()),
-            },
-        )?;
+        let after = if matches!(before, AdoptionEntry::Missing) && after.trim().is_empty() {
+            // Keep an absent-to-absent rule delivery in the plan so the
+            // server can journal this enrolled target for future rules.
+            AdoptionEntry::Missing
+        } else {
+            AdoptionEntry::File(after.into_bytes())
+        };
+        record_file(&mut files, path.clone(), AdoptionFile { before, after })?;
     }
     Ok((overlays, files, links, codex_sync_replaced, skipped_rules))
 }

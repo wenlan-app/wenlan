@@ -1355,6 +1355,11 @@ fn display_entry(entry: &AdoptionEntry) -> (Option<Code>, &str) {
 pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     let mut files = Vec::new();
     for (path, file) in &adoption.files {
+        if matches!(file.before, AdoptionEntry::Missing)
+            && matches!(file.after, AdoptionEntry::Missing)
+        {
+            continue;
+        }
         let personal_source = adoption.personal_files.contains_key(path);
         let personal_note = adoption.personal_file_notes.get(path);
         let tool = adoption_tool(path);
@@ -1515,7 +1520,9 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     // A new skill copy counts once per folder, not once per file inside it.
     let mut created = BTreeMap::<String, BTreeSet<PathBuf>>::new();
     for (path, file) in &adoption.files {
-        if matches!(file.before, AdoptionEntry::Missing) {
+        if matches!(file.before, AdoptionEntry::Missing)
+            && !matches!(file.after, AdoptionEntry::Missing)
+        {
             if let Some(tool) = adoption_tool(path) {
                 created
                     .entry(tool.name)
@@ -1525,6 +1532,13 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         }
     }
     Ok(AdoptionPlan {
+        rule_lines: Some(
+            std::iter::once(&adoption.shared)
+                .chain(adoption.overlays.values())
+                .flat_map(|text| text.lines())
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+        ),
         new_files: created
             .into_iter()
             .map(|(tool, units)| AdoptionNewFiles {
@@ -1557,7 +1571,8 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                 let rules = usize::from(
                     adoption
                         .files
-                        .contains_key(Path::new(target.rules.destination)),
+                        .get(Path::new(target.rules.destination))
+                        .is_some_and(|file| !matches!(file.after, AdoptionEntry::Missing)),
                 );
                 let skills = adoption
                     .skill_locations
@@ -1572,12 +1587,13 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
                             .is_some_and(|location| location.tool == target.id)
                     })
                     .count();
-                (rules + skills + other_files > 0).then(|| AdoptionTool {
-                    name: target.tool.display_name().into(),
-                    rule_files: rules,
-                    skills,
-                    other_files,
-                })
+                (adoption.overlays.contains_key(target.id) || rules + skills + other_files > 0)
+                    .then(|| AdoptionTool {
+                        name: target.tool.display_name().into(),
+                        rule_files: rules,
+                        skills,
+                        other_files,
+                    })
             })
             .collect(),
     })
@@ -1971,7 +1987,7 @@ mod tests {
     #[test]
     fn rulesync_preview_names_tools_that_get_new_files() {
         let home = tempfile::tempdir().unwrap();
-        for (path, text) in [(".claude/CLAUDE.md", "Rule.\n"), (".gemini/note", "x")] {
+        for (path, text) in [(".agents/AGENTS.md", "Rule.\n"), (".gemini/note", "x")] {
             let path = home.path().join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
@@ -2017,6 +2033,8 @@ mod tests {
             ])
         );
         let plan = adoption_plan(&adoption).unwrap();
+        // The shared line is counted once, and each tool-only line once.
+        assert_eq!(plan.rule_lines, Some(4));
         assert_eq!(plan.files.len(), 3);
         assert_eq!(plan.notes.len(), plan.note_codes.len());
         assert_eq!(plan.skipped_tools.len(), plan.skipped_tool_codes.len());
@@ -2043,6 +2061,34 @@ mod tests {
         }
         assert!(!home.path().join(".cursor").exists());
         assert!(!home.path().join(".config").exists());
+    }
+
+    #[test]
+    fn ux_cli_8_adoption_does_not_create_an_empty_rule_file_for_an_installed_tool() {
+        for shared in ["", "\n \t\n", "\u{2003}\n"] {
+            let home = tempfile::tempdir().unwrap();
+            fs::create_dir_all(home.path().join(".claude")).unwrap();
+            fs::create_dir_all(home.path().join(".agents")).unwrap();
+            fs::write(home.path().join(".agents/AGENTS.md"), shared).unwrap();
+
+            let adoption = discover_adoption(home.path()).unwrap();
+            let no_op = &adoption.files[Path::new(".claude/CLAUDE.md")];
+            assert!(matches!(no_op.before, AdoptionEntry::Missing));
+            assert!(matches!(no_op.after, AdoptionEntry::Missing), "{shared:?}");
+            assert!(adoption.overlays.contains_key("claudecode"));
+
+            let plan = adoption_plan(&adoption).unwrap();
+            assert_eq!(plan.rule_lines, Some(0));
+            assert!(!plan
+                .files
+                .iter()
+                .any(|file| file.path == ".claude/CLAUDE.md"));
+            assert!(plan.new_files.is_empty());
+            assert!(plan
+                .tools
+                .iter()
+                .any(|tool| tool.name == "Claude Code" && tool.rule_files == 0));
+        }
     }
 
     #[test]

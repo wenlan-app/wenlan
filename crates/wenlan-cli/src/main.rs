@@ -66,6 +66,9 @@ enum Commands {
         /// Skip confirmation prompts where possible.
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show the full Codex hooks preview and share details.
+        #[arg(long)]
+        details: bool,
         /// Write the settings only: connect no AI tool and ask nothing.
         #[arg(long)]
         config_only: bool,
@@ -760,6 +763,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             model,
             anthropic_api_key_env,
             yes,
+            details,
             config_only,
             finish,
         } => {
@@ -770,6 +774,8 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
                     model,
                     anthropic_api_key_env,
                     yes,
+                    details,
+                    person: agent_name.is_none() && session.is_none(),
                     config_only,
                     finish,
                     format,

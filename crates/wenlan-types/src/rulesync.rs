@@ -141,6 +141,10 @@ pub struct AdoptionPlan {
     pub plan_id: String,
     /// Binds approval to the exact files seen by the preview.
     pub token: String,
+    /// Nonempty lines in the shared rules once, plus each tool's own overlay.
+    /// Absent when the daemon predates this count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_lines: Option<usize>,
     pub files: Vec<AdoptionChange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<SettingsPlan>,

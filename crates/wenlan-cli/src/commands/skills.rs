@@ -915,19 +915,19 @@ fn require_the_person_at_a_terminal(
     Ok(())
 }
 
-/// Ask one question; only the exact word `yes` means yes.
+/// Ask one question; a trimmed, case-insensitive `y` or `yes` means yes.
 pub(super) fn person_says_yes(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
     question: &str,
 ) -> Result<bool> {
-    write!(output, "{question} Type yes to go on: ")?;
+    write!(output, "{question} Type y to go on: ")?;
     output.flush()?;
     let mut answer = String::new();
     if input.read_line(&mut answer)? == 0 {
         return Ok(false);
     }
-    Ok(answer.trim() == "yes")
+    Ok(answer.trim().eq_ignore_ascii_case("y") || answer.trim().eq_ignore_ascii_case("yes"))
 }
 
 /// The questions an install asks, after the whole skill was shown. A skill
@@ -2118,7 +2118,7 @@ mod tests {
         }
     }
 
-    /// UX-SKILL-13: only the whole word `yes` is a yes, and a skill without
+    /// UX-SKILL-13: only y or yes is a yes, and a skill without
     /// passed checks needs a yes of its own before the install question.
     #[test]
     fn ux_skill_13_only_a_typed_yes_installs_and_warnings_ask_twice() {
@@ -2139,9 +2139,12 @@ mod tests {
         assert_eq!(
             screen,
             "Install Meeting Notes for every Space? It is copied into Wenlan and each AI tool \
-             on this computer. Type yes to go on: "
+             on this computer. Type y to go on: "
         );
-        for not_yes in ["", "\n", "y\n", "YES\n", "no\n", "yes please\n"] {
+        for yes in ["y\n", "YES\n", " YEs \n", "  Y  \n"] {
+            assert!(ask(yes, &passing).0, "{yes:?}");
+        }
+        for not_yes in ["", "\n", "no\n", "yes please\n"] {
             assert!(!ask(not_yes, &passing).0, "{not_yes:?}");
         }
 
@@ -2150,7 +2153,7 @@ mod tests {
         assert!(!agreed, "one yes is not enough for an unchecked skill");
         assert!(
             screen.starts_with(
-                "This skill has not been checked for safety yet. Install it anyway? Type yes \
+                "This skill has not been checked for safety yet. Install it anyway? Type y \
                  to go on: "
             ),
             "{screen}"

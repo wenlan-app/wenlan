@@ -52,7 +52,7 @@ pub enum RulesSetupCmd {
         #[arg(long, conflicts_with = "dry_run")]
         confirm: Option<String>,
         /// Also offer the MCP servers that may contain a key. You are still
-        /// asked to type yes; an AI tool cannot share them.
+        /// asked to type y or yes; an AI tool cannot share them.
         #[arg(long, conflicts_with_all = ["dry_run", "confirm"])]
         include_keys: bool,
     },
@@ -256,50 +256,10 @@ async fn run_inner(
             confirm: confirmed,
             details,
             ..
-        } => {
-            let expected = home_request()?;
-            let plan = client.preview_share_as_person(&expected).await?;
-            let mut include_keys = false;
-            if let Some(id) = confirmed {
-                ensure!(plan.plan_id == *id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
-            } else {
-                // The person must see the same plan even with --quiet or --format json.
-                print!("{}", sharing_for_a_person(&plan, *details));
-                if !plan.tools.is_empty()
-                    && !confirm("Copy these items to the tools listed above?")?
-                {
-                    return Ok(());
-                }
-                // Servers that may contain a key need their own typed yes.
-                if !plan.key_servers.is_empty() {
-                    let count = plan.key_servers.len();
-                    include_keys = confirm(&format!(
-                        "Also copy {} that may contain a key into {}?",
-                        if count == 1 {
-                            "this server".to_owned()
-                        } else {
-                            format!("these {count} servers")
-                        },
-                        plan.key_tools
-                            .iter()
-                            .map(|tool| one_line(tool))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ))?;
-                }
-                if plan.tools.is_empty() && !include_keys {
-                    return Ok(());
-                }
-            }
-            client
-                .share_rules_as_person(&AdoptRequest {
-                    token: plan.token,
-                    confirmed_plan_id: confirmed.clone(),
-                    home: Some(expected.home),
-                    include_keys,
-                })
-                .await?
-        }
+        } => match share_with_person(&client, *details, confirmed.as_deref(), false).await? {
+            ShareResult::Applied(report) => report,
+            ShareResult::Cancelled | ShareResult::Nothing => return Ok(()),
+        },
         RulesSetupCmd::Restore => {
             if !confirm("Replace managed files and links with the original copies from the local setup backup?")? {
                 return Ok(());
@@ -517,7 +477,7 @@ fn adoption_plan() -> Result<AdoptionPlan> {
 #[derive(Debug, Serialize)]
 struct SetupSync {
     tools: Vec<String>,
-    rules: usize,
+    rules: Option<usize>,
     skills: usize,
     following: usize,
     copied: usize,
@@ -528,6 +488,111 @@ fn home_request() -> Result<AdoptPreviewRequest> {
     Ok(AdoptPreviewRequest {
         home: rulesync_personal::system_home()?.canonicalize()?,
     })
+}
+
+enum ShareResult {
+    Applied(RulesSyncReport),
+    Cancelled,
+    Nothing,
+}
+
+/// Both setup and `rules share` use the same preview, approval and write path.
+async fn share_with_person(
+    client: &WenlanClient,
+    details: bool,
+    confirmed: Option<&str>,
+    setup: bool,
+) -> Result<ShareResult> {
+    let expected = home_request()?;
+    let plan = client.preview_share_as_person(&expected).await?;
+    let include_keys = if let Some(id) = confirmed {
+        ensure!(plan.plan_id == id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
+        false
+    } else {
+        // The person must see the plan even with --quiet or --format json.
+        let preview = sharing_for_a_person(&plan, details);
+        if setup {
+            print!("{}", wrap_setup_text(&preview)?);
+        } else {
+            print!("{preview}");
+        }
+        if plan.tools.is_empty() && plan.key_servers.is_empty() {
+            return Ok(ShareResult::Nothing);
+        }
+        let Some(include_keys) =
+            share_confirmation(&plan, &mut io::stdin().lock(), &mut io::stdout())?
+        else {
+            if !setup {
+                println!("Cancelled.");
+            }
+            return Ok(ShareResult::Cancelled);
+        };
+        if plan.tools.is_empty() && !include_keys {
+            return Ok(ShareResult::Nothing);
+        }
+        include_keys
+    };
+    let report = client
+        .share_rules_as_person(&AdoptRequest {
+            token: plan.token,
+            confirmed_plan_id: confirmed.map(str::to_owned),
+            home: Some(expected.home),
+            include_keys,
+        })
+        .await?;
+    Ok(ShareResult::Applied(report))
+}
+
+/// The key group always needs its own answer, including when it is the only group.
+fn share_confirmation(
+    plan: &SharingPlan,
+    input: &mut dyn io::BufRead,
+    output: &mut dyn io::Write,
+) -> Result<Option<bool>> {
+    if !person_says_yes(input, output, "Copy these items to the tools above?")? {
+        return Ok(None);
+    }
+    let include_keys = if plan.key_servers.is_empty() {
+        false
+    } else {
+        writeln!(output)?;
+        person_says_yes(
+            input,
+            output,
+            "Also copy the servers that may contain a key?",
+        )?
+    };
+    Ok(Some(include_keys))
+}
+
+/// Wrap at spaces without cutting words. Refuse an unshowable preview rather
+/// than asking someone to approve a shortened or misleading item name.
+pub(super) fn wrap_setup_text(text: &str) -> Result<String> {
+    let mut out = String::new();
+    for line in text.lines() {
+        let indent: String = line.chars().take_while(|ch| *ch == ' ').collect();
+        let mut current = indent.clone();
+        for word in line.split_whitespace() {
+            let width = console::measure_text_width(word);
+            ensure!(
+                width + indent.len() < 80,
+                "A name is too long to show here. Run `wenlan rules share --details`."
+            );
+            let spacer = usize::from(current.len() > indent.len());
+            if console::measure_text_width(&current) + spacer + width >= 80 {
+                out.push_str(&current);
+                out.push('\n');
+                current.clone_from(&indent);
+            }
+            if current.len() > indent.len() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+        out.push_str(&current);
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -589,7 +654,7 @@ impl StayReason {
 
 fn sharing_for_a_person(plan: &SharingPlan, details: bool) -> String {
     let mut out = String::new();
-    if plan.tools.is_empty() {
+    if plan.tools.is_empty() && plan.key_servers.is_empty() {
         out.push_str("Nothing to share.\n");
     } else {
         out.push_str("Share with your other tools\n");
@@ -761,15 +826,19 @@ fn setup_sync_line(sync: &SetupSync) -> String {
         [one] => one.clone(),
         [init @ .., last] => format!("{} and {last}", init.join(", ")),
     };
-    let mut line = format!(
-        "Synced {tools}: {}, {} ({} follow their source, {} copied).",
-        plural(sync.rules, "rule"),
-        plural(sync.skills, "skill"),
-        sync.following,
-        sync.copied
+    let rules = sync.rules.map_or_else(
+        || "rule count unavailable".to_string(),
+        |count| plural(count, "rule"),
     );
+    let mut line = format!("Set up {tools}: {rules}, {}.", plural(sync.skills, "skill"));
     if sync.left_alone > 0 {
-        line.push_str(&format!(" {} left as they are.", sync.left_alone));
+        line.push_str(&format!(
+            " {} {} left as {} {}.",
+            plural(sync.left_alone, "item"),
+            if sync.left_alone == 1 { "was" } else { "were" },
+            if sync.left_alone == 1 { "it" } else { "they" },
+            if sync.left_alone == 1 { "was" } else { "were" }
+        ));
     }
     line
 }
@@ -778,30 +847,89 @@ fn setup_sync_line(sync: &SetupSync) -> String {
 /// in and sync once, with no question and no terminal needed. A plan that
 /// cannot be adopted safely is left alone with one line saying so; setup
 /// itself still succeeds.
-pub(super) async fn adopt_during_setup(format: ResolvedFormat) {
-    if let Err(error) = try_adopt_during_setup(format).await {
-        println!(
-            "Your tool setup was left as it is: {}. See `wenlan rules adopt --dry-run`.",
+pub(super) async fn adopt_during_setup(format: ResolvedFormat) -> bool {
+    match try_adopt_during_setup(format).await {
+        Ok(adopted) => adopted,
+        Err(error) => {
+            let message = format!(
+            "Your tool setup could not be fully set up: {}.\nSee `wenlan rules adopt --dry-run`.\n",
             one_line(&printable(&format!("{error:#}"))).trim_end_matches('.')
         );
+            print!("{}", wrap_setup_text(&message).unwrap_or_else(|_| {
+            "Your tool setup could not be fully set up.\nSee `wenlan rules adopt --dry-run`.\n".to_string()
+        }));
+            false
+        }
     }
 }
 
-async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
+pub(super) async fn share_during_setup(details: bool) {
+    let result = async {
+        let client = WenlanClient::for_local_rules_with_identity(None, None)?;
+        share_with_person(&client, details, None, true).await
+    }
+    .await;
+    match result {
+        Ok(ShareResult::Cancelled) => {
+            println!("\nRun wenlan rules share to copy skills to your other tools.");
+        }
+        Ok(ShareResult::Nothing) => {}
+        Ok(ShareResult::Applied(report)) => {
+            let mut text = format!("\n{}\n", one_line(&report.message));
+            if !report.blocked.is_empty() {
+                text.push_str(&format!(
+                    "{} could not be copied.\n",
+                    plural(report.blocked.len(), "item")
+                ));
+            }
+            if !report.proposals.is_empty() {
+                let count = report.proposals.len();
+                text.push_str(&format!(
+                    "{} {} review. Run `wenlan rules review`.\n",
+                    plural(count, "item"),
+                    if count == 1 { "needs" } else { "need" }
+                ));
+            }
+            append_kept_in_place_summary(&mut text, &report.kept_in_place);
+            match wrap_setup_text(&text) {
+                Ok(text) => print!("{text}"),
+                Err(_) => println!("Sharing finished. Run `wenlan rules status` for details."),
+            }
+        }
+        Err(error) => {
+            let message = format!(
+                "\nCould not share: {}.\nRun `wenlan rules share` to try again.\n",
+                one_line(&printable(&format!("{error:#}"))).trim_end_matches('.')
+            );
+            print!(
+                "{}",
+                wrap_setup_text(&message).unwrap_or_else(|_| {
+                    "\nCould not share. Run `wenlan rules share` to try again.\n".to_string()
+                })
+            );
+        }
+    }
+}
+
+async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<bool> {
     rulesync_personal::set_enabled(true)?;
     // An AI tool running setup says who it is; the daemon then adopts only
     // the plan it just previewed (the same check as `rules adopt --confirm`).
     let session = wenlan_types::session_context::resolve_session_from_env(None);
     let client = WenlanClient::for_local_rules_with_identity(None, session.session.as_ref())?;
     if client.rules_setup_status().await?.adopted {
-        return Ok(());
+        return Ok(true);
     }
     let home = rulesync_personal::system_home()?.canonicalize()?;
     let plan = client
         .preview_adoption_as_person(&AdoptPreviewRequest { home: home.clone() })
         .await?;
-    if plan.files.is_empty() && plan.settings.is_none() && plan.skills.is_empty() {
-        return Ok(());
+    if plan.files.is_empty()
+        && plan.settings.is_none()
+        && plan.skills.is_empty()
+        && plan.tools.is_empty()
+    {
+        return Ok(false);
     }
     ensure!(
         !plan.note_codes.iter().any(|note| matches!(
@@ -823,7 +951,12 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
         "{} need your review",
         plural(report.blocked.len(), "item")
     );
-    let _ = client.sync_rules_as_person().await;
+    let synced = client.sync_rules_as_person().await?;
+    ensure!(
+        synced.blocked.is_empty(),
+        "{} could not be synced",
+        plural(synced.blocked.len(), "item")
+    );
     // Name only the tools that ended up managed, not everything the plan listed.
     let managed = client.rules_setup_status().await.ok().map(|status| {
         status
@@ -846,7 +979,6 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
         tools: plan
             .tools
             .iter()
-            .filter(|tool| tool.rule_files + tool.skills + tool.other_files > 0)
             .filter(|tool| {
                 managed
                     .as_ref()
@@ -854,7 +986,7 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
             })
             .map(|tool| tool.name.clone())
             .collect(),
-        rules: plan.tools.iter().map(|tool| tool.rule_files).sum(),
+        rules: plan.rule_lines,
         skills: following + copied,
         following,
         copied,
@@ -863,11 +995,11 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
     match format {
         ResolvedFormat::Json => println!("{}", terminal_json(&sync)?),
         ResolvedFormat::Table => {
-            println!("{}", printable(&setup_sync_line(&sync)));
+            print!("{}", wrap_setup_text(&printable(&setup_sync_line(&sync)))?);
             println!("To undo: wenlan rules restore");
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn confirm(question: &str) -> Result<bool> {
@@ -1166,11 +1298,17 @@ fn append_kept_in_place_summary(
         .map(|entry| entry.count)
         .fold(0usize, usize::saturating_add);
     if count > 0 {
-        writeln!(
-            out,
-            "Kept {count} settings in place in their own tools because they may hold keys or cannot be copied."
-        )
-        .unwrap();
+        if count == 1 {
+            out.push_str(
+                "Kept 1 setting in its own tool because it may hold a key or cannot be copied.\n",
+            );
+        } else {
+            writeln!(
+                out,
+                "Kept {count} settings in place in their own tools because they may hold keys or cannot be copied."
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -1194,6 +1332,82 @@ pub(super) fn file_label(path: &str) -> String {
 mod tests {
     use super::*;
     use wenlan_types::rulesync::{AdoptionChange, SharingStay, SharingTool};
+
+    #[test]
+    fn ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no() {
+        let plan = SharingPlan {
+            tools: vec![SharingTool {
+                tool: "Codex".into(),
+                skills: vec!["example".into()],
+                ..Default::default()
+            }],
+            key_servers: vec!["example server".into()],
+            ..Default::default()
+        };
+        let ask = |answers: &[u8]| {
+            let mut output = Vec::new();
+            let result = share_confirmation(&plan, &mut &answers[..], &mut output).unwrap();
+            (result, String::from_utf8(output).unwrap())
+        };
+        assert_eq!(ask(b"n\n").0, None);
+        assert_eq!(ask(b"").0, None);
+        assert_eq!(ask(b"y\nn\n").0, Some(false));
+        assert_eq!(ask(b"Y\nYeS\n").0, Some(true));
+        assert_eq!(ask(b"y\n").0, Some(false));
+        let (answer, output) = ask(b"y\ny\n");
+        assert_eq!(answer, Some(true));
+        assert_eq!(output.matches("Type y to go on:").count(), 2);
+
+        let keys_only = SharingPlan {
+            tools: Vec::new(),
+            ..plan
+        };
+        let mut output = Vec::new();
+        assert_eq!(
+            share_confirmation(&keys_only, &mut &b"y\n"[..], &mut output).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            String::from_utf8(output)
+                .unwrap()
+                .matches("Type y to go on:")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn ux_cli_8_setup_report_counts_and_preview_wrap_without_splitting_words() {
+        let sync = SetupSync {
+            tools: [
+                "Claude Code",
+                "Codex",
+                "Gemini CLI",
+                "GitHub Copilot CLI",
+                "Cursor",
+                "OpenCode",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            rules: Some(3),
+            skills: 1,
+            following: 0,
+            copied: 1,
+            left_alone: 1,
+        };
+        let shown = wrap_setup_text(&setup_sync_line(&sync)).unwrap();
+        assert!(shown.contains("3 rules, 1 skill."), "{shown}");
+        assert!(shown.contains("1 item was left as it was."), "{shown}");
+        assert!(
+            shown
+                .lines()
+                .all(|line| console::measure_text_width(line) < 80),
+            "{shown}"
+        );
+        assert!(!shown.contains("follow their source"), "{shown}");
+        assert!(wrap_setup_text(&"x".repeat(80)).is_err());
+    }
 
     #[test]
     fn ux_skill_26_rules_share_short_preview_summarizes_distinct_stays() {
@@ -1318,7 +1532,7 @@ mod tests {
                 review_confirmation(&mut &b"yes\n"[..], &mut output, &decision, preview).unwrap()
             );
             let output = String::from_utf8(output).unwrap();
-            let (before, _) = output.split_once("Type yes to go on:").unwrap();
+            let (before, _) = output.split_once("Type y to go on:").unwrap();
             assert!(before.contains(preview), "{before}");
             assert!(before.contains(".claude/commands/check.md"), "{before}");
         }
@@ -1370,6 +1584,7 @@ mod tests {
         let mut plan = AdoptionPlan {
             plan_id: String::new(),
             token: "t".into(),
+            rule_lines: None,
             settings: None,
             files: Vec::new(),
             skills: Vec::new(),
@@ -1415,6 +1630,7 @@ mod tests {
         let plan = AdoptionPlan {
             plan_id: "test".into(),
             token: "test".into(),
+            rule_lines: None,
             settings: None,
             files: vec![AdoptionChange {
                 path: "tool\nsettings.md".into(),

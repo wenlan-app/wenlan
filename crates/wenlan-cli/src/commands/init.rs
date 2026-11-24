@@ -197,7 +197,8 @@ impl Tools {
             );
         }
         if self.connected.is_empty() && self.waiting.is_empty() {
-            println!("No AI tool was found on this computer. `wenlan connect --help` lists the ones Wenlan can connect.");
+            println!("No AI tool was found on this computer.");
+            println!("`wenlan connect --help` lists the tools Wenlan can connect.");
         }
     }
 }

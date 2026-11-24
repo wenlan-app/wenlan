@@ -364,6 +364,7 @@ Options:
 - `--model <MODEL_ID>`: Download and select a local model, for example qwen3.5-4b.
 - `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
 - `-y, --yes`: Skip confirmation prompts where possible.
+- `--details`: Show the full Codex hooks preview and share details.
 - `--config-only`: Write the settings only: connect no AI tool and ask nothing.
 
 ### `wenlan init`
@@ -569,7 +570,7 @@ Options:
 - `--dry-run`: Preview what each tool would get.
 - `--details`: Show every item in the preview.
 - `--confirm <CONFIRM>`: Confirm the plan shown to the person.
-- `--include-keys`: Also offer the MCP servers that may contain a key. You are still asked to type yes; an AI tool cannot share them.
+- `--include-keys`: Also offer the MCP servers that may contain a key. You are still asked to type y or yes; an AI tool cannot share them.
 
 #### `wenlan rules status`
 

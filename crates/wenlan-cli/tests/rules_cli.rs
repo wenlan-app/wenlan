@@ -141,7 +141,11 @@ fn setup_fixture_with(
 fn setup_home(state: &Path) -> AdoptionPlan {
     let home = state.join("ai-tools/home");
     fs::create_dir_all(home.join(".codex")).unwrap();
-    fs::write(home.join(".codex/AGENTS.md"), "Fixture rules.\n").unwrap();
+    fs::write(
+        home.join(".codex/AGENTS.md"),
+        "First fixture rule.\n\nSecond fixture rule.\nThird fixture rule.\n",
+    )
+    .unwrap();
     let skill = home.join(".codex/skills/example/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
     fs::write(
@@ -171,12 +175,9 @@ fn ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts() {
         .stdout
         .clone();
     let text = String::from_utf8(output).unwrap();
-    let copied = plan
-        .skills
-        .iter()
-        .filter(|skill| matches!(skill.outcome, AdoptionSkillOutcome::PlainCopy))
-        .count();
-    assert!(text.contains(&format!("{copied} copied)")), "{text}");
+    assert!(text.contains("3 rules, 1 skill."), "{text}");
+    assert!(!text.contains("follow their source"), "{text}");
+    assert!(!text.contains(" copied)"), "{text}");
     assert!(text.contains("To undo: wenlan rules restore"), "{text}");
     assert!(!text.contains(state.path().to_str().unwrap()), "{text}");
     assert!(state.path().join("unused-data-root/rulesync.on").is_file());
@@ -188,6 +189,7 @@ fn ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts() {
     ] {
         assert!(seen.iter().any(|seen| seen == route), "{route}: {seen:?}");
     }
+    assert!(seen.iter().all(|path| !path.contains("/share")), "{seen:?}");
 }
 
 #[cfg(unix)]
@@ -231,6 +233,20 @@ fn setup_in_an_ai_session_adopts_only_the_plan_it_previewed() {
         .expect("setup adopts");
     let request: wenlan_types::rulesync::AdoptRequest = serde_json::from_str(&adopt.1).unwrap();
     assert_eq!(request.confirmed_plan_id.as_deref(), Some("0123456789ab"));
+    assert!(requests
+        .try_iter()
+        .all(|(path, _)| !path.contains("/share")));
+}
+
+#[cfg(unix)]
+#[test]
+fn ux_cli_8_setup_noninteractive_yes_never_requests_share() {
+    let state = tempfile::tempdir().unwrap();
+    let plan = setup_home(state.path());
+    let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
+    cmd.arg("--yes").assert().success();
+    let seen = requested(&requests);
+    assert!(seen.iter().all(|path| !path.contains("/share")), "{seen:?}");
 }
 
 #[cfg(unix)]
@@ -257,6 +273,7 @@ fn setup_json_carries_the_same_counts() {
     ] {
         assert!(value.get(field).is_some(), "{field}: {value}");
     }
+    assert_eq!(value["rules"], 3);
 }
 
 #[cfg(unix)]
@@ -294,7 +311,10 @@ fn setup_leaves_a_blocked_plan_alone_and_still_succeeds() {
     let (mut cmd, requests) = setup_fixture(state.path(), false, &plan);
     let output = cmd.assert().success().get_output().stdout.clone();
     let text = String::from_utf8(output).unwrap();
-    assert!(text.contains("Your tool setup was left as it is"), "{text}");
+    assert!(
+        text.contains("Your tool setup could not be fully set up"),
+        "{text}"
+    );
     assert!(!text.contains("To undo"), "{text}");
     let seen = requested(&requests);
     assert!(

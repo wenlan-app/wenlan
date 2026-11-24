@@ -1545,6 +1545,12 @@ impl Setup {
                 );
             }
             let desired = match change.after {
+                AdoptionEntry::Missing
+                    if rules.contains_key(path.as_path())
+                        && matches!(change.before, AdoptionEntry::Missing) =>
+                {
+                    Snapshot::Absent
+                }
                 AdoptionEntry::File(bytes) => match linked {
                     Some((ancestor, link)) => {
                         let mode = link
@@ -1643,6 +1649,13 @@ impl Setup {
             adoption.settings,
             &mut operations,
         )?;
+        let no_op_paths = operations
+            .iter()
+            .filter(|operation| {
+                operation.seen == Snapshot::Absent && operation.desired == Snapshot::Absent
+            })
+            .map(|operation| operation.path.clone())
+            .collect::<BTreeSet<_>>();
         let setting_count: usize = settings.values().map(Vec::len).sum();
         let mut result = if !adoption.added_tools.is_empty() {
             report(&format!(
@@ -1678,7 +1691,7 @@ impl Setup {
                     path.display()
                 );
             }
-            if !existing_settings.contains(&path) {
+            if !existing_settings.contains(&path) && !no_op_paths.contains(&path) {
                 result.written.push(path.display().to_string());
             }
         }
@@ -2923,6 +2936,13 @@ impl Setup {
                 );
                 continue;
             };
+            if seen == Snapshot::Absent
+                && std::str::from_utf8(bytes).is_ok_and(|text| text.trim().is_empty())
+            {
+                // An enrolled target can have no rules yet. Keep its absent
+                // receipt until shared, team, or generated content renders.
+                continue;
+            }
             let desired = with_bytes(&seen, bytes.clone());
             if desired == seen && delivery.observed.is_none() {
                 continue;
@@ -5402,12 +5422,12 @@ mod tests {
             }
         }
 
-        pub(super) fn adopt_from_plan(&self) {
+        pub(super) fn adopt_from_plan(&self) -> RulesSyncReport {
             let adoption = discover_adoption(&self.setup.home).unwrap();
             let master = PersonalMaster::new(&adoption);
             let root = FileRoot::open_home(&self.setup.home).unwrap();
             let _lock = self.setup.lock().unwrap();
-            self.setup.apply_adoption(&root, adoption, master).unwrap();
+            self.setup.apply_adoption(&root, adoption, master).unwrap()
         }
 
         pub(super) fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
@@ -5429,6 +5449,29 @@ mod tests {
                     fixture_skill_renderer,
                 )
                 .unwrap()
+        }
+
+        pub(super) fn sync_generated(&self, generated: &[String]) -> RulesSyncReport {
+            let root = FileRoot::open_home(&self.setup.home).unwrap();
+            let _lock = self.setup.lock().unwrap();
+            let mut manifest = self.setup.load().unwrap().unwrap();
+            self.setup
+                .sync_locked(
+                    &root,
+                    &mut manifest,
+                    generated,
+                    fixture_rule_renderer,
+                    fixture_skill_renderer,
+                )
+                .unwrap()
+        }
+
+        pub(super) fn empty_rules() -> Self {
+            let fixture = Self::new();
+            fs::remove_file(fixture.setup.home.join(".agents/AGENTS.md")).unwrap();
+            fs::remove_file(fixture.setup.home.join(CLAUDE)).unwrap();
+            fs::remove_file(fixture.setup.home.join(CODEX)).unwrap();
+            fixture
         }
 
         pub(super) fn sync_review(
@@ -5479,6 +5522,76 @@ mod tests {
                     .map(move |(path, bytes)| (folder.join(path), bytes.clone()))
             })
             .collect())
+    }
+
+    #[test]
+    fn ux_cli_8_empty_rule_target_is_journaled_without_creating_a_file_then_delivered_and_restored()
+    {
+        let fixture = Fixture::empty_rules();
+        let path = fixture.setup.home.join(CLAUDE);
+
+        let adopted = fixture.adopt_from_plan();
+        assert!(!adopted.written.iter().any(|written| written == CLAUDE));
+        assert!(!path.exists());
+        let immediate = fixture.sync_generated(&[]);
+        assert!(!path.exists());
+        assert!(immediate.blocked.is_empty(), "{immediate:?}");
+        assert_eq!(
+            fixture
+                .setup
+                .load()
+                .unwrap()
+                .unwrap()
+                .delivered
+                .get(Path::new(CLAUDE))
+                .map(|delivery| &delivery.delivered),
+            Some(&Snapshot::Absent)
+        );
+
+        let later = fixture.sync_generated(&["Generated later.".into()]);
+        assert!(
+            later.written.iter().any(|written| written == CLAUDE),
+            "{later:?}"
+        );
+        assert_eq!(
+            fixture.text(CLAUDE),
+            "\n## How I work\n\n- Generated later.\n"
+        );
+
+        let restored = fixture.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn ux_cli_8_empty_rule_target_preserves_a_user_created_file_for_review() {
+        let fixture = Fixture::empty_rules();
+        fixture.adopt_from_plan();
+        fixture.write(CLAUDE, "User-created rule.\n");
+
+        let result = fixture.sync_generated(&["Generated later.".into()]);
+
+        assert!(
+            result
+                .blocked
+                .iter()
+                .any(|blocked| blocked.contains(CLAUDE)),
+            "{result:?}"
+        );
+        assert_eq!(fixture.text(CLAUDE), "User-created rule.\n");
+    }
+
+    #[test]
+    fn ux_cli_8_whitespace_only_shared_rules_leave_missing_files_absent() {
+        let fixture = Fixture::empty_rules();
+        fixture.write(".agents/AGENTS.md", "\u{2003}\n");
+        fixture.adopt_from_plan();
+
+        let report = fixture.sync_generated(&[]);
+
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(!fixture.setup.home.join(CLAUDE).exists());
+        assert!(!fixture.setup.home.join(CODEX).exists());
     }
 
     fn render_fixture_tree(

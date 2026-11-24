@@ -2576,8 +2576,8 @@ Otherwise install the local Wenlan runtime and run `wenlan setup`.
 
 Setup choices:
 - Local Memory: store, search, and recall now. No model download or API key.
-- On-device Model: private local extraction and distill cycles after model download.
-- Anthropic Key: richer extraction and distill cycles using your API key.
+- On-device Model: write notes on this computer after downloading a model.
+- Anthropic Key: write notes using your Anthropic API key.
 
 Install:
   curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash

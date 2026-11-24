@@ -64,10 +64,12 @@ impl KeyAnswer {
 
 fn keys_left_message(count: usize, answer: KeyAnswer) -> String {
     let servers = if count == 1 { "server" } else { "servers" };
-    let line = format!("Left {count} {servers} that may contain a key where they are.");
+    let place = if count == 1 { "it is" } else { "they are" };
+    let line = format!("Left {count} {servers} that may contain a key where {place}.");
     if answer == KeyAnswer::NotAsked {
+        let object = if count == 1 { "it" } else { "those" };
         format!(
-            "{line} Only the person can share those, by running `wenlan rules share` in their own terminal."
+            "{line} Only the person can share {object}, by running `wenlan rules share` in their own terminal."
         )
     } else {
         line
@@ -1688,7 +1690,7 @@ mod tests {
         assert!(
             shared
                 .message
-                .ends_with("Left 1 server that may contain a key where they are."),
+                .ends_with("Left 1 server that may contain a key where it is."),
             "{shared:?}"
         );
         assert!(
@@ -1784,7 +1786,7 @@ mod tests {
         let shared = share_keys(&f, KeyAnswer::NotAsked);
         assert!(
             shared.message.contains(
-                "Left 1 server that may contain a key where they are. Only the person can share those, by running `wenlan rules share` in their own terminal."
+                "Left 1 server that may contain a key where it is. Only the person can share it, by running `wenlan rules share` in their own terminal."
             ),
             "{shared:?}"
         );

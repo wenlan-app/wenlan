@@ -1047,7 +1047,8 @@ and wait for evidence that people need them.
   away. They do it in the app, or in their own terminal: `wenlan skills
   install` shows every file, the safety checks and the files that can run,
   then asks; `wenlan skills import` lists what it would take in, then asks;
-  `wenlan skills remove` names the skill, then asks. Only a typed `yes` goes
+  `wenlan skills remove` names the skill, then asks. A typed `y` or `yes`
+  (ignoring case and surrounding whitespace) goes
   on, a skill that has not passed its checks asks once more first, and no
   flag answers for the person; from a pipe, a script or an AI tool's shell
   the command stops before asking. A skill cannot keep text from the person:
@@ -1205,7 +1206,7 @@ and wait for evidence that people need them.
   Wenlan also detects a new or edited skill
   in a tool's folder. It offers that content for the current tool or all
   supported tools. The person's terminal shows the complete proposal and
-  asks for typed `yes` before accepting it. The review for an edited skill
+  asks for typed `y` or `yes` before accepting it. The review for an edited skill
   shows the changed files and lists the removed files. A changed adopted
   file that is too large to preview shows its size and SHA-256 before and
   after the edit. Existing invisible characters on unchanged lines appear
@@ -1495,7 +1496,7 @@ and wait for evidence that people need them.
   `env_http_headers` and `bearer_token_env_var`). A server that may hold a
   key joins the key group of UX-SKILL-27 instead. Wenlan never edits a shell
   profile. Only files Wenlan may write receive copies.
-  The person types `yes`; an AI session shows the person
+  The person types `y` or `yes`; an AI session shows the person
   `wenlan rules share --dry-run` and runs
   `wenlan rules share --confirm <plan id>` after they agree, and a plan id
   from an older preview is refused. Other copies go through the same backup
@@ -1517,7 +1518,8 @@ and wait for evidence that people need them.
   `rulesync_share_never_copies_a_server_url_with_a_key_in_its_path`,
   `rulesync_share_stores_no_password_from_a_permission_rule`,
   `rulesync_share_backs_up_no_codex_file_with_a_literal_password` and
-  `personal_rules_setup_requires_interactive_confirmation`.
+  `personal_rules_setup_requires_interactive_confirmation` and
+  `ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no`.
 
 - **UX-SKILL-27** `shipped` MCP servers that may hold a key (a value written
   in the entry rather than an environment variable reference) form one key
@@ -1526,8 +1528,9 @@ and wait for evidence that people need them.
   in their own tool. The preview names the servers and the tools only:
   "These N servers may contain a key. Sharing copies the key into: <tools>."
   A server the check cannot copy safely keeps its "Stays in <tool>: <reason>"
-  line. Only the person can share the key group: after the first `yes`, a
-  second typed `yes` in their own terminal. `--include-keys` still asks. The
+  line. Only the person can share the key group: after the first `y` or `yes`, a
+  second typed `y` or `yes` in their own terminal, even when the key group is
+  the only group offered. `--include-keys` still asks. The
   `--confirm <plan id>` route and any request that names an AI session or an
   agent leave the group where it is with a plain line, and the rest applies;
   a "no" does the same. This tells the AI tools' normal route from the
@@ -1602,7 +1605,11 @@ and wait for evidence that people need them.
   AI tools. A tool that already has Wenlan, through its plugin or an earlier
   run, is left as it is. It works the same outside a repository; inside one
   it names `wenlan init` and ties nothing. `--config-only` connects nothing
-  and asks nothing.
+  and asks nothing. Codex hooks are summarized by the hooks actually added,
+  or as script updates when already installed; `--details` shows the full
+  JSON. The hook question accepts `y` or `yes`. The usual setup text uses
+  short lines that fit within 80 columns. Test
+  `ux_cli_6_setup_hooks_summary_names_only_hooks_actually_added`.
   原文：「裝完的流程，是要那些需要人手動做，哪些是自動設好，要絲滑的體驗 dx ux」（2026-11-17 06:11Z）；「要的，另外想問如果不在 repo 內的情況，不知是否已考慮過」（2026-11-17 06:24Z）。
 - **UX-CLI-7** `shipped` In a repository Wenlan does not know, the terminal
   asks only when the command cannot do its work without setup:
@@ -1617,10 +1624,17 @@ and wait for evidence that people need them.
   Wenlan answers, setup turns tool sync on, previews the person's AI-tool
   setup, brings it in and syncs once; running setup is the consent, so it asks
   nothing, needs no terminal and works when an AI tool runs it. It ends with
-  a short report: which tools, how many rules and skills (how many follow
-  their source, how many are copies), how many are left as they are, and
+  a short report: which tools, how many nonempty rule lines and skills,
+  how many are left as they are, and
   `To undo: wenlan rules restore`. No paths or ids. `--format json` carries
-  the same counts. An already-adopted setup is skipped silently. A plan that
+  the same counts. The shared rules count once, each tool's own overlay counts
+  separately, and an absent rule file is not created for empty content. An
+  already-adopted setup is skipped silently. After adoption and sync, setup
+  presents the same short share preview as `wenlan rules share` to a person
+  in a terminal. A yes shares the offered items; key servers need their own
+  second yes (UX-SKILL-27). A no leaves sharing for `wenlan rules share` and
+  setup continues. AI and non-interactive setup never share, including with
+  `--yes`. A plan that
   cannot be previewed completely, or that Wenlan refuses to adopt, is left
   alone with one line saying so and setup still succeeds. The switch is a
   `rulesync.on` file in the data root, so the daemon and the CLI agree and a
@@ -1630,7 +1644,19 @@ and wait for evidence that people need them.
   shows the preview and runs `wenlan rules adopt --confirm <plan id>` only
   after a yes.
   原文（2026-11-22）：「第一次用戶體驗就是，只要設置跑一次，就全部都弄好，看到一個同步好的簡短報告。」
-  Tests `ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts`, `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`, `setup_leaves_a_blocked_plan_alone_and_still_succeeds`, `rules_switch_persists_and_environment_overrides_it` and `rules_switch_survives_a_service_reinstall`.
+  Tests `ux_cli_8_setup_turns_sync_on_adopts_and_reports_the_counts`,
+  `ux_cli_8_setup_report_counts_and_preview_wrap_without_splitting_words`,
+  `ux_cli_8_setup_share_requires_person_tty_and_successful_adoption`,
+  `ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no`,
+  `ux_cli_8_setup_noninteractive_yes_never_requests_share`,
+  `ux_cli_8_adoption_does_not_create_an_empty_rule_file_for_an_installed_tool`,
+  `ux_cli_8_empty_rule_target_is_journaled_without_creating_a_file_then_delivered_and_restored`,
+  `ux_cli_8_empty_rule_target_preserves_a_user_created_file_for_review`,
+  `ux_cli_8_whitespace_only_shared_rules_leave_missing_files_absent`,
+  `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`,
+  `setup_leaves_a_blocked_plan_alone_and_still_succeeds`,
+  `rules_switch_persists_and_environment_overrides_it` and
+  `rules_switch_survives_a_service_reinstall`.
 
 ## Adding to Wenlan
 

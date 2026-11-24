@@ -16,6 +16,7 @@ pub(super) struct HookPlan {
     pub(super) codex_home: PathBuf,
     pub(super) merged_json: String,
     pub(super) needs_install: bool,
+    pub(super) added_events: Vec<&'static str>,
     original_exists: bool,
     original_json: Vec<u8>,
 }
@@ -102,8 +103,14 @@ pub(super) fn plan(codex_home: &Path) -> anyhow::Result<HookPlan> {
     let install_dir = codex_home.join(INSTALL_DIR);
     let brief_command = command(&install_dir.join("brief-context.sh"));
     let reminder_command = command(&install_dir.join("handoff-reminder.sh"));
-    let changed = add_hook(&mut root, "SessionStart", &brief_command)?
-        | add_hook(&mut root, "Stop", &reminder_command)?;
+    let mut added_events = Vec::new();
+    if add_hook(&mut root, "SessionStart", &brief_command)? {
+        added_events.push("session start");
+    }
+    if add_hook(&mut root, "Stop", &reminder_command)? {
+        added_events.push("stop");
+    }
+    let changed = !added_events.is_empty();
     let merged_json = if changed || original.is_empty() {
         format!("{}\n", serde_json::to_string_pretty(&root)?)
     } else {
@@ -116,6 +123,7 @@ pub(super) fn plan(codex_home: &Path) -> anyhow::Result<HookPlan> {
     Ok(HookPlan {
         codex_home: codex_home.to_path_buf(),
         needs_install: changed || scripts_differ,
+        added_events,
         merged_json,
         original_exists,
         original_json,
@@ -180,15 +188,21 @@ pub(super) fn apply_if_approved(plan: &HookPlan, approved: bool) -> anyhow::Resu
 }
 
 #[cfg(test)]
+pub(super) fn fake_codex_home() -> (tempfile::TempDir, PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("ai-tools/home/.codex");
+    fs::create_dir_all(&home).unwrap();
+    (temp, home)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
 
     #[test]
     fn merge_preserves_existing_hooks_and_is_idempotent() {
-        let temp = tempfile::tempdir().unwrap();
-        let codex_home = temp.path().join("codex-home");
-        fs::create_dir_all(&codex_home).unwrap();
+        let (_temp, codex_home) = fake_codex_home();
         fs::write(
             codex_home.join("hooks.json"),
             r#"{"hooks":{"Stop":[{"matcher":"keep","hooks":[{"type":"command","command":"existing-stop"}]}]},"custom":"untouched"}"#,
@@ -227,9 +241,7 @@ mod tests {
 
     #[test]
     fn preview_without_approval_does_not_touch_scratch_codex_home() {
-        let temp = tempfile::tempdir().unwrap();
-        let codex_home = temp.path().join("codex-home");
-        fs::create_dir_all(&codex_home).unwrap();
+        let (_temp, codex_home) = fake_codex_home();
         let original = r#"{"hooks":{"SessionStart":[]},"keep":true}"#;
         fs::write(codex_home.join("hooks.json"), original).unwrap();
 
@@ -245,9 +257,7 @@ mod tests {
 
     #[test]
     fn malformed_existing_hooks_are_refused_without_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        let codex_home = temp.path().join("codex-home");
-        fs::create_dir_all(&codex_home).unwrap();
+        let (_temp, codex_home) = fake_codex_home();
         let path = codex_home.join("hooks.json");
         fs::write(&path, "{not json").unwrap();
 
@@ -259,9 +269,7 @@ mod tests {
 
     #[test]
     fn apply_refuses_hook_file_changed_after_preview() {
-        let temp = tempfile::tempdir().unwrap();
-        let codex_home = temp.path().join("codex-home");
-        fs::create_dir_all(&codex_home).unwrap();
+        let (_temp, codex_home) = fake_codex_home();
         let path = codex_home.join("hooks.json");
         fs::write(&path, r#"{"hooks":{}}"#).unwrap();
         let hook_plan = plan(&codex_home).unwrap();
