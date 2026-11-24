@@ -19,6 +19,8 @@ vi.mock("../../lib/tauri", () => ({
   listRefinements: vi.fn().mockResolvedValue({ proposals: [] }),
   listAgentActivity: activityMock,
   listAgents: agentsMock,
+  listSetAsideMaterial: vi.fn().mockResolvedValue({ groups: [] }),
+  releaseSetAsideMaterial: vi.fn().mockResolvedValue({ released: 0 }),
 }));
 
 const agent = (name: string, displayName: string | null): AgentConnection => ({

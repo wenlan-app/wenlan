@@ -229,8 +229,7 @@ export function PagesOverview({
         )}
         {/* What last night steeped spans every Space and the Wiki, so it
             opens home on its own line. "What you're working on" carries its
-            own steeped line, so while it is on only the "not written yet"
-            line shows here, above it (UX-HOME-7). */}
+            own steeped line, so while it is on that line is left to it. */}
         {example || team ? null : <HomeNightLines onReplayNight={onReplayNight} steeped={!thingsOn} />}
         {/* A teammate's AI change waiting on you comes first: it needs a person. */}
         {team ? <TeamWaiting group={team} onOpenPage={onSelectPage} /> : null}
