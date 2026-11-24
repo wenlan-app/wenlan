@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, BufWriter, Write};
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -1734,11 +1735,21 @@ fn bounded_lines(before: &[&str], after: &[&str]) -> bool {
 pub fn line_changes(before: &str, after: &str) -> Result<Vec<LineChange>> {
     let before: Vec<_> = before.split_inclusive('\n').collect();
     let after: Vec<_> = after.split_inclusive('\n').collect();
-    let prefix = before
-        .iter()
-        .zip(&after)
-        .take_while(|(a, b)| a == b)
-        .count();
+    Ok(changed_line_ranges(&before, &after)?
+        .into_iter()
+        .map(|(old, new)| LineChange {
+            start: old.start,
+            removed: before[old].iter().map(ToString::to_string).collect(),
+            added: after[new].iter().map(ToString::to_string).collect(),
+        })
+        .collect())
+}
+
+fn changed_line_ranges(
+    before: &[&str],
+    after: &[&str],
+) -> Result<Vec<(Range<usize>, Range<usize>)>> {
+    let prefix = before.iter().zip(after).take_while(|(a, b)| a == b).count();
     let suffix = before[prefix..]
         .iter()
         .rev()
@@ -1759,17 +1770,10 @@ pub fn line_changes(before: &str, after: &str) -> Result<Vec<LineChange>> {
         .chain(std::iter::once((old.len(), new.len())))
     {
         if (i, j) != (previous_old, previous_new) {
-            changes.push(LineChange {
-                start: prefix + previous_old,
-                removed: old[previous_old..i]
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                added: new[previous_new..j]
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-            });
+            changes.push((
+                prefix + previous_old..prefix + i,
+                prefix + previous_new..prefix + j,
+            ));
         }
         previous_old = i + 1;
         previous_new = j + 1;
@@ -1847,6 +1851,73 @@ pub struct RuleTextConflict;
 /// Apply both sets of changes to a common ancestor. Overlapping changes
 /// require consent when they disagree rather than guessing how to combine them.
 pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
+    merge_rule_text_inner(base, left, right, false)
+}
+
+/// Prepare a source with credential locations removed from its text. An
+/// opaque line cannot be evidence that the rules in its edit hunk were deleted.
+pub fn preserve_rules_at_credential_lines(
+    base: &str,
+    safe_source: &str,
+    credential_lines: &[usize],
+) -> Result<String> {
+    if credential_lines.is_empty() {
+        return Ok(safe_source.to_owned());
+    }
+    let base_lines: Vec<_> = base.split_inclusive('\n').collect();
+    let mut safe_lines = safe_source.split_inclusive('\n');
+    let mut locations = credential_lines.iter().copied().peekable();
+    let mut source: Vec<_> = (1..=safe_lines.clone().count() + credential_lines.len())
+        .map(|number| {
+            if locations.next_if_eq(&number).is_some() {
+                Ok(None)
+            } else {
+                safe_lines
+                    .next()
+                    .map(Some)
+                    .context("invalid shared source line locations")
+            }
+        })
+        .collect::<Result<_>>()?;
+    // Match lines across newline changes. The marker cannot equal any line
+    // after its ending is removed, including a blank line.
+    let base_content: Vec<_> = base_lines
+        .iter()
+        .map(|line| rule_line_content(line))
+        .collect();
+    let source_content: Vec<_> = source
+        .iter()
+        .map(|line| line.map_or("\n", rule_line_content))
+        .collect();
+    let ranges = changed_line_ranges(&base_content, &source_content)?;
+    for (old, new) in ranges.into_iter().rev() {
+        if old.len() == new.len() {
+            for (line, &previous) in source[new].iter_mut().zip(&base_lines[old]) {
+                // Only the opaque replacement is inherited. The safe
+                // replacements at the other positions are source edits.
+                line.get_or_insert(previous);
+            }
+        } else if let Some(offset) = source[new.clone()].iter().position(Option::is_none) {
+            // Keep possibly replaced rules at the masked position, so that
+            // adjacent safe insertions retain their order on the next read.
+            let index = new.start + offset;
+            source.splice(index..=index, base_lines[old].iter().copied().map(Some));
+        }
+    }
+    let mut result = String::new();
+    for line in source.into_iter().flatten() {
+        rulesync_adopt::append_text(&mut result, line);
+    }
+    Ok(result)
+}
+
+/// Merge a person's shared source with approved master changes, coalescing
+/// independent additions of the same new line at the source's position.
+pub fn merge_shared_rule_text(base: &str, source: &str, master: &str) -> Result<String> {
+    merge_rule_text_inner(base, source, master, true)
+}
+
+fn merge_rule_text_inner(base: &str, left: &str, right: &str, deduplicate: bool) -> Result<String> {
     if left == base || left == right {
         return Ok(right.into());
     }
@@ -1854,7 +1925,11 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
         return Ok(left.into());
     }
     let mut changes = line_changes(base, left)?;
-    for change in line_changes(base, right)? {
+    let mut right = line_changes(base, right)?;
+    if deduplicate {
+        coalesce_shared_insertions(base, &changes, &mut right);
+    }
+    for change in right {
         if changes.contains(&change) {
             continue;
         }
@@ -1868,6 +1943,44 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
         changes.push(change);
     }
     changes.sort_by_key(|change| change.start);
+    Ok(apply_rule_text_changes(base, changes))
+}
+
+fn coalesce_shared_insertions(base: &str, source: &[LineChange], master: &mut Vec<LineChange>) {
+    let existing: BTreeSet<_> = base.lines().collect();
+    let mut source_insertions = BTreeMap::new();
+    for change in source {
+        if master.contains(change) {
+            continue;
+        }
+        for line in &change.added {
+            let line = rule_line_content(line);
+            if !line.trim().is_empty() && !existing.contains(line) {
+                *source_insertions.entry(line).or_insert(0usize) += 1;
+            }
+        }
+    }
+    master.retain_mut(|change| {
+        if !change.removed.is_empty() || source.contains(change) {
+            return true;
+        }
+        change.added.retain(|line| {
+            let line = rule_line_content(line);
+            let Some(count) = source_insertions.get_mut(line).filter(|count| **count > 0) else {
+                return true;
+            };
+            *count -= 1;
+            false
+        });
+        !change.added.is_empty()
+    });
+}
+
+fn rule_line_content(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+fn apply_rule_text_changes(base: &str, changes: Vec<LineChange>) -> String {
     let lines: Vec<_> = base.split_inclusive('\n').collect();
     let (mut result, mut at) = (String::new(), 0);
     for change in changes {
@@ -1883,7 +1996,7 @@ pub fn merge_rule_text(base: &str, left: &str, right: &str) -> Result<String> {
     for line in &lines[at..] {
         rulesync_adopt::append_text(&mut result, line);
     }
-    Ok(result)
+    result
 }
 
 fn promote_changes(

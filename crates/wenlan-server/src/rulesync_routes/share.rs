@@ -12,7 +12,7 @@ use wenlan_core::rulesync_personal::adoption_plan_id;
 use wenlan_core::rulesync_personal_files::{sharing_paths, NO_PERSONAL_DESTINATION};
 use wenlan_types::rulesync::{SharingPlan, SharingStay, SharingTool};
 
-const SHARE_TOKEN_VERSION: &str = "share-4";
+const SHARE_TOKEN_VERSION: &str = "share-5";
 const NOTHING_TO_SHARE: &str = "Nothing to share";
 
 /// A skill folder a tool receives, recorded in the master after the write.
@@ -567,9 +567,14 @@ impl Setup {
                 key_tools: settings.keys.tools.clone(),
                 rules: rules.lines.clone(),
                 rule_stays: rules.stays.clone(),
+                rule_notes: rules.notes.clone(),
                 shared_source_notice: (count != 0).then(|| {
-                    let unit = if count == 1 { "line" } else { "lines" };
-                    format!("Also adds {count} {unit} to ~/.agents/AGENTS.md.")
+                    if source.credential_lines.is_empty() {
+                        let unit = if count == 1 { "line" } else { "lines" };
+                        format!("Also adds {count} {unit} to ~/.agents/AGENTS.md.")
+                    } else {
+                        "Move the possible credential out of ~/.agents/AGENTS.md and preview again if you want these rules added there too. This share updates the tool copies.".into()
+                    }
                 }),
             },
             rules,
@@ -1109,6 +1114,137 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn rulesync_share_offers_other_tools_rules_when_a_live_tool_file_holds_a_key() {
+        const VALUE: &str = "sk-claudeRuleFixtureOnly123456789";
+        const CHANGED: &str = "sk-claudeRuleFixtureOnly987654321";
+        const PORTABLE: &str = "- Prefer one change per pull request.";
+        let f = Fixture::new();
+        f.write(
+            CLAUDE_RULES,
+            &format!("{}{COMMON_RULE}\n", f.text(CLAUDE_RULES)),
+        );
+        f.write(
+            CODEX_RULES,
+            &format!("{}{PORTABLE}\n{COMMON_RULE}\n", f.text(CODEX_RULES)),
+        );
+        adopt(&f);
+        let claude = f.text(CLAUDE_RULES);
+        let line = claude.lines().count() + 1;
+        let with_key = |value| format!("{claude}- api_key = \"{value}\"\n");
+        f.write(CLAUDE_RULES, &with_key(VALUE));
+
+        let plan = preview_rules(&f, &[]);
+        assert!(plan.rules.iter().any(|rule| rule.line == PORTABLE));
+        assert!(plan.rules.iter().any(|rule| rule.line == COMMON_RULE));
+        let preview = serde_json::to_value(&plan).unwrap();
+        assert!(preview["rule_stays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|stay| {
+                stay["tool"] == "Claude Code"
+                    && stay["line_number"] == line
+                    && stay["line"].is_null()
+            }));
+        assert!(!preview.to_string().contains(VALUE));
+        assert_eq!(plan.rule_notes.len(), 1);
+        assert!(plan.rule_notes[0].contains(SYNC_COMMAND));
+        f.write(CLAUDE_RULES, &with_key(CHANGED));
+        let again = preview_rules(&f, &[]);
+        assert_eq!(again.plan_id, plan.plan_id);
+        assert!(!serde_json::to_string(&again).unwrap().contains(CHANGED));
+
+        let report = apply_rules(&f, &plan, &[]).unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert_eq!(f.text(CLAUDE_RULES), with_key(CHANGED));
+        assert!(f.text(CODEX_RULES).contains(PORTABLE));
+        assert!(f.text(SHARED_RULES).contains(PORTABLE));
+        let saved = f.setup.load().unwrap().unwrap();
+        assert!(saved.master.shared.contains(PORTABLE));
+        for value in [VALUE, CHANGED] {
+            assert!(!saved.master.shared.contains(value));
+            assert!(!f.text(CODEX_RULES).contains(value));
+            assert!(!holds(&f.setup.data, value.as_bytes()));
+        }
+        f.write(CLAUDE_RULES, &claude);
+        f.sync_with("");
+        assert!(f.text(CLAUDE_RULES).contains(PORTABLE));
+        assert_eq!(f.text(CLAUDE_RULES).matches(COMMON_RULE).count(), 1);
+    }
+
+    #[test]
+    fn rulesync_share_offers_rules_when_the_shared_source_holds_a_key() {
+        const VALUE: &str = "sk-sourceRuleFixtureOnly123456789";
+        const CHANGED: &str = "sk-sourceRuleFixtureOnly987654321";
+        let f = Fixture::new();
+        rule_fixture(&f);
+        f.write(
+            SHARED_RULES,
+            "Already shared.\nPrior shared rule.\nSafe source tail.\n",
+        );
+        adopt(&f);
+        let with_key = |value| format!("Already shared.\nAPI_KEY={value}\nSafe source tail.\n");
+        f.write(SHARED_RULES, &with_key(VALUE));
+
+        let plan = preview_rules(&f, &[]);
+        assert_eq!(
+            plan.rules
+                .iter()
+                .map(|rule| rule.line.as_str())
+                .collect::<Vec<_>>(),
+            [COMMON_RULE, REVIEW_RULE]
+        );
+        let preview = serde_json::to_value(&plan).unwrap();
+        assert!(preview["rule_stays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|stay| {
+                stay["tool"] == SHARED_RULES && stay["line_number"] == 2 && stay["line"].is_null()
+            }));
+        assert!(!preview.to_string().contains(VALUE));
+        assert!(plan
+            .shared_source_notice
+            .as_deref()
+            .unwrap()
+            .contains("tool copies"));
+        f.write(SHARED_RULES, &with_key(CHANGED));
+        let again = preview_rules(&f, &[]);
+        assert_eq!(again.plan_id, plan.plan_id);
+        assert!(!serde_json::to_string(&again).unwrap().contains(CHANGED));
+        f.write(
+            SHARED_RULES,
+            &with_key(CHANGED).replace("Safe source tail.\n", ""),
+        );
+        assert_ne!(preview_rules(&f, &[]).plan_id, plan.plan_id);
+        assert!(apply_rules(&f, &plan, &[]).is_err());
+        f.write(SHARED_RULES, &with_key(CHANGED));
+
+        let report = apply_rules(&f, &plan, &[]).unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert_eq!(f.text(SHARED_RULES), with_key(CHANGED));
+        let saved = f.setup.load().unwrap().unwrap();
+        assert!(saved.master.shared.contains(REVIEW_RULE));
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            let tool = f.text(path);
+            assert!(
+                tool.contains(COMMON_RULE) && tool.contains(REVIEW_RULE),
+                "{path}"
+            );
+            assert!(!tool.contains(VALUE) && !tool.contains(CHANGED), "{path}");
+        }
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.written.is_empty(),
+            "{sync:?}"
+        );
+        for value in [VALUE, CHANGED] {
+            assert!(!saved.master.shared.contains(value));
+            assert!(!holds(&f.setup.data, value.as_bytes()));
+        }
+    }
+
     fn apply_rules(f: &Fixture, plan: &SharingPlan, keep: &[usize]) -> Result<RulesSyncReport> {
         f.setup.apply_share(
             &plan.token,
@@ -1253,7 +1389,7 @@ mod tests {
     fn rulesync_share_keeps_numbered_rules_and_redacts_credentials() {
         let f = Fixture::new();
         rule_fixture(&f);
-        const VALUE: &str = "Z8sm1sFz7dJ5dKwS9E4nyP2g_87";
+        const VALUE: &str = "synthetic-rule-credential";
         let secret = format!("Claude PASSWORD={VALUE}");
         f.write(
             CLAUDE_RULES,
@@ -1827,6 +1963,146 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_sync_keeps_approved_shared_edits_without_source_history() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let approved = "Approved for all tools.";
+        approve_shared_edit(&f, "Already shared.", approved);
+        let mut legacy = f.setup.load().unwrap().unwrap();
+        legacy.shared_source_base = None;
+        assert!(!is_shared_source_receipt(&legacy, Path::new(SHARED_RULES)));
+        f.setup.save(&legacy).unwrap();
+
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(saved.master.shared, format!("{approved}\n"));
+        assert_eq!(
+            saved.shared_source_base.as_deref(),
+            Some("Already shared.\n")
+        );
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert!(f.text(path).contains(approved), "{path}");
+        }
+        assert!(f.sync_with("").written.is_empty());
+    }
+
+    #[test]
+    fn rulesync_sync_retains_shared_rules_under_credentials_and_accepts_version_tags() {
+        const VALUE: &str = "sk-redactedSourceFixtureOnly123456789";
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let original = "Already shared.\nKeep this shared rule.\nA shared anchor.";
+        f.write(SHARED_RULES, original);
+        adopt(&f);
+        let safe = "Use node:20@sha256 and react:18@latest.\nCheck the result.\n";
+        let revised = format!(
+            "An edited rule.\napi_key={VALUE}\nA shared anchor.\n-----BEGIN OPENSSH PRIVATE KEY-----\n{safe}"
+        );
+        f.write(SHARED_RULES, &revised);
+
+        let sync = f.sync_with("");
+        assert!(
+            sync.blocked.is_empty() && sync.proposals.is_empty(),
+            "{sync:?}"
+        );
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(
+            saved.master.shared,
+            format!("An edited rule.\nKeep this shared rule.\nA shared anchor.\n{safe}")
+        );
+        assert_eq!(
+            saved.credentials.rules[Path::new(SHARED_RULES)].lines,
+            [2, 4]
+        );
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            let tool = f.text(path);
+            assert!(tool.contains(&saved.master.shared), "{path}");
+            assert!(!tool.contains(VALUE), "{path}");
+        }
+        assert_eq!(f.text(SHARED_RULES), revised);
+        assert!(f.sync_with("").written.is_empty());
+        assert!(!holds(&f.setup.data, VALUE.as_bytes()));
+    }
+
+    #[test]
+    fn rulesync_sync_pauses_for_missing_or_empty_shared_rules_source() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let source_path = f.setup.home.join(SHARED_RULES);
+        let original = f.text(SHARED_RULES);
+        let saved = tree(&f.setup.data);
+        for empty in [false, true] {
+            if empty {
+                f.write(SHARED_RULES, "\n \n");
+            } else {
+                fs::remove_file(&source_path).unwrap();
+            }
+            let before = tree(&f.setup.home);
+            let sync = f.sync_with("");
+            assert!(
+                sync.written.is_empty() && sync.proposals.is_empty(),
+                "{sync:?}"
+            );
+            assert_eq!(sync.blocked.len(), 1, "{sync:?}");
+            assert!(sync.blocked[0].contains("missing or empty"), "{sync:?}");
+            assert!(sync.blocked[0].contains(SYNC_COMMAND), "{sync:?}");
+            assert_eq!(tree(&f.setup.home), before);
+            assert_eq!(tree(&f.setup.data), saved);
+            let status = f.setup.status().unwrap();
+            assert!(!status.in_sync);
+            assert_eq!(status.notes, sync.blocked);
+        }
+        f.write(SHARED_RULES, &original);
+        assert!(f.sync_with("").blocked.is_empty());
+    }
+
+    #[test]
+    fn rulesync_adoption_does_not_duplicate_shared_rules_via_a_protected_claude_import() {
+        const VALUE: &str = "sk-claudeImportFixtureOnly123456789";
+        let f = Fixture::new();
+        let shared = "Read the release checklist.\n";
+        let protected = format!("{shared}API_KEY={VALUE}\n");
+        f.write(SHARED_RULES, &protected);
+        adopt(&f);
+
+        assert_eq!(f.text(CLAUDE_RULES), format!("{shared}Claude only.\n"));
+        assert_eq!(f.text(SHARED_RULES), protected);
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(saved.credentials.rules[Path::new(SHARED_RULES)].lines, [2]);
+        assert!(!holds(&f.setup.data, VALUE.as_bytes()));
+    }
+
+    #[test]
+    fn rulesync_sync_merges_a_shared_line_inserted_on_both_sides_only_once() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let base = "First rule.\nSecond rule.\nThird rule.\n";
+        let line = "A shared addition.\n";
+        f.write(SHARED_RULES, base);
+        adopt(&f);
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        manifest.master.shared = format!("{line}{base}");
+        f.setup.save(&manifest).unwrap();
+        let source = format!("{base}{line}");
+        f.write(SHARED_RULES, &source);
+
+        let sync = f.sync_with("");
+        assert!(sync.blocked.is_empty(), "{sync:?}");
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(saved.master.shared, source);
+        for path in [CLAUDE_RULES, CODEX_RULES, GEMINI_RULES] {
+            assert_eq!(f.text(path).matches(line).count(), 1, "{path}");
+        }
+        assert!(f.sync_with("").written.is_empty());
+    }
+
+    #[test]
     fn rulesync_sync_merges_independent_edits_on_both_sides() {
         let f = Fixture::new();
         rule_fixture(&f);
@@ -2000,9 +2276,11 @@ mod tests {
     fn rulesync_share_retries_a_source_edit_that_has_not_reached_tools() {
         let f = Fixture::new();
         rule_fixture(&f);
-        adopt(&f);
+        let retained = "Keep this shared rule.\n";
         let deleted = f.text(".agents/AGENTS.md");
-        f.write(".agents/AGENTS.md", "");
+        f.write(SHARED_RULES, &format!("{deleted}{retained}"));
+        adopt(&f);
+        f.write(SHARED_RULES, retained);
         // Record the edit without writing the tool files, as an interrupted
         // delivery can do. The old shared line is not a local share candidate.
         let mut manifest = f.setup.load().unwrap().unwrap();

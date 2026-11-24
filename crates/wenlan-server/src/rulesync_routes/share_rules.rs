@@ -12,7 +12,8 @@ use wenlan_types::rulesync::{SharingRule, SharingRuleStay};
 pub(super) struct RuleShares {
     pub lines: Vec<SharingRule>,
     pub stays: Vec<SharingRuleStay>,
-    targets: Vec<&'static PersonalTarget>,
+    pub notes: Vec<String>,
+    targets: Vec<(&'static PersonalTarget, bool)>,
     versions: Vec<(&'static str, Option<String>)>,
 }
 
@@ -25,12 +26,23 @@ impl RuleShares {
     }
 
     pub(super) fn approval(&self) -> impl Serialize + '_ {
-        (&self.lines, &self.stays, &self.versions)
+        (&self.lines, &self.stays, &self.notes, &self.versions)
+    }
+
+    fn keep_credential_lines(&mut self, tool: &str, lines: &[usize]) {
+        self.stays
+            .extend(lines.iter().map(|&line_number| SharingRuleStay {
+                tool: tool.into(),
+                line: None,
+                line_number: Some(line_number),
+                reason: LocalReason::Credential.reason().into(),
+            }));
     }
 }
 
 struct RuleDocument {
     target: &'static PersonalTarget,
+    writable: bool,
     personal: String,
     overlay: String,
     imported: BTreeSet<String>,
@@ -100,16 +112,27 @@ pub(super) fn plan(
     let mut documents = Vec::new();
     for &target in enrolled {
         let path = Path::new(target.rules.destination);
-        let Some(receipt) = manifest.delivered.get(path) else {
-            if let Some(credential) = manifest.credentials.rules.get(path) {
-                let lines =
-                    read_credential_lines(root, path).unwrap_or_else(|| credential.lines.clone());
-                plan.stays.extend(
-                    lines
-                        .iter()
-                        .map(|_| stay(target.tool.display_name(), "", LocalReason::Credential)),
-                );
+        let receipt = manifest.delivered.get(path);
+        let marker = manifest.credentials.rules.get(path);
+        if receipt.is_none() && marker.is_none() {
+            continue;
+        }
+        let current = root.read(path, false);
+        let credential_lines = current.as_ref().map_or_else(
+            |_| marker.map_or_else(Vec::new, |marker| marker.lines.clone()),
+            snapshot_credential_lines,
+        );
+        let writable = credential_lines.is_empty();
+        if !writable {
+            let tool = target.tool.display_name();
+            plan.keep_credential_lines(tool, &credential_lines);
+            if receipt.is_some() {
+                plan.notes.push(format!(
+                    "{tool}'s other rules are waiting because its rule file may hold a credential. Move the credential out, then run `{SYNC_COMMAND}` to review the file."
+                ));
             }
+        }
+        let Some(receipt) = receipt else {
             continue;
         };
         let Kind::Rule {
@@ -124,20 +147,12 @@ pub(super) fn plan(
         if id != target.id {
             continue;
         }
-        let current = root.read(path, false);
-        if let Ok(snapshot) = &current {
-            let credential_lines = snapshot_credential_lines(snapshot);
-            if !credential_lines.is_empty() {
-                plan.stays.extend(
-                    credential_lines
-                        .iter()
-                        .map(|_| stay(target.tool.display_name(), "", LocalReason::Credential)),
-                );
-                continue;
-            }
-        }
         let expected = receipt.observed.as_ref().unwrap_or(&receipt.delivered);
-        verify_rule_snapshot(path, current, expected)?;
+        if writable {
+            verify_rule_snapshot(path, current, expected)?;
+        }
+        // For a protected tool only its safe, previously reviewed rules
+        // can affect classification. Its live file cannot become a donor.
         let personal = rulesync_layers::only_personal(text(expected)?)?;
         let overlay = if let Some([shared, authored]) = authored_ends {
             // An interrupted sync may have recorded the source edit before
@@ -179,28 +194,23 @@ pub(super) fn plan(
         };
         documents.push(RuleDocument {
             target,
+            writable,
             personal,
             overlay,
             imported,
             native,
         });
-        plan.targets.push(target);
+        plan.targets.push((target, writable));
         plan.versions
             .push((target.id, receipt.rule_revision.clone()));
     }
-    if !source.credential_lines.is_empty() {
-        plan.stays.push(SharingRuleStay {
-            tool: SHARED_RULES.into(),
-            line: None,
-            reason: CREDENTIAL_FILE_REASON.into(),
-        });
-        return Ok((plan, Vec::new()));
-    }
+    plan.keep_credential_lines(SHARED_RULES, &source.credential_lines);
     let previously_kept = |line: &str| manifest.kept_share_rules.contains(line);
     let local = classified_local(&documents, previously_kept, BTreeMap::new());
     let shared: BTreeSet<_> = source.merged.lines().chain(source.read.lines()).collect();
     let mut numbers = BTreeMap::new();
-    for doc in &documents {
+    let donors = documents.iter().filter(|doc| doc.writable);
+    for doc in donors.clone() {
         let name = doc.target.tool.display_name();
         for line in doc.overlay.lines().filter(|line| !line.trim().is_empty()) {
             if let Some(reason) = local.get(line) {
@@ -248,7 +258,7 @@ pub(super) fn plan(
             |line| previously_kept(line) || selected.contains(line),
             local.clone(),
         );
-        for doc in &documents {
+        for doc in donors.clone() {
             for line in doc.overlay.lines() {
                 if !local.contains_key(line) && !selected.contains(line) {
                     if let Some(reason) = with_keeps.get(line) {
@@ -261,8 +271,7 @@ pub(super) fn plan(
         plan.lines
             .retain(|rule| rule.kept || !with_keeps.contains_key(rule.line.as_str()));
     }
-    let additions = documents
-        .iter()
+    let additions = donors
         .filter_map(|doc| {
             let live: BTreeSet<_> = doc.personal.lines().collect();
             let count = plan.moving().filter(|line| !live.contains(line)).count();
@@ -276,6 +285,7 @@ fn stay(tool: &str, line: &str, reason: LocalReason) -> SharingRuleStay {
     SharingRuleStay {
         tool: tool.into(),
         line: (reason != LocalReason::Credential).then(|| line.to_owned()),
+        line_number: None,
         reason: reason.reason().into(),
     }
 }
@@ -369,28 +379,9 @@ impl Setup {
                 manifest.rule_origins_tracked || !is_shared_source_receipt(manifest, Path::new(SHARED_RULES)),
                 "The backup does not say which tool added the previously shared rules. Review the tool and shared files before sharing more rules."
             );
-            let source_root = root.with_shared_rule_source()?;
-            let path = PathBuf::from(SHARED_RULES);
-            let directory = path.parent().expect("shared rules directory");
-            let seen = source_root
-                .read(&path, false)
-                .context("Read ~/.agents/AGENTS.md before sharing rules")?;
-            ensure!(
-                !snapshot_has_credentials(&seen),
-                "{}",
-                credential_note(&path)
-            );
-            let raw = text(&seen)?;
-            ensure!(
-                manifest.shared_source_base.as_deref() == Some(raw),
-                "~/.agents/AGENTS.md changed since the preview. Run `wenlan rules share --dry-run` again."
-            );
-            let appended = append_rule_lines(raw, &approved);
-            let changed_since_share = is_shared_source_receipt(manifest, &path)
-                && manifest.delivered[&path].delivered != seen;
             master.shared = append_rule_lines(&master.shared, &approved);
             let mut worktrees = DeliveryWorktrees::new(&self.home)?;
-            for target in &plan.targets {
+            for &(target, writable) in &plan.targets {
                 let overlay = master
                     .overlays
                     .get_mut(target.id)
@@ -398,7 +389,11 @@ impl Setup {
                 *overlay = without_moves(overlay, &moving);
                 let path = PathBuf::from(target.rules.destination);
                 let receipt = &manifest.delivered[&path];
-                let seen = rule_snapshot(root, &path, receipt)?;
+                let seen = if writable {
+                    rule_snapshot(root, &path, receipt)?
+                } else {
+                    receipt.observed.as_ref().unwrap_or(&receipt.delivered)
+                };
                 if let Some(origin) =
                     restore_rules::AuthoredRules::for_promotion(manifest, &path, seen, &moving)?
                 {
@@ -430,6 +425,11 @@ impl Setup {
                         },
                     );
                 }
+                // Bookkeep promotions against the last reviewed snapshot.
+                // Once delivery resumes the shared line appears only once.
+                if !writable {
+                    continue;
+                }
                 let mut outputs = render(target.id, &source).map_err(|_| {
                     anyhow::anyhow!("Could not render rules for {}.", target.tool.display_name())
                 })?;
@@ -451,26 +451,20 @@ impl Setup {
                     allow_link: false,
                 });
             }
-            if source_root.read(directory, false)? == Snapshot::Absent {
-                operations.push(Pending {
-                    path: directory.to_owned(),
-                    seen: Snapshot::Absent,
-                    desired: Snapshot::private_directory(),
-                    kind: Some(Kind::SharedRuleSource),
-                    allow_link: false,
-                });
+            // A protected source cannot enter the share journal. The same
+            // approved rules still go into the master and the tool copies.
+            if !manifest
+                .credentials
+                .rules
+                .contains_key(Path::new(SHARED_RULES))
+            {
+                source_append = Some(stage_source_append(
+                    root,
+                    manifest,
+                    &approved,
+                    &mut operations,
+                )?);
             }
-            operations.push(Pending {
-                path,
-                desired: with_bytes(&seen, appended.as_bytes().to_vec()),
-                seen,
-                kind: Some(Kind::SharedRuleSource),
-                allow_link: false,
-            });
-            source_append = Some(SourceAppend {
-                text: appended,
-                changed_since_share,
-            });
         }
         Ok(Some(RuleShareChange {
             update: RuleShareUpdate {
@@ -522,6 +516,53 @@ impl Setup {
         }
         Ok(())
     }
+}
+
+fn stage_source_append(
+    root: &FileRoot,
+    manifest: &Manifest,
+    approved: &[&str],
+    operations: &mut Vec<Pending>,
+) -> Result<SourceAppend> {
+    let source_root = root.with_shared_rule_source()?;
+    let path = PathBuf::from(SHARED_RULES);
+    let directory = path.parent().expect("shared rules directory");
+    let seen = source_root
+        .read(&path, false)
+        .context("Read ~/.agents/AGENTS.md before sharing rules")?;
+    ensure!(
+        !snapshot_has_credentials(&seen),
+        "{}",
+        credential_note(&path)
+    );
+    let raw = text(&seen)?;
+    ensure!(
+        manifest.shared_source_base.as_deref() == Some(raw),
+        "~/.agents/AGENTS.md changed since the preview. Run `wenlan rules share --dry-run` again."
+    );
+    let appended = append_rule_lines(raw, approved);
+    let changed_since_share =
+        is_shared_source_receipt(manifest, &path) && manifest.delivered[&path].delivered != seen;
+    if source_root.read(directory, false)? == Snapshot::Absent {
+        operations.push(Pending {
+            path: directory.to_owned(),
+            seen: Snapshot::Absent,
+            desired: Snapshot::private_directory(),
+            kind: Some(Kind::SharedRuleSource),
+            allow_link: false,
+        });
+    }
+    operations.push(Pending {
+        path,
+        desired: with_bytes(&seen, appended.as_bytes().to_vec()),
+        seen,
+        kind: Some(Kind::SharedRuleSource),
+        allow_link: false,
+    });
+    Ok(SourceAppend {
+        text: appended,
+        changed_since_share,
+    })
 }
 
 fn append_rule_lines(original: &str, approved: &[&str]) -> String {

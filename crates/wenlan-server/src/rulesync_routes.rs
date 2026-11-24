@@ -576,6 +576,12 @@ impl Setup {
             && manifest.delivery_issues.is_empty()
             && manifest.scope_reviews.is_empty();
         status.in_sync &= !stale_key_receipt;
+        if manifest.adopted && !manifest.settings_only {
+            if let Err(error) = shared_source::SharedSource::read(&self.home, &manifest) {
+                status.in_sync = false;
+                status.notes.push(error.to_string());
+            }
+        }
         status
             .proposals
             .extend(cards.into_iter().map(|card| card.wire));

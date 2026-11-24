@@ -1485,14 +1485,24 @@ and wait for evidence that people need them.
   Sync now and the background check follow the person's edits and deletions in
   `~/.agents/AGENTS.md` without a review card. Wenlan merges these edits with
   the saved shared rules using the last text it read or wrote as the common
-  version. Each tool keeps its own rule lines. A possible credential stays in
-  the shared source, and Wenlan records only its location. When both sides
-  change the same lines differently, one message explains how to resolve the
-  conflict and retry. Wenlan leaves the saved rules and all copies in place.
+  version. Older setups without a common version keep approved edits in Wenlan
+  and start tracking the source from its current text. When both sides insert
+  the same new rule, the source's position is used once. Each tool keeps its
+  own rule lines. A possible credential stays in the source. Wenlan records
+  its line number and protects any saved rules that the line might have
+  replaced. If both sides change the same lines differently, or a previously
+  populated source is missing or empty, delivery pauses. Status shows one
+  message with the reason and how to retry. The background check leaves the
+  last successful check time, saved rules and tool copies in place.
   Tests `rulesync_watch_delivery_open_card`, `rulesync_watch_delivery_busy_lock`,
   `rulesync_watch_delivery_receipt_mismatch`, and `rulesync_watch_delivery_positive`.
   Tests `rulesync_watch_delivers_shared_source_edits_without_review`,
-  `rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays`, and
+  `rulesync_watch_stops_on_a_shared_source_conflict`,
+  `rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays`,
+  `rulesync_sync_keeps_approved_shared_edits_without_source_history`,
+  `rulesync_sync_retains_shared_rules_under_credentials_and_accepts_version_tags`,
+  `rulesync_sync_pauses_for_missing_or_empty_shared_rules_source`,
+  `rulesync_sync_merges_a_shared_line_inserted_on_both_sides_only_once`, and
   `rulesync_shared_source_conflict_reports_once_and_leaves_files_intact`.
 - **UX-SKILL-25** `shipped` Local rules setup uses the same four action names
   in the app, CLI help and command hints. In order they are Bring in, Status,
@@ -1516,19 +1526,25 @@ and wait for evidence that people need them.
   its tool-specific lines and the sections under a local heading or lead-in.
   The short preview shows each moving line, shortened when needed to fit
   100 columns, and summarizes lines that stay. `--details` explains each
-  line that stays. A line that may hold a credential stays local and the
-  preview shows only that reason.
+  line that stays. A line that may hold a credential stays local. Details show
+  its tool or source file and line number. Wenlan can share lines from the
+  other tools while a rule file waits for the person to move the credential
+  out and review the file.
   `--details` numbers portable lines. The person can keep any of those lines
   locally with `--keep-rule N[,N]` in the same preview and confirmation.
   The preview accounts for edits to `~/.agents/AGENTS.md` before choosing
-  which lines to move. The short, detailed, and JSON previews say
-  “Also adds N lines to ~/.agents/AGENTS.md.” The plan ID binds the shared
-  source, numbered lines, keep choices, and reviewed versions of the tool
-  files. On confirmation, Wenlan appends only the selected lines to that file
-  and delivers them to the tool copies. A conflict leaves the previous shared
-  master and receipts in force. Restore uses the adoption backups and
-  preserves added rules in their originating tools. It undoes the shared
-  source append when the file has no intervening edits.
+  which lines to move. When the shared file is safe to write, the short,
+  detailed, and JSON previews say “Also adds N lines to ~/.agents/AGENTS.md.”
+  The plan ID binds the safe shared text, credential locations, numbered
+  lines, keep choices, and reviewed versions of the tool files. On
+  confirmation, Wenlan appends only the selected lines to that file and
+  delivers them to the tool copies. If the shared file may hold a credential,
+  the preview explains that confirmation updates the tool copies and tells
+  the person how to include the shared file before confirming. A conflict
+  leaves the previous shared master and receipts in force. The person's
+  confirmed Restore uses the adoption backups and preserves added rules in
+  their originating tools. It restores `~/.agents/AGENTS.md` from its backup
+  only when the file remains as Wenlan last wrote it and it had no intervening edits.
   Safe personal MCP
   servers in managed tools are offered even if Wenlan does not yet manage the
   entry; on confirmation they are first adopted with the usual receipts and
@@ -1560,6 +1576,9 @@ and wait for evidence that people need them.
   "Nothing to share". The app has no Share action yet.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
   `ux_skill_26_rulesync_share_moves_common_rules_and_preserves_tool_only_files`,
+  `rulesync_share_offers_other_tools_rules_when_a_live_tool_file_holds_a_key`,
+  `rulesync_share_offers_rules_when_the_shared_source_holds_a_key`,
+  `rulesync_adoption_does_not_duplicate_shared_rules_via_a_protected_claude_import`,
   `rulesync_share_classifies_imports_tool_references_and_empty_headings`,
   `rulesync_share_redacts_a_credential_even_in_a_tool_line_or_key_block`,
   `rulesync_share_requires_a_client_that_can_preview_rule_lines`,

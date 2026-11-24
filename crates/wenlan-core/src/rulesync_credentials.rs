@@ -16,7 +16,6 @@ static EXPLICIT_CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
         r"|(?i:\bbearer[ \t]+[A-Za-z0-9_.~+/-]{20,})",
         r#"|(?i:\b(?:proxy[-_])?authorization["']?[ \t]*[:=][ \t]*["']?(?:basic|bearer)[ \t]+[A-Za-z0-9][A-Za-z0-9_.~+/-]*)"#,
         r#"|(?i:\b[a-z][a-z0-9+.-]*://[^:/@?#\s"'\x60]+:[^/@?#\s"'\x60]+@)"#,
-        r#"|\b[a-zA-Z0-9_.%+-]+:[a-zA-Z0-9%_.~+!-]+@[a-zA-Z0-9][a-zA-Z0-9.-]*"#,
         r#"|(?i:[?&](?:token|api[_-]?key|secret|password)=(?:[a-z0-9]|%[a-f0-9]{2})[^\s"'#&\x60]*)"#,
     ))
     .expect("explicit credential pattern")
@@ -26,46 +25,92 @@ static BASIC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bbasic[ \t]+([a-z0-9+/]+={0,2})").expect("Basic credential pattern")
 });
 
+static BARE_USERINFO: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b[A-Za-z0-9_.%+-]+:([A-Za-z0-9%_.~+!-]+)@([A-Za-z0-9][A-Za-z0-9.-]*)")
+        .expect("bare userinfo pattern")
+});
+
+static PACKAGE_VERSION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^v?[0-9]{1,4}(?:\.[0-9]+)*(?:[-+][A-Za-z0-9.+-]+)?$")
+        .expect("package version pattern")
+});
+
 static ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
-        r#"(?i)\b(?:[a-z0-9_]*[_-])?(?:api[_-]?key|secret|token|password|access[_-]?key)\b["']?"#,
-        r#"[ \t]*[:=][ \t]*(?:"([a-z0-9_+./~-]+=*)"|'([a-z0-9_+./~-]+=*)'|\x60([a-z0-9_+./~-]+=*)\x60|([a-z0-9_+./~-]+=*))"#,
+        r#"(?i)\b(?:[a-z0-9_]*[_-])?(?:api[_-]?key|secret|token|password|access[_-]?key)\b["'\x60]?"#,
+        r#"[ \t]*[:=][ \t]*(?:"((?:\\[^\r\n]|[^"\\\r\n])*)"|'((?:\\[^\r\n]|[^'\\\r\n])*)'|\x60((?:\\[^\r\n]|[^\x60\\\r\n])*)\x60"#,
+        r#"|(<[^>\r\n]*>|\$\{[^}\r\n]*\}|\{env:[^}\r\n]*\}|[^\s"'\x60,;()\[\]}]+))"#,
     ))
     .expect("credential assignment pattern")
 });
 
-fn key_shaped(value: &str, quoted: bool) -> bool {
-    if value.len() < 20 || !value.is_ascii() {
-        return false;
-    }
-    let mut distinct = [false; 128];
-    let mut lower = false;
-    let mut upper = false;
-    let mut digits = 0;
-    for byte in value.bytes() {
-        distinct[usize::from(byte)] = true;
-        lower |= byte.is_ascii_lowercase();
-        upper |= byte.is_ascii_uppercase();
-        digits += usize::from(byte.is_ascii_digit());
-    }
-    // Unquoted property paths and snake-case names can have numeric suffixes
-    // such as auth_v2_token. A digit inside a word is more typical of a key.
-    if !quoted
-        && value.contains(['.', '_'])
-        && value.split(['.', '_']).all(|word| {
-            word.trim_end_matches(|ch: char| ch.is_ascii_digit())
-                .bytes()
-                .all(|byte| byte.is_ascii_alphabetic())
+static ENV_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*",
+        r"|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|\{env:[A-Za-z_][A-Za-z0-9_]*\})$",
+    ))
+    .expect("environment reference pattern")
+});
+
+static PRIVATE_KEY_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"-----(BEGIN|END) ((?:[A-Z0-9]+ )*PRIVATE KEY)-----")
+        .expect("private key boundary pattern")
+});
+
+fn assignment_literal(value: &str, quoted: bool) -> bool {
+    let value = value.trim();
+    if value.chars().count() < 8
+        || ENV_REFERENCE.is_match(value)
+        || value.starts_with('<') && value.ends_with('>')
+        || value.get(..5).is_some_and(|prefix| {
+            prefix.eq_ignore_ascii_case("your_")
+                && value[5..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.'))
         })
+        || value
+            .bytes()
+            .all(|byte| matches!(byte, b'x' | b'X' | b'*' | b'.'))
     {
         return false;
     }
-    (digits >= 4 && (lower || upper) || quoted && lower && upper)
-        && distinct.into_iter().filter(|seen| *seen).count() >= 10
+    if value.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        // Bare identifiers and quoted plain words occur in rule examples.
+        return quoted && value.bytes().any(|byte| byte.is_ascii_uppercase());
+    }
+    quoted || !property_reference(value)
+}
+
+fn property_reference(value: &str) -> bool {
+    if value.contains('.') || value.contains("::") {
+        return value
+            .split('.')
+            .flat_map(|part| part.split("::"))
+            .all(|part| {
+                let mut bytes = part.bytes();
+                bytes
+                    .next()
+                    .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                    && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            });
+    }
+    value.contains('_')
+        && value.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
+        && value.split('_').all(|part| {
+            part.trim_end_matches(|ch: char| ch.is_ascii_digit())
+                .bytes()
+                .all(|byte| byte.is_ascii_alphabetic())
+        })
 }
 
 fn has_literal(line: &str) -> bool {
     EXPLICIT_CREDENTIAL.is_match(line)
+        || BARE_USERINFO.captures_iter(line).any(|capture| {
+            let host = capture[2].trim_end_matches('.');
+            host.eq_ignore_ascii_case("localhost")
+                || host.contains('.')
+                || !PACKAGE_VERSION.is_match(&capture[1])
+        })
         || BASIC.captures_iter(line).any(|capture| {
             STANDARD_NO_PAD
                 .decode(capture[1].trim_end_matches('='))
@@ -75,20 +120,34 @@ fn has_literal(line: &str) -> bool {
             let quoted = capture.iter().skip(1).take(3).flatten().next();
             let value = quoted.or_else(|| capture.get(4)).expect("assignment value");
             let tail = line[capture.get(0).expect("assignment").end()..].trim_start();
-            !tail.starts_with(['(', '[', '.']) && key_shaped(value.as_str(), quoted.is_some())
+            (quoted.is_some() || !tail.starts_with(['(', '[', '.']))
+                && assignment_literal(value.as_str(), quoted.is_some())
         })
 }
 
 pub(crate) fn scanned_lines(text: &str) -> impl Iterator<Item = (usize, &str, bool)> {
-    text.split_inclusive('\n')
-        .enumerate()
-        .scan(false, |in_key, (index, line)| {
-            let key_marker = line.contains("PRIVATE KEY-----");
-            *in_key |= key_marker && line.contains("-----BEGIN ");
-            let has_key = *in_key || has_literal(line);
-            *in_key &= !(key_marker && line.contains("-----END "));
-            Some((index + 1, line, has_key))
+    let lines = text.split_inclusive('\n').enumerate();
+    let mut markers = lines
+        .clone()
+        .filter_map(|(index, line)| {
+            let capture = PRIVATE_KEY_MARKER.captures(line)?;
+            let kind = capture.get(1)?.as_str();
+            let label = capture.get(2)?.as_str();
+            Some((index, kind, label))
         })
+        .peekable();
+    lines.scan(false, move |in_key, (index, line)| {
+        let marker = markers.next_if(|&(at, _, _)| at == index);
+        let opening = marker.is_some_and(|(_, kind, _)| kind == "BEGIN");
+        let has_key = *in_key || opening || has_literal(line);
+        if let Some((_, _, label)) = marker {
+            *in_key = opening
+                && markers
+                    .peek()
+                    .is_some_and(|&(_, kind, closing)| kind == "END" && label == closing);
+        }
+        Some((index + 1, line, has_key))
+    })
 }
 
 pub fn credential_line_numbers(text: &str) -> Vec<usize> {
@@ -124,6 +183,7 @@ mod tests {
             "const headers = { Authorization: 'Bearer zn7SpKc2bVT9jpD4RfyK2Hwg4zfcQFtQ29xwBwC2enAZpx3sY5hcpTMcqdX' };\r\n",
             "Use https://example:rule-credential-fixture@fixture.invalid\r\n",
             "Use example:rule-credential-fixture@localhost\r\n",
+            "Use example:rule-credential-fixture@internal-host\r\n",
             "Use https://fixture.invalid/?token=rule-query-fixture\r\n",
             "api-key: w79wxza928af410e9c4f36xdpycb01h6\r\n",
             "SERVICE_TOKEN=Z8sm1sFz7dJ5dKwS9E4nyP2g_87\r\n",
@@ -133,10 +193,28 @@ mod tests {
             "-----END OPENSSH PRIVATE KEY-----\r\n",
             "ordinary rule again",
         );
-        assert_eq!(credential_line_numbers(text), (2..=12).collect::<Vec<_>>());
+        assert_eq!(credential_line_numbers(text), (2..=13).collect::<Vec<_>>());
         assert_eq!(
             reject_secret_lines(text).unwrap_err().to_string(),
             "possible credential on line 2"
+        );
+    }
+
+    #[test]
+    fn rulesync_credential_scan_refuses_short_and_low_entropy_assignments() {
+        let fixtures = [
+            "DB_PASSWORD=Summer2024!",
+            "password: correct-horse-battery-staple",
+            "token: 3f9a2b7c1d8e4f60",
+            "PASSWORD=synthetic-rule-credential",
+            "- DB_PASSWORD = \"Summer2024!\".",
+            "DB_PASSWORD=Summer2024.",
+            r#"PASSWORD="Pass\"word42!""#,
+            "TOKEN=${TOKEN:-fallback-password}",
+        ];
+        assert_eq!(
+            credential_line_numbers(&fixtures.join("\n")),
+            (1..=fixtures.len()).collect::<Vec<_>>()
         );
     }
 
@@ -152,6 +230,15 @@ mod tests {
             "token = getTokenFromDatabase2026(user)\n",
             "token = authorization\n",
             "secret: 'uncharacteristicallylongword'\n",
+            "token = env::var(\"TOKEN\")\n",
+            "api_key = process.env.OPENAI2KEY\n",
+            "password = $DATABASE_PASSWORD\n",
+            "password = '${DATABASE_PASSWORD}'\n",
+            "access_key: <insert key here>\n",
+            "token = \"YOUR_TOKEN_HERE\"\n",
+            "password = 'xxxxxxxx'\n",
+            "token = '********'\n",
+            "api_key: '........'\n",
             "Authorization: Bearer ${AUTH_TOKEN}\n",
             "https://fixture.invalid/?token=$TOKEN\n",
         );

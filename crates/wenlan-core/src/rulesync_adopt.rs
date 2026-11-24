@@ -1619,21 +1619,25 @@ impl Imports<'_> {
             } else {
                 !credential_line_numbers(&imported.text).is_empty()
             };
-            if protected {
-                // A native import still reads its own file. An adapter import
-                // cannot bring this file into the projected rule text.
-                if self.mode == ClaudeImports::KeepLocal && depth == 0 {
-                    body.push_str(&file.text[range.clone()]);
-                    body.push_str(ending);
-                }
-            } else if self.shared_path == Some(&imported.node.path) {
+            if self.shared_path == Some(&imported.node.path) {
                 self.included_shared = true;
-                let extra = without_shared(self.shared, &imported.text);
+                let extra = if protected {
+                    without_shared(self.shared, &shared_rule_lines(&imported.text).0)
+                } else {
+                    without_shared(self.shared, &imported.text)
+                };
                 if depth == 0 {
                     remember_imported(self.imported_rules, &extra);
                 }
                 body.push_str(&extra);
                 if !extra.is_empty() && !extra.ends_with('\n') {
+                    body.push_str(ending);
+                }
+            } else if protected {
+                // A native import still reads its own file. An adapter import
+                // cannot bring this file into the projected rule text.
+                if self.mode == ClaudeImports::KeepLocal && depth == 0 {
+                    body.push_str(&file.text[range.clone()]);
                     body.push_str(ending);
                 }
             } else {

@@ -276,14 +276,17 @@ async fn run_inner(
             client.restore_rules_as_person().await?
         }
         RulesSetupCmd::Status { sync } => {
-            if *sync {
-                let sync_report = client.sync_rules_as_person().await?;
-                if !quiet {
-                    eprint!("{}", report_for_a_person(&sync_report, false));
-                }
+            let sync_report = if *sync {
+                Some(client.sync_rules_as_person().await?)
+            } else {
+                None
+            };
+            let status = client.rules_setup_status().await;
+            if let Some(report) = sync_report.filter(|_| !quiet) {
+                let shown_notes = status.as_ref().map_or(&[][..], |status| &status.notes);
+                eprint!("{}", report_for_a_person(&report, false, shown_notes));
             }
-            let status = client.rules_setup_status().await?;
-            return show(format, quiet, &status, status_for_a_person);
+            return show(format, quiet, &status?, status_for_a_person);
         }
         RulesSetupCmd::Sync => client.sync_rules_as_person().await?,
         RulesSetupCmd::SkillUpdates => {
@@ -339,7 +342,7 @@ async fn run_inner(
             }
     );
     show(format, quiet, &report, |report| {
-        report_for_a_person(report, show_kept_in_place)
+        report_for_a_person(report, show_kept_in_place, &[])
     })
 }
 
@@ -442,7 +445,7 @@ async fn answer_item(
         }
     };
     show(format, quiet, &report, |report| {
-        report_for_a_person(report, false)
+        report_for_a_person(report, false, &[])
     })
 }
 
@@ -874,6 +877,9 @@ fn append_rule_preview(out: &mut String, plan: &SharingPlan, details: bool, widt
     if let Some(notice) = &plan.shared_source_notice {
         writeln!(out, "\n{}", one_line(notice)).unwrap();
     }
+    for note in &plan.rule_notes {
+        writeln!(out, "\n{}", one_line(note)).unwrap();
+    }
     if details {
         if !plan.rules.is_empty() {
             out.push_str("\nNumbered rule lines\n");
@@ -908,7 +914,16 @@ fn append_rule_preview(out: &mut String, plan: &SharingPlan, details: bool, widt
                 )
                 .unwrap();
             } else {
-                writeln!(out, "Stays in {}: {description}.", one_line(&stay.tool)).unwrap();
+                let location = stay
+                    .line_number
+                    .map(|number| format!(" (line {number})"))
+                    .unwrap_or_default();
+                writeln!(
+                    out,
+                    "Stays in {}{location}: {description}.",
+                    one_line(&stay.tool)
+                )
+                .unwrap();
             }
         }
     } else {
@@ -1405,12 +1420,20 @@ fn render_plan(
     out
 }
 
-fn report_for_a_person(report: &RulesSyncReport, show_kept_in_place: bool) -> String {
+fn report_for_a_person(
+    report: &RulesSyncReport,
+    show_kept_in_place: bool,
+    shown_notes: &[String],
+) -> String {
     let mut out = format!("{}\n", printable(&report.message));
     for path in &report.written {
         out.push_str(&format!("Wrote {}\n", file_label(path)));
     }
-    for path in &report.blocked {
+    for path in report
+        .blocked
+        .iter()
+        .filter(|note| !shown_notes.contains(note))
+    {
         out.push_str(&format!("Blocked {}\n", file_label(path)));
     }
     for card in &report.proposals {
@@ -1553,19 +1576,23 @@ mod tests {
                 SharingRuleStay {
                     tool: "Claude Code".into(),
                     line: Some("@./local.md".into()),
+                    line_number: None,
                     reason: "Only Claude Code reads this import.".into(),
                 },
                 SharingRuleStay {
                     tool: "Claude Code".into(),
                     line: Some("Use CLAUDE.md here.".into()),
+                    line_number: None,
                     reason: "This line names a tool-specific file.".into(),
                 },
                 SharingRuleStay {
                     tool: "Claude Code".into(),
                     line: None,
+                    line_number: Some(12),
                     reason: "This line may hold a credential.".into(),
                 },
             ],
+            rule_notes: vec!["Remove the possible credential to review the other rules.".into()],
             ..Default::default()
         };
         let short = sharing_for_a_person(&plan, false, false);
@@ -1578,6 +1605,7 @@ mod tests {
                 1,
                 "{preview}"
             );
+            assert!(preview.contains(&plan.rule_notes[0]), "{preview}");
         }
         assert!(short.contains("Codex: 1 rule"), "{short}");
         assert!(
@@ -1598,7 +1626,7 @@ mod tests {
             "{details}"
         );
         assert!(
-            details.contains("a line that may hold a credential"),
+            details.contains("Stays in Claude Code (line 12): a line that may hold a credential."),
             "{details}"
         );
         assert!(
@@ -1796,7 +1824,7 @@ mod tests {
             message: "Checked the local tool setup".into(),
             kept_in_place: Vec::new(),
         };
-        assert!(report_for_a_person(&report, false)
+        assert!(report_for_a_person(&report, false, &[])
             .contains("Blocked .codex/AGENTS.md: Review your changes before syncing.\n"));
     }
 
@@ -1821,10 +1849,12 @@ mod tests {
         };
         let summary = "Kept 5 settings in place in their own tools because they may hold keys or cannot be copied.\n";
         assert_eq!(
-            report_for_a_person(&report, true).matches(summary).count(),
+            report_for_a_person(&report, true, &[])
+                .matches(summary)
+                .count(),
             1
         );
-        assert!(!report_for_a_person(&report, false).contains("Kept "));
+        assert!(!report_for_a_person(&report, false, &[]).contains("Kept "));
     }
 
     #[test]

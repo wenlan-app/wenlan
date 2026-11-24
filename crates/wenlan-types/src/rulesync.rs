@@ -318,7 +318,9 @@ pub struct SharingPlan {
     pub rules: Vec<SharingRule>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_stays: Vec<SharingRuleStay>,
-    /// The approved append to the person's shared rule file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_notes: Vec<String>,
+    /// Where the approved rules will be written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_source_notice: Option<String>,
     /// Copies another tool already has with the same content.
@@ -362,6 +364,9 @@ pub struct SharingRuleStay {
     /// Omitted for a possible credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
+    /// One-based position of a possible credential in the live file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<usize>,
     pub reason: String,
 }
 
@@ -445,7 +450,7 @@ pub struct RulesSetupStatus {
     pub last_checked_at: Option<i64>,
     #[serde(default)]
     pub tools: Vec<RulesToolStatus>,
-    /// Plain lines about shared servers Wenlan left as they are.
+    /// Plain notices about local rules and settings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
