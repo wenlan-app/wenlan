@@ -946,7 +946,9 @@ impl Setup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rulesync_routes::tests::{fixture_rule_renderer, fixture_skill_renderer, Fixture};
+    use crate::rulesync_routes::tests::{
+        accept_local_rule_additions, fixture_rule_renderer, fixture_skill_renderer, Fixture,
+    };
     use std::cell::RefCell;
 
     thread_local! {
@@ -1609,6 +1611,59 @@ mod tests {
             assert!(result.blocked.is_empty(), "{result:?}");
             assert_eq!(tree(&f.setup.home), before);
         }
+    }
+
+    #[test]
+    fn rulesync_restore_keeps_a_shared_addition_only_in_its_donor() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        let original = f.text(CODEX_RULES);
+        let claude = f.text(CLAUDE_RULES);
+        let shared = f.text(".agents/AGENTS.md");
+        let addition = "New rule from the source tool.\n";
+        let first = format!("{addition}Use Codex to check this workspace.\r\n{addition}");
+        let later = "A rule added after sharing.\n";
+        adopt(&f);
+        for (local, shared_line) in [(&*first, addition), (later, later)] {
+            accept_local_rule_additions(&f, local);
+            let plan = preview_rules(&f, &[]);
+            let shared_report = apply_rules(&f, &plan, &[]).unwrap();
+            assert!(shared_report.blocked.is_empty(), "{shared_report:?}");
+            assert!(f.text(CLAUDE_RULES).contains(shared_line));
+            assert!(f.text(GEMINI_RULES).contains(shared_line));
+        }
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(f.text(CODEX_RULES), format!("{original}{first}{later}"));
+        assert_eq!(f.text(CLAUDE_RULES), claude);
+        assert_eq!(f.text(".agents/AGENTS.md"), shared);
+        assert!(!f.setup.home.join(GEMINI_RULES).exists());
+    }
+
+    #[test]
+    fn rulesync_restore_blocks_an_old_share_without_donor_information() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        accept_local_rule_additions(&f, "An addition with no old receipt for its donor.\n");
+        apply_rules(&f, &preview_rules(&f, &[]), &[]).unwrap();
+        let mut legacy = f.setup.load().unwrap().unwrap();
+        legacy.rule_origins_tracked = false;
+        legacy.authored_rules.clear();
+        f.setup.save(&legacy).unwrap();
+        let before = tree(&f.setup.home);
+
+        let restored = f.setup.restore().unwrap();
+        assert!(
+            restored
+                .blocked
+                .iter()
+                .any(|reason| reason.contains("does not say which tool")),
+            "{restored:?}"
+        );
+        assert_eq!(tree(&f.setup.home), before);
+        assert!(f.setup.load().unwrap().is_some());
     }
 
     #[test]

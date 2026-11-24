@@ -79,7 +79,7 @@ pub enum RulesSetupCmd {
         #[arg(long, value_name = "PATH", requires = "id")]
         file: Option<String>,
     },
-    /// Restore the original files and links from the local setup backup.
+    /// Restore the original tool setup and keep rules you added.
     Restore,
     #[command(hide = true)]
     Sync,
@@ -270,7 +270,7 @@ async fn run_inner(
             ShareResult::Cancelled | ShareResult::Nothing => return Ok(()),
         },
         RulesSetupCmd::Restore => {
-            if !confirm("Replace managed files and links with the original copies from the local setup backup?")? {
+            if !confirm("Restore the original tool setup and keep rules you added?")? {
                 return Ok(());
             }
             client.restore_rules_as_person().await?

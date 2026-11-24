@@ -1199,8 +1199,14 @@ and wait for evidence that people need them.
   `rulesync_confirmed_adoption_writes_previewed_files_and_links`,
   `rules_restore_refused_in_session`, and `rules_review_answer_refused_in_session`.
   `wenlan rules restore` asks the person again and uses that backup to
-  restore the original bytes and link targets. It keeps any destination
-  that has changed since delivery available for review.
+  restore the original bytes and link targets. A rule file keeps the
+  original text followed by rules added in that tool, in their authored
+  order. When someone shared a rule from one tool, it stays in the tool
+  where they wrote it. Copies sent only by Wenlan are removed. Bringing
+  in the setup again reads the retained rules from the tool files.
+  Restore leaves a file in place with a reason if it cannot separate the
+  original text and later edits safely, including a rewrite of an original
+  rule. The backup stays available for review.
   Restore keeps the backup when an unreviewed spelling differs at any point
   in the path or when a needed parent disappeared outside an approved change.
   On Windows, restore keeps the backup when it cannot verify its recorded owner
@@ -1208,6 +1214,11 @@ and wait for evidence that people need them.
   原文（2026-11-22）：「有 CLI，那你就能幫我執行，只在 AI 也要能支援」
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
   Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
+  Tests `rulesync_restore_keeps_accepted_tool_only_lines_in_byte_order`,
+  `rulesync_restore_blocks_a_settled_rewrite_of_an_original_rule`,
+  `rulesync_restore_then_adopt_keeps_the_rule_tool_only`,
+  `rulesync_restore_rechecks_rule_additions_on_retry`, and
+  `rulesync_restore_keeps_a_shared_addition_only_in_its_donor`.
 
 - **UX-SKILL-16** `shipped` `save_skill` in a local AI tool proposes the
   skill's text and files. `wenlan skills save` saves the source directly when
@@ -1416,7 +1427,8 @@ and wait for evidence that people need them.
   remove with its permissions, and why each other enrolled tool is skipped.
   It spells out when an all-tools review only affects the source tool.
   Restore uses the original bytes, modes, and link targets and removes empty
-  directories created for delivery. A retry compares already-restored originals
+  directories created for delivery. A native skill, command, or subagent that
+  exists only in one tool stays there. A retry compares already-restored originals
   with the backup and retains it if anything differs. If an interrupted deletion
   displaced a file with changed bytes, permissions, or links, recovery reports a
   conflict and puts the file back when the destination is vacant. The plan reports
@@ -1502,8 +1514,8 @@ and wait for evidence that people need them.
   versions of the rule files. The same batch updates `~/.agents/AGENTS.md`
   and the tool copies. A conflict leaves the previous shared master and
   receipts in force. Sync keeps the shared rules and each tool's local
-  lines. Restore uses the adoption backups for tool copies and the pre-share
-  backup for the shared source file.
+  lines. Restore uses the adoption backups and preserves added rules in their
+  originating tools. The shared source file returns to its pre-share contents.
   Safe personal MCP
   servers in managed tools are offered even if Wenlan does not yet manage the
   entry; on confirmation they are first adopted with the usual receipts and

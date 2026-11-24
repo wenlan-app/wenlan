@@ -16,8 +16,8 @@ pub(crate) use saved_skills::{accept_only_tool_proposal, review_only_tool_propos
 pub(crate) use saved_skills::{
     authored_rows, check_skill_format, clear_delivery_state, collect_tool_proposals,
     has_pending_skill_reviews, pending_skill_reviews, register, remove_saved_source,
-    saved_skill_deliveries, ApprovedSkills, ManagedSkill, SavedSkillDeliveries, SkillHome,
-    SkillModes,
+    retained_new_skill_folders, saved_skill_deliveries, ApprovedSkills, ManagedSkill,
+    SavedSkillDeliveries, SkillHome, SkillModes,
 };
 
 // The registry swaps source directories in place. A snapshot taken during

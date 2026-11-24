@@ -149,6 +149,12 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
         .chain(&manifest.kept_share_rules)
         .chain(
             manifest
+                .authored_rules
+                .values()
+                .flat_map(|authored| authored.text()),
+        )
+        .chain(
+            manifest
                 .scope_reviews
                 .values()
                 .flat_map(|review| [&review.before, &review.after]),
@@ -175,6 +181,7 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
         .iter()
         .filter(|(path, _)| is_rules_or_skills_path(path))
         .map(|(_, original)| original)
+        .chain(manifest.restored_rules.values())
         .chain(
             manifest
                 .delivered
@@ -296,6 +303,13 @@ fn map_contents<From, To>(
         },
         backup: manifest
             .backup
+            .iter()
+            .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
+            .collect::<Result<_>>()?,
+        authored_rules: manifest.authored_rules.clone(),
+        rule_origins_tracked: manifest.rule_origins_tracked,
+        restored_rules: manifest
+            .restored_rules
             .iter()
             .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
             .collect::<Result<_>>()?,

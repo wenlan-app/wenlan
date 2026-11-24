@@ -1300,6 +1300,45 @@ pub(crate) fn saved_skill_deliveries(data: &Path) -> Result<SavedSkillDeliveries
     })
 }
 
+pub(crate) fn retained_new_skill_folders<'a>(
+    data: &Path,
+    mut folders: impl Iterator<Item = (&'a Path, &'a str)>,
+) -> Result<BTreeSet<PathBuf>> {
+    let Some(first) = folders.next() else {
+        return Ok(BTreeSet::new());
+    };
+    let state = SkillStore::open(data)?.state;
+    Ok(std::iter::once(first)
+        .chain(folders)
+        .filter(|(folder, name)| {
+            if let Some(hold) = state.review_holds.get(*name) {
+                if let Some(Draft {
+                    source: Candidate::Tool { folder: source, .. },
+                    ..
+                }) = state.proposals.get(&hold.proposal)
+                {
+                    return source.as_path() == *folder;
+                }
+            }
+            state.kept.get(*name).is_some_and(|variants| {
+                if variants.shared.is_some() {
+                    // A native package can be approved for sharing while it
+                    // still has only its originating tool as a recipient.
+                    variants.shared_reviewed.len() == 1
+                        && state.approved_local.contains_key(*folder)
+                } else {
+                    variants.tools.len() == 1
+                        && rulesync_personal::PERSONAL_TARGETS.iter().any(|target| {
+                            folder.starts_with(target.skills.destination)
+                                && variants.tools.contains_key(&target.tool)
+                        })
+                }
+            })
+        })
+        .map(|(folder, _)| folder.to_owned())
+        .collect())
+}
+
 #[cfg(test)]
 fn approved_skill_sources(data: &Path, target: &str) -> Result<BTreeMap<String, SkillFiles>> {
     let target = rulesync_personal::personal_target(target).context("unknown test tool")?;

@@ -296,6 +296,8 @@ pub(super) struct RuleShareUpdate {
     overlays: BTreeMap<String, String>,
     overrides: BTreeMap<String, LocalText>,
     kept: BTreeSet<String>,
+    authored: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
+    moved: bool,
 }
 
 impl RuleShareUpdate {
@@ -304,6 +306,8 @@ impl RuleShareUpdate {
         manifest.master.overlays = self.overlays;
         manifest.master.overrides = self.overrides;
         manifest.kept_share_rules.extend(self.kept);
+        manifest.authored_rules.extend(self.authored);
+        manifest.rule_origins_tracked |= self.moved;
     }
 }
 
@@ -335,7 +339,12 @@ impl Setup {
             overrides: manifest.master.overrides.clone(),
         };
         let mut operations = Vec::new();
+        let mut authored = BTreeMap::new();
         if !moving.is_empty() {
+            ensure!(
+                manifest.rule_origins_tracked || !is_shared_source_receipt(manifest, Path::new(SHARED_RULES)),
+                "The backup does not say which tool added the previously shared rules. Review the tool and shared files before sharing more rules."
+            );
             let mut append = String::new();
             for line in plan.moving() {
                 append.push_str(line);
@@ -352,6 +361,11 @@ impl Setup {
                 let path = PathBuf::from(target.rules.destination);
                 let receipt = &manifest.delivered[&path];
                 let seen = rule_snapshot(root, &path, receipt)?;
+                if let Some(origin) =
+                    restore_rules::AuthoredRules::for_promotion(manifest, &path, seen, &moving)?
+                {
+                    authored.insert(path.clone(), origin);
+                }
                 let base = master.base_rule_text(target.id, generated);
                 let source = rebase_tool_rules(
                     &manifest.master,
@@ -441,6 +455,8 @@ impl Setup {
                 overlays: master.overlays,
                 overrides: master.overrides,
                 kept,
+                authored,
+                moved: !moving.is_empty(),
             },
             operations,
         }))

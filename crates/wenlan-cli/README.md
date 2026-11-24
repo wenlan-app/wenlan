@@ -607,7 +607,7 @@ Options:
 
 #### `wenlan rules restore`
 
-Restore the original files and links from the local setup backup.
+Restore the original tool setup and keep rules you added.
 
 ```text
 wenlan rules restore [OPTIONS]
