@@ -547,7 +547,7 @@ pub(super) fn plan_shares(
     })
 }
 
-fn choose_destination(
+pub(super) fn choose_destination(
     root: &FileRoot,
     manifest: &Manifest,
     preferred: &Path,
@@ -712,7 +712,7 @@ impl Setup {
     }
 }
 
-fn file_bytes(snapshot: &Snapshot) -> Option<&[u8]> {
+pub(super) fn file_bytes(snapshot: &Snapshot) -> Option<&[u8]> {
     match snapshot {
         Snapshot::File { bytes, .. } => Some(bytes),
         _ => None,

@@ -148,6 +148,9 @@ pub struct AdoptionPlan {
     pub skills: Vec<AdoptionSkill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// Settings intentionally left in their native tool during adoption.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_in_place: Vec<KeptInPlace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub note_codes: Vec<RulesSetupNotice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -271,6 +274,55 @@ pub struct AdoptRequest {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<std::path::PathBuf>,
+    /// The person also said yes to sharing the servers that may hold a key.
+    /// The server ignores it on the AI confirm route and for agent sessions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_keys: bool,
+}
+
+/// What `wenlan rules share` would copy into the other managed tools.
+/// Approval binds to `token`; an AI session confirms with `plan_id`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingPlan {
+    pub plan_id: String,
+    pub token: String,
+    /// Tools that would receive something, with the names they get.
+    #[serde(default)]
+    pub tools: Vec<SharingTool>,
+    /// Items that stay where they are, one plain reason each.
+    #[serde(default)]
+    pub stays: Vec<SharingStay>,
+    /// Copies another tool already has with the same content.
+    #[serde(default)]
+    pub already_there: usize,
+    /// Servers that may hold a key. Only a person can share them, with a
+    /// second yes. Names only; no value is ever part of a plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_servers: Vec<String>,
+    /// Tools those servers would be copied into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingTool {
+    pub tool: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub subagents: Vec<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingStay {
+    /// The tool the item stays in.
+    pub tool: String,
+    pub item: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -279,8 +331,17 @@ pub struct RulesSyncReport {
     pub blocked: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_codes: Vec<RulesSetupNotice>,
+    /// Settings intentionally left in their native tool during sync.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_in_place: Vec<KeptInPlace>,
     pub proposals: Vec<PullbackCard>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptInPlace {
+    pub tool: String,
+    pub count: usize,
 }
 
 impl RulesSyncReport {
@@ -336,6 +397,9 @@ pub struct RulesSetupStatus {
     pub last_checked_at: Option<i64>,
     #[serde(default)]
     pub tools: Vec<RulesToolStatus>,
+    /// Plain lines about shared servers Wenlan left as they are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

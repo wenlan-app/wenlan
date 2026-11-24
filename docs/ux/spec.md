@@ -1226,11 +1226,99 @@ and wait for evidence that people need them.
 - **UX-SKILL-17** `shipped` With `WENLAN_RULESYNC=1`, `wenlan rules adopt`
   previews existing personal MCP servers, hooks and permissions in the tools'
   default home directories. The person types `yes` to import the listed entries
-  into the local settings source. The preview gives the reason for each skipped
-  entry or file. It keeps supported native environment references, checks
-  commands and arguments, and skips credential options and literal values in
-  environment and header maps. A file containing possible credentials
+  into the local settings source. Refused entries stay in their own tool; the
+  adoption preview and the adopt, share and person sync outputs show at most
+  one summary line with their total. JSON reports counts per tool. Review,
+  restore and status do not print this summary. A kept entry alone does not
+  block a file or make a tool need review. The preview explains skipped files.
+  It keeps supported native environment references, also
+  under names such as `API_KEY` or `Authorization`, because the entry then
+  holds only the variable's name. It checks commands and arguments, and skips
+  credential options and literal values in environment and header maps. A
+  header may hold a plain literal only when it is `Accept`, `Content-Type`
+  or `User-Agent` holding media-type or product text, or an
+  `X-<name>-Source` label. A server started with `npx`,
+  `bunx`, `uvx` or `pnpm dlx` may name one package; any other plain word in
+  its arguments skips the entry. An `oauth` block may hold only a client id,
+  a callback port and scopes; a client secret skips the entry. Wenlan's own
+  server entry, which `wenlan mcp connect` writes into each tool, is neither
+  managed nor reported as skipped, and it does not stop the file from being
+  written. An entry counts as free of keys only when every value matches a
+  named public pattern; anything else may hold a key and stays. Every string
+  in an entry, and every name the person chose, is checked for parts that
+  look like a key: a known key prefix (such as `ghp_`, `sk-ant-`, `glpat-`,
+  `npm_` or `xoxb-`), a Slack webhook path, 16 or more hex characters (a
+  UUID too), 16 or more letters and digits that include a digit, or 20 or
+  more letters in mixed case that do not split into camelCase words
+  (`skipDangerousModePermissionPrompt` is a name; a run of capitals and
+  single lowercase letters is not). Web addresses are checked part by
+  part (host, path, `;name=value`), and so are arguments, headers,
+  permission rules, Codex rule patterns (each word and the whole command)
+  and justifications, Gemini policy prefixes, hooks and environment values.
+  Setting names the catalog itself declares, such as Copilot's
+  `defaultPermissionMode`, are fixed spellings and skip this check. A name
+  the person chose (a server, a setting key) names a thing, not a value, so
+  it gets only the key-looking check: a server named `github-auth` or the
+  setting `apiKeyHelper` passes. One list of credential words marks a name
+  as credential-like, matched as whole words after splitting the name at
+  `_ - . :`, camelCase and digit boundaries: password, passwd, pass, pwd,
+  pw, pin, otp, totp, mfa, cvc, cvv, puk, ssn, secret, token, key, apikey,
+  auth, authorization, cred, credential, cookie, session, session id and
+  account number, and `code` after auth, access, backup, door,
+  verification, otp, pin or recovery (`DOOR_CODE`, `authCode`). One word
+  also counts when it joins two of them (`authtoken`) or ends in password,
+  passwd, secret, token, credential or apikey (`PGPASSWORD`). So `author`,
+  `spinner`, `bypass`, `keyboard`, `tokenizer` and `EXIT_CODE` name no
+  credential, and `DB_PASS` does. A value under a credential-like name may
+  only be an on/off value, an environment reference, a path (as
+  `apiKeyHelper` holds) or a number under a measure such as `_TOKENS`.
+  A credential word followed within three words by a value skips the text;
+  a lowercase word, a path or a flag after it is not a value, so
+  `gh auth status` and `npm run auth:test` pass. In a command (a permission
+  rule, hook, status line or Codex rule), one dash and up to four letters
+  (`-la`, `-rf`, `-xzf`) are switches; a longer cluster or one with a digit
+  or other character (`-phunter2`) skips the entry. A credential option
+  takes no value but a `$VAR` reference: a long flag with a credential word
+  (`--pass`, `--pin`, `--otp`, `--token`, `--auth`, `--key`, `--secret`,
+  `--password`, but not `--session` or `--author`), `-u` or `--user` with a
+  `user:password` value, and a named program's password flag: `mysql` or
+  `mariadb -p`, `sshpass -p`, `redis-cli -a`, `openssl -k` or `-pass`, and
+  `zip` or `7z -P|-p`. Such a flag with no value (`--passWithNoTests`) is
+  fine. After any other flag, the value must be a path, a `$VAR`
+  reference, or text whose words are each letters only, a version such as
+  `v2`, or a number of up to six digits (`HEAD`, `f.tgz`, `4096`); letters
+  and digits mixed in one word, as in `hunter2`, skip the entry. `-u value`
+  and `-H value` stay refused by the older header and user patterns.
+  `NAME=value` before a command is allowed only when the value is a `$VAR`
+  reference, or the name holds no credential word and the value does not
+  look like a key. A hook or status line command may use plain flags, and a
+  flag may take a value only when it is `--agent`, `--agent-name`,
+  `--tool`, `--tool-profile`, `--format`, `--space` or `--session`. Every
+  other word must be a path, a lowercase word without digits, or a number of
+  up to four digits that does not follow a credential word, `lock`, `unlock`
+  or `code`. Some passwords cannot be told apart from ordinary text, so
+  these pass the check and are shared only because the person approves the
+  plain words the preview lists: a password made only of lowercase letters
+  in a command (`notify hunter`, `fixture -e hunter`), a password shaped
+  like a package name after a launcher (`npx -y hunter2`), and a short
+  credential word inside a single-word name (`MYPIN`). A Codex field that
+  names an environment variable (`bearer_token_env_var`, `env_vars`,
+  `env_key`, `env_http_headers` values) must hold an uppercase name such as
+  `OPENAI_API_KEY` that does not look like a key.
+  Gemini's sign-in method (`security.auth.selectedType`) is not a credential.
+  In Claude Code's `env`, a value under an ordinary name is plain when it is
+  a number, an on/off value or text that does not look like a key, such as
+  `ANTHROPIC_MODEL: "claude-opus"`. Under a credential-like name, only a
+  number is plain, and only when its name ends in `_TOKENS`, `_LIMIT`,
+  `_TIMEOUT`, `_MS`, `_SECONDS`, `_PORT`, `_SIZE`, `_COUNT` or `_RETRIES`
+  and token is its only credential word (`API_SECRET_MS` is not plain).
+  `NODE_OPTIONS: "--max-old-space-size=4096"` and `EXIT_CODE: "0"` are
+  plain.
+  A file containing possible credentials
   can supply safe entries but cannot be written or backed up by personal sync.
+  The backup check reads the raw file as well: a key-looking part anywhere,
+  a value under a credential-like name, or a credential word followed by a
+  value in a comment or text keeps the whole file out of backups.
   Wenlan neither resolves references nor executes hooks or servers.
   Wenlan reads Codex hooks from both native files and requires evidence of
   the OpenCode config generation before using that file. Hard-linked settings
@@ -1261,9 +1349,25 @@ and wait for evidence that people need them.
   `rulesync_personal_settings_keep_jsonc_and_toml_siblings_byte_stable`,
   `rulesync_personal_settings_read_codex_and_gemini_permissions_without_writing`,
   `rulesync_personal_settings_accept_only_native_credential_references`,
+  `rulesync_personal_settings_keep_public_oauth_fields_and_refuse_a_client_secret`,
+  `rulesync_personal_settings_recognize_wenlan_own_server_without_sharing_it`,
+  `rulesync_personal_settings_keep_a_public_header_label_and_refuse_other_literals`,
+  `rulesync_personal_settings_keep_one_package_after_a_launcher_and_refuse_other_words`,
+  `rulesync_personal_settings_file_check_skips_wenlan_own_server_only`,
+  `rulesync_personal_settings_gemini_sign_in_method_is_not_a_credential`,
+  `rulesync_personal_settings_claude_plain_number_and_switch_settings_are_not_credentials`,
+  `rulesync_personal_settings_flag_values_are_checked_by_shape`,
+  `rulesync_personal_settings_hook_and_status_line_admit_plain_words_only`,
+  `rulesync_personal_settings_codex_variable_fields_hold_only_usual_names`,
+  `rulesync_personal_settings_wenlan_own_server_needs_a_plain_program`,
+  `rulesync_personal_settings_review_inputs_are_refused`,
+  `rulesync_personal_settings_approved_public_settings_pass`,
+  `rulesync_personal_settings_everyday_settings_pass`,
   `rulesync_personal_settings_native_references_are_backup_safe_but_comments_are_checked`,
   `rulesync_personal_settings_adopt_review_merge_and_restore`,
   `rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback`,
+  `rulesync_personal_settings_summarizes_refused_hooks_and_permissions_without_review`,
+  `rulesync_report_summarizes_kept_in_place_entries_once_when_enabled`,
   `rulesync_personal_settings_review_preserves_native_approval_and_mode`,
   `rulesync_personal_settings_restore_owns_only_recorded_entries`,
   `rulesync_personal_settings_journal_keeps_the_prior_setup_recoverable`,
@@ -1289,7 +1393,9 @@ and wait for evidence that people need them.
   so they inherit access rules from the destination folder.
   A hand edit or removal appears in `wenlan rules review`.
   The person can keep it in the originating tool or share it with enrolled
-  tools that read the same format. Any `$` or `!` in a command keeps it in
+  tools that read the same format. Commands and subagents that were already
+  there before adoption reach the other tools through `wenlan rules share`
+  (UX-SKILL-26). Any `$` or `!` in a command keeps it in
   its own tool because the characters can introduce argument expansion or
   shell execution. Tool-specific fields and Codex TOML subagents can also
   keep a file in its own tool.
@@ -1366,6 +1472,80 @@ and wait for evidence that people need them.
   button and the line below the tool chips show the same merged queue count.
   Tests `UX-SKILL-25: names and orders the setup actions` and
   `ux_skill_25_rulesync_action_hints_parse_with_the_real_cli`.
+
+- **UX-SKILL-26** `shipped` After adoption, `wenlan rules share` copies the
+  skills, commands, subagents and MCP servers a person already had in one tool
+  to every other managed tool that supports that kind. The preview lists each
+  tool with its counts and item names, counts items every tool already has,
+  and gives a line "Stays in <tool>: <item>: <reason>" for each item that
+  cannot travel: a same-name item with different content (never replaced),
+  a command with `$` or `!`, or an MCP server a tool cannot represent.
+  Kinds a tool has no place for are left out without a line. An MCP server
+  travels only when it passes the safety check and refers to keys through
+  environment variables; Wenlan rewrites a reference into each tool's own
+  syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`, Codex `env_vars`,
+  `env_http_headers` and `bearer_token_env_var`). A server that may hold a
+  key joins the key group of UX-SKILL-27 instead. Wenlan never edits a shell
+  profile. Only files Wenlan may write receive copies.
+  The person types `yes`; an AI session shows the person
+  `wenlan rules share --dry-run` and runs
+  `wenlan rules share --confirm <plan id>` after they agree, and a plan id
+  from an older preview is refused. Other copies go through the same backup
+  as adoption, so `wenlan rules restore` removes them. A second run says
+  "Nothing to share". The app has no Share action yet.
+  Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
+  `rulesync_share_keeps_a_codex_server_with_a_key_in_a_name_field`,
+  `rulesync_share_leaves_a_different_item_with_the_same_name`,
+  `rulesync_status_counts_mcp_servers_adopted_in_place`,
+  `rulesync_personal_settings_translate_environment_references_between_tools`,
+  `rulesync_personal_settings_mark_a_written_key_and_keep_it_out`,
+  `rules_share_in_session_without_confirm_only_previews`,
+  `rules_share_in_session_applies_the_confirmed_plan`,
+  `rules_share_in_session_refuses_a_stale_plan_id`,
+  `rulesync_share_never_copies_a_server_url_with_a_key_in_its_path`,
+  `rulesync_share_stores_no_password_from_a_permission_rule`,
+  `rulesync_share_backs_up_no_codex_file_with_a_literal_password` and
+  `personal_rules_setup_requires_interactive_confirmation`.
+
+- **UX-SKILL-27** `shipped` MCP servers that may hold a key (a value written
+  in the entry rather than an environment variable reference) form one key
+  group in `wenlan rules share`. Hooks, permissions and other settings stay
+  in their own tool. The preview names the servers and the tools only:
+  "These N servers may contain a key. Sharing copies the key into: <tools>."
+  A server the check cannot copy safely keeps its "Stays in <tool>: <reason>"
+  line. Only the person can share the key group: after the first `yes`, a
+  second typed `yes` in their own terminal. `--include-keys` still asks. The
+  `--confirm <plan id>` route and any request that names an AI session or an
+  agent leave the group where it is with a plain line, and the rest applies;
+  a "no" does the same. This tells the AI tools' normal route from the
+  person's and is not a security boundary: a program under the same account
+  can leave those markers out.
+  Wenlan stores no value and no hash of such a server anywhere. It records
+  only where each copy went (destination file and server name, source tool,
+  file and server name, time). It reads the live source and writes the copy
+  into the destination one entry at a time, never through a whole-file backup,
+  and saves an intent first. A file that holds or will hold such a server
+  gets every other Wenlan edit one entry at a time too. After a crash, an
+  intent whose copy equals the live source becomes a record; any other is
+  dropped and status says it was left as it is. Status compares each shared
+  copy with its live source and reports a copy removed or changed since
+  sharing; that tool is not up to date. Restore removes a copy only
+  while it still equals the live source, before the other entries of that
+  file; otherwise it says "kept <server> in <tool>: changed since sharing;
+  remove it by hand if you don't want it".
+  Tests `rulesync_share_previews_key_servers_by_name_and_tool_only`,
+  `ux_skill_27_rulesync_share_copies_a_key_server_on_yes_and_restores_without_storing_it`,
+  `rulesync_share_leaves_key_servers_on_no_and_shares_the_rest`,
+  `rulesync_share_refuses_key_servers_for_an_ai_caller`,
+  `rulesync_restore_keeps_a_key_copy_the_person_changed`,
+  `rulesync_status_checks_key_share_receipt_against_live_source_and_destination`,
+  `rules_share_reports_kept_in_place_counts_once`,
+  `rulesync_key_share_post_rename_error_retains_intent_then_claims_receipt`,
+  `rulesync_round6_direct_key_settings_rename_recovers_receipt_then_restores`,
+  `rulesync_interrupted_key_share_is_claimed_when_the_copy_landed`,
+  `rulesync_interrupted_key_share_is_dropped_when_the_copy_is_not_there`,
+  `rulesync_safe_server_shares_syncs_and_restores_in_a_file_with_a_key` and
+  `rules_share_in_session_without_confirm_only_previews`.
 
 ## From the terminal
 

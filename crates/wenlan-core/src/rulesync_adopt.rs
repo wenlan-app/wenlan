@@ -1870,6 +1870,39 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_preview_counts_a_new_skill_copy_once_per_folder() {
+        let home = tempfile::tempdir().unwrap();
+        for (path, text) in [
+            (".claude/CLAUDE.md", "Rule.\n"),
+            (
+                ".agents/skills/demo/SKILL.md",
+                "---\nname: demo\ndescription: Demo.\n---\nBody.\n",
+            ),
+            (".agents/skills/demo/notes.md", "One.\n"),
+            (".agents/skills/demo/refs/two.md", "Two.\n"),
+        ] {
+            let path = home.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        fs::create_dir_all(home.path().join(".claude/skills")).unwrap();
+        std::os::unix::fs::symlink(
+            home.path().join(".agents/skills/demo"),
+            home.path().join(".claude/skills/demo"),
+        )
+        .unwrap();
+        let plan = crate::rulesync_personal::plan_adoption(home.path()).unwrap();
+        assert_eq!(
+            plan.new_files,
+            vec![wenlan_types::rulesync::AdoptionNewFiles {
+                tool: "Claude Code".into(),
+                files: 1
+            }]
+        );
+    }
+
     fn put(home: &Path, path: &str, bytes: impl AsRef<[u8]>) {
         let path = home.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -12,8 +12,8 @@ use wenlan_core::{rulesync_personal, skill_registry::printable};
 use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
     PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
-    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SkillUpdateStatus,
-    SkillUpstream, TO_REVIEW_COMMAND,
+    RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SharingPlan,
+    SkillUpdateStatus, SkillUpstream, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -37,6 +37,20 @@ pub enum RulesSetupCmd {
         /// Confirm the plan shown to the person.
         #[arg(long, conflicts_with = "dry_run")]
         confirm: Option<String>,
+    },
+    /// Copy your existing skills, commands, subagents and MCP servers to
+    /// every managed tool that supports them.
+    Share {
+        /// Preview what each tool would get.
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm the plan shown to the person.
+        #[arg(long, conflicts_with = "dry_run")]
+        confirm: Option<String>,
+        /// Also offer the MCP servers that may contain a key. You are still
+        /// asked to type yes; an AI tool cannot share them.
+        #[arg(long, conflicts_with_all = ["dry_run", "confirm"])]
+        include_keys: bool,
     },
     /// Status of the personal setup in each tool.
     #[command(hide = !rulesync_personal::enabled())]
@@ -149,9 +163,18 @@ async fn run_inner(
         }
         return show(format, quiet, &adoption_plan()?, plan_for_a_person);
     }
+    if matches!(command, RulesSetupCmd::Share { dry_run: true, .. }) {
+        let client =
+            WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
+        let plan = client.preview_share_as_person(&home_request()?).await?;
+        return show(format, quiet, &plan, sharing_for_a_person);
+    }
     let confirmed_adopt = matches!(
         command,
         RulesSetupCmd::Adopt {
+            confirm: Some(_),
+            ..
+        } | RulesSetupCmd::Share {
             confirm: Some(_),
             ..
         }
@@ -160,6 +183,11 @@ async fn run_inner(
         && (agent_name.is_some() || session.session.is_some())
     {
         bail!("Only you can change your personal tool setup. Run this from your own terminal outside an AI session. From an AI tool: show the person `wenlan rules adopt --dry-run`, and after they say yes run `wenlan rules adopt --confirm <plan id>`.");
+    }
+    if matches!(command, RulesSetupCmd::Share { confirm: None, .. })
+        && (agent_name.is_some() || session.session.is_some())
+    {
+        bail!("Only you can change your personal tool setup. Run this from your own terminal outside an AI session. From an AI tool: show the person `wenlan rules share --dry-run`, and after they say yes run `wenlan rules share --confirm <plan id>`.");
     }
     ensure!(
         confirmed_adopt || matches!(command, RulesSetupCmd::Status { .. } | RulesSetupCmd::Review { id: None, .. })
@@ -209,6 +237,53 @@ async fn run_inner(
                     token: plan.token,
                     confirmed_plan_id: confirmed.clone(),
                     home: Some(expected.home),
+                    include_keys: false,
+                })
+                .await?
+        }
+        RulesSetupCmd::Share {
+            confirm: confirmed, ..
+        } => {
+            let expected = home_request()?;
+            let plan = client.preview_share_as_person(&expected).await?;
+            let mut include_keys = false;
+            if let Some(id) = confirmed {
+                ensure!(plan.plan_id == *id && !id.is_empty(), "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list.");
+            } else {
+                // The person must see the same plan even with --quiet or --format json.
+                print!("{}", sharing_for_a_person(&plan));
+                if !plan.tools.is_empty()
+                    && !confirm("Copy these items to the tools listed above?")?
+                {
+                    return Ok(());
+                }
+                // Servers that may contain a key need their own typed yes.
+                if !plan.key_servers.is_empty() {
+                    let count = plan.key_servers.len();
+                    include_keys = confirm(&format!(
+                        "Also copy {} that may contain a key into {}?",
+                        if count == 1 {
+                            "this server".to_owned()
+                        } else {
+                            format!("these {count} servers")
+                        },
+                        plan.key_tools
+                            .iter()
+                            .map(|tool| one_line(tool))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))?;
+                }
+                if plan.tools.is_empty() && !include_keys {
+                    return Ok(());
+                }
+            }
+            client
+                .share_rules_as_person(&AdoptRequest {
+                    token: plan.token,
+                    confirmed_plan_id: confirmed.clone(),
+                    home: Some(expected.home),
+                    include_keys,
                 })
                 .await?
         }
@@ -222,7 +297,7 @@ async fn run_inner(
             if *sync {
                 let sync_report = client.sync_rules_as_person().await?;
                 if !quiet {
-                    eprint!("{}", report_for_a_person(&sync_report));
+                    eprint!("{}", report_for_a_person(&sync_report, false));
                 }
             }
             let status = client.rules_setup_status().await?;
@@ -272,7 +347,18 @@ async fn run_inner(
             return answer_item(&client, format, quiet, item, (*answer).into(), file.clone()).await;
         }
     };
-    show(format, quiet, &report, report_for_a_person)
+    let show_kept_in_place = matches!(
+        command,
+        RulesSetupCmd::Share { .. }
+            | RulesSetupCmd::Sync
+            | RulesSetupCmd::Adopt {
+                confirm: Some(_),
+                ..
+            }
+    );
+    show(format, quiet, &report, |report| {
+        report_for_a_person(report, show_kept_in_place)
+    })
 }
 
 async fn answer_item(
@@ -373,7 +459,9 @@ async fn answer_item(
                 .await?
         }
     };
-    show(format, quiet, &report, report_for_a_person)
+    show(format, quiet, &report, |report| {
+        report_for_a_person(report, false)
+    })
 }
 
 fn answer_word(answer: PullbackAction) -> &'static str {
@@ -421,6 +509,99 @@ struct SetupSync {
     following: usize,
     copied: usize,
     left_alone: usize,
+}
+
+fn home_request() -> Result<AdoptPreviewRequest> {
+    Ok(AdoptPreviewRequest {
+        home: rulesync_personal::system_home()?.canonicalize()?,
+    })
+}
+
+fn sharing_for_a_person(plan: &SharingPlan) -> String {
+    let mut out = String::new();
+    if plan.tools.is_empty() {
+        out.push_str("Nothing to share.\n");
+    } else {
+        out.push_str("Share with your other tools\n");
+    }
+    for tool in &plan.tools {
+        let groups = [
+            ("skill", &tool.skills),
+            ("command", &tool.commands),
+            ("subagent", &tool.subagents),
+            ("MCP server", &tool.mcp_servers),
+        ];
+        let counts = groups
+            .iter()
+            .filter(|(_, names)| !names.is_empty())
+            .map(|(word, names)| plural(names.len(), word))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(&mut out, "\n{}: {counts}", one_line(&tool.tool)).unwrap();
+        for (word, names) in groups {
+            for name in names {
+                writeln!(&mut out, "  + {word} {}", one_line(name)).unwrap();
+            }
+        }
+    }
+    if plan.already_there > 0 {
+        writeln!(
+            &mut out,
+            "\n{} already in every tool that supports {}.",
+            plural(plan.already_there, "item"),
+            if plan.already_there == 1 {
+                "it"
+            } else {
+                "them"
+            }
+        )
+        .unwrap();
+    }
+    if !plan.key_servers.is_empty() {
+        // Names and tools only; no value of these servers is ever shown.
+        let count = plan.key_servers.len();
+        writeln!(
+            &mut out,
+            "\n{} may contain a key. Sharing copies the key into: {}.",
+            if count == 1 {
+                "This server".to_owned()
+            } else {
+                format!("These {count} servers")
+            },
+            plan.key_tools
+                .iter()
+                .map(|tool| one_line(tool))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+        for name in &plan.key_servers {
+            writeln!(&mut out, "  ? MCP server {}", one_line(name)).unwrap();
+        }
+        out.push_str("Only you can share them, with a second yes in your own terminal.\n");
+    }
+    if !plan.stays.is_empty() {
+        out.push('\n');
+        for stay in &plan.stays {
+            writeln!(
+                &mut out,
+                "Stays in {}: {}: {}",
+                one_line(&stay.tool),
+                one_line(&stay.item),
+                one_line(&stay.reason)
+            )
+            .unwrap();
+        }
+    }
+    if !plan.tools.is_empty() && !plan.plan_id.is_empty() {
+        writeln!(
+            &mut out,
+            "\nPlan id: {} — to go ahead from an AI tool: wenlan rules share --confirm {}",
+            plan.plan_id, plan.plan_id
+        )
+        .unwrap();
+    }
+    out
 }
 
 fn plural(count: usize, word: &str) -> String {
@@ -487,6 +668,7 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<()> {
             token: plan.token.clone(),
             confirmed_plan_id: Some(plan.plan_id.clone()).filter(|id| !id.is_empty()),
             home: Some(home),
+            include_keys: false,
         })
         .await?;
     ensure!(
@@ -635,6 +817,7 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
         out.push('\n');
         out.push_str(&settings_plan_for_a_person(settings));
     }
+    append_kept_in_place_summary(&mut out, &plan.kept_in_place);
     if !plan.plan_id.is_empty() {
         writeln!(
             &mut out,
@@ -737,6 +920,9 @@ fn status_for_a_person(status: &RulesSetupStatus) -> String {
     } else {
         out.push_str("No background check yet.\n");
     }
+    for note in &status.notes {
+        writeln!(out, "{}", one_line(note)).unwrap();
+    }
     for row in &status.tools {
         let state = match row.state {
             RulesToolState::UpToDate => "up to date",
@@ -793,7 +979,7 @@ fn render_plan(
     out
 }
 
-fn report_for_a_person(report: &RulesSyncReport) -> String {
+fn report_for_a_person(report: &RulesSyncReport, show_kept_in_place: bool) -> String {
     let mut out = format!("{}\n", printable(&report.message));
     for path in &report.written {
         out.push_str(&format!("Wrote {}\n", file_label(path)));
@@ -818,7 +1004,27 @@ fn report_for_a_person(report: &RulesSyncReport) -> String {
     if report.proposals.iter().any(|card| card.files.len() > 1) {
         out.push_str("Use `--file <path>` to choose a file when tools changed the same rule.\n");
     }
+    if show_kept_in_place {
+        append_kept_in_place_summary(&mut out, &report.kept_in_place);
+    }
     out
+}
+
+fn append_kept_in_place_summary(
+    out: &mut String,
+    kept_in_place: &[wenlan_types::rulesync::KeptInPlace],
+) {
+    let count = kept_in_place
+        .iter()
+        .map(|entry| entry.count)
+        .fold(0usize, usize::saturating_add);
+    if count > 0 {
+        writeln!(
+            out,
+            "Kept {count} settings in place in their own tools because they may hold keys or cannot be copied."
+        )
+        .unwrap();
+    }
 }
 
 fn append_diff(out: &mut String, diff: &str) {
@@ -882,9 +1088,37 @@ mod tests {
             blocked_codes: Vec::new(),
             proposals: Vec::new(),
             message: "Checked the local tool setup".into(),
+            kept_in_place: Vec::new(),
         };
-        assert!(report_for_a_person(&report)
+        assert!(report_for_a_person(&report, false)
             .contains("Blocked .codex/AGENTS.md: Review your changes before syncing.\n"));
+    }
+
+    #[test]
+    fn rulesync_report_summarizes_kept_in_place_entries_once_when_enabled() {
+        let report = RulesSyncReport {
+            written: Vec::new(),
+            blocked: Vec::new(),
+            blocked_codes: Vec::new(),
+            proposals: Vec::new(),
+            message: "Synced settings".into(),
+            kept_in_place: vec![
+                wenlan_types::rulesync::KeptInPlace {
+                    tool: "Claude Code".into(),
+                    count: 2,
+                },
+                wenlan_types::rulesync::KeptInPlace {
+                    tool: "Codex CLI".into(),
+                    count: 3,
+                },
+            ],
+        };
+        let summary = "Kept 5 settings in place in their own tools because they may hold keys or cannot be copied.\n";
+        assert_eq!(
+            report_for_a_person(&report, true).matches(summary).count(),
+            1
+        );
+        assert!(!report_for_a_person(&report, false).contains("Kept "));
     }
 
     #[test]
@@ -902,8 +1136,10 @@ mod tests {
             skipped_tool_codes: Vec::new(),
             note_codes: Vec::new(),
             new_files: Vec::new(),
+            kept_in_place: Vec::new(),
         };
         assert!(!plan_for_a_person(&plan).contains("Will also write to"));
+        assert!(!plan_for_a_person(&plan).contains("Kept "));
         plan.new_files = vec![
             wenlan_types::rulesync::AdoptionNewFiles {
                 tool: "Cursor".into(),
@@ -916,6 +1152,18 @@ mod tests {
         ];
         assert!(plan_for_a_person(&plan)
             .contains("Will also write to: Cursor, Gemini CLI (3 files).\n"));
+        plan.kept_in_place = vec![wenlan_types::rulesync::KeptInPlace {
+            tool: "Claude Code".into(),
+            count: 4,
+        }];
+        assert_eq!(
+            plan_for_a_person(&plan)
+                .matches(
+                    "Kept 4 settings in place in their own tools because they may hold keys or cannot be copied.\n"
+                )
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -941,6 +1189,7 @@ mod tests {
             skipped_tool_codes: Vec::new(),
             note_codes: Vec::new(),
             new_files: Vec::new(),
+            kept_in_place: Vec::new(),
         };
         let text = plan_for_a_person(&plan);
         assert!(text.contains("tool<U+000A>settings.md (+2 / -1)"));

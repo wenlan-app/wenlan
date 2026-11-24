@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::rulesync::{
     AdoptionChange, AdoptionNewFiles, AdoptionPlan, AdoptionSkill, AdoptionSkillOutcome,
-    AdoptionTextDiff, AdoptionTool, RulesSetupCode as Code, RulesSetupNotice, RulesSetupTool,
+    AdoptionTextDiff, AdoptionTool, KeptInPlace, RulesSetupCode as Code, RulesSetupNotice,
+    RulesSetupTool,
 };
 use wenlan_types::rulesync_skill::SavedSkillTool;
 
@@ -1109,6 +1110,20 @@ pub fn adoption_tool(path: &Path) -> Option<RulesSetupTool> {
         })
 }
 
+/// The unit a preview counts for a new file: the skill folder for a file
+/// inside a skills directory, otherwise the file itself.
+fn new_file_unit(path: &Path) -> PathBuf {
+    PERSONAL_TARGETS
+        .iter()
+        .flat_map(|target| [target.skills.destination, ".agents/skills"])
+        .find_map(|root| {
+            let rest = path.strip_prefix(root).ok()?;
+            let folder = rest.components().next()?;
+            Some(Path::new(root).join(folder))
+        })
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 fn discover_targets(
     home: &Path,
     installed: &[&PersonalTarget],
@@ -1497,18 +1512,25 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
     // `note_codes` stays aligned with `notes` by index.
     notes.extend(adoption.settings.notes.iter().cloned());
     let token = adoption_token(adoption)?;
-    let mut created = BTreeMap::<String, usize>::new();
+    // A new skill copy counts once per folder, not once per file inside it.
+    let mut created = BTreeMap::<String, BTreeSet<PathBuf>>::new();
     for (path, file) in &adoption.files {
         if matches!(file.before, AdoptionEntry::Missing) {
             if let Some(tool) = adoption_tool(path) {
-                *created.entry(tool.name).or_default() += 1;
+                created
+                    .entry(tool.name)
+                    .or_default()
+                    .insert(new_file_unit(path));
             }
         }
     }
     Ok(AdoptionPlan {
         new_files: created
             .into_iter()
-            .map(|(tool, files)| AdoptionNewFiles { tool, files })
+            .map(|(tool, units)| AdoptionNewFiles {
+                tool,
+                files: units.len(),
+            })
             .collect(),
         settings: None,
         plan_id: adoption_plan_id(&token),
@@ -1516,6 +1538,15 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
         files,
         skills,
         notes,
+        kept_in_place: adoption
+            .settings
+            .kept_in_place
+            .iter()
+            .map(|(tool, count)| KeptInPlace {
+                tool: tool.clone(),
+                count: *count,
+            })
+            .collect(),
         note_codes,
         skipped_files,
         skipped_tools: adoption.skipped_tools.clone(),

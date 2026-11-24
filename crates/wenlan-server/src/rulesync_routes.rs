@@ -32,10 +32,10 @@ use wenlan_core::rulesync_renderer::{self, RenderSession};
 use wenlan_core::rulesync_skill::SkillFiles;
 use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_types::rulesync::{
-    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, PullbackAction,
-    PullbackCard, PullbackDecision, PullbackKind, PullbackPreview, RulesSetupCode as Code,
-    RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport, RulesToolCounts,
-    RulesToolState, RulesToolStatus, SYNC_COMMAND, TO_REVIEW_COMMAND,
+    AdoptPreviewRequest, AdoptRequest, AdoptedSkillUpdate, AdoptionPlan, KeptInPlace,
+    PullbackAction, PullbackCard, PullbackDecision, PullbackKind, PullbackPreview,
+    RulesSetupCode as Code, RulesSetupNotice, RulesSetupStatus, RulesSetupTool, RulesSyncReport,
+    RulesToolCounts, RulesToolState, RulesToolStatus, SharingPlan, SYNC_COMMAND, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_skill::{
     SavedSkillTool, SkillDeliveryChange, SkillDeliveryFile, SkillFileDigest,
@@ -51,10 +51,12 @@ use crate::rulesync_registry::{
 use crate::state::SharedState;
 
 mod displaced;
+mod key_shares;
 mod personal_files;
 mod personal_settings;
 mod review_list;
 mod settings;
+mod share;
 mod storage;
 pub(super) mod watch;
 
@@ -65,6 +67,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/setup/status", get(status))
         .route("/api/rules/setup/adopt", post(adopt))
         .route("/api/rules/setup/adopt/preview", post(adopt_preview))
+        .route("/api/rules/setup/share", post(share_items))
+        .route("/api/rules/setup/share/preview", post(share_preview))
         .route("/api/rules/setup/restore", post(restore))
         .route("/api/rules/setup/sync", post(sync))
         .route("/api/rules/setup/skill-updates", post(skill_updates))
@@ -145,6 +149,20 @@ fn setup_status(enabled: bool, setup: impl FnOnce() -> Result<Setup>) -> Result<
     setup()?.status()
 }
 
+/// Recover key-bearing rules temporaries before the server starts runtime
+/// workers. The fast path does not resolve or create a tool home when there is
+/// no local rules manifest.
+pub fn recover_rulesync_on_startup() -> Result<()> {
+    let data = wenlan_core::config::data_root().join("rulesync");
+    match fs::symlink_metadata(data.join(storage::MANIFEST)) {
+        Ok(_) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("check for a local setup backup"),
+    }
+    Setup::system()?;
+    Ok(())
+}
+
 fn require_personal_rules_writer(headers: &HeaderMap) -> Result<(), ServerError> {
     require_local_person(headers)?;
     if !wenlan_core::rulesync_personal::enabled() {
@@ -188,6 +206,41 @@ async fn adopt(
     Json(request): Json<AdoptRequest>,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
     execute(state, headers, Operation::Adopt(request)).await
+}
+
+async fn share_preview(
+    headers: HeaderMap,
+    Json(request): Json<AdoptPreviewRequest>,
+) -> Result<Json<SharingPlan>, ServerError> {
+    require_local_rules_access(&headers)?;
+    if !wenlan_core::rulesync_personal::enabled() {
+        return Err(ServerError::ValidationError(
+            "WENLAN_RULESYNC is off".into(),
+        ));
+    }
+    tokio::task::spawn_blocking(move || Setup::system_ready()?.preview_share(&request.home))
+        .await
+        .map_err(|error| ServerError::Internal(error.to_string()))?
+        .map(Json)
+        .map_err(|error| ServerError::Conflict(format!("{error:#}")))
+}
+
+fn validate_confirmed_share(request: &AdoptRequest, plan: &SharingPlan) -> Result<()> {
+    ensure!(
+        !plan.plan_id.is_empty()
+            && request.confirmed_plan_id.as_deref() == Some(plan.plan_id.as_str())
+            && request.token == plan.token,
+        "The setup changed since that preview. Run `wenlan rules share --dry-run` again and show the person the new list."
+    );
+    Ok(())
+}
+
+async fn share_items(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(request): Json<AdoptRequest>,
+) -> Result<Json<RulesSyncReport>, ServerError> {
+    execute(state, headers, Operation::Share(request)).await
 }
 
 async fn restore(
@@ -238,9 +291,19 @@ async fn review_preview(
 
 enum Operation {
     Adopt(AdoptRequest),
+    Share(AdoptRequest),
     Restore(RestoreOptions),
     Sync,
     Review(PullbackDecision),
+}
+
+/// A request that names an AI session or an agent. The CLI sends these
+/// headers from `WENLAN_SESSION`/`--session` and `--agent-name`/
+/// `WENLAN_AGENT_NAME`. They are cooperative: a program under the same
+/// account can leave them out, so this tells an AI tool's normal route
+/// from a person's, and is not a security boundary.
+fn ai_caller(headers: &HeaderMap) -> bool {
+    headers.contains_key(wenlan_types::SESSION_HEADER) || headers.contains_key("x-agent-name")
 }
 
 async fn execute(
@@ -248,7 +311,10 @@ async fn execute(
     headers: HeaderMap,
     operation: Operation,
 ) -> Result<Json<RulesSyncReport>, ServerError> {
-    if matches!(operation, Operation::Sync | Operation::Adopt(_)) {
+    if matches!(
+        operation,
+        Operation::Sync | Operation::Adopt(_) | Operation::Share(_)
+    ) {
         require_local_rules_access(&headers)?;
         if !wenlan_core::rulesync_personal::enabled() {
             return Err(ServerError::ValidationError(
@@ -258,8 +324,7 @@ async fn execute(
     } else {
         require_personal_rules_writer(&headers)?;
     }
-    let ai_caller =
-        headers.contains_key(wenlan_types::SESSION_HEADER) || headers.contains_key("x-agent-name");
+    let ai_caller = ai_caller(&headers);
     let generated = if matches!(operation, Operation::Sync | Operation::Review(_)) {
         crate::skill_grow::general_tool_rules(&state).await?
     } else {
@@ -282,6 +347,17 @@ async fn execute(
                     validate_confirmed_adoption(&request, &plan)?;
                 }
                 setup.adopt(&request)
+            }
+            Operation::Share(request) => {
+                if ai_caller || request.confirmed_plan_id.is_some() {
+                    let home = request
+                        .home
+                        .as_deref()
+                        .context("A confirmed share needs the tool home")?;
+                    let plan = setup.preview_share(home)?;
+                    validate_confirmed_share(&request, &plan)?;
+                }
+                setup.share(&request, share::KeyAnswer::of(ai_caller, &request))
             }
             Operation::Restore(options) => setup.restore_with_options(options),
             Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
@@ -404,12 +480,49 @@ impl Setup {
             return Ok(status);
         };
         status.adopted = manifest.adopted;
+        status.notes.clone_from(&manifest.keys.notes);
+        if !manifest.keys.intents.is_empty() {
+            status.notes.push(format!(
+                "Sharing {} server(s) that may contain a key was interrupted. The next rules sync checks them.",
+                manifest.keys.intents.len()
+            ));
+        }
         status.can_adopt = manifest.adopted || manifest.settings_only;
         status.can_restore = true;
         if manifest.adopted {
             status.last_checked_at = watch::last_checked_at();
         }
         let root = FileRoot::open_home(&self.home)?;
+        let mut stale_key_receipt = false;
+        let mut affected = BTreeSet::new();
+        for share in &manifest.keys.shares {
+            if !self.key_share_receipt_matches_live(&root, share)? {
+                stale_key_receipt = true;
+                let name = share
+                    .key
+                    .name
+                    .last()
+                    .map(String::as_str)
+                    .unwrap_or("server");
+                let catalog = wenlan_core::rulesync_settings::personal::Catalog::read(&self.home)?;
+                let location = catalog
+                    .locations
+                    .iter()
+                    .find(|location| location.path == share.destination);
+                let destination_tool = location
+                    .and_then(|location| personal_target(location.tool))
+                    .map_or("the receiving tool", |target| target.tool.display_name());
+                if let Some(target) = location.and_then(|location| personal_target(location.tool)) {
+                    affected.insert(target.tool);
+                }
+                let note = format!(
+                    "{name} in {destination_tool} was removed or changed since sharing. Review both tools before syncing."
+                );
+                if !status.notes.contains(&note) {
+                    status.notes.push(note);
+                }
+            }
+        }
         let Pullback {
             drafts,
             cards,
@@ -422,6 +535,7 @@ impl Setup {
             && manifest.extension_paths.is_empty()
             && manifest.delivery_issues.is_empty()
             && manifest.scope_reviews.is_empty();
+        status.in_sync &= !stale_key_receipt;
         status
             .proposals
             .extend(cards.into_iter().map(|card| card.wire));
@@ -439,7 +553,6 @@ impl Setup {
         status.in_sync &= settings.is_empty();
         status.proposals.extend(settings);
         let skill_reviews = rulesync_registry::pending_skill_reviews(&self.data)?;
-        let mut affected = BTreeSet::new();
         for proposal in &skill_reviews {
             if let Some(tool) = review_list::proposal_tool(proposal) {
                 affected.insert(tool);
@@ -508,6 +621,22 @@ impl Setup {
         for row in &mut status.tools {
             row.counts.skills = skills.get(row.tool.id.as_str()).map_or(0, BTreeSet::len);
         }
+        // MCP servers Wenlan manages in place, without a whole-file delivery.
+        for (tool, count) in personal_settings::managed_mcp_counts(&self.home, &manifest)? {
+            let Some(target) = personal_target(tool) else {
+                continue;
+            };
+            if let Some(row) = status
+                .tools
+                .iter_mut()
+                .find(|row| row.tool.id == target.agent)
+            {
+                row.counts.mcp += count;
+                if row.state == RulesToolState::NotManaged {
+                    row.state = RulesToolState::UpToDate;
+                }
+            }
+        }
         affected.extend(
             blocked
                 .keys()
@@ -537,6 +666,52 @@ impl Setup {
             }
         }
         Ok(status)
+    }
+
+    fn key_share_receipt_matches_live(
+        &self,
+        root: &FileRoot,
+        share: &key_shares::KeyShare,
+    ) -> Result<bool> {
+        use wenlan_core::rulesync_settings::personal::{
+            mcp_refusal, same_key_server, Catalog, Refusal,
+        };
+
+        let catalog = Catalog::read(&self.home)?;
+        let Some(from) = catalog
+            .locations
+            .iter()
+            .find(|location| location.path == share.source)
+        else {
+            return Ok(false);
+        };
+        let Some(to) = catalog
+            .locations
+            .iter()
+            .find(|location| location.path == share.destination)
+        else {
+            return Ok(false);
+        };
+        if from.tool != share.tool {
+            return Ok(false);
+        }
+        let Ok(source_file) = personal_settings::read(&self.home, root, from) else {
+            return Ok(false);
+        };
+        let Ok(destination_file) = personal_settings::read(&self.home, root, to) else {
+            return Ok(false);
+        };
+        let Some(source) = source_file
+            .doc
+            .entry(&share.source_key)
+            .filter(|entry| mcp_refusal(from.tool, entry) == Some(Refusal::MayHoldKey))
+        else {
+            return Ok(false);
+        };
+        let Some(destination) = destination_file.doc.entry(&share.key) else {
+            return Ok(false);
+        };
+        Ok(same_key_server(from.tool, source, to.tool, destination))
     }
 
     fn delivery_status(&self) -> BTreeMap<String, DeliveryStatus> {
@@ -821,6 +996,9 @@ struct Manifest<Content = Vec<u8>> {
     delivery_issues: BTreeMap<PathBuf, RuleDeliveryIssue>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     dismissed_skill_updates: BTreeMap<String, String>,
+    /// Servers that may hold a key, shared by name only. No value or hash.
+    #[serde(default, skip_serializing_if = "key_shares::KeyState::is_empty")]
+    keys: key_shares::KeyState,
 }
 
 impl Manifest {
@@ -885,6 +1063,7 @@ impl Manifest {
             scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
             dismissed_skill_updates: BTreeMap::new(),
+            keys: key_shares::KeyState::default(),
         }
     }
 }
@@ -1059,7 +1238,13 @@ impl Setup {
     pub(crate) fn system() -> Result<Self> {
         let home = Self::tool_home()?;
         let data = wenlan_core::config::data_root().join("rulesync");
-        Ok(Self::new(home, data))
+        Self::new_with_entry_recovery(home, data)
+    }
+
+    fn new_with_entry_recovery(home: PathBuf, data: PathBuf) -> Result<Self> {
+        let setup = Self::new(home, data);
+        setup.cleanup_key_temps_on_entry()?;
+        Ok(setup)
     }
 
     /// `system()` for operations that render: fetches the pinned binary when
@@ -1240,6 +1425,15 @@ impl Setup {
             verify_adoption_token(&adoption, token)?;
         }
         let already_adopted = manifest.as_ref().is_some_and(|manifest| manifest.adopted);
+        let kept_in_place = adoption
+            .settings
+            .kept_in_place
+            .iter()
+            .map(|(tool, count)| KeptInPlace {
+                tool: tool.clone(),
+                count: *count,
+            })
+            .collect();
         let mut result = if adoption.files.is_empty()
             && adoption.overlays.is_empty()
             && adoption.settings.sources.is_empty()
@@ -1258,6 +1452,7 @@ impl Setup {
             let master = PersonalMaster::new(&adoption);
             self.apply_adoption(&root, adoption, master)?
         };
+        result.kept_in_place = kept_in_place;
         if let Some(settings) = settings.filter(|_| result.blocked.is_empty()) {
             let token = settings.response.token.clone();
             match crate::rulesync_settings_routes::apply_plan(self, &root, settings, &token) {
@@ -1529,12 +1724,13 @@ impl Setup {
 
     fn recover(&self, root: &FileRoot, manifest: &mut Manifest) -> Result<Option<RulesSyncReport>> {
         self.recover_pending(root, manifest)?;
+        self.claim_key_intents(root, manifest)?;
         if manifest.extension_paths.is_empty() {
             return Ok(None);
         }
         let mut result =
             report("Rolled back the interrupted tool addition. Earlier tools are still managed");
-        self.restore_deliveries(root, manifest, &mut result, true)?;
+        self.restore_deliveries(root, manifest, &mut result, true, &BTreeSet::new())?;
         let pending: BTreeSet<_> = manifest.pending.iter().map(|op| &op.path).collect();
         manifest.extension_paths.retain(|path| {
             if pending.contains(path) || manifest.delivered.contains_key(path) {
@@ -1894,6 +2090,7 @@ impl Setup {
         manifest.adopted = false;
         manifest.settings_batch = None;
         let mut result = report("Restored the managed files from the local setup backup");
+        let (in_place, kept) = self.restore_key_files(&root, &mut manifest, &mut result)?;
         if !manifest.settings_only {
             let (written, blocked) = crate::rulesync_checkout::refresh(
                 self,
@@ -1905,7 +2102,7 @@ impl Setup {
             result.written.extend(written);
             result.extend_blocks(Code::CheckoutNeedsReview, blocked);
         }
-        self.restore_deliveries(&root, &mut manifest, &mut result, false)?;
+        self.restore_deliveries(&root, &mut manifest, &mut result, false, &in_place)?;
         for (path, original) in &manifest.backup {
             if *original == Snapshot::Absent
                 || manifest.delivered.contains_key(path)
@@ -1959,6 +2156,9 @@ impl Setup {
             result.message =
                 "Some paths could not be restored. The backup is still available".into();
         }
+        if !kept.is_empty() {
+            result.message = format!("{}.\n{}", result.message, kept.join("\n"));
+        }
         Ok(result)
     }
 
@@ -1968,9 +2168,10 @@ impl Setup {
         manifest: &mut Manifest,
         result: &mut RulesSyncReport,
         extension_only: bool,
+        in_place: &BTreeSet<PathBuf>,
     ) -> Result<()> {
         let selected = |manifest: &Manifest, path: &Path| {
-            !extension_only || manifest.extension_paths.contains(path)
+            (!extension_only || manifest.extension_paths.contains(path)) && !in_place.contains(path)
         };
         result.extend_blocks(
             Code::RecoveryNeeded,
@@ -1991,11 +2192,16 @@ impl Setup {
                 || wenlan_core::rulesync_settings::personal::is_settings_path(path)
             {
                 if let Some(alias) = manifest.case_alias(root, path)? {
-                    block_path(result, path, Code::NameConflict, format!(
-                        "{} aliases {} in the local setup backup. Resolve the conflicting entries before restoring.",
-                        path.display(),
-                        alias.display()
-                    ));
+                    block_path(
+                        result,
+                        path,
+                        Code::NameConflict,
+                        format!(
+                            "{} aliases {} in the local setup backup. Resolve the conflicting entries before restoring.",
+                            path.display(),
+                            alias.display()
+                        ),
+                    );
                     return Ok(());
                 }
             }
@@ -2024,9 +2230,9 @@ impl Setup {
                     &path,
                     Code::SharedReadOnly,
                     format!(
-                    "{}: {HARNESS_READ_ONLY} The retained backup is available for manual recovery.",
-                    path.display()
-                ),
+                        "{}: {HARNESS_READ_ONLY} The retained backup is available for manual recovery.",
+                        path.display()
+                    ),
                 );
                 continue;
             }
@@ -2374,6 +2580,7 @@ impl Setup {
                     "A tool update was interrupted. Open Wenlan to finish or undo it.",
                 ));
             }
+            self.claim_key_intents(&root, &mut manifest)?;
             None
         } else {
             self.recover(&root, &mut manifest)?
@@ -3065,7 +3272,7 @@ impl Setup {
             ) {
                 Ok(deliveries) => deliveries,
                 Err(error) if reviewing => {
-                    return Err(error.context(format!("stage skills for {id}")))
+                    return Err(error.context(format!("stage skills for {id}")));
                 }
                 Err(error) => {
                     result.block(
@@ -3963,10 +4170,15 @@ fn plan_registry_entries(
         let seen = package_entry(root, folder, &path, snapshot)?;
         if let (Snapshot::Directory { mode: current }, Some(mode)) = (&seen, mode) {
             if !reviewing && *current != mode {
-                block_path(result, &path, Code::DestinationPermissions, format!(
-                    "{}: Destination permissions are {current}, but the approved copy uses {mode}. The existing directory was kept.",
-                    path.display()
-                ));
+                block_path(
+                    result,
+                    &path,
+                    Code::DestinationPermissions,
+                    format!(
+                        "{}: Destination permissions are {current}, but the approved copy uses {mode}. The existing directory was kept.",
+                        path.display()
+                    ),
+                );
             }
         }
         let desired = match &seen {
@@ -4779,7 +4991,9 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
                 let message = if matches!(delivery.kind, Kind::PersonalFile) {
                     format!("Left unmanaged: {error:#}")
                 } else {
-                    format!("Cannot read this file ({error:#}). Check that it is a readable regular file and sync again.")
+                    format!(
+                        "Cannot read this file ({error:#}). Check that it is a readable regular file and sync again."
+                    )
                 };
                 blocked.insert(path.clone(), (Code::ReadFailed, message));
                 continue;
@@ -4986,7 +5200,7 @@ fn rule_review_code(action: PullbackAction) -> Code {
 fn competing_edits(first: &Draft, second: &Draft) -> bool {
     let (first, second) = match (&first.scope, &second.scope) {
         (DraftScope::PersonalFile(first), DraftScope::PersonalFile(second)) => {
-            return !first.destinations.is_disjoint(&second.destinations)
+            return !first.destinations.is_disjoint(&second.destinations);
         }
         (DraftScope::Rule(first), DraftScope::Rule(second)) => (first, second),
         _ => return false,
@@ -5088,6 +5302,7 @@ pub(crate) fn report(message: &str) -> RulesSyncReport {
         written: Vec::new(),
         blocked: Vec::new(),
         blocked_codes: Vec::new(),
+        kept_in_place: Vec::new(),
         proposals: Vec::new(),
         message: message.into(),
     }
@@ -5194,7 +5409,7 @@ mod tests {
             self.setup.apply_adoption(&root, adoption, master).unwrap();
         }
 
-        fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
+        pub(super) fn sync_with(&self, pin_banner: &str) -> RulesSyncReport {
             let root = FileRoot::open_home(&self.setup.home).unwrap();
             let _lock = self.setup.lock().unwrap();
             let mut manifest = self.setup.load().unwrap().unwrap();
@@ -5346,17 +5561,47 @@ mod tests {
         let f = Fixture::new();
         let home = &f.setup.home;
         let files = [
-            (".claude.json", r#"{ "mcpServers": { "shared": {"command":"before"}, "second": {"command":"second-before"} }, "unrelated": {"keep":  true} }"#),
-            (".codex/config.toml", "# keep comment\nmodel = 'fixture' # preserve\n\n[mcp_servers.shared]\ncommand = 'before'\n"),
-            (".gemini/settings.json", r#"{ "mcpServers": { "gemini-own": {"command":"gemini-local"} }, "model": {"name":"leave-alone"} }"#),
-            (".gemini/config/mcp_config.json", r#"{ "mcpServers": { "antigravity-own": {"command":"antigravity-local"} } }"#),
-            (".copilot/mcp-config.json", r#"{ "mcpServers": { "copilot-own": {"type":"stdio","command":"copilot-local"} } }"#),
-            (".cursor/mcp.json", r#"{ "mcpServers": { "shared": { "command": "cursor-only" }, "other" : { "command" : "exact" } }, "anything":  7 }"#),
-            (".config/opencode/opencode.jsonc", "// keep this comment\n{ \"mcp\": { \"servers\": { \"opencode-own\": {\"type\":\"local\", \"command\":[\"native\"]}, }, }, }\n"),
-            (".config/muse/settings.json", r#"{ "schema_version": 1, "mcp_servers": { "muse-own": {"transport":"stdio","command":"muse-local"} } }"#),
-            (".claude/settings.json", r#"{ "hooks": {"SessionStart":[{"hooks":[{"type":"command","command":"before-hook"}]}]}, "permissions":{"allow":["Bash(fixture)"],"defaultMode":"default"}, "model":  "keep" }"#),
+            (
+                ".claude.json",
+                r#"{ "mcpServers": { "shared": {"command":"before"}, "second": {"command":"second-before"} }, "unrelated": {"keep":  true} }"#,
+            ),
+            (
+                ".codex/config.toml",
+                "# keep comment\nmodel = 'fixture' # preserve\n\n[mcp_servers.shared]\ncommand = 'before'\n",
+            ),
+            (
+                ".gemini/settings.json",
+                r#"{ "mcpServers": { "gemini-own": {"command":"gemini-local"} }, "model": {"name":"leave-alone"} }"#,
+            ),
+            (
+                ".gemini/config/mcp_config.json",
+                r#"{ "mcpServers": { "antigravity-own": {"command":"antigravity-local"} } }"#,
+            ),
+            (
+                ".copilot/mcp-config.json",
+                r#"{ "mcpServers": { "copilot-own": {"type":"stdio","command":"copilot-local"} } }"#,
+            ),
+            (
+                ".cursor/mcp.json",
+                r#"{ "mcpServers": { "shared": { "command": "cursor-only" }, "other" : { "command" : "exact" } }, "anything":  7 }"#,
+            ),
+            (
+                ".config/opencode/opencode.jsonc",
+                "// keep this comment\n{ \"mcp\": { \"servers\": { \"opencode-own\": {\"type\":\"local\", \"command\":[\"native\"]}, }, }, }\n",
+            ),
+            (
+                ".config/muse/settings.json",
+                r#"{ "schema_version": 1, "mcp_servers": { "muse-own": {"transport":"stdio","command":"muse-local"} } }"#,
+            ),
+            (
+                ".claude/settings.json",
+                r#"{ "hooks": {"SessionStart":[{"hooks":[{"type":"command","command":"before-hook"}]}]}, "permissions":{"allow":["Bash(fixture)"],"defaultMode":"default"}, "model":  "keep" }"#,
+            ),
             (".codex/hooks.json", "{}\n"),
-            (".cursor/cli-config.json", r#"{ "version":1, "permissions":{"deny":["Shell(fixture)"]} }"#),
+            (
+                ".cursor/cli-config.json",
+                r#"{ "version":1, "permissions":{"deny":["Shell(fixture)"]} }"#,
+            ),
         ];
         for (path, original) in files {
             let path = home.join(path);
@@ -5555,6 +5800,60 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_personal_settings_summarizes_refused_hooks_and_permissions_without_review() {
+        let f = Fixture::new();
+        let settings = f.setup.home.join(".claude/settings.json");
+        let original = r#"{"hooks":{"SessionStart":[
+            {"hooks":[{"type":"command","command":"curl --user person:pass"}]},
+            {"hooks":[{"type":"command","command":"mysql -p hunter2"}]},
+            {"hooks":[{"type":"command","command":"curl --password=fixture-secret"}]}
+        ]},"permissions":{"allow":[
+            "Bash(mysql -p hunter2)",
+            "Bash(curl -u person:pass)"
+        ]}}"#;
+        fs::write(&settings, original).unwrap();
+
+        let preview = f
+            .setup
+            .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+            .unwrap();
+        assert_eq!(preview.kept_in_place.len(), 1, "{preview:?}");
+        assert_eq!(preview.kept_in_place[0].tool, "claudecode");
+        assert_eq!(preview.kept_in_place[0].count, 5);
+        assert!(!preview
+            .notes
+            .iter()
+            .any(|note| note.contains("skipped hook") || note.contains("skipped permission")));
+
+        f.setup
+            .adopt_using(
+                &preview.token,
+                fixture_rule_renderer,
+                fixture_skill_renderer,
+            )
+            .unwrap();
+        let report = f.sync_with("");
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert_eq!(report.kept_in_place.len(), 1, "{report:?}");
+        assert_eq!(report.kept_in_place[0].tool, "claudecode");
+        assert_eq!(report.kept_in_place[0].count, 5);
+        assert_eq!(fs::read_to_string(&settings).unwrap(), original);
+
+        let status = f.setup.status().unwrap();
+        assert!(status.in_sync, "{status:?}");
+        assert_eq!(
+            status
+                .tools
+                .iter()
+                .find(|tool| tool.tool.id == "claude-code")
+                .unwrap()
+                .state,
+            RulesToolState::UpToDate,
+            "{status:?}"
+        );
+    }
+
+    #[test]
     fn rulesync_personal_settings_rejects_literals_in_sources_journal_and_pullback() {
         fn contains_sentinel(dir: &Path) -> bool {
             fs::read_dir(dir).unwrap().any(|entry| {
@@ -5581,12 +5880,12 @@ mod tests {
             "password":{"command":"example","args":["--password=synthetic-sentinel-pass"]},
             "bare":{"command":"example","args":["synthetic-sentinel-bare"]},
             "header":{"url":"https://example.invalid/mcp","headers":{"X-Custom":"synthetic-sentinel-header"}},
-            "auth-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SYNTHETIC_TOKEN}"}},
+            "header-reference":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer ${SHARED_API_TOKEN}"}},
             "userinfo":{"url":"https://u:q4@example.invalid/mcp"},
             "key-field":{"command":"example","key":"synthetic-sentinel-key"},
             "direct-auth":{"command":"example","bearer":"u:q4"},
             "unverified-field":{"command":"example","opaque":"synthetic-sentinel-opaque"},
-            "env-auth":{"command":"example","env":{"API_KEY":"${SYNTHETIC_TOKEN}"}},
+            "env-reference":{"command":"example","env":{"API_KEY":"${SHARED_API_TOKEN}"}},
             "good":{"command":"before"}
         }, "sessionToken":"synthetic-sentinel-unrelated" }"#;
         let claude = home.join(".claude.json");
@@ -5596,6 +5895,9 @@ mod tests {
             {"matcher":"two","hooks":[{"type":"command","command":"curl -uu:q4"}]},
             {"matcher":"three","hooks":[{"type":"command","command":"curl --password=synthetic-sentinel-hook"}]},
             {"matcher":"four","hooks":[{"type":"command","command":"curl --oauth2-bearer ${SYNTHETIC_TOKEN}"}]}
+        ]},"permissions":{"allow":[
+            "Bash(mysql -p synthetic-sentinel-permission)",
+            "Bash(curl -u user:password)"
         ]}}"#).unwrap();
         fs::write(&claude, original).unwrap();
         fs::write(&codex, b"# safe fixture\n").unwrap();
@@ -5607,22 +5909,17 @@ mod tests {
             .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
             .unwrap();
         let shown = serde_json::to_string(&preview).unwrap();
-        assert_eq!(
-            preview
-                .notes
-                .iter()
-                .filter(|note| note.contains("skipped MCP server"))
-                .count(),
-            11
-        );
-        assert_eq!(
-            preview
-                .notes
-                .iter()
-                .filter(|note| note.contains("skipped hook"))
-                .count(),
-            4
-        );
+        assert_eq!(preview.kept_in_place.len(), 1);
+        assert_eq!(preview.kept_in_place[0].tool, "claudecode");
+        assert_eq!(preview.kept_in_place[0].count, 15);
+        assert!(!preview
+            .notes
+            .iter()
+            .any(|note| note.contains("skipped hook")));
+        assert!(!preview
+            .notes
+            .iter()
+            .any(|note| note.contains("skipped MCP server")));
         assert!(shown.contains("cannot write or back up"));
         assert!(!shown.contains("synthetic-sentinel"));
         assert!(!shown.contains("u:q4") && !shown.contains("SYNTHETIC_TOKEN"));
@@ -5648,18 +5945,41 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fs::read_to_string(&claude).unwrap(), original);
+        let status = f.setup.status().unwrap();
+        assert!(status.in_sync, "{status:?}");
+        assert_eq!(
+            status
+                .tools
+                .iter()
+                .find(|tool| tool.tool.id == "claude-code")
+                .unwrap()
+                .state,
+            RulesToolState::UpToDate,
+            "{status:?}"
+        );
 
         let risky = original.replace("\"before\"", "\"fixture --token synthetic-sentinel-edit\"");
         fs::write(&claude, &risky).unwrap();
         let result = f.sync_with("");
         assert!(result.proposals.is_empty());
         let report = serde_json::to_string(&result).unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
         assert_eq!(
             result
-                .blocked
+                .kept_in_place
                 .iter()
-                .filter(|note| note.contains("possible credentials or unsafe text"))
-                .count(),
+                .map(|kept| kept.count)
+                .sum::<usize>(),
+            // The risky edit adds one refused Claude entry.
+            16
+        );
+        assert_eq!(
+            result
+                .kept_in_place
+                .iter()
+                .find(|kept| kept.tool == "claudecode")
+                .unwrap()
+                .count,
             16
         );
         assert!(!report.contains("synthetic-sentinel"));
@@ -5685,13 +6005,19 @@ mod tests {
                 |root, manifest| f.sync_review(root, manifest),
             )
             .unwrap();
-        assert!(reviewed
-            .blocked
-            .iter()
-            .any(|reason| reason.contains(".cursor/mcp.json")
-                && reason.contains("possible credentials")));
+        // The Cursor file holds other text that may be a key, so the shared server is
+        // written into it as one entry and the file is never copied whole.
+        assert!(
+            reviewed
+                .written
+                .iter()
+                .any(|path| path == ".cursor/mcp.json"),
+            "{reviewed:?}"
+        );
+        let cursor_now = fs::read_to_string(&cursor).unwrap();
+        assert!(cursor_now.contains("\"after\""), "{cursor_now}");
+        assert!(cursor_now.contains("\"password\":\"synthetic-sentinel-other\""));
         assert_eq!(fs::read_to_string(&claude).unwrap(), safe_edit);
-        assert_eq!(fs::read_to_string(&cursor).unwrap(), cursor_original);
         assert!(fs::read_to_string(&codex).unwrap().contains("after"));
         assert!(!contains_sentinel(&f.setup.data));
         assert!(f.setup.restore().unwrap().blocked.is_empty());
@@ -6111,9 +6437,15 @@ mod tests {
             .contains_key(parent);
 
         let result = f.setup.restore().unwrap();
-        assert!(result.blocked.is_empty() && linked_listed && !linked_offered
-            && kept_layout && !receipt_claimed_sibling && !parent_claimed,
-            "restore={result:?}, hard-link notice={linked_listed}, hard link offered={linked_offered}, mixed endings retained={kept_layout} in {delivered:?}, receipt captured sibling={receipt_claimed_sibling}, receipt captured parent={parent_claimed}");
+        assert!(
+            result.blocked.is_empty()
+                && linked_listed
+                && !linked_offered
+                && kept_layout
+                && !receipt_claimed_sibling
+                && !parent_claimed,
+            "restore={result:?}, hard-link notice={linked_listed}, hard link offered={linked_offered}, mixed endings retained={kept_layout} in {delivered:?}, receipt captured sibling={receipt_claimed_sibling}, receipt captured parent={parent_claimed}"
+        );
         assert_eq!(f.text(codex), base.replace("'original'", "'newest'"));
         assert_eq!(f.text(claude), deletion.replace("after", "before"));
         assert!(f.text(copilot).contains("local-hook"));
@@ -7347,6 +7679,54 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn rulesync_round6_key_settings_rename_crash_helper() {
+        let Some(root) = std::env::var_os("WENLAN_TEST_KEY_SETTINGS_ROOT").map(PathBuf::from)
+        else {
+            return;
+        };
+        let setup = Setup {
+            home: root.join("home"),
+            data: root.join("data"),
+            binary: "unused".into(),
+        };
+        setup
+            .review_using(
+                &PullbackDecision {
+                    id: std::env::var("WENLAN_TEST_KEY_SETTINGS_REVIEW_ID").unwrap(),
+                    action: PullbackAction::AllTools,
+                    file: None,
+                },
+                |root, manifest| {
+                    setup.sync_locked(
+                        root,
+                        manifest,
+                        &[],
+                        fixture_rule_renderer,
+                        fixture_skill_renderer,
+                    )
+                },
+            )
+            .unwrap();
+        panic!("the post-rename crash point was not reached");
+    }
+
+    #[cfg(unix)]
+    fn crash_during_key_settings_rename(f: &Fixture, card: &PullbackCard) {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "rulesync_routes::tests::rulesync_round6_key_settings_rename_crash_helper",
+            ])
+            .env("WENLAN_TEST_KEY_SETTINGS_ROOT", f._temp.path())
+            .env("WENLAN_TEST_KEY_SETTINGS_REVIEW_ID", &card.id)
+            .env("WENLAN_TEST_FILE_APPLY_CRASH", "key-renamed:.claude.json")
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(76), "{child:?}");
+    }
+
+    #[cfg(unix)]
     fn crash_during_personal_review(f: &Fixture, card: &PullbackCard, point: &str) {
         let child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
@@ -7410,6 +7790,74 @@ mod tests {
                 manifest.recovery_issues
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rulesync_round6_direct_key_settings_rename_recovers_receipt_then_restores() {
+        fn contains_bytes(path: &Path, needle: &[u8]) -> bool {
+            let Ok(metadata) = fs::symlink_metadata(path) else {
+                return false;
+            };
+            if metadata.is_dir() {
+                return fs::read_dir(path).is_ok_and(|entries| {
+                    entries
+                        .flatten()
+                        .any(|entry| contains_bytes(&entry.path(), needle))
+                });
+            }
+            fs::read(path)
+                .is_ok_and(|bytes| bytes.windows(needle.len()).any(|window| window == needle))
+        }
+
+        const SECRET: &str = "sk-directWriteFixture0123456789abcdef";
+        let f = Fixture::new();
+        let own = format!(
+            "{{ \"mcpServers\": {{\"mine\":{{\"command\":\"mine\",\"env\":{{\"API_TOKEN\":\"{SECRET}\"}}}}}} }}\n"
+        );
+        f.write(
+            ".codex/config.toml",
+            "[mcp_servers.safe]\ncommand = 'safe-server'\n",
+        );
+        f.write(".claude.json", &own);
+        let before = step1e_tree(&f.setup.home);
+        f.adopt_from_plan();
+
+        let plan = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        f.setup
+            .share_with_keys(&plan.token, share::KeyAnswer::No, fixture_skill_renderer)
+            .unwrap();
+        f.write(
+            ".codex/config.toml",
+            "[mcp_servers.safe]\ncommand = 'safe-server-2'\n",
+        );
+        let pull = f.sync_with("");
+        let card = pull
+            .proposals
+            .iter()
+            .find(|card| card.id.starts_with("setting-"))
+            .unwrap_or_else(|| panic!("{pull:?}"));
+        crash_during_key_settings_rename(&f, card);
+
+        let claude = fs::read_to_string(f.setup.home.join(".claude.json")).unwrap();
+        assert!(claude.contains("safe-server-2"), "{claude}");
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(manifest.keys.writes.len(), 1, "{manifest:?}");
+        let stored = fs::read(f.setup.data.join(storage::MANIFEST)).unwrap();
+        assert!(!stored
+            .windows(SECRET.len())
+            .any(|bytes| bytes == SECRET.as_bytes()));
+        assert!(!contains_bytes(&f.setup.data, SECRET.as_bytes()));
+
+        let root = FileRoot::open_home(&f.setup.home).unwrap();
+        f.setup.recover(&root, &mut manifest).unwrap();
+        assert!(manifest.keys.writes.is_empty(), "{manifest:?}");
+        f.setup.save(&manifest).unwrap();
+
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert_eq!(step1e_tree(&f.setup.home), before);
+        assert!(!contains_bytes(&f.setup.data, SECRET.as_bytes()));
     }
 
     #[cfg(unix)]
@@ -7881,10 +8329,22 @@ mod tests {
     fn rulesync_round2_adopts_gemini_and_nested_opencode_native_files() {
         let f = Fixture::new();
         let native = [
-            (".gemini/commands/review.toml", "# Keep TOML\nprompt = \"Review {{args}}\"\n"),
-            (".gemini/commands/git/check.toml", "# Keep namespace\nprompt = \"Check {{args}}\"\n"),
-            (".gemini/agents/review.md", "---\nname: review\ndescription: Review\nkind: local\ntools: [read_file]\n---\nReview.\n"),
-            (".config/opencode/commands/git/check.md", "---\ndescription: 'Check' # Keep\n---\nCheck the output.\n"),
+            (
+                ".gemini/commands/review.toml",
+                "# Keep TOML\nprompt = \"Review {{args}}\"\n",
+            ),
+            (
+                ".gemini/commands/git/check.toml",
+                "# Keep namespace\nprompt = \"Check {{args}}\"\n",
+            ),
+            (
+                ".gemini/agents/review.md",
+                "---\nname: review\ndescription: Review\nkind: local\ntools: [read_file]\n---\nReview.\n",
+            ),
+            (
+                ".config/opencode/commands/git/check.md",
+                "---\ndescription: 'Check' # Keep\n---\nCheck the output.\n",
+            ),
         ];
         for (path, contents) in native {
             fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
@@ -8424,13 +8884,34 @@ mod tests {
         let f = Fixture::new();
         let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
         let files = [
-            (".claude/commands/check.md", "---\r\ndescription: 'Check'\r\nallowed-tools: [Read]\r\nx-extra: 'Exact bytes'\r\n---\r\n\r\nCheck $1.\r\n"),
-            (".cursor/agents/plain.md", "---\nname: plain\ndescription: Plain\n---\nRead.\n"),
-            (".cursor/agents/rich.md", "---\nname: rich\ndescription: Rich\nreadonly: true\nx-extra: 'Exact bytes'\n---\nRead.\n"),
-            (".codex/agents/check.toml", "# Keep comment\nname = \"check\"\ndescription = \"Check\"\nmodel = \"gpt-5.4\"\nsandbox_mode = \"read-only\"\ndeveloper_instructions = \"Read.\"\n"),
-            (".gemini/commands/git/check.toml", "# Keep Gemini TOML\nprompt = \"Check {{args}}\"\n"),
-            (".gemini/agents/review.md", "---\nname: review\ndescription: Review\nkind: local\ntools: [read_file]\n---\nReview.\n"),
-            (".config/opencode/commands/git/check.md", "---\ndescription: 'Check' # Keep\n---\nCheck $1.\n"),
+            (
+                ".claude/commands/check.md",
+                "---\r\ndescription: 'Check'\r\nallowed-tools: [Read]\r\nx-extra: 'Exact bytes'\r\n---\r\n\r\nCheck $1.\r\n",
+            ),
+            (
+                ".cursor/agents/plain.md",
+                "---\nname: plain\ndescription: Plain\n---\nRead.\n",
+            ),
+            (
+                ".cursor/agents/rich.md",
+                "---\nname: rich\ndescription: Rich\nreadonly: true\nx-extra: 'Exact bytes'\n---\nRead.\n",
+            ),
+            (
+                ".codex/agents/check.toml",
+                "# Keep comment\nname = \"check\"\ndescription = \"Check\"\nmodel = \"gpt-5.4\"\nsandbox_mode = \"read-only\"\ndeveloper_instructions = \"Read.\"\n",
+            ),
+            (
+                ".gemini/commands/git/check.toml",
+                "# Keep Gemini TOML\nprompt = \"Check {{args}}\"\n",
+            ),
+            (
+                ".gemini/agents/review.md",
+                "---\nname: review\ndescription: Review\nkind: local\ntools: [read_file]\n---\nReview.\n",
+            ),
+            (
+                ".config/opencode/commands/git/check.md",
+                "---\ndescription: 'Check' # Keep\n---\nCheck $1.\n",
+            ),
         ];
         for (path, bytes) in files {
             fs::create_dir_all(f.setup.home.join(path).parent().unwrap()).unwrap();
@@ -10583,7 +11064,9 @@ mod tests {
         f.adopt_from_plan();
         let section = |key: &str, wording: &str| {
             format!(
-            "<!-- WENLAN SHARED RULES {key} {} -->\n## Shared rules\n\nLast synced date.\n\n{wording}\n<!-- END WENLAN SHARED RULES -->\n", "b".repeat(64))
+                "<!-- WENLAN SHARED RULES {key} {} -->\n## Shared rules\n\nLast synced date.\n\n{wording}\n<!-- END WENLAN SHARED RULES -->\n",
+                "b".repeat(64)
+            )
         };
         let edited_block = section(&"a".repeat(64), "First shared rule.");
         let clean_block = section(&"c".repeat(64), "Second shared rule.");
@@ -10631,7 +11114,11 @@ mod tests {
     fn rulesync_revoked_block_replacement_is_left_for_manual_review() {
         let f = Fixture::new();
         f.adopt_from_plan();
-        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Shared rules\n\nLast synced date.\n\nOriginal shared rule.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        let block = format!(
+            "<!-- WENLAN SHARED RULES {} {} -->\n## Shared rules\n\nLast synced date.\n\nOriginal shared rule.\n<!-- END WENLAN SHARED RULES -->\n",
+            "a".repeat(64),
+            "b".repeat(64)
+        );
         f.sync_with(&block);
         let edited = f
             .text(CODEX)
@@ -10934,6 +11421,7 @@ mod tests {
                 confirmed_plan_id: None,
                 token: String::new(),
                 home: Some(other),
+                include_keys: false,
             })
             .unwrap_err();
         assert!(error.to_string().contains("different tool homes"));
@@ -10967,7 +11455,9 @@ mod tests {
         assert_eq!(
             json["blocked"],
             serde_json::json!([
-                &format!(".claude/skills/new-skill: Skill changes need your approval. Run `{TO_REVIEW_COMMAND}` to review them."),
+                &format!(
+                    ".claude/skills/new-skill: Skill changes need your approval. Run `{TO_REVIEW_COMMAND}` to review them."
+                ),
                 ".codex/AGENTS.md: Rule changes need your approval. Use `wenlan rules review` with the proposal below."
             ])
         );
@@ -11638,7 +12128,9 @@ mod tests {
         }
         assert!(!manifest_file.exists());
         assert!(!f.setup.data.join("personal-blobs").exists());
-        eprintln!("1000 files: adopt {adoption_saves} saves in {adoption_time:?}, sync {sync_saves} saves in {sync_time:?}, restore {restore_saves} saves in {restore_time:?}");
+        eprintln!(
+            "1000 files: adopt {adoption_saves} saves in {adoption_time:?}, sync {sync_saves} saves in {sync_time:?}, restore {restore_saves} saves in {restore_time:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -12572,6 +13064,7 @@ mod tests {
             token: plan.token.clone(),
             home: Some(home.clone()),
             confirmed_plan_id: Some(plan.plan_id.clone()),
+            include_keys: false,
         };
         validate_confirmed_adoption(&request, &plan).unwrap();
         let report = f
@@ -12618,6 +13111,7 @@ mod tests {
             token: plan.token.clone(),
             home: Some(home.clone()),
             confirmed_plan_id: None,
+            include_keys: false,
         };
         assert!(validate_confirmed_adoption(&request, &plan).is_err());
         request.confirmed_plan_id = Some("wrong".into());
@@ -12892,6 +13386,41 @@ mod tests {
         assert_eq!(f.text(CODEX), local_rule);
         assert_eq!(f.text(command), "Double-check the result.\n");
         assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
+    }
+
+    #[test]
+    fn rulesync_system_entry_cleans_interrupted_settings_temp_and_keeps_its_receipt() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let lock = f.setup.lock().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let temp = key_shares::begin_write(
+            &f.setup,
+            &mut manifest,
+            Path::new(".claude.json"),
+            Vec::new(),
+        )
+        .unwrap();
+        fs::write(f.setup.home.join(&temp), b"interrupted temp").unwrap();
+        drop(lock);
+
+        Setup::new_with_entry_recovery(f.setup.home.clone(), f.setup.data.clone()).unwrap();
+        assert!(!f.setup.home.join(&temp).exists());
+        let saved = f.setup.load().unwrap().unwrap();
+        assert_eq!(saved.keys.writes.len(), 1, "keep the receipt for review");
+        assert_eq!(saved.keys.writes[0].temp, temp);
+    }
+
+    #[test]
+    fn rulesync_system_entry_does_not_create_state_without_a_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let data = temp.path().join("rulesync");
+        fs::create_dir_all(home.join(".agents")).unwrap();
+
+        Setup::new_with_entry_recovery(home, data.clone()).unwrap();
+
+        assert!(!data.exists(), "empty rules state should stay absent");
     }
 
     #[test]
