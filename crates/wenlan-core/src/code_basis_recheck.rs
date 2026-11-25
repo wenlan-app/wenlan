@@ -404,8 +404,17 @@ async fn read_current(row: &CodeBasisRow) -> Reading {
         start: r.line_start,
         end: r.line_end,
     };
+    let lines_added = r.state == crate::code_basis::CODE_BASIS_STATE_PENDING
+        && r.reason.as_deref() == Some(crate::code_basis::LINES_ADDED);
     let span = match code_anchor::relocate(&text, Some(hint), &row.anchor) {
         Relocation::Changed { span } => span,
+        // Lines were added above the row's own (`LINES_ADDED`): it spans
+        // them, and its own lines still close the span.
+        Relocation::Moved { span } | Relocation::Unchanged { span }
+            if lines_added && span.end == hint.end && hint.start < span.start =>
+        {
+            hint
+        }
         Relocation::Unchanged { .. } | Relocation::Moved { .. } => return Reading::NothingToJudge,
         Relocation::Unresolved => return Reading::Unresolved,
     };

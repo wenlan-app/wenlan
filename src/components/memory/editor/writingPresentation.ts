@@ -96,6 +96,15 @@ function listIndentEm(indent: string): number {
   return Math.round(width * 100) / 100;
 }
 
+/**
+ * Width of an ordered marker such as "1." or "12)": room for each character
+ * at a monospace font's 0.6em plus the gap before the text, so a theme that
+ * sets a monospace body font does not squeeze it.
+ */
+export function orderedMarkerEm(length: number): number {
+  return Math.max(1.35, Math.round((0.62 * length + 0.4) * 100) / 100);
+}
+
 class ListMarkerWidget extends WidgetType {
   constructor(
     readonly kind: "bullet" | "ordered",
@@ -503,6 +512,10 @@ const writingTheme = EditorView.theme({
     color: "var(--mem-text-secondary)",
     fontVariantNumeric: "tabular-nums",
     textAlign: "right",
+    // "1." must never break into "1" over ".". The editor's line wrapping
+    // sets overflow-wrap: anywhere, so a marker a hair too narrow (a theme
+    // with a monospace body font makes each character 0.6em) splits.
+    whiteSpace: "nowrap",
     userSelect: "none",
   },
   ".cm-writing-plain-brackets, .cm-writing-plain-brackets *:not(.cm-writing-link, .cm-writing-link *)": {
@@ -859,7 +872,7 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const indentEm = listIndentEm(indentText);
           const markerWidth = task
             ? "1.43rem"
-            : `${list?.name === "OrderedList" ? Math.max(1.35, 0.58 * (node.to - node.from) + 0.35) : 1.35}em`;
+            : `${list?.name === "OrderedList" ? orderedMarkerEm(node.to - node.from) : 1.35}em`;
           const column = `calc(${indentEm}em + ${markerWidth})`;
           addListLine(itemLine.from, "cm-writing-list-item", column);
           // A nested item's leading spaces are a few pixels wide in a

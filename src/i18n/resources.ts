@@ -173,6 +173,7 @@ const en = {
     state: {
       ok: "Up to date",
       moved: "Moved",
+      linesAdded: "Lines added",
       pending: "Changed",
       unavailable: "Not found",
       deleted: "Deleted",
@@ -3872,6 +3873,7 @@ const zhHans = {
     state: {
       ok: "已是最新",
       moved: "位置变了",
+      linesAdded: "中间多了几行",
       pending: "有变动",
       unavailable: "找不到",
       deleted: "已删除",
@@ -7510,6 +7512,7 @@ const zhHant = {
     state: {
       ok: "已是最新",
       moved: "位置變了",
+      linesAdded: "中間多了幾行",
       pending: "有變動",
       unavailable: "找不到",
       deleted: "已刪除",

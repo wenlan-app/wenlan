@@ -46,6 +46,11 @@ pub struct SetPageLookParams {
     #[serde(default)]
     pub path: Option<String>,
     #[schemars(
+        description = "@home only: true to change the home view the theme in use already has. Leave it out for a new look: make a new theme first."
+    )]
+    #[serde(default)]
+    pub replace: Option<bool>,
+    #[schemars(
         description = "This conversation as <tool>:<id>, e.g. claude-code:<session id>. Defaults to WENLAN_SESSION."
     )]
     #[serde(default)]
@@ -77,7 +82,8 @@ This is the home screen's look, not a page's (it is part of the theme in use and
 - wenlan.home.spaces lists the person's Spaces, the one with the page changed last first: {name, description, starred, modified}. modified is empty for a Space with no listed page.
 - wenlan.home.pages lists pages across every Space, changed last first, at most 200: {id, title, space, created, modified, summary}. space is empty for a page in no Space. wenlan.home.more says there are more.
 - wenlan.open(pageId) opens any page in home.pages. wenlan.check does nothing here.
-- Show a heading of your own at the top; a home has no page title. Rule 3 still holds: build every list from wenlan.home, never write page titles into the HTML.";
+- Show a heading of your own at the top; a home has no page title. Rule 3 still holds: build every list from wenlan.home, never write page titles into the HTML.
+- A home view belongs to one theme. When the person asks for a new look for home and the theme in use already has a home view, make a new theme first (the theme tool, apply with a new id and matching colours), then save the view into it, so the other theme keeps its own. Pass replace: true only to change the current theme's own home view.";
 
 const EXAMPLE: &str = r#"Example: a dashboard that counts done items and shows each table as cards.
 
@@ -310,8 +316,11 @@ impl WenlanMcpServer {
             Err(why) => return refuse(&why),
         };
         let path = format!("/api/pages/{}/look", url_encode_simple(&page_id));
-        let saved: SetPageLookResponse = match client.put(&path, &SetPageLookRequest { html }).await
-        {
+        let request = SetPageLookRequest {
+            html,
+            replace: params.replace.unwrap_or(false),
+        };
+        let saved: SetPageLookResponse = match client.put(&path, &request).await {
             Ok(saved) => saved,
             Err(WenlanError::Api {
                 reason: Some(reason),
@@ -325,7 +334,9 @@ impl WenlanMcpServer {
             }
             Err(error) => return Ok(tool_error(error, "set page look")),
         };
-        let text = if saved.created && page_id == HOME_LOOK_ID {
+        let text = if saved.replaced && page_id == HOME_LOOK_ID {
+            "Saved into the theme in use, in place of its earlier home view (that one is not kept). Wenlan's home screen now shows this look while that theme is on. Tell the person to open Home in Wenlan."
+        } else if saved.created && page_id == HOME_LOOK_ID {
             "Saved into the theme in use. Wenlan's home screen now shows this look, filled with the person's current pages and Spaces, while that theme is on. Settings › Appearance takes it off. Tell the person to open Home in Wenlan."
         } else if saved.created {
             "Saved. Wenlan now opens this page on the look, filled with the page's current text. The pencil in the page's top bar shows the text for editing. The earlier look, if any, is kept and the person can put it back. Tell the person to open the page in Wenlan."

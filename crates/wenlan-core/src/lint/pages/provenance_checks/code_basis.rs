@@ -64,7 +64,7 @@ fn assess_code_basis(
     }
     for (row, verdict) in verdicts {
         let bad = match verdict {
-            CodeBasisVerdict::Pending => {
+            CodeBasisVerdict::Pending | CodeBasisVerdict::LinesAdded { .. } => {
                 pending += 1;
                 true
             }
