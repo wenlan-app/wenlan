@@ -716,6 +716,41 @@ pub fn rename_space_access(path: &Path, from: &str, to: &str) -> Result<(), Wenl
     })
 }
 
+/// The owner's member record for a team this computer is the server of,
+/// made (with no key) when the team has no owner yet: the person who
+/// started the team here is its owner, as the team sees what they publish
+/// from this computer's terminal or app. An existing owner is kept as is.
+pub fn ensure_owner(path: &Path, name: &str) -> Result<Member, WenlanError> {
+    let name = clean_name(name)?;
+    change_team(path, |file| {
+        if let Some(owner) = file
+            .members
+            .iter()
+            .find(|member| member.role == TeamRole::Owner && member.is_active())
+        {
+            return Ok(owner.clone());
+        }
+        let owner = Member {
+            id: uuid::Uuid::new_v4().simple().to_string(),
+            name,
+            key_sha256: None,
+            spaces: BTreeMap::new(),
+            library_access: None,
+            space_only: false,
+            added_at: now(),
+            removed_at: None,
+            role: TeamRole::Owner,
+            identities: Vec::new(),
+            keys: Vec::new(),
+            invite: None,
+            everyone: BTreeMap::new(),
+            team: None,
+        };
+        file.members.push(owner.clone());
+        Ok(owner)
+    })
+}
+
 /// Whether the team has an owner who manages it from another computer.
 pub fn has_owner(path: &Path) -> Result<bool, WenlanError> {
     Ok(read_team(path)?

@@ -1162,3 +1162,38 @@ fn the_owners_list_says_how_each_member_signs_in_without_the_whole_email() {
     assert_eq!(me.accounts[0].email.as_deref(), Some("eli@studio.example"));
     assert!(!serde_json::to_string(&me).unwrap().contains("s9"));
 }
+
+/// A team started on this computer (`wenlan team start`, the app's "start a
+/// team on this computer") records the person who started it as owner, with
+/// no key: they act from this computer, so the host's terminal can publish.
+#[test]
+fn a_team_started_here_records_its_starter_as_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(TEAM_FILE);
+    rename_team(&path, "Studio").unwrap();
+    let library = crate::team_library::Library::new(path.clone(), false);
+    assert!(matches!(
+        library.owner(),
+        Err(crate::team_library::LibraryError::Denied)
+    ));
+
+    let owner = ensure_owner(&path, " Qi ").unwrap();
+    assert_eq!(owner.role, TeamRole::Owner);
+    assert_eq!(owner.name, "Qi");
+    assert!(owner.key_sha256.is_none());
+    assert_eq!(library.owner().unwrap(), owner.id);
+    assert!(has_owner(&path).unwrap());
+
+    // Starting again (or another name) keeps the one owner.
+    let again = ensure_owner(&path, "Someone else").unwrap();
+    assert_eq!(again.id, owner.id);
+    assert_eq!(again.name, "Qi");
+    assert_eq!(read_team(&path).unwrap().members.len(), 1);
+    assert!(ensure_owner(&path, " ").is_err());
+
+    // A new owner link (a server nobody sits at, started with a new owner
+    // link) gives this same owner a key.
+    let (keyed, key) = owner_key(&path, "Owner").unwrap();
+    assert_eq!(keyed.id, owner.id);
+    assert!(authenticate(&path, &key).unwrap().is_some());
+}

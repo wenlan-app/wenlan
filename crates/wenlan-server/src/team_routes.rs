@@ -263,6 +263,33 @@ async fn own_name(state: &SharedState) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Records the person here as the owner of a team this computer is the
+/// server of when the team has none: one started from the app or
+/// `wenlan team start` before the starter was recorded. A server nobody sits
+/// at (`WENLAN_TEAM_ADDR`, the personal cloud) makes its own owner.
+async fn own_started_team(state: &SharedState, path: &std::path::Path) -> Result<(), ServerError> {
+    if env_value(TEAM_ADDR_ENV).is_some() || env_value(crate::cloud_pass::ACCOUNT_ENV).is_some() {
+        return Ok(());
+    }
+    let unowned = {
+        let path = path.to_path_buf();
+        blocking(move || {
+            let file = team::read_team(&path)?;
+            let hosted = team::hosted_spaces(&shared_space::settings_path())?.len();
+            Ok(hosts_a_team(&file, hosted) && !team::has_owner(&path)?)
+        })
+        .await?
+    };
+    if !unowned {
+        return Ok(());
+    }
+    let name = own_name(state)
+        .await
+        .unwrap_or_else(|| OWNER_STAND_IN.to_string());
+    let path = path.to_path_buf();
+    blocking(move || team::ensure_owner(&path, &name).map(|_| ())).await
+}
+
 fn json_of<T: serde::Serialize>(value: &T) -> Option<serde_json::Value> {
     serde_json::to_value(value).ok()
 }
@@ -744,6 +771,9 @@ pub async fn handle_start_team(
         blocking(move || {
             let path = team::team_path();
             team::rename_team(&path, &name)?;
+            // The person starting the team here is its owner: publishing
+            // from this computer acts as them.
+            team::ensure_owner(&path, &person)?;
             team::set_listen(&path, Some(&listen), url.as_deref())
         })
         .await?;

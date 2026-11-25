@@ -8,7 +8,8 @@ use clap::Subcommand;
 use wenlan_types::shared_space::{SharedHost, SharedSyncRequest, SharedSyncStatus};
 use wenlan_types::team::{
     TeamAccess, TeamAddMemberRequest, TeamEveryone, TeamJoinResponse, TeamMember, TeamMemberKey,
-    TeamMembershipInfo, TeamSpaceAccess, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
+    TeamMembershipInfo, TeamRole, TeamSpaceAccess, TeamStartRequest, TeamStatus,
+    TeamUpdateMemberRequest,
 };
 
 use crate::client::WenlanClient;
@@ -657,11 +658,14 @@ fn print_own_team(status: &TeamStatus) {
     if !status.everyone.is_empty() {
         println!("Open to everyone: {}", access_list(&status.everyone));
     }
-    let active: Vec<&TeamMember> = status
+    let (owners, active): (Vec<&TeamMember>, Vec<&TeamMember>) = status
         .members
         .iter()
         .filter(|member| member.removed_at.is_none())
-        .collect();
+        .partition(|member| member.role == TeamRole::Owner);
+    if let Some(owner) = owners.first() {
+        println!("Owner: {}", owner.name);
+    }
     if active.is_empty() {
         println!("No one invited yet (wenlan team invite <NAME>)");
         return;
