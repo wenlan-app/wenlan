@@ -919,8 +919,6 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/settings/apply` | main | no | not_applicable | `none` | — | local settings write receipt |
 | `POST` | `/api/rules/setup/settings/preview` | main | no | not_applicable | `none` | — | settings plan contains safe local settings additions |
 | `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |
-| `POST` | `/api/rules/setup/shared-source/off/preview` | main | no | not_applicable | `none` | — | personal file-source retirement preview; no Page records |
-| `POST` | `/api/rules/setup/shared-source/off` | main | no | not_applicable | `none` | — | person-only local source retirement status |
 | `POST` | `/api/rules/personal/show` | main | no | not_applicable | `none` | — | local personal master text and line origins; no Page records |
 | `POST` | `/api/rules/personal/propose` | main | no | not_applicable | `none` | — | local personal master and submitted rule edit preview; no Page records |
 | `GET` | `/api/rules/personal/plan/{id}` | main | no | not_applicable | `none` | — | in-memory personal rule edit preview; no Page records |

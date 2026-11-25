@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Plan and apply rule moves from the reviewed, live tool documents.
 
-use super::shared_source::SharedSource;
 use super::*;
-use wenlan_core::rulesync_adopt::{legacy_claude_imported_rules, without_shared};
+use wenlan_core::rulesync_adopt::without_shared;
 use wenlan_core::rulesync_personal::join_text;
 use wenlan_core::rulesync_personal::sharing::{overlay_lines_with, LocalReason};
 use wenlan_types::rulesync::{SharingRule, SharingRuleStay};
@@ -101,10 +100,8 @@ type RuleAdditions = Vec<(&'static str, usize)>;
 /// A line cannot travel if any copy has to stay local, including within a
 /// private key or a Markdown block.
 pub(super) fn plan(
-    home: &Path,
     root: &FileRoot,
     manifest: &Manifest,
-    source: &SharedSource,
     enrolled: &[&'static PersonalTarget],
     keep: &[usize],
 ) -> Result<(RuleShares, RuleAdditions)> {
@@ -114,6 +111,12 @@ pub(super) fn plan(
         let path = Path::new(target.rules.destination);
         let receipt = manifest.delivered.get(path);
         let marker = manifest.credentials.rules.get(path);
+        if manifest.imported_rule_paths.contains(path) {
+            if let Some(marker) = marker {
+                plan.keep_credential_lines(target.tool.display_name(), &marker.lines);
+            }
+            continue;
+        }
         if receipt.is_none() && marker.is_none() {
             continue;
         }
@@ -177,13 +180,6 @@ pub(super) fn plan(
                 .get(path)
                 .and_then(|backup| text(backup).ok())
                 .unwrap_or("");
-            let imported = legacy_claude_imported_rules(
-                home,
-                path,
-                original,
-                &manifest.master.shared,
-                manifest.shared_source_following,
-            );
             let mut native: BTreeSet<_> = original.lines().map(str::to_owned).collect();
             // The current tool file can contain bytes Wenlan previously
             // flattened into it. Only later authored additions are new
@@ -195,7 +191,7 @@ pub(super) fn plan(
                     .filter(|line| !saved.contains(line))
                     .map(str::to_owned),
             );
-            (imported, Some(native))
+            (BTreeSet::new(), Some(native))
         };
         documents.push(RuleDocument {
             target,
@@ -209,10 +205,9 @@ pub(super) fn plan(
         plan.versions
             .push((target.id, receipt.rule_revision.clone()));
     }
-    plan.keep_credential_lines(SHARED_RULES, &source.credential_lines);
     let previously_kept = |line: &str| manifest.kept_share_rules.contains(line);
     let local = classified_local(&documents, previously_kept, BTreeMap::new());
-    let shared: BTreeSet<_> = source.merged.lines().chain(source.read.lines()).collect();
+    let shared: BTreeSet<_> = manifest.master.shared.lines().collect();
     let mut numbers = BTreeMap::new();
     let donors = documents.iter().filter(|doc| doc.writable);
     for doc in donors.clone() {
@@ -325,13 +320,7 @@ pub(super) struct RuleShareUpdate {
     overrides: BTreeMap<String, LocalText>,
     kept: BTreeSet<String>,
     authored: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
-    source_append: Option<SourceAppend>,
     history: Option<personal_rules::RulePlanUpdate>,
-}
-
-struct SourceAppend {
-    text: String,
-    changed_since_share: bool,
 }
 
 impl RuleShareUpdate {
@@ -344,11 +333,6 @@ impl RuleShareUpdate {
         manifest.master.overrides = self.overrides;
         manifest.kept_share_rules.extend(self.kept);
         manifest.authored_rules.extend(self.authored);
-        if let Some(append) = self.source_append {
-            manifest.shared_source_base = Some(append.text);
-            manifest.shared_source_restore_blocked |= append.changed_since_share;
-            manifest.rule_origins_tracked = true;
-        }
     }
 }
 
@@ -383,12 +367,7 @@ impl Setup {
         };
         let mut operations = Vec::new();
         let mut authored = BTreeMap::new();
-        let mut source_append = None;
         if !moving.is_empty() {
-            ensure!(
-                manifest.rule_origins_tracked || !is_shared_source_receipt(manifest, Path::new(SHARED_RULES)),
-                "The backup does not say which tool added the previously shared rules. Review the tool and shared files before sharing more rules."
-            );
             master.shared = append_rule_lines(&master.shared, &approved);
             let mut worktrees = DeliveryWorktrees::new(&self.home)?;
             for &(target, writable) in &plan.targets {
@@ -461,21 +440,6 @@ impl Setup {
                     allow_link: false,
                 });
             }
-            // A protected source cannot enter the share journal. The same
-            // approved rules still go into the master and the tool copies.
-            if manifest.shared_source_following
-                && !manifest
-                    .credentials
-                    .rules
-                    .contains_key(Path::new(SHARED_RULES))
-            {
-                source_append = Some(stage_source_append(
-                    root,
-                    manifest,
-                    &approved,
-                    &mut operations,
-                )?);
-            }
         }
         Ok(Some(RuleShareChange {
             update: RuleShareUpdate {
@@ -484,7 +448,6 @@ impl Setup {
                 overrides: master.overrides,
                 kept,
                 authored,
-                source_append,
                 history: None,
             },
             operations,
@@ -551,57 +514,6 @@ impl Setup {
         }
         Ok(())
     }
-}
-
-fn stage_source_append(
-    root: &FileRoot,
-    manifest: &Manifest,
-    approved: &[&str],
-    operations: &mut Vec<Pending>,
-) -> Result<SourceAppend> {
-    ensure!(
-        manifest.shared_source_following,
-        "The shared source is retired; sharing uses the saved Wenlan master."
-    );
-    let source_root = root.with_shared_rule_source()?;
-    let path = PathBuf::from(SHARED_RULES);
-    let directory = path.parent().expect("shared rules directory");
-    let seen = source_root
-        .read(&path, false)
-        .context("Read ~/.agents/AGENTS.md before sharing rules")?;
-    ensure!(
-        !snapshot_has_credentials(&seen),
-        "{}",
-        credential_note(&path)
-    );
-    let raw = text(&seen)?;
-    ensure!(
-        manifest.shared_source_base.as_deref() == Some(raw),
-        "~/.agents/AGENTS.md changed since the preview. Run `wenlan rules share --dry-run` again."
-    );
-    let appended = append_rule_lines(raw, approved);
-    let changed_since_share =
-        is_shared_source_receipt(manifest, &path) && manifest.delivered[&path].delivered != seen;
-    if source_root.read(directory, false)? == Snapshot::Absent {
-        operations.push(Pending {
-            path: directory.to_owned(),
-            seen: Snapshot::Absent,
-            desired: Snapshot::private_directory(),
-            kind: Some(Kind::SharedRuleSource),
-            allow_link: false,
-        });
-    }
-    operations.push(Pending {
-        path,
-        desired: with_bytes(&seen, appended.as_bytes().to_vec()),
-        seen,
-        kind: Some(Kind::SharedRuleSource),
-        allow_link: false,
-    });
-    Ok(SourceAppend {
-        text: appended,
-        changed_since_share,
-    })
 }
 
 fn append_rule_lines(original: &str, approved: &[&str]) -> String {
@@ -723,26 +635,4 @@ pub(super) fn after_rule_final_checkpoint() -> Result<()> {
         "Synthetic post-checkpoint failure."
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn legacy_share_imports_do_not_open_the_retired_shared_source() {
-        let home = tempfile::tempdir().unwrap();
-        let source = home.path().join(SHARED_RULES);
-        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        std::fs::write(&source, "Retired source only rule.\n").unwrap();
-
-        let imported = legacy_claude_imported_rules(
-            home.path(),
-            Path::new(".claude/CLAUDE.md"),
-            "@~/.agents/AGENTS.md\n",
-            "",
-            false,
-        );
-        assert!(!imported.contains("Retired source only rule."));
-    }
 }

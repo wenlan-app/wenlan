@@ -207,43 +207,8 @@ pub fn is_personal_path(path: &Path) -> bool {
 /// resolve to this identity are aliases. Multiple hard links are distinct
 /// entries and must continue through the normal link-safety checks.
 pub fn directory_entry_identity(metadata: &Metadata) -> Option<(u64, u64)> {
-    #[cfg(windows)]
-    {
-        use cap_primitives::fs::_WindowsByHandle as _;
-        let inode = metadata.file_index()?;
-        let device = u64::from(metadata.volume_serial_number()?);
-        let single_link = metadata.is_dir() || metadata.number_of_links()? == 1;
-        (inode != 0 && single_link).then_some((device, inode))
-    }
-    #[cfg(not(windows))]
-    {
-        let inode = metadata.ino();
-        (inode != 0 && (metadata.is_dir() || metadata.nlink() == 1))
-            .then(|| (metadata.dev(), inode))
-    }
-}
-
-/// Return the opened regular file's identity and link count only when the
-/// platform can verify both. In particular, Windows metadata can lack these
-/// by-handle fields; that is a refusal, not a reason to panic.
-pub fn file_identity_and_link_count(metadata: &Metadata) -> Option<((u64, u64), u64)> {
-    if !metadata.is_file() {
-        return None;
-    }
-    #[cfg(windows)]
-    {
-        use cap_primitives::fs::_WindowsByHandle as _;
-        let inode = metadata.file_index()?;
-        let device = u64::from(metadata.volume_serial_number()?);
-        let links = u64::from(metadata.number_of_links()?);
-        (inode != 0 && links != 0).then_some(((device, inode), links))
-    }
-    #[cfg(not(windows))]
-    {
-        let inode = metadata.ino();
-        let links = metadata.nlink();
-        (inode != 0 && links != 0).then(|| ((metadata.dev(), inode), links))
-    }
+    let inode = metadata.ino();
+    (inode != 0 && (metadata.is_dir() || metadata.nlink() == 1)).then(|| (metadata.dev(), inode))
 }
 
 /// A spelling supplied by the caller can alias an on-disk Unicode name.
@@ -551,10 +516,10 @@ pub fn require_plain_personal_file(
     if cfg!(windows) && metadata.permissions().readonly() {
         return Err(readonly_personal_file());
     }
-    if directory_entry_identity(metadata).is_none() {
+    if metadata.nlink() != 1 {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "the file has multiple hard links or its identity cannot be verified. Its link will be kept in place",
+            "the file has multiple hard links. Its link will be kept in place",
         ));
     }
     #[cfg(unix)]

@@ -3,37 +3,24 @@
 
 use super::*;
 use std::ops::Range;
-use wenlan_core::rulesync_adopt::SHARED_RULES;
 
-pub(super) fn unknown_shared_origins(root: &FileRoot, manifest: &Manifest) -> bool {
-    if !manifest.shared_source_following {
-        // The retired source is intentionally unavailable as provenance.
-        return !manifest.rule_origins_tracked;
-    }
-    if manifest.rule_origins_tracked {
+pub(super) fn unknown_shared_origins(manifest: &Manifest) -> bool {
+    if manifest.rule_origins_tracked || manifest.master.shared.trim().is_empty() {
         return false;
     }
-    let shared_path = Path::new(SHARED_RULES);
-    if is_shared_source_receipt(manifest, shared_path) {
-        // Before origin tracking a share could move a rule out of its only
-        // originating overlay, leaving identical tool delivery receipts.
-        return true;
-    }
-    if manifest.master.shared.trim().is_empty() {
-        return false;
-    }
-    // Older review approvals could also change the shared master in memory.
-    // Check whether its lines still have a source we can restore or leave in place.
-    let source = root
-        .with_shared_rule_source()
-        .and_then(|root| root.read(shared_path, false));
-    let source = source
-        .as_ref()
-        .ok()
-        .and_then(|snapshot| text(snapshot).ok())
-        .unwrap_or("");
-    let recoverable: BTreeSet<_> = source
-        .lines()
+    // Old backups may still preserve an original copy. Use saved rule files
+    // and known donors so restore does not need the imported source.
+    let recoverable: BTreeSet<_> = manifest
+        .backup
+        .iter()
+        .filter(|(path, _)| {
+            manifest
+                .delivered
+                .get(*path)
+                .is_some_and(|receipt| matches!(receipt.kind, Kind::Rule { .. }))
+        })
+        .filter_map(|(_, snapshot)| text(snapshot).ok())
+        .flat_map(str::lines)
         .chain(manifest.authored_rules.values().flat_map(|authored| {
             authored
                 .lines
@@ -112,26 +99,6 @@ impl AuthoredRules {
         Ok(())
     }
 
-    pub(super) fn check_shared_removal_against_overlay(
-        &self,
-        before: &str,
-        after: &str,
-        overlay: &str,
-    ) -> Result<()> {
-        for line in self.lines.iter().filter(|line| line.shared) {
-            let key = line_key(&line.text);
-            ensure!(
-                !before.lines().any(|item| item == key)
-                    || after.lines().any(|item| item == key)
-                    || !overlay.lines().any(|item| item == key),
-                "A shared rule and a tool rule have an unclear origin. The rules were left unchanged."
-            );
-        }
-        Ok(())
-    }
-
-    // Capture ownership before an accepted tool edit is folded into the
-    // canonical overlay and its delivery baseline advances.
     pub(super) fn for_tool_edit(
         manifest: &Manifest,
         path: &Path,

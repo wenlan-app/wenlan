@@ -106,7 +106,7 @@ pub(super) async fn list(headers: HeaderMap) -> Result<Json<RulesReviewList>, Se
 }
 
 fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
-    let status = setup.status_with_source_lock()?;
+    let status = setup.status_for_caller(false)?;
     let mut items = status
         .proposals
         .into_iter()

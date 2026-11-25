@@ -118,9 +118,6 @@ rustix = { version = "1.1.6", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 fastembed = { workspace = true, features = ["ort-load-dynamic"] }
-# cap-fs-ext's convenience identity methods panic if Windows cannot supply
-# by-handle identity. Use the underlying optional values to refuse safely.
-cap-primitives = "=4.0.3"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(not(windows))'.dependencies]

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::super::tests::{fixture_rule_renderer, fixture_skill_renderer, Fixture};
+use super::super::tests::{fixture_rule_renderer, fixture_skill_renderer, Fixture, SHARED_RULES};
 use super::*;
 use wenlan_types::personal_rules::{PersonalRuleEdit, PersonalRuleLayer};
-use wenlan_types::rulesync::SharedSourceOffRequest;
 
 const CLAUDE_RULES: &str = "claudecode";
 
@@ -59,18 +58,6 @@ fn adopted_fixture() -> Fixture {
     let fixture = Fixture::new();
     fixture.adopt_from_plan();
     fixture
-}
-
-#[test]
-fn source_free_setup_status_is_off_without_opening_the_source() {
-    let fixture = Fixture::new();
-    let source = fixture.setup.home.join(SHARED_RULES);
-    std::fs::remove_file(&source).unwrap();
-    std::fs::create_dir(&source).unwrap();
-    let status = fixture.setup.status().unwrap();
-    assert!(!status.adopted);
-    assert!(!status.shared_source_following);
-    assert!(source.is_dir());
 }
 
 #[test]
@@ -148,7 +135,7 @@ fn personal_rule_plan_waits_for_an_unconfirmed_scope_edit() {
 }
 
 #[test]
-fn personal_rule_plan_and_source_off_preserve_reviewed_tool_additions_on_setup_restore() {
+fn personal_rule_plan_preserves_reviewed_tool_additions_on_setup_restore() {
     use super::super::tests::{accept_local_rule_additions, CLAUDE, CODEX};
 
     let fixture = Fixture::new();
@@ -159,14 +146,6 @@ fn personal_rule_plan_and_source_off_preserve_reviewed_tool_additions_on_setup_r
     fixture.adopt_from_plan();
     accept_local_rule_additions(&fixture, additions);
 
-    let preview = fixture.setup.preview_source_off().unwrap();
-    fixture
-        .setup
-        .turn_source_off(&SharedSourceOffRequest {
-            plan_id: preview.plan_id,
-            token: preview.token,
-        })
-        .unwrap();
     let retired_source = fixture.setup.home.join(SHARED_RULES);
     let marker = "Retired source stays untouched.\n";
     std::fs::write(&retired_source, marker).unwrap();
@@ -278,14 +257,6 @@ fn personal_rule_plan_removes_a_previously_shared_donor_addition() {
         .to_owned();
     let addition = "A portable donor rule.\n";
     accept_local_rule_additions(&fixture, addition);
-    let off = fixture.setup.preview_source_off().unwrap();
-    fixture
-        .setup
-        .turn_source_off(&SharedSourceOffRequest {
-            plan_id: off.plan_id,
-            token: off.token,
-        })
-        .unwrap();
     let preview = fixture
         .setup
         .build_share_preview(Some(&[]), false, fixture_skill_renderer)
@@ -338,55 +309,6 @@ fn share_fixture_rules(fixture: &Fixture) {
 fn personal_rule_plan_keeps_a_shared_donor_moved_back_to_its_overlay() {
     use super::super::tests::{accept_local_rule_additions, CODEX};
 
-    for source_off in [false, true] {
-        let fixture = adopted_fixture();
-        let original = text(&fixture.setup.load().unwrap().unwrap().backup[Path::new(CODEX)])
-            .unwrap()
-            .to_owned();
-        let addition = "A portable donor rule.\n";
-        accept_local_rule_additions(&fixture, addition);
-        if source_off {
-            let off = fixture.setup.preview_source_off().unwrap();
-            fixture
-                .setup
-                .turn_source_off(&SharedSourceOffRequest {
-                    plan_id: off.plan_id,
-                    token: off.token,
-                })
-                .unwrap();
-        }
-        share_fixture_rules(&fixture);
-        let master = fixture.setup.load().unwrap().unwrap().master;
-        assert!(master.shared.contains(addition));
-        let plan = propose(
-            &fixture,
-            vec![
-                PersonalRuleEdit {
-                    layer: PersonalRuleLayer::Shared,
-                    text: master.shared.replace(addition, ""),
-                },
-                PersonalRuleEdit {
-                    layer: PersonalRuleLayer::Tool {
-                        tool: "codexcli".into(),
-                    },
-                    text: format!("{}{addition}", master.overlays["codexcli"]),
-                },
-            ],
-        );
-        apply(&fixture, &plan).unwrap();
-        let restored = fixture.setup.restore().unwrap();
-        assert!(
-            restored.blocked.is_empty(),
-            "source_off={source_off}: {restored:?}"
-        );
-        assert_eq!(fixture.text(CODEX), format!("{original}{addition}"));
-    }
-}
-
-#[test]
-fn followed_source_deletion_does_not_resurrect_a_shared_donor() {
-    use super::super::tests::{accept_local_rule_additions, CODEX};
-
     let fixture = adopted_fixture();
     let original = text(&fixture.setup.load().unwrap().unwrap().backup[Path::new(CODEX)])
         .unwrap()
@@ -394,25 +316,27 @@ fn followed_source_deletion_does_not_resurrect_a_shared_donor() {
     let addition = "A portable donor rule.\n";
     accept_local_rule_additions(&fixture, addition);
     share_fixture_rules(&fixture);
-    let source = fixture.text(SHARED_RULES);
-    assert!(source.contains(addition));
-    fixture.write(
-        SHARED_RULES,
-        &format!("{}A different shared rule.\n", source.replace(addition, "")),
+    let master = fixture.setup.load().unwrap().unwrap().master;
+    assert!(master.shared.contains(addition));
+    let plan = propose(
+        &fixture,
+        vec![
+            PersonalRuleEdit {
+                layer: PersonalRuleLayer::Shared,
+                text: master.shared.replace(addition, ""),
+            },
+            PersonalRuleEdit {
+                layer: PersonalRuleLayer::Tool {
+                    tool: "codexcli".into(),
+                },
+                text: format!("{}{addition}", master.overlays["codexcli"]),
+            },
+        ],
     );
-    let synced = fixture.sync_with("");
-    assert!(synced.blocked.is_empty(), "{synced:?}");
-    let off = fixture.setup.preview_source_off().unwrap();
-    fixture
-        .setup
-        .turn_source_off(&SharedSourceOffRequest {
-            plan_id: off.plan_id,
-            token: off.token,
-        })
-        .unwrap();
+    apply(&fixture, &plan).unwrap();
     let restored = fixture.setup.restore().unwrap();
     assert!(restored.blocked.is_empty(), "{restored:?}");
-    assert_eq!(fixture.text(CODEX), original);
+    assert_eq!(fixture.text(CODEX), format!("{original}{addition}"));
 }
 
 #[test]
@@ -478,54 +402,6 @@ fn personal_rule_plan_refuses_an_ambiguous_move_to_another_tool() {
 fn shared_donor_removal_refuses_an_indistinguishable_existing_overlay_copy() {
     use super::super::tests::accept_local_rule_additions;
 
-    for source_off in [false, true] {
-        let fixture = adopted_fixture();
-        let line = "A portable donor rule.\n";
-        accept_local_rule_additions(&fixture, line);
-        if source_off {
-            let off = fixture.setup.preview_source_off().unwrap();
-            fixture
-                .setup
-                .turn_source_off(&SharedSourceOffRequest {
-                    plan_id: off.plan_id,
-                    token: off.token,
-                })
-                .unwrap();
-        }
-        share_fixture_rules(&fixture);
-        let master = fixture.setup.load().unwrap().unwrap().master;
-        let add_copy = propose(
-            &fixture,
-            vec![PersonalRuleEdit {
-                layer: PersonalRuleLayer::Tool {
-                    tool: "codexcli".into(),
-                },
-                text: format!("{}{line}", master.overlays["codexcli"]),
-            }],
-        );
-        apply(&fixture, &add_copy).unwrap();
-        let before = fixture.setup.load().unwrap().unwrap();
-        let edit = [PersonalRuleEdit {
-            layer: PersonalRuleLayer::Shared,
-            text: before.master.shared.replace(line, ""),
-        }];
-        let error = fixture
-            .setup
-            .prepare_rule_plan(&before, &edit, &[], None, &fixture_rule_renderer)
-            .err()
-            .expect("the surviving duplicate has an ambiguous origin");
-        assert!(error.to_string().contains("origin"), "{error:#}");
-        assert_eq!(
-            fixture.setup.load().unwrap().unwrap().authored_rules,
-            before.authored_rules
-        );
-    }
-}
-
-#[test]
-fn followed_source_removal_refuses_an_indistinguishable_overlay_copy() {
-    use super::super::tests::accept_local_rule_additions;
-
     let fixture = adopted_fixture();
     let line = "A portable donor rule.\n";
     accept_local_rule_additions(&fixture, line);
@@ -541,17 +417,21 @@ fn followed_source_removal_refuses_an_indistinguishable_overlay_copy() {
         }],
     );
     apply(&fixture, &add_copy).unwrap();
-    let source = fixture.text(SHARED_RULES);
-    fixture.write(SHARED_RULES, &source.replace(line, ""));
-    let _lock = fixture.setup.lock().unwrap();
-    let mut manifest = fixture.setup.load().unwrap().unwrap();
-    let before = manifest.authored_rules.clone();
+    let before = fixture.setup.load().unwrap().unwrap();
+    let edit = [PersonalRuleEdit {
+        layer: PersonalRuleLayer::Shared,
+        text: before.master.shared.replace(line, ""),
+    }];
     let error = fixture
         .setup
-        .follow_shared_source(&mut manifest)
-        .unwrap_err();
+        .prepare_rule_plan(&before, &edit, &[], None, &fixture_rule_renderer)
+        .err()
+        .expect("the surviving duplicate has an ambiguous origin");
     assert!(error.to_string().contains("origin"), "{error:#}");
-    assert_eq!(manifest.authored_rules, before);
+    assert_eq!(
+        fixture.setup.load().unwrap().unwrap().authored_rules,
+        before.authored_rules
+    );
 }
 
 #[test]
@@ -628,15 +508,20 @@ fn stale_legacy_shared_donor_is_refused_instead_of_resurrected() {
     let line = "A portable donor rule.\n";
     accept_local_rule_additions(&fixture, line);
     share_fixture_rules(&fixture);
-    let old_authored = fixture.setup.load().unwrap().unwrap().authored_rules;
-    let source = fixture.text(SHARED_RULES);
-    fixture.write(
-        SHARED_RULES,
-        &format!("{}Another shared rule.\n", source.replace(line, "")),
+    let before = fixture.setup.load().unwrap().unwrap();
+    let plan = propose(
+        &fixture,
+        vec![PersonalRuleEdit {
+            layer: PersonalRuleLayer::Shared,
+            text: format!(
+                "{}Another shared rule.\n",
+                before.master.shared.replace(line, "")
+            ),
+        }],
     );
-    assert!(fixture.sync_with("").blocked.is_empty());
+    apply(&fixture, &plan).unwrap();
     let mut stale = fixture.setup.load().unwrap().unwrap();
-    stale.authored_rules = old_authored;
+    stale.authored_rules = before.authored_rules;
     let mut json = serde_json::to_value(stale).unwrap();
     let authored = json["authored_rules"][CODEX].as_object_mut().unwrap();
     authored.remove("reference");
@@ -698,102 +583,6 @@ fn setup_restore_records_a_recovered_legacy_override_with_unknown_origin() {
         matches!(&rule.layer, PersonalRuleLayer::Tool { tool: id } if id == tool)
             && rule.text.contains("A legacy accepted addition.")
     }));
-}
-
-#[test]
-fn retired_source_hardlink_is_not_read_by_rule_routes() {
-    let fixture = adopted_fixture();
-    let preview = fixture.setup.preview_source_off().unwrap();
-    fixture
-        .setup
-        .turn_source_off(&SharedSourceOffRequest {
-            plan_id: preview.plan_id,
-            token: preview.token,
-        })
-        .unwrap();
-    let source = fixture.setup.home.join(SHARED_RULES);
-    let tool = fixture.setup.home.join(super::super::tests::CLAUDE);
-    let marker = "synthetic retired source marker";
-    std::fs::write(&source, marker).unwrap();
-    std::fs::remove_file(&tool).unwrap();
-    std::fs::hard_link(&source, &tool).unwrap();
-
-    let root = fixture.setup.home_files().unwrap();
-    let error = root
-        .read(Path::new(super::super::tests::CLAUDE), false)
-        .unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-    assert!(root.with_shared_rule_source().is_err());
-
-    let status = fixture.setup.status();
-    assert!(!format!("{status:?}").contains(marker));
-    let share = fixture.setup.preview_share_using(fixture_skill_renderer);
-    assert!(!format!("{share:?}").contains(marker));
-    let adoption = fixture
-        .setup
-        .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer);
-    assert!(!format!("{adoption:?}").contains(marker));
-    let restore = fixture.setup.restore();
-    assert!(!format!("{restore:?}").contains(marker));
-    assert_eq!(std::fs::read_to_string(&source).unwrap(), marker);
-}
-
-#[test]
-fn retired_source_hardlink_in_private_data_is_not_read() {
-    let fixture = adopted_fixture();
-    let preview = fixture.setup.preview_source_off().unwrap();
-    fixture
-        .setup
-        .turn_source_off(&SharedSourceOffRequest {
-            plan_id: preview.plan_id,
-            token: preview.token,
-        })
-        .unwrap();
-    let source = fixture.setup.home.join(SHARED_RULES);
-    let marker = "synthetic private-data alias marker";
-    std::fs::write(&source, marker).unwrap();
-    let manifest = fixture.setup.data.join(storage::MANIFEST);
-    std::fs::remove_file(&manifest).unwrap();
-    std::fs::hard_link(&source, &manifest).unwrap();
-
-    let status = fixture.setup.status();
-    assert!(status.is_err());
-    assert!(!format!("{status:?}").contains(marker));
-    assert_eq!(std::fs::read_to_string(&source).unwrap(), marker);
-}
-
-#[test]
-fn settings_only_source_off_adoption_does_not_read_the_source() {
-    let fixture = Fixture::new();
-    let mut manifest = empty_manifest();
-    manifest.settings_only = true;
-    {
-        let _lock = fixture.setup.lock().unwrap();
-        fixture.setup.save(&manifest).unwrap();
-    }
-    fixture.write(super::super::tests::CLAUDE, "Claude-only rule.\n");
-    fixture.write(super::super::tests::CODEX, "Codex-only rule.\n");
-    let source = fixture.setup.home.join(SHARED_RULES);
-    std::fs::remove_file(&source).unwrap();
-    std::fs::create_dir(&source).unwrap();
-
-    let plan = fixture
-        .setup
-        .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
-        .unwrap();
-    fixture
-        .setup
-        .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
-        .unwrap();
-    assert!(
-        !fixture
-            .setup
-            .load()
-            .unwrap()
-            .unwrap()
-            .shared_source_following
-    );
-    assert!(source.is_dir());
 }
 
 fn shared_and_claude_edits(fixture: &Fixture) -> (Vec<PersonalRuleEdit>, String, String) {
@@ -955,107 +744,9 @@ fn personal_rule_plan_refuses_stale_tool_projection_without_mutating_rules_or_hi
 }
 
 #[test]
-fn personal_rule_plan_refuses_stale_source_without_mutating_rules_or_history() {
-    let fixture = adopted_fixture();
-    let (edits, _, _) = shared_and_claude_edits(&fixture);
-    let plan = propose(&fixture, edits);
-    let before = fixture.setup.load().unwrap().unwrap();
-    let source_edit = format!("{}Concurrent source line.\n", before.master.shared);
-    fixture.write(super::super::SHARED_RULES, &source_edit);
-
-    let error = apply(&fixture, &plan).unwrap_err().to_string();
-    assert!(
-        error.contains("Shared source changes are waiting"),
-        "{error}"
-    );
-    let after = fixture.setup.load().unwrap().unwrap();
-    assert_eq!(after.master.shared, before.master.shared);
-    assert_eq!(after.master.overlays, before.master.overlays);
-    assert_eq!(after.personal_rule_origins, before.personal_rule_origins);
-    assert_eq!(after.personal_rule_history, before.personal_rule_history);
-    assert_eq!(fixture.text(super::super::SHARED_RULES), source_edit);
-}
-
-#[test]
-fn personal_rule_plan_rolls_back_if_source_changes_during_delivery() {
-    let fixture = adopted_fixture();
-    let (edits, _, _) = shared_and_claude_edits(&fixture);
-    let plan = propose(&fixture, edits);
-    let before = fixture.setup.load().unwrap().unwrap();
-    let claude_before = fixture.text(super::super::tests::CLAUDE);
-    let codex_before = fixture.text(super::super::tests::CODEX);
-    let source_path = fixture.setup.home.join(SHARED_RULES);
-    let source_after = format!("{}A concurrent source edit.\n", fixture.text(SHARED_RULES));
-    let changed = source_after.clone();
-    super::super::share_rules::at_rule_share_write(super::super::tests::CODEX, move || {
-        std::fs::write(source_path, changed).unwrap();
-    });
-
-    let error = format!("{:#}", apply(&fixture, &plan).unwrap_err());
-    assert!(
-        error.contains("source") && error.contains("changed"),
-        "{error}"
-    );
-    assert_eq!(fixture.text(SHARED_RULES), source_after);
-    assert_eq!(fixture.text(super::super::tests::CLAUDE), claude_before);
-    assert_eq!(fixture.text(super::super::tests::CODEX), codex_before);
-    let after = fixture.setup.load().unwrap().unwrap();
-    assert_eq!(after.master.shared, before.master.shared);
-    assert_eq!(after.master.overlays, before.master.overlays);
-    assert_eq!(after.personal_rule_history, before.personal_rule_history);
-    assert!(after.personal_rule_journal.is_none());
-    assert!(after.pending.is_empty());
-}
-
-#[test]
-fn followed_source_sync_records_one_change_with_unknown_author_and_confirmer() {
-    let fixture = adopted_fixture();
-    let source_before = fixture.text(super::super::SHARED_RULES);
-    let source_after = format!("{source_before}Automatic source addition.\n");
-    fixture.write(super::super::SHARED_RULES, &source_after);
-
-    let report = fixture.sync_generated(&[]);
-    assert!(report.blocked.is_empty(), "{report:?}");
-    let manifest = fixture.setup.load().unwrap().unwrap();
-    assert!(manifest.shared_source_following);
-    assert_eq!(manifest.master.shared, source_after);
-    assert_eq!(manifest.personal_rule_history.len(), 2);
-    let baseline = read_version(
-        &fixture.setup,
-        &manifest,
-        &manifest.personal_rule_history[0],
-    )
-    .unwrap();
-    let change = read_version(
-        &fixture.setup,
-        &manifest,
-        &manifest.personal_rule_history[1],
-    )
-    .unwrap();
-    assert_eq!(baseline.summary.cause, "baseline");
-    assert_eq!(change.summary.cause, "change");
-    assert_eq!(change.summary.layers, vec![PersonalRuleLayer::Shared]);
-    assert_eq!(change.summary.author, None);
-    assert_eq!(change.summary.proposer, None);
-    assert_eq!(change.summary.confirmer, None);
-    let origin = manifest
-        .personal_rule_origins
-        .iter()
-        .find(|record| record.layer == PersonalRuleLayer::Shared)
-        .unwrap()
-        .lines
-        .last()
-        .and_then(Option::as_ref)
-        .unwrap();
-    assert_eq!(origin.author, None);
-    assert_eq!(origin.proposer, None);
-    assert_eq!(origin.confirmer, None);
-}
-
-#[test]
 fn person_confirmed_rule_share_records_one_change_with_person_confirmer() {
     let fixture = Fixture::new();
-    let source = fixture.text(super::super::SHARED_RULES);
+    let source = fixture.text(SHARED_RULES);
     fixture.write(
         super::super::tests::CODEX,
         &format!("{source}- Check the final exit status.\n"),
@@ -1184,18 +875,8 @@ fn personal_rule_plan_expiry_requires_a_fresh_preview() {
     assert_eq!(after.personal_rule_history, before.personal_rule_history);
 }
 
-fn check_personal_rule_batch_rollback(source_following: bool) {
+fn check_personal_rule_batch_rollback() {
     let fixture = adopted_fixture();
-    if !source_following {
-        let preview = fixture.setup.preview_source_off().unwrap();
-        fixture
-            .setup
-            .turn_source_off(&SharedSourceOffRequest {
-                plan_id: preview.plan_id,
-                token: preview.token,
-            })
-            .unwrap();
-    }
     let (edits, _, _) = shared_and_claude_edits(&fixture);
     let plan = propose(&fixture, edits);
     let before = fixture.setup.load().unwrap().unwrap();
@@ -1245,27 +926,12 @@ fn check_personal_rule_batch_rollback(source_following: bool) {
 
 #[test]
 fn personal_rule_batch_rolls_back_earlier_tool_and_preserves_concurrent_second_write() {
-    check_personal_rule_batch_rollback(true);
+    check_personal_rule_batch_rollback();
 }
 
-#[test]
-fn personal_rule_batch_rolls_back_earlier_tool_when_source_is_off() {
-    check_personal_rule_batch_rollback(false);
-}
-
-fn check_personal_rule_interrupted_recovery(source_following: bool) {
+fn check_personal_rule_interrupted_recovery() {
     let fixture = adopted_fixture();
     super::super::tests::accept_local_rule_additions(&fixture, "An approved donor rule.\n");
-    if !source_following {
-        let preview = fixture.setup.preview_source_off().unwrap();
-        fixture
-            .setup
-            .turn_source_off(&SharedSourceOffRequest {
-                plan_id: preview.plan_id,
-                token: preview.token,
-            })
-            .unwrap();
-    }
     let (edits, _, _) = shared_and_claude_edits(&fixture);
     let plan = propose(&fixture, edits);
     let before = fixture.setup.load().unwrap().unwrap();
@@ -1296,12 +962,7 @@ fn check_personal_rule_interrupted_recovery(source_following: bool) {
 
 #[test]
 fn personal_rule_recovery_rolls_back_an_interrupted_multi_tool_write() {
-    check_personal_rule_interrupted_recovery(true);
-}
-
-#[test]
-fn personal_rule_recovery_rolls_back_an_interrupted_write_when_source_is_off() {
-    check_personal_rule_interrupted_recovery(false);
+    check_personal_rule_interrupted_recovery();
 }
 
 #[test]
@@ -1408,41 +1069,6 @@ fn unmanaged_personal_rule_checkpoint_failures_preserve_a_clear_outcome() {
 }
 
 #[test]
-fn followed_source_checkpoint_failures_preserve_a_clear_outcome() {
-    for after_save in [false, true] {
-        let fixture = adopted_fixture();
-        let before = fixture.setup.load().unwrap().unwrap();
-        let source = format!("{}A followed source edit.\n", fixture.text(SHARED_RULES));
-        fixture.write(SHARED_RULES, &source);
-        if after_save {
-            super::super::share_rules::fail_after_next_rule_final_checkpoint();
-        } else {
-            super::super::share_rules::fail_next_rule_final_checkpoint();
-        }
-        let _lock = fixture.setup.lock().unwrap();
-        let mut manifest = fixture.setup.load().unwrap().unwrap();
-        let error = fixture
-            .setup
-            .follow_shared_source(&mut manifest)
-            .unwrap_err();
-        let after = fixture.setup.load().unwrap().unwrap();
-        assert!(after.personal_rule_journal.is_none());
-        if after_save {
-            assert!(
-                error.to_string().contains("may have been applied"),
-                "{error:#}"
-            );
-            assert!(after.master.shared.contains("A followed source edit."));
-        } else {
-            assert!(error.to_string().contains("not applied"), "{error:#}");
-            assert_eq!(after.master.shared, before.master.shared);
-            assert_eq!(after.personal_rule_history, before.personal_rule_history);
-        }
-        assert_eq!(fixture.text(SHARED_RULES), source);
-    }
-}
-
-#[test]
 fn personal_rule_history_restore_applies_as_one_new_history_entry() {
     let fixture = adopted_fixture();
     let (edits, _, _) = shared_and_claude_edits(&fixture);
@@ -1501,14 +1127,6 @@ fn personal_master_survives_setup_restore_and_reenrolls_a_tool_from_its_saved_ov
     let fixture = Fixture::new();
     fixture.adopt_from_plan();
 
-    let off = fixture.setup.preview_source_off().unwrap();
-    fixture
-        .setup
-        .turn_source_off(&SharedSourceOffRequest {
-            plan_id: off.plan_id,
-            token: off.token,
-        })
-        .unwrap();
     fixture.setup.restore().unwrap();
     std::fs::remove_dir_all(fixture.setup.home.join(".claude")).unwrap();
     std::fs::remove_dir_all(fixture.setup.home.join(".codex")).unwrap();
@@ -1548,7 +1166,6 @@ fn personal_master_survives_setup_restore_and_reenrolls_a_tool_from_its_saved_ov
         restored.personal_rule_history,
         personal.personal_rule_history
     );
-    assert!(!restored.shared_source_following);
     assert!(restored.master.unenrolled_overlays.contains("geminicli"));
     let retained_change = read_version(
         &fixture.setup,
@@ -1591,7 +1208,7 @@ fn personal_master_survives_setup_restore_and_reenrolls_a_tool_from_its_saved_ov
 }
 
 #[test]
-fn confirmed_personal_tool_rule_survives_setup_restore_while_source_following_is_on() {
+fn confirmed_personal_tool_rule_survives_setup_restore() {
     let fixture = adopted_fixture();
     let before = fixture.setup.load().unwrap().unwrap();
     let old_overlay = before.master.overlays[CLAUDE_RULES].clone();
@@ -1607,7 +1224,6 @@ fn confirmed_personal_tool_rule_survives_setup_restore_while_source_following_is
     );
     apply(&fixture, &plan).unwrap();
     let confirmed = fixture.setup.load().unwrap().unwrap();
-    assert!(confirmed.shared_source_following);
     assert_eq!(confirmed.personal_rule_history.len(), 2);
 
     let report = fixture.setup.restore().unwrap();
@@ -1618,7 +1234,6 @@ fn confirmed_personal_tool_rule_survives_setup_restore_while_source_following_is
         restored.personal_rule_history,
         confirmed.personal_rule_history
     );
-    assert!(restored.shared_source_following);
     assert!(restored.master.unenrolled_overlays.contains(CLAUDE_RULES));
     assert!(restored.personal_rule_journal.is_none());
 }

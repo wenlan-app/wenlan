@@ -14,8 +14,7 @@ use wenlan_types::rulesync::{
     AdoptPreviewRequest, AdoptRequest, AdoptionPlan, AdoptionSkillOutcome, PullbackAction,
     PullbackDecision, PullbackKind, RulesReviewContent, RulesReviewItem, RulesReviewList,
     RulesSetupCode, RulesSetupStatus, RulesSyncReport, RulesToolState, SharePreviewRequest,
-    ShareRequest, SharedSourceOffPreview, SharedSourceOffRequest, SharingPlan, SkillUpdateStatus,
-    SkillUpstream, TO_REVIEW_COMMAND,
+    ShareRequest, SharingPlan, SkillUpdateStatus, SkillUpstream, TO_REVIEW_COMMAND,
 };
 use wenlan_types::rulesync_settings::{SettingsApplyRequest, SettingsPlan, SettingsPreviewRequest};
 
@@ -33,7 +32,7 @@ pub enum PersonalRulesCmd {
     /// The shared personal rules that apply across tools.
     Shared {
         #[command(subcommand)]
-        command: PersonalSharedRulesAction,
+        command: PersonalRulesAction,
     },
     /// Rules that belong to one named tool.
     Tool {
@@ -47,24 +46,6 @@ pub enum PersonalRulesCmd {
         #[command(subcommand)]
         command: PersonalRulesHistoryAction,
     },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum PersonalSharedRulesAction {
-    /// Read, propose, or apply changes to shared personal rules.
-    #[command(flatten)]
-    Rules(PersonalRulesAction),
-    /// Preview the shared source changes and stop following after you confirm.
-    Source {
-        #[command(subcommand)]
-        command: PersonalSharedSourceAction,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum PersonalSharedSourceAction {
-    /// Stop following the shared source file and keep the saved personal rules.
-    Off,
 }
 
 #[derive(Debug, Subcommand)]
@@ -109,38 +90,17 @@ pub async fn run_personal_rules(
 ) -> Result<()> {
     let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
     let has_ai_identity = agent_name.is_some() || session.session.is_some();
-    if matches!(
-        command,
-        PersonalRulesCmd::Shared {
-            command: PersonalSharedRulesAction::Source {
-                command: PersonalSharedSourceAction::Off
-            }
-        }
-    ) {
-        require_personal_rule_confirmation(
-            has_ai_identity,
-            io::stdin().is_terminal(),
-            io::stdout().is_terminal(),
-        )?;
-        let client = WenlanClient::for_local_rules()?;
-        return turn_shared_source_off(&client).await;
-    }
     let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
     match command {
-        PersonalRulesCmd::Shared { command } => match command {
-            PersonalSharedRulesAction::Rules(command) => {
-                run_personal_layer(
-                    &client,
-                    command,
-                    wenlan_types::personal_rules::PersonalRuleLayer::Shared,
-                    has_ai_identity,
-                )
-                .await
-            }
-            PersonalSharedRulesAction::Source { .. } => {
-                unreachable!("source-off was handled before constructing an identity client")
-            }
-        },
+        PersonalRulesCmd::Shared { command } => {
+            run_personal_layer(
+                &client,
+                command,
+                wenlan_types::personal_rules::PersonalRuleLayer::Shared,
+                has_ai_identity,
+            )
+            .await
+        }
         PersonalRulesCmd::Tool { name, command } => {
             run_personal_layer(
                 &client,
@@ -154,37 +114,6 @@ pub async fn run_personal_rules(
             run_personal_history(&client, command, has_ai_identity).await
         }
     }
-}
-
-async fn turn_shared_source_off(client: &WenlanClient) -> Result<()> {
-    let preview = client.preview_shared_source_off_as_person().await?;
-    print!("{}", shared_source_off_preview(&preview));
-    if !person_types_yes(&mut io::stdin().lock(), &mut io::stdout(), &preview.plan_id)? {
-        println!("Nothing was changed.");
-        return Ok(());
-    }
-    let status = client
-        .turn_shared_source_off_as_person(&SharedSourceOffRequest {
-            plan_id: preview.plan_id,
-            token: preview.token,
-        })
-        .await?;
-    println!("{}", status_for_a_person(&status));
-    Ok(())
-}
-
-fn shared_source_off_preview(preview: &SharedSourceOffPreview) -> String {
-    let mut output = String::from("Shared rules source\n");
-    if preview.source_missing {
-        output.push_str("The source file is missing or empty. The saved master will be kept.\n");
-    } else {
-        output.push_str("The saved master will be kept; future source changes will not be read.\n");
-    }
-    output.push_str(&printable(&preview.diff));
-    if !preview.diff.ends_with('\n') {
-        output.push('\n');
-    }
-    output
 }
 
 async fn run_personal_layer(
@@ -302,11 +231,11 @@ fn require_personal_rule_confirmation(
 ) -> Result<()> {
     ensure!(
         !has_ai_identity,
-        "Only you can confirm personal rule changes or stop following the shared source. Run this from your own terminal outside an AI session."
+        "Only you can confirm personal rule changes. Run this from your own terminal outside an AI session."
     );
     ensure!(
         stdin_is_terminal && stdout_is_terminal,
-        "Only you can confirm personal rule changes or stop following the shared source: run this in a terminal and type yes yourself. There is no flag or piped approval."
+        "Only you can confirm personal rule changes: run this in a terminal and type yes yourself. There is no flag or piped approval."
     );
     Ok(())
 }
@@ -399,13 +328,8 @@ fn personal_rule_show(shown: &wenlan_types::personal_rules::PersonalRuleShow) ->
 fn personal_rule_plan(plan: &wenlan_types::personal_rules::PersonalRulePlan) -> String {
     let mut output = format!("Plan {} (expires {})\n", plan.id, plan.expires_at);
     output.push_str(&format!(
-        "Proposed by: {}\nAuthor on confirmation: person\nShared source: {}\n",
+        "Proposed by: {}\nAuthor on confirmation: person\n",
         printable(plan.proposer.as_deref().unwrap_or("person or unknown")),
-        if plan.following_source {
-            "following"
-        } else {
-            "off"
-        }
     ));
     for change in &plan.changes {
         output.push_str(&format!(
@@ -1296,9 +1220,6 @@ fn append_rule_preview(out: &mut String, plan: &SharingPlan, details: bool, widt
             .unwrap();
         }
     }
-    if let Some(notice) = &plan.shared_source_notice {
-        writeln!(out, "\n{}", one_line(notice)).unwrap();
-    }
     for note in &plan.rule_notes {
         writeln!(out, "\n{}", one_line(note)).unwrap();
     }
@@ -1770,18 +1691,6 @@ fn status_for_a_person(status: &RulesSetupStatus) -> String {
         return "WENLAN_RULESYNC is off.\n".into();
     }
     let mut out = String::from("Status\n");
-    writeln!(
-        out,
-        "Shared rules source: {}",
-        if !status.shared_source_following {
-            "off"
-        } else if status.adopted {
-            "following"
-        } else {
-            "not adopted"
-        }
-    )
-    .unwrap();
     if let Some(at) = status
         .last_checked_at
         .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
@@ -1974,7 +1883,7 @@ mod tests {
         let plan: wenlan_types::personal_rules::PersonalRulePlan =
             serde_json::from_value(serde_json::json!({
                 "id": "plan", "expires_at": 1, "proposer": null,
-                "following_source": false, "changes": [], "blocked_tools": [],
+                "changes": [], "blocked_tools": [],
                 "unmanaged_tools": ["geminicli"]
             }))
             .unwrap();
@@ -1994,54 +1903,6 @@ mod tests {
         assert!(String::from_utf8(output)
             .unwrap()
             .contains("Type yes to go on"));
-    }
-
-    #[test]
-    fn shared_source_off_preview_shows_the_complete_diff_and_missing_source_note() {
-        let missing = shared_source_off_preview(&SharedSourceOffPreview {
-            plan_id: "source-off-1".into(),
-            token: "opaque-token".into(),
-            source_missing: true,
-            diff: "Saved master:\nKeep this line.\n".into(),
-        });
-        assert!(missing.contains("source file is missing or empty"));
-        assert!(missing.contains("Keep this line."));
-
-        let present = shared_source_off_preview(&SharedSourceOffPreview {
-            plan_id: "source-off-2".into(),
-            token: "opaque-token".into(),
-            source_missing: false,
-            diff: "Source changes to reconcile:\n-one\n+two\n".into(),
-        });
-        assert!(present.contains("Source changes to reconcile:\n-one\n+two\n"));
-        assert!(present.contains("future source changes will not be read"));
-    }
-
-    #[test]
-    fn rules_status_shows_shared_source_follow_state() {
-        let mut status = RulesSetupStatus {
-            enabled: true,
-            adopted: true,
-            shared_source_following: true,
-            ..RulesSetupStatus::default()
-        };
-        assert!(status_for_a_person(&status).contains("Shared rules source: following"));
-        status.shared_source_following = false;
-        assert!(status_for_a_person(&status).contains("Shared rules source: off"));
-        status.adopted = false;
-        assert!(status_for_a_person(&status).contains("Shared rules source: off"));
-    }
-
-    #[test]
-    fn shared_source_off_requires_person_confirmation_and_literal_yes() {
-        assert!(require_personal_rule_confirmation(true, true, true).is_err());
-        assert!(require_personal_rule_confirmation(false, false, true).is_err());
-        assert!(require_personal_rule_confirmation(false, true, false).is_err());
-        assert!(require_personal_rule_confirmation(false, true, true).is_ok());
-
-        let mut output = Vec::new();
-        assert!(!person_types_yes(&mut &b"y\n"[..], &mut output, "source-off-1").unwrap());
-        assert!(person_types_yes(&mut &b"yes\n"[..], &mut output, "source-off-1").unwrap());
     }
 
     #[test]
@@ -2091,7 +1952,6 @@ mod tests {
     fn ux_cli_8_setup_share_previews_numbered_rules_and_uses_one_yes() {
         let plan = SharingPlan {
             plan_id: "rule-plan".into(),
-            shared_source_notice: Some("Also adds 1 line to ~/.agents/AGENTS.md.".into()),
             tools: vec![SharingTool {
                 tool: "Codex".into(),
                 rules: 1,
@@ -2137,13 +1997,6 @@ mod tests {
         let short = sharing_for_a_person(&plan, false, false);
         for details in [false, true] {
             let preview = sharing_for_a_person(&plan, details, false);
-            assert_eq!(
-                preview
-                    .matches("Also adds 1 line to ~/.agents/AGENTS.md.")
-                    .count(),
-                1,
-                "{preview}"
-            );
             assert!(preview.contains(&plan.rule_notes[0]), "{preview}");
         }
         assert!(short.contains("Codex: 1 rule"), "{short}");

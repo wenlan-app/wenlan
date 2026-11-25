@@ -15,7 +15,7 @@ use super::{
     is_rule_or_skill, snapshot_has_credentials, AdoptedSkill, Delivery, Kind, Manifest, Pending,
     PersonalMaster, Setup, UnsupportedRulesyncState,
 };
-use crate::rulesync_apply::{is_shared_rule_source_path, ApplyOutcome, FileRoot, Snapshot};
+use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 
 pub(super) const MANIFEST: &str = "personal.json";
 const BLOBS: &str = "personal-blobs";
@@ -88,9 +88,9 @@ impl StoredSetup {
             Snapshot::Absent => return Ok(None),
             _ => bail!("unexpected personal rules master file type"),
         };
-        let stored: Self = serde_json::from_slice(&bytes).context(UnsupportedRulesyncState)?;
+        let mut stored: Self = serde_json::from_slice(&bytes).context(UnsupportedRulesyncState)?;
         ensure!(stored.format == FORMAT, UnsupportedRulesyncState);
-
+        discard_legacy_source_receipts(&mut stored.state);
         Ok(Some(stored))
     }
 
@@ -118,6 +118,47 @@ impl StoredSetup {
     }
 }
 
+// Previous releases could journal a write to these two paths. Drop those
+// operations and their receipts without opening either path. Any interrupted
+// writes to tool files still use the ordinary recovery journal.
+fn discard_legacy_source_receipts<T>(manifest: &mut Manifest<T>) {
+    let paths = [Path::new(".agents/AGENTS.md"), Path::new(".agents")]
+        .into_iter()
+        .filter(|path| {
+            let receipt = manifest.delivered.get(*path);
+            receipt.is_some_and(|entry| matches!(entry.kind, Kind::SharedRuleSource))
+                || manifest
+                    .pending
+                    .iter()
+                    .any(|op| op.path == *path && matches!(op.kind, Some(Kind::SharedRuleSource)))
+                || manifest.legacy_source_following
+                    && receipt.is_none()
+                    && manifest.backup.contains_key(*path)
+        })
+        .collect::<BTreeSet<_>>();
+    if paths.is_empty() {
+        return;
+    }
+    let is_old_source = |path: &Path| paths.contains(path);
+    manifest.backup.retain(|path, _| !is_old_source(path));
+    manifest.delivered.retain(|path, _| !is_old_source(path));
+    manifest.stages.retain(|path, _| !is_old_source(path));
+    manifest
+        .recovery_issues
+        .retain(|path, _| !is_old_source(path));
+    if let Some(journal) = &mut manifest.rule_share {
+        journal.attempted -= manifest
+            .pending
+            .iter()
+            .take(journal.attempted)
+            .filter(|op| is_old_source(&op.path))
+            .count();
+        journal.new_backups.retain(|path| !is_old_source(path));
+        journal.undo_stages.retain(|path, _| !is_old_source(path));
+    }
+    manifest.pending.retain(|op| !is_old_source(&op.path));
+}
+
 fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
     use wenlan_core::rulesync_personal::credentials::contains_credential_bytes;
 
@@ -135,7 +176,6 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
         UnsupportedRulesyncState
     );
     let rule_text = std::iter::once(&master.shared)
-        .chain(&manifest.shared_source_base)
         .chain(master.overlays.values())
         .chain(master.claude_imported_rules.iter().flatten())
         .chain(
@@ -168,11 +208,10 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
                 .flatten(),
         );
     let is_rules_or_skills_path = |path: &Path| {
-        is_shared_rule_source_path(path)
-            || PERSONAL_TARGETS.iter().any(|target| {
-                path == Path::new(target.rules.destination)
-                    || path.starts_with(target.skills.destination)
-            })
+        PERSONAL_TARGETS.iter().any(|target| {
+            path == Path::new(target.rules.destination)
+                || path.starts_with(target.skills.destination)
+        })
     };
     let snapshots = manifest
         .backup
@@ -303,10 +342,9 @@ fn map_contents<From, To>(
         personal_rule_origins: manifest.personal_rule_origins.clone(),
         personal_rule_history: manifest.personal_rule_history.clone(),
         personal_rule_journal: manifest.personal_rule_journal.clone(),
-        shared_source_following: manifest.shared_source_following,
-        source_off_archive: manifest.source_off_archive.clone(),
-        shared_source_base: manifest.shared_source_base.clone(),
-        shared_source_restore_blocked: manifest.shared_source_restore_blocked,
+        legacy_source_following: manifest.legacy_source_following,
+        rule_import_notice_pending: manifest.rule_import_notice_pending,
+        imported_rule_paths: manifest.imported_rule_paths.clone(),
         backup: manifest
             .backup
             .iter()

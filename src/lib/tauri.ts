@@ -1253,6 +1253,7 @@ export interface RulesSetupStatus {
   review_tools: Record<string, RulesSetupTool>;
   last_checked_at?: number;
   tools?: RulesToolStatus[];
+  rule_import_finished?: boolean;
 }
 
 export interface RulesToolStatus extends RulesSetupTool {

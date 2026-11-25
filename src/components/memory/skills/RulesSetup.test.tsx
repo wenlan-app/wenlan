@@ -203,6 +203,24 @@ describe("setup settings", () => {
   }
 
   it.each([
+    ["en", "Edit your shared rules in Wenlan from now on."],
+    ["zh-Hant", "之後請在 Wenlan 編輯共用規則。"],
+    ["zh-Hans", "今后请在 Wenlan 编辑共用规则。"],
+  ])("UX-SKILL-24: shows the source migration notice once in %s", async (locale, notice) => {
+    await i18n.changeLanguage(locale);
+    answers({ ...status, rule_import_finished: true });
+    const view = mount(<RulesSetupSettings />);
+    expect(await screen.findByText(notice)).toHaveAttribute("role", "status");
+    expect(screen.getAllByText(notice)).toHaveLength(1);
+    view.unmount();
+
+    answers(status);
+    mount(<RulesSetupSettings />);
+    await screen.findByTestId("rules-tools");
+    expect(screen.queryByText(notice)).toBeNull();
+  });
+
+  it.each([
     ["en", "Bring in", "Status", "To review", "Restore"],
     ["zh-Hant", "搬進來", "狀態", "待確認", "還原"],
     ["zh-Hans", "搬进来", "状态", "待确认", "还原"],

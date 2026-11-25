@@ -365,10 +365,10 @@ fn manifest_counts_match_the_spec() {
     // team publication review, which echoes the supplied draft).
     // The personal review queue and release-notice dismissal bring this to 421.
     // Sharing items with every tool and its preview bring it to 423.
-    // Personal-rule plans, history and source-off add nine local routes.
+    // Personal-rule plans and history add seven local routes.
     assert_eq!(
         HTTP_READERS.len(),
-        432,
+        430,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -382,7 +382,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        444,
+        442,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -390,7 +390,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        427,
+        425,
         "main builder entries"
     );
     assert_eq!(
@@ -598,7 +598,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        422 // The nine personal-rule routes also have no page markers.
+        420 // The seven personal-rule routes also have no page markers.
     );
 }
 

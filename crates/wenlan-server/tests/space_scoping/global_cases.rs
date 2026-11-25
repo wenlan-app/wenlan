@@ -323,8 +323,6 @@ pub async fn global_routes_enforce_scope_contracts() {
         (Method::Post, "/api/rules/setup/adopt/preview"),
         (Method::Post, "/api/rules/setup/share"),
         (Method::Post, "/api/rules/setup/share/preview"),
-        (Method::Post, "/api/rules/setup/shared-source/off/preview"),
-        (Method::Post, "/api/rules/setup/shared-source/off"),
         (Method::Post, "/api/rules/personal/apply"),
         (Method::Post, "/api/rules/setup/restore"),
         (Method::Post, "/api/rules/setup/skill-updates"),
@@ -349,9 +347,6 @@ pub async fn global_routes_enforce_scope_contracts() {
         let body = match uri {
             "/api/team/library/terminal" => {
                 Some(serde_json::json!({"action":"withdraw","item_id":"fixture"}))
-            }
-            "/api/rules/setup/shared-source/off" => {
-                Some(serde_json::json!({"plan_id":"fixture","token":"fixture"}))
             }
             "/api/rules/personal/apply" => Some(serde_json::json!({"plan_id":"fixture"})),
             _ => None,

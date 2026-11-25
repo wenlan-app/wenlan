@@ -1082,18 +1082,16 @@ mod catalog_tests {
             super::Commands::Rules {
                 command: Some(RulesCmd::Personal(
                     commands::rulesync::PersonalRulesCmd::Shared {
-                        command: commands::rulesync::PersonalSharedRulesAction::Rules(
-                            commands::rulesync::PersonalRulesAction::Propose { edits }
-                        )
+                        command: commands::rulesync::PersonalRulesAction::Propose { edits }
                     }
                 ))
             } if edits.len() == 2
         ));
 
         assert!(Cli::try_parse_from(["wenlan", "rules", "shared", "propose"]).is_err());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "shared", "source", "off"]).is_err());
         assert!(Cli::try_parse_from(["wenlan", "rules", "tool", "claude", "show"]).is_ok());
         assert!(Cli::try_parse_from(["wenlan", "rules", "tool", "codex", "show"]).is_ok());
-        assert!(Cli::try_parse_from(["wenlan", "rules", "shared", "source", "off"]).is_ok());
         assert!(Cli::try_parse_from(["wenlan", "rules", "history", "list"]).is_ok());
     }
 
