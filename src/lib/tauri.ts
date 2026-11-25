@@ -3672,7 +3672,9 @@ export type CodeBasisUnavailableReason =
   | "outside_repo"
   | "unreadable"
   | "too_large"
-  | "lines_not_found";
+  | "lines_not_found"
+  /** Pending: lines were added inside a stretch the page relies on. */
+  | "lines_added";
 
 export interface CodeBasisRef {
   /** Absolute. */

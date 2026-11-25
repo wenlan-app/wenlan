@@ -64,6 +64,11 @@ pub struct PageLookResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetPageLookRequest {
     pub html: String,
+    /// Home only: replace the home view the theme in use already has. Without
+    /// it a different view there is refused (`look_refused`), since a new
+    /// look for home belongs in a new theme.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replace: bool,
 }
 
 /// `PUT /api/pages/{id}/look` answer.
@@ -74,6 +79,9 @@ pub struct SetPageLookResponse {
     pub look_id: i64,
     /// False when the same HTML was already the active look.
     pub created: bool,
+    /// Home only: the new view took the place of a different one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replaced: bool,
 }
 
 /// `DELETE /api/pages/{id}/look` answer.
