@@ -674,8 +674,26 @@ fn print_own_team(status: &TeamStatus) {
     }
     println!("{:<20} SPACES", "NAME");
     for member in active {
-        println!("{:<20} {}", member.name, access_list(&member.spaces));
+        let link_only = if link_only(member) {
+            "  [invite link: read only until they add Google or GitHub]"
+        } else {
+            ""
+        };
+        println!(
+            "{:<20} {}{link_only}",
+            member.name,
+            access_list(&member.spaces)
+        );
     }
+}
+
+/// Joined, or will join, with only an invite link's key: no Google or
+/// GitHub account linked and no sign-in invite open. Writing needs sign-in,
+/// so they read.
+fn link_only(member: &TeamMember) -> bool {
+    member.sign_in.as_ref().is_none_or(|sign_in| {
+        sign_in.providers.is_empty() && !sign_in.invited && sign_in.waiting_email.is_none()
+    })
 }
 
 /// Prints the invite link (or the key). It is shown only this once.
@@ -706,6 +724,9 @@ fn print_key(
                 }
             }
             println!("This is shown only once. Send it to them privately.");
+            if link_only(&issued.member) {
+                println!("With the link only they can read. To write, they add Google or GitHub on the team's web page.");
+            }
             if let Some(everyone) = everyone {
                 let mut spaces = issued.member.spaces.clone();
                 for space in everyone {
@@ -1060,6 +1081,29 @@ mod tests {
             "member_id": "m", "member_name": "Amy", "members": [], "last": null,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn only_someone_with_just_the_invite_link_is_shown_read_only() {
+        let member = |sign_in: Option<wenlan_types::team::TeamMemberSignIn>| TeamMember {
+            sign_in,
+            ..serde_json::from_value(serde_json::json!({
+                "id": "m1", "name": "Bo", "spaces": [], "added_at": "2026-11-25T00:00:00Z"
+            }))
+            .unwrap()
+        };
+        let signed = |providers: &[&str], invited: bool| {
+            Some(wenlan_types::team::TeamMemberSignIn {
+                providers: providers.iter().map(|p| p.to_string()).collect(),
+                invited,
+                ..Default::default()
+            })
+        };
+        assert!(link_only(&member(None)));
+        assert!(link_only(&member(signed(&[], false))));
+        assert!(!link_only(&member(signed(&["google"], false))));
+        // A sign-in invite not used yet: they will sign in to join.
+        assert!(!link_only(&member(signed(&[], true))));
     }
 
     #[test]

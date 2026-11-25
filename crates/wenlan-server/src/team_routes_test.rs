@@ -2813,14 +2813,34 @@ async fn me_lists_team_only_library_spaces_apart_from_synced_ones() {
     assert_eq!(status, StatusCode::OK);
     let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
     assert!(me.spaces.is_empty(), "{me:?}");
+    // Bo joined with the link only: the grant says Write, but writing
+    // needs Google or GitHub sign-in, so Bo is told Read.
     assert_eq!(
         me.library_spaces,
         vec![TeamSpaceAccess {
             space: "Roadmap".into(),
-            access: TeamAccess::Write,
+            access: TeamAccess::Read,
             id: Some(roadmap.id.clone()),
         }]
     );
+    let me_now = || async {
+        let (status, body) = call(&f.state, Method::GET, "/team/v1/me", Some(&bo), vec![]).await;
+        assert_eq!(status, StatusCode::OK);
+        serde_json::from_slice::<wenlan_types::team::TeamMe>(&body).unwrap()
+    };
+    // Once Bo links an account, the Write grant is theirs to use.
+    team::link_identity(
+        &f.state.team_path,
+        &bo_member.id,
+        team::Identity {
+            issuer: "https://accounts.google.com".into(),
+            subject: "bo-1".into(),
+            email: None,
+            linked_at: "2026-11-25T00:00:00Z".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(me_now().await.library_spaces[0].access, TeamAccess::Write);
 
     // The library agrees with what /me says Bo can use (the HTTP library
     // route also migrates hosted Spaces, which needs the host database).
