@@ -3,6 +3,7 @@ import { StateEffect, StateField, type EditorState, type Extension, type Range }
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 import { foldedPageLayers, pageLayersField } from "./pageLayersEditing";
 import { locateSentence } from "./sentenceProposals";
+import { readableSentence } from "../../../lib/readableSentence";
 
 /**
  * The sentences the AI's newest write changed, marked only while the person
@@ -41,7 +42,8 @@ class BeforeWidget extends WidgetType {
     label.className = "cm-ai-change-before-label";
     label.textContent = this.label;
     const text = document.createElement("span");
-    text.textContent = this.before;
+    // Read as words, like the line above it, not as its Markdown.
+    text.textContent = readableSentence(this.before);
     root.append(label, text);
     return root;
   }

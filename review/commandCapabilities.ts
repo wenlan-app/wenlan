@@ -157,9 +157,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_code_basis_pending",
     "confirm_page_code_basis",
     "remove_page_code_basis",
-    "get_page_code_basis_cited",
-    "read_code_lines",
-    "read_git_blob_lines",
+    "get_page_code_basis_lines",
     "get_page_revisions",
     "get_page_sources",
     // Fixtures have no AI conversations; both answer with the quiet shape.

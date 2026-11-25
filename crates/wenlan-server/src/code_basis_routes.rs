@@ -20,8 +20,8 @@ use tokio::sync::RwLock;
 use wenlan_core::code_basis::CodeBasisError;
 use wenlan_core::db::MemoryDB;
 use wenlan_types::{
-    BasisRemoveResponse, CodeBasisCitedResponse, CodeBasisLocator, CodeBasisRecheckEntry,
-    CodeBasisRef,
+    BasisRemoveResponse, CodeBasisCitedResponse, CodeBasisLinesRequest, CodeBasisLinesResponse,
+    CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef,
 };
 
 use crate::error::ServerError;
@@ -42,6 +42,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route(
             "/api/pages/{id}/code-basis/cited",
             post(handle_code_basis_cited),
+        )
+        .route(
+            "/api/pages/{id}/code-basis/lines",
+            post(handle_code_basis_lines),
         )
         .route(
             "/api/pages/{id}/code-basis",
@@ -179,6 +183,27 @@ pub async fn handle_code_basis_cited(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     require_page_visible(&db, &scope, &id).await?;
     db.get_code_basis_cited(&id, &locator)
+        .await?
+        .map(Json)
+        .ok_or_else(|| code_basis_error(CodeBasisError::NotFound))
+}
+
+/// POST /api/pages/{id}/code-basis/lines
+///
+/// A row's lines as cited and as they read now, read here so a browser (which
+/// cannot reach a repository) shows the same side-by-side view as the app.
+/// Only files the note already relies on are read. 404 when the note or the
+/// row is not there.
+pub async fn handle_code_basis_lines(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Path(id): Path<String>,
+    Json(request): Json<CodeBasisLinesRequest>,
+) -> Result<Json<CodeBasisLinesResponse>, ServerError> {
+    let db = open_db(&state).await?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    require_page_visible(&db, &scope, &id).await?;
+    wenlan_core::code_basis_recheck::code_basis_lines(&db, &id, &request.locator, request.extra)
         .await?
         .map(Json)
         .ok_or_else(|| code_basis_error(CodeBasisError::NotFound))

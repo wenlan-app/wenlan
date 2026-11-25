@@ -206,12 +206,18 @@ fn reviewable(client: &WenlanClient) -> Result<()> {
     Ok(())
 }
 
+/// Ask `question` and read one line. The answer goes on its own line after
+/// "> ", so what the person types never runs on after the question.
 fn answer(question: &str) -> Result<String> {
-    print!("{question} ");
+    print!("{}", prompt_text(question));
     io::stdout().flush()?;
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
     Ok(answer.trim().to_owned())
+}
+
+fn prompt_text(question: &str) -> String {
+    format!("{question}\n> ")
 }
 
 fn read_edits<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -316,4 +322,17 @@ pub(super) async fn change(client: &WenlanClient, action: TeamTerminalAction) ->
         return Ok(());
     }
     print_json(&client.team_library_terminal(&action).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prompt_text;
+
+    #[test]
+    fn the_answer_goes_on_its_own_line() {
+        assert_eq!(
+            prompt_text("Publish the reviewed text to this audience? Type yes to confirm."),
+            "Publish the reviewed text to this audience? Type yes to confirm.\n> "
+        );
+    }
 }

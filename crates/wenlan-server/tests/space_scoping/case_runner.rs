@@ -429,8 +429,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // skill-update card add two more Global routes. The person-key-gated team
     // publication review adds one more Global route. Sharing what a person
     // already has across tools (share and its preview) adds two more Global
-    // routes.
-    assert_eq!(rows.len(), 175);
+    // routes. A code basis' lines then and now add one PageWorkspace-scoped
+    // single-id route.
+    assert_eq!(rows.len(), 176);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -441,7 +442,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        122
+        123
     );
     assert_eq!(
         rows.iter()

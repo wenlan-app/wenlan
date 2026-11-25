@@ -344,20 +344,6 @@ pub enum CodeBasisConfirmResult {
     },
 }
 
-/// The file a note cited, as git knew it then
-/// (`POST /api/pages/{id}/code-basis/cited`). `cited_blob` is the 40 hex
-/// character git blob id of the whole file when the note last cited or
-/// confirmed the lines; `null` for rows written before the id was kept.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodeBasisCited {
-    #[serde(default)]
-    pub cited_blob: Option<String>,
-    #[serde(default)]
-    pub confirmed_at: i64,
-    #[serde(default)]
-    pub state: String,
-}
-
 /// The comparison for a basis, or the reason there is none to show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -1478,16 +1464,21 @@ impl WenlanClient {
         }
     }
 
-    /// The git blob of the file as the note cited it, for the "when cited"
-    /// side of the before and after view.
-    pub async fn get_page_code_basis_cited(
+    /// A code basis' lines as cited and as they read now, for the before
+    /// and after view: `extra` lines past its end on the "now" side.
+    pub async fn get_page_code_basis_lines(
         &self,
         page_id: &str,
         locator: &wenlan_types::CodeBasisLocator,
-    ) -> Result<CodeBasisCited, String> {
-        let path = format!("{}/cited", Self::code_basis_path(page_id));
+        extra: u32,
+    ) -> Result<wenlan_types::CodeBasisLinesResponse, String> {
+        let path = format!("{}/lines", Self::code_basis_path(page_id));
+        let body = wenlan_types::CodeBasisLinesRequest {
+            locator: locator.clone(),
+            extra,
+        };
         let (status, text) = self
-            .basis_call(reqwest::Method::POST, &path, Some(locator))
+            .basis_call(reqwest::Method::POST, &path, Some(&body))
             .await?;
         match status {
             200..=299 => serde_json::from_str(&text).map_err(|e| format!("Parse {path}: {e}")),
@@ -3876,40 +3867,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_page_code_basis_cited_reads_the_blob_id_or_null() {
-        let blob = "0123456789abcdef0123456789abcdef01234567";
+    async fn get_page_code_basis_lines_reads_both_sides_or_null() {
         let (base_url, requests) = serve_sequence(vec![
             (
                 "200 OK",
-                r#"{"cited_blob":"0123456789abcdef0123456789abcdef01234567","confirmed_at":1700000000,"state":"pending"}"#,
+                r#"{"cited":["one"],"cited_start":4,"now":["added","one"]}"#,
             ),
-            (
-                "200 OK",
-                r#"{"cited_blob":null,"confirmed_at":1700000000,"state":"ok"}"#,
-            ),
+            ("200 OK", r#"{"cited":null,"now":null}"#),
         ])
         .await;
         let client = client_at(base_url);
 
-        let cited = client
-            .get_page_code_basis_cited("plan", &code_locator())
+        let lines = client
+            .get_page_code_basis_lines("plan", &code_locator(), 8)
             .await
             .unwrap();
-        assert_eq!(cited.cited_blob.as_deref(), Some(blob));
-        assert_eq!(cited.confirmed_at, 1_700_000_000);
+        assert_eq!(lines.cited, Some(vec!["one".to_string()]));
+        assert_eq!(lines.cited_start, Some(4));
+        assert_eq!(lines.now.as_deref().map(<[String]>::len), Some(2));
         let none = client
-            .get_page_code_basis_cited("plan", &code_locator())
+            .get_page_code_basis_lines("plan", &code_locator(), 8)
             .await
             .unwrap();
-        assert_eq!(none.cited_blob, None);
+        assert_eq!((none.cited, none.now), (None, None));
 
+        let request = &requests.await.unwrap()[0];
         assert_eq!(
-            requests.await.unwrap()[0]
-                .lines()
-                .next()
-                .unwrap_or_default(),
-            "POST /api/pages/plan/code-basis/cited HTTP/1.1"
+            request.lines().next().unwrap_or_default(),
+            "POST /api/pages/plan/code-basis/lines HTTP/1.1"
         );
+        assert_eq!(request_body(request)["extra"], 8);
+        assert_eq!(request_body(request)["locator"]["path"], "src/lib.rs");
     }
 
     #[tokio::test]

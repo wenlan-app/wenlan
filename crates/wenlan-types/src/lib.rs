@@ -71,7 +71,8 @@ pub mod zotero;
 pub use brief::*;
 pub use briefing::{BriefingResponse, ContradictionItem};
 pub use code_basis::{
-    CodeBasisCitedResponse, CodeBasisInput, CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef,
+    CodeBasisCitedResponse, CodeBasisInput, CodeBasisLinesRequest, CodeBasisLinesResponse,
+    CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef,
 };
 pub use communities::{
     CommunityListResponse, CommunityMember, CommunityMemberCursor, CommunityMembersResponse,

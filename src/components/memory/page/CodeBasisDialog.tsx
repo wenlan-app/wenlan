@@ -3,10 +3,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { getPageCodeBasisCited, readCodeLines, readGitBlobLines, type CodeBasisRef } from "../../../lib/tauri";
+import { getPageCodeBasisLines, type CodeBasisRef } from "../../../lib/tauri";
 import { Button } from "../settings/primitives";
 import {
-  codeBasisAbsolutePath,
   codeBasisLineText,
   codeBasisLocation,
   codeBasisSpanVars,
@@ -123,30 +122,31 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
   // Code that cannot be found has nothing to show side by side; the notice's
   // own sentence says why.
   const missing = Boolean(decide) && row.state === "unavailable";
-  // The lines as cited: the file's git blob from when the note cited it, read
-  // for these lines. No blob (an older row) is "nothing to compare"; a blob
-  // that git cannot read is an error, which the view treats the same way.
-  const cited = useQuery({
-    queryKey: ["code-basis-cited", rowKey],
-    queryFn: async (): Promise<string[] | null> => {
-      const { cited_blob: blob } = await getPageCodeBasisCited(pageId, row);
-      return blob ? readGitBlobLines(row.repo_root, blob, row.line_start, row.line_end) : null;
-    },
+  // Both sides come from the daemon, which can reach the repository from
+  // the app and a browser alike. The cited side is the row's own lines in
+  // the version of the file it was cited from; null when git no longer has
+  // that version ("nothing to compare"). The "now" side runs a little past
+  // the span: an insertion inside it pushes its last lines down.
+  const lines = useQuery({
+    queryKey: ["code-basis-lines", rowKey],
+    queryFn: () => getPageCodeBasisLines(pageId, row, CURRENT_LINES_EXTRA),
     // The answer is only good for the moment it is read: always ask again.
     staleTime: 0,
     gcTime: 0,
     retry: false,
     enabled: !missing,
   });
-  const now = useQuery({
-    queryKey: ["code-basis-now", rowKey],
-    // A little past the span: an insertion inside it pushes its last lines down.
-    queryFn: () => readCodeLines(codeBasisAbsolutePath(row), row.line_start, row.line_end + CURRENT_LINES_EXTRA),
-    staleTime: 0,
-    gcTime: 0,
-    retry: false,
-    enabled: !missing,
-  });
+  const cited = {
+    isPending: lines.isPending,
+    data: lines.data?.cited ?? null,
+    isError: lines.isError,
+  };
+  const now = {
+    isPending: lines.isPending,
+    data: lines.data?.now ?? null,
+    isError: lines.isError || (lines.isSuccess && lines.data.now == null),
+  };
+  const citedStart = lines.data?.cited_start ?? row.line_start;
 
   useEffect(() => {
     // Return focus to whatever opened the dialog once it closes.
@@ -193,7 +193,7 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
   } else {
     before = <Code
       lines={citedLines}
-      firstLine={row.line_start}
+      firstLine={citedStart}
       testId="code-basis-before"
       rows={shown}
       side="before"
