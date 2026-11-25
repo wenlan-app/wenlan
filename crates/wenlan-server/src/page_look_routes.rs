@@ -164,14 +164,30 @@ pub async fn handle_set_page_look(
         // The home screen has no text of its own to copy.
         wenlan_core::page_look::check_look(&req.html, "")
             .map_err(|reason| ServerError::ValidationError(format!("look_refused: {reason}")))?;
-        let html = req.html;
-        let (look_id, created) = theme_home(move |root| home::write_home(root, &html))
+        let (html, replace) = (req.html, req.replace);
+        let saved = theme_home(move |root| home::write_home(root, &html, replace))
             .await?
             .map_err(|e| ServerError::Internal(format!("could not save the home view: {e}")))?;
+        let (look_id, created, replaced) = match saved {
+            home::HomeSave::Unchanged { id } => (id, false, false),
+            home::HomeSave::Saved { id, replaced } => (id, true, replaced),
+            home::HomeSave::Taken { theme } => {
+                let theme = theme.map_or_else(
+                    || "the theme in use".to_string(),
+                    |name| format!("the theme in use, {name},"),
+                );
+                return Err(ServerError::ValidationError(format!(
+                    "look_refused: {theme} already has its own home view, and saving would replace it. \
+                     For a new look, make a new theme first with the theme tool (apply with a new id), then save the view into it. \
+                     To change this theme's own home view, save again with replace set."
+                )));
+            }
+        };
         return Ok(Json(SetPageLookResponse {
             page_id: id,
             look_id,
             created,
+            replaced,
         }));
     }
     let db = open_db(&state).await?;
@@ -188,6 +204,7 @@ pub async fn handle_set_page_look(
         page_id: id,
         look_id,
         created,
+        replaced: false,
     }))
 }
 
@@ -234,6 +251,7 @@ pub async fn handle_restore_page_look(
             page_id: id,
             look_id,
             created: false,
+            replaced: false,
         }));
     }
     let db = open_db(&state).await?;
@@ -245,6 +263,7 @@ pub async fn handle_restore_page_look(
         page_id: id,
         look_id,
         created: false,
+        replaced: false,
     }))
 }
 
@@ -566,6 +585,31 @@ mod tests {
         let (status, saved) = send(&app, "PUT", home, Some(json!({ "html": first }))).await;
         assert_eq!(status, 200, "{saved}");
         assert_eq!(saved["page_id"], "home");
+        assert_eq!(saved["created"], true);
+        // The same view again is no change; a different one is refused unless
+        // asked for, so a new look never silently replaces this theme's home.
+        let (_, same) = send(&app, "PUT", home, Some(json!({ "html": first }))).await;
+        assert_eq!(same["created"], false, "{same}");
+        let (status, taken) = send(&app, "PUT", home, Some(json!({ "html": second }))).await;
+        assert_eq!(status, 422, "{taken}");
+        assert!(taken.to_string().contains("new theme"), "{taken}");
+        let (status, replaced) = send(
+            &app,
+            "PUT",
+            home,
+            Some(json!({ "html": second, "replace": true })),
+        )
+        .await;
+        assert_eq!(status, 200, "{replaced}");
+        assert_eq!(replaced["replaced"], true);
+        let (status, _) = send(
+            &app,
+            "PUT",
+            home,
+            Some(json!({ "html": first, "replace": true })),
+        )
+        .await;
+        assert_eq!(status, 200);
         let (_, got) = send(&app, "GET", home, None).await;
         assert_eq!(got["look"]["html"], first);
         let (_, page_look) = send(&app, "GET", &uri, None).await;

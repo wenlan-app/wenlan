@@ -31,6 +31,9 @@ export interface ReferencePreviewProps {
   id?: string;
   copyPrefix?: "reference" | "pageLinkPreview";
   externalOpenFailure?: string | null;
+  /** Who wrote the sentence a citation backs. With it, the card opens with
+   *  one line: whether the source was checked, and who wrote it. */
+  citationWriter?: string | null;
 }
 
 const WIDTH = 300;
@@ -70,6 +73,7 @@ export function ReferencePreview({
   id,
   copyPrefix = "reference",
   externalOpenFailure = null,
+  citationWriter = null,
 }: ReferencePreviewProps) {
   const { t, i18n } = useTranslation();
   // Same rule as the page's info panel: English keeps the short "15h ago",
@@ -220,6 +224,15 @@ export function ReferencePreview({
         boxShadow: "var(--mem-popover-shadow)", fontFamily: "var(--mem-font-body)",
       }}
     >
+      {citation && citationWriter && <p data-citation-check="true" data-status={citation.historical ? "historical" : citation.status} style={{ margin: 0, fontSize: "var(--mem-text-xs)", color: "var(--mem-text-secondary)" }}>
+        {!citation.historical && <>
+          <span style={{ color: citation.status === "verified" ? "var(--mem-accent-sage)" : citation.status === "unverified" ? "var(--mem-accent-amber)" : undefined, fontWeight: citation.status === "unevaluated" ? undefined : 600 }}>
+            {citation.status === "verified" ? `✓ ${t("thisSentence.evidence.verified")}` : t(citation.status === "unverified" ? "thisSentence.evidence.unverified" : "thisSentence.evidence.unevaluated")}
+          </span>
+          <span aria-hidden="true"> · </span>
+        </>}
+        <span>{citationWriter}</span>
+      </p>}
       {!zoteroSource && <div className="flex items-center gap-1.5" style={{ color: "var(--mem-text-tertiary)", fontSize: "var(--mem-text-xs)" }}>
         <ReferenceTypeIcon kind={kind} size={12} locator={citation?.locator} />
         <span>{typeLabel}</span>
@@ -229,8 +242,8 @@ export function ReferencePreview({
         {t("citation.importedFromZotero")}{citation?.pdf_target?.page != null ? ` · ${t("citation.pageLocator", { page: citation.pdf_target.page })}` : ""}
       </span>}
       {citation?.historical && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("sourceLifecycle.historicalCitation")}</span>}
-      {!citation?.historical && citation?.status === "unverified" && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("citation.unverified")}</span>}
-      {!citation?.historical && citation?.status === "unevaluated" && <span style={{ color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("thisSentence.evidence.unevaluated")}</span>}
+      {!citationWriter && !citation?.historical && citation?.status === "unverified" && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("citation.unverified")}</span>}
+      {!citationWriter && !citation?.historical && citation?.status === "unevaluated" && <span style={{ color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("thisSentence.evidence.unevaluated")}</span>}
       {citation?.source_kind === "authored" && <p style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("citation.authoredDescription")}</p>}
       {(activeOpenFailure || externalOpenFailure) && <div role="alert" style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>
         <p style={{ margin: 0 }}>{t(citation?.source_kind === "external_file" ? "citation.openFileFailed" : "citation.openLinkFailed")}</p>

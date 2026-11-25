@@ -45,7 +45,7 @@ function CodeRow({ row, modelAvailable, onUnmark }: CodeRowProps) {
     <span className="note-info-link-status" role={copied ? "status" : undefined}>
       {copied
         ? t("codeBasis.copied")
-        : t(row.reason === "file_deleted" ? "codeBasis.state.deleted" : `codeBasis.state.${row.state}`)}
+        : t(stateKey(row))}
     </span>
     {onUnmark && <OverflowMenu
       label={t("codeBasis.moreActions")}
@@ -53,6 +53,17 @@ function CodeRow({ row, modelAvailable, onUnmark }: CodeRowProps) {
     />}
     {quietNote && <p className="note-info-code-ai">{quietNote}</p>}
   </li>;
+}
+
+/**
+ * The word for a row's state. Lines that only shifted read the same and the
+ * line numbers already follow them, so they are up to date to a person
+ * ("moved" is for agents). Lines added inside a cited stretch say so.
+ */
+function stateKey(row: CodeBasisRef) {
+  if (row.reason === "file_deleted") return "codeBasis.state.deleted" as const;
+  if (row.reason === "lines_added") return "codeBasis.state.linesAdded" as const;
+  return `codeBasis.state.${row.state === "moved" ? "ok" : row.state}` as const;
 }
 
 /** The lines of code this note relies on. Code bases are attached by the AI tool that writes the note; here they are only shown and removed. */

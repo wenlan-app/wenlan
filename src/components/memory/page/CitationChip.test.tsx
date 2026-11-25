@@ -286,6 +286,32 @@ describe("CitationChip", () => {
     expect(screen.getByText(/unverified/i)).toBeInTheDocument();
   });
 
+  it("UX-WHO-9: the card opens with whether the source was checked and who wrote the sentence", () => {
+    renderChip({
+      citation: cite({ source_kind: "external_file", locator: "/notes/release-checklist.md" }),
+      sourceMemory: null,
+      writer: "Written by Claude Code",
+    });
+    fireEvent.focus(screen.getByRole("button", { name: /File/ }));
+    const line = document.querySelector("[data-citation-check]");
+    expect(line?.textContent).toBe("✓ source checked · Written by Claude Code");
+  });
+
+  it("UX-WHO-9 keeps an unverified source visibly unverified on the writer line", () => {
+    renderChip({ citation: cite({ status: "unverified" }), writer: "Written by Codex" });
+    fireEvent.focus(screen.getByRole("button", { name: /Memory/ }));
+    const line = document.querySelector("[data-citation-check]");
+    expect(line?.getAttribute("data-status")).toBe("unverified");
+    expect(line?.textContent).toBe("not confirmed by text matching · Written by Codex");
+    expect(line?.textContent).not.toContain("✓");
+  });
+
+  it("shows no writer line where the sentence is not known", () => {
+    renderChip();
+    fireEvent.focus(screen.getByRole("button", { name: /Memory/ }));
+    expect(document.querySelector("[data-citation-check]")).toBeNull();
+  });
+
   it("opens external urls in the browser", async () => {
     const user = userEvent.setup();
     renderChip({

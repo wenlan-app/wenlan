@@ -76,15 +76,45 @@ fn write_atomic(dir: &Path, name: &str, body: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, dir.join(name))
 }
 
+/// What [`write_home`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeSave {
+    /// The same HTML was already the home view: nothing written.
+    Unchanged { id: i64 },
+    /// Saved. `replaced` when it took the place of a different view.
+    Saved { id: i64, replaced: bool },
+    /// The theme in use already has a different home view, and the caller did
+    /// not ask to replace it. `theme` is its name (`None` for the built-in
+    /// themes). A new look for home belongs in a new theme, so another
+    /// theme's view is never lost by accident.
+    Taken { theme: Option<String> },
+}
+
 /// Save the active theme's home view. The caller has already checked the
-/// HTML with `page_look::check_look`. Returns its id and whether it is new.
-pub fn write_home(root: &Path, html: &str) -> std::io::Result<(i64, bool)> {
+/// HTML with `page_look::check_look`. A different view already there is
+/// replaced only when `replace` is set.
+pub fn write_home(root: &Path, html: &str, replace: bool) -> std::io::Result<HomeSave> {
     let dir = home_dir(root);
-    let created = !dir.join(HOME_FILE).exists();
+    let id = look_id(html);
+    let replaced = match read_home(root) {
+        Some(existing) if existing.html == html => return Ok(HomeSave::Unchanged { id }),
+        Some(_) if !replace => {
+            let theme = (dir != root)
+                .then(|| {
+                    super::read_theme_file(&dir)
+                        .ok()
+                        .map(|(theme, _)| theme.name)
+                })
+                .flatten();
+            return Ok(HomeSave::Taken { theme });
+        }
+        Some(_) => true,
+        None => false,
+    };
     write_atomic(&dir, HOME_FILE, html.as_bytes())?;
     let _ = std::fs::remove_file(dir.join(HOME_OFF_FILE));
     let _ = std::fs::remove_file(dir.join(HOME_ERROR_FILE));
-    Ok((look_id(html), created))
+    Ok(HomeSave::Saved { id, replaced })
 }
 
 /// Take the active theme's home view off; the file stays for Undo.
@@ -127,8 +157,14 @@ mod tests {
 
         // Built-in themes keep their home in the themes folder.
         assert!(read_home(root).is_none());
-        let (first, created) = write_home(root, "<p>built-in home</p>").unwrap();
-        assert!(created);
+        let HomeSave::Saved {
+            id: first,
+            replaced,
+        } = write_home(root, "<p>built-in home</p>", false).unwrap()
+        else {
+            panic!("a first home view is saved");
+        };
+        assert!(!replaced);
         assert_eq!(read_home(root).unwrap().id, first);
         assert!(root.join(HOME_FILE).is_file());
 
@@ -136,7 +172,11 @@ mod tests {
         let detail = create_theme(root, "Night", ThemeBase::Dark).unwrap();
         set_active_id(root, Some(&detail.id)).unwrap();
         assert!(read_home(root).is_none());
-        let (night, _) = write_home(root, "<p>night home</p>").unwrap();
+        let HomeSave::Saved { id: night, .. } =
+            write_home(root, "<p>night home</p>", false).unwrap()
+        else {
+            panic!("the custom theme's own home is saved");
+        };
         assert_ne!(night, first);
         assert!(night < (1_i64 << 53), "exact in JavaScript");
         assert!(root.join(&detail.id).join(HOME_FILE).is_file());
@@ -153,8 +193,37 @@ mod tests {
         assert_eq!(restore_home(root).unwrap(), Some(first));
         assert_eq!(read_home(root).unwrap().id, first);
         remove_home(root).unwrap();
-        write_home(root, "<p>again</p>").unwrap();
+        write_home(root, "<p>again</p>", false).unwrap();
         assert_eq!(restore_home(root).unwrap(), None);
         assert_eq!(read_home(root).unwrap().html, "<p>again</p>");
+    }
+
+    #[test]
+    fn a_new_home_never_replaces_another_themes_view_by_accident() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let ship = create_theme(root, "Ship Console", ThemeBase::Dark).unwrap();
+        set_active_id(root, Some(&ship.id)).unwrap();
+        write_home(root, "<p>bridge</p>", false).unwrap();
+
+        // The same view again changes nothing, and says so.
+        assert!(matches!(
+            write_home(root, "<p>bridge</p>", false).unwrap(),
+            HomeSave::Unchanged { .. }
+        ));
+        // A different view is refused, naming the theme, and the old one stays.
+        assert_eq!(
+            write_home(root, "<p>magazine</p>", false).unwrap(),
+            HomeSave::Taken {
+                theme: Some("Ship Console".into())
+            }
+        );
+        assert_eq!(read_home(root).unwrap().html, "<p>bridge</p>");
+        // Asked for, it is replaced.
+        assert!(matches!(
+            write_home(root, "<p>bridge v2</p>", true).unwrap(),
+            HomeSave::Saved { replaced: true, .. }
+        ));
+        assert_eq!(read_home(root).unwrap().html, "<p>bridge v2</p>");
     }
 }
