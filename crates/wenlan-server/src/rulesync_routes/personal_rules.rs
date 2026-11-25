@@ -44,7 +44,6 @@ struct Prepared {
     next_master: PersonalMaster,
     next_authored: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
     signature: String,
-    expected_source: Option<String>,
 }
 
 /// The data-root files are private, and AI callers may only read or propose
@@ -212,10 +211,6 @@ struct PlanBinding<'a> {
     overrides: &'a BTreeMap<String, LocalText>,
     codex_sync_replaced: bool,
     claude_imported_rules: &'a Option<BTreeSet<String>>,
-    following_source: bool,
-    source_base: &'a Option<String>,
-    source_read: &'a str,
-    source_credential_lines: &'a [usize],
     generated: &'a [String],
     origins: &'a [PersonalRuleLayerOrigins],
     history: &'a [String],
@@ -281,17 +276,6 @@ impl Setup {
                 }
             }
         }
-
-        // A plan uses the source's last reconciled state. Never silently pull
-        // a source edit into a different change after the person saw a diff.
-        let source = shared_source::SharedSource::read(&self.home, manifest)?;
-        if let Some(line) = source.credential_lines.first() {
-            return Err(SharedSourceCredential(*line).into());
-        }
-        ensure!(
-            source.merged == manifest.master.shared,
-            "Shared source changes are waiting. Sync or resolve them before changing rules."
-        );
 
         let root = self.home_files()?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
@@ -450,10 +434,6 @@ impl Setup {
             overrides: &manifest.master.overrides,
             codex_sync_replaced: manifest.master.codex_sync_replaced,
             claude_imported_rules: &manifest.master.claude_imported_rules,
-            following_source: manifest.shared_source_following,
-            source_base: &manifest.shared_source_base,
-            source_read: &source.read,
-            source_credential_lines: &source.credential_lines,
             generated,
             origins: &manifest.personal_rule_origins,
             history: &manifest.personal_rule_history,
@@ -470,7 +450,6 @@ impl Setup {
                 id: String::new(),
                 expires_at: 0,
                 proposer,
-                following_source: manifest.shared_source_following,
                 changes,
                 blocked_tools: blocked,
                 unmanaged_tools: unmanaged,
@@ -479,7 +458,6 @@ impl Setup {
             next_master,
             next_authored,
             signature,
-            expected_source: manifest.shared_source_following.then_some(source.read),
         })
     }
 }
@@ -498,23 +476,7 @@ fn rendering_setup() -> Result<Setup> {
     }
 }
 
-#[derive(Debug)]
-struct SharedSourceCredential(usize);
-
-impl std::fmt::Display for SharedSourceCredential {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "The shared source has a possible credential on line {}. Resolve it before changing rules.", self.0)
-    }
-}
-
-impl std::error::Error for SharedSourceCredential {}
-
 fn server_error(error: anyhow::Error) -> ServerError {
-    if let Some(SharedSourceCredential(line)) = error.downcast_ref::<SharedSourceCredential>() {
-        return ServerError::Conflict(format!(
-            "personal_rule_credential: layer=shared-source line={line}"
-        ));
-    }
     if let Some(credential) =
         error.downcast_ref::<wenlan_core::rulesync_rule_plan::PersonalRuleCredential>()
     {
@@ -982,26 +944,6 @@ fn snapshot_baseline(manifest: &Manifest, id: String) -> Result<PersonalRuleVers
     )
 }
 
-/// Stage the first known snapshot without inventing an earlier version.
-pub(super) fn stage_baseline(setup: &Setup, manifest: &mut Manifest) -> Result<Option<String>> {
-    if !manifest.personal_rule_history.is_empty() {
-        return Ok(None);
-    }
-    settled(manifest)?;
-    let id = Uuid::new_v4().simple().to_string();
-    let version = snapshot_baseline(manifest, id.clone())?;
-    let journal = RuleHistoryJournal {
-        files: BTreeMap::from([(id.clone(), serde_json::to_vec(&version)?)]),
-    };
-    manifest.personal_rule_journal = Some(journal.clone());
-    setup.save(manifest)?;
-    if let Err(error) = write_history_files(setup, &journal) {
-        discard_history_journal(setup, manifest)?;
-        return Err(error);
-    }
-    Ok(Some(id))
-}
-
 fn restore_edits(
     manifest: &Manifest,
     version: &PersonalRuleVersion,
@@ -1034,20 +976,10 @@ pub(super) struct RulePlanUpdate {
     master: PersonalMaster,
     origins: Vec<PersonalRuleLayerOrigins>,
     history: Vec<String>,
-    expected_source: Option<String>,
     authored: Option<BTreeMap<PathBuf, restore_rules::AuthoredRules>>,
 }
 
 impl RulePlanUpdate {
-    pub(super) fn check_followed_source(&self, setup: &Setup, manifest: &Manifest) -> Result<()> {
-        if let Some(expected) = &self.expected_source {
-            let unchanged = shared_source::SharedSource::read(&setup.home, manifest)
-                .is_ok_and(|source| source.credential_lines.is_empty() && source.read == *expected);
-            ensure!(unchanged, "The shared source changed during delivery or could not be checked. Propose the change again.");
-        }
-        Ok(())
-    }
-
     pub(super) fn commit(self, manifest: &mut Manifest) {
         manifest.master = self.master;
         manifest.personal_rule_origins = self.origins;
@@ -1215,7 +1147,6 @@ fn stage_master_history_with_origin(
         master: next,
         origins,
         history,
-        expected_source: None,
         authored: None,
     }))
 }
@@ -1414,14 +1345,9 @@ impl Setup {
             master: prepared.next_master,
             origins,
             history,
-            expected_source: prepared.expected_source,
             authored: Some(prepared.next_authored),
         };
         if prepared.operations.is_empty() {
-            if let Err(error) = update.check_followed_source(self, &manifest) {
-                discard_history_journal(self, &mut manifest)?;
-                return Err(error);
-            }
             update.commit(&mut manifest);
             if let Err(error) = save_rule_checkpoint(self, &manifest) {
                 recover_unconfirmed_checkpoint(self)?;

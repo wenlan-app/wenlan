@@ -8,7 +8,8 @@ use clap::Subcommand;
 use wenlan_types::shared_space::{SharedHost, SharedSyncRequest, SharedSyncStatus};
 use wenlan_types::team::{
     TeamAccess, TeamAddMemberRequest, TeamEveryone, TeamJoinResponse, TeamMember, TeamMemberKey,
-    TeamMembershipInfo, TeamSpaceAccess, TeamStartRequest, TeamStatus, TeamUpdateMemberRequest,
+    TeamMembershipInfo, TeamRole, TeamSpaceAccess, TeamStartRequest, TeamStatus,
+    TeamUpdateMemberRequest,
 };
 
 use crate::client::WenlanClient;
@@ -563,6 +564,7 @@ fn joined_teams(
                 url: host.clone(),
                 team: share.team.clone(),
                 owner: false,
+                library_spaces: Vec::new(),
             });
         }
     }
@@ -623,13 +625,14 @@ async fn status(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> R
         }
         println!("Joined: {}", team_label(team));
         let spaces = team_shares(&shares, &team.url);
-        if spaces.is_empty() {
+        if spaces.is_empty() && team.library_spaces.is_empty() {
             println!("  No Spaces are open to you yet. They sync here when the team opens one.");
         }
         for share in spaces {
             let access = if share.read_only { " (read)" } else { "" };
             println!("  {}{access}", share.target);
         }
+        print_library_spaces(&team.library_spaces, "  ");
     }
     Ok(())
 }
@@ -657,19 +660,40 @@ fn print_own_team(status: &TeamStatus) {
     if !status.everyone.is_empty() {
         println!("Open to everyone: {}", access_list(&status.everyone));
     }
-    let active: Vec<&TeamMember> = status
+    let (owners, active): (Vec<&TeamMember>, Vec<&TeamMember>) = status
         .members
         .iter()
         .filter(|member| member.removed_at.is_none())
-        .collect();
+        .partition(|member| member.role == TeamRole::Owner);
+    if let Some(owner) = owners.first() {
+        println!("Owner: {}", owner.name);
+    }
     if active.is_empty() {
         println!("No one invited yet (wenlan team invite <NAME>)");
         return;
     }
     println!("{:<20} SPACES", "NAME");
     for member in active {
-        println!("{:<20} {}", member.name, access_list(&member.spaces));
+        let link_only = if link_only(member) {
+            "  [invite link: read only until they add Google or GitHub]"
+        } else {
+            ""
+        };
+        println!(
+            "{:<20} {}{link_only}",
+            member.name,
+            access_list(&member.spaces)
+        );
     }
+}
+
+/// Joined, or will join, with only an invite link's key: no Google or
+/// GitHub account linked and no sign-in invite open. Writing needs sign-in,
+/// so they read.
+fn link_only(member: &TeamMember) -> bool {
+    member.sign_in.as_ref().is_none_or(|sign_in| {
+        sign_in.providers.is_empty() && !sign_in.invited && sign_in.waiting_email.is_none()
+    })
 }
 
 /// Prints the invite link (or the key). It is shown only this once.
@@ -700,6 +724,9 @@ fn print_key(
                 }
             }
             println!("This is shown only once. Send it to them privately.");
+            if link_only(&issued.member) {
+                println!("With the link only they can read. To write, they add Google or GitHub on the team's web page.");
+            }
             if let Some(everyone) = everyone {
                 let mut spaces = issued.member.spaces.clone();
                 for space in everyone {
@@ -724,17 +751,36 @@ fn print_key(
 fn print_open_spaces(joined: &TeamJoinResponse) {
     println!("Server: {}", joined.url);
     println!("You are {}.", joined.me.name);
-    if joined.me.spaces.is_empty() {
+    if joined.me.spaces.is_empty() && joined.me.library_spaces.is_empty() {
         println!("No Spaces are open to you yet.");
         return;
     }
-    println!("Spaces you can use:");
+    if !joined.me.spaces.is_empty() {
+        println!("Spaces you can use:");
+    }
     for s in &joined.me.spaces {
-        let access = match s.access {
-            TeamAccess::Read => "read only",
-            TeamAccess::Write => "read and write",
-        };
-        println!("  {} ({access})", s.space);
+        println!("  {} ({})", s.space, access_words(s.access));
+    }
+    print_library_spaces(&joined.me.library_spaces, "");
+}
+
+fn access_words(access: TeamAccess) -> &'static str {
+    match access {
+        TeamAccess::Read => "read only",
+        TeamAccess::Write => "read and write",
+    }
+}
+
+/// Team-only Spaces in the team library: open to this person, read through
+/// the team server, never copied to this computer. Says so, so nobody is
+/// told nothing is open to them.
+fn print_library_spaces(spaces: &[TeamSpaceAccess], indent: &str) {
+    if spaces.is_empty() {
+        return;
+    }
+    println!("{indent}In the team library (your AI tools read these from the team server; they are not copied to this computer):");
+    for s in spaces {
+        println!("{indent}  {} ({})", s.space, access_words(s.access));
     }
 }
 
@@ -835,7 +881,7 @@ async fn join_all(
     };
     output(format, quiet, &joined, || {
         println!("Joined {team} as {}.", joined.me.name);
-        if joined.spaces.is_empty() {
+        if joined.spaces.is_empty() && joined.me.library_spaces.is_empty() {
             println!("No Spaces are open to you yet. They sync here when the team opens one.");
         }
         for space in &joined.spaces {
@@ -856,6 +902,7 @@ async fn join_all(
                 );
             }
         }
+        print_library_spaces(&joined.me.library_spaces, "");
     })
 }
 
@@ -1037,6 +1084,29 @@ mod tests {
     }
 
     #[test]
+    fn only_someone_with_just_the_invite_link_is_shown_read_only() {
+        let member = |sign_in: Option<wenlan_types::team::TeamMemberSignIn>| TeamMember {
+            sign_in,
+            ..serde_json::from_value(serde_json::json!({
+                "id": "m1", "name": "Bo", "spaces": [], "added_at": "2026-11-25T00:00:00Z"
+            }))
+            .unwrap()
+        };
+        let signed = |providers: &[&str], invited: bool| {
+            Some(wenlan_types::team::TeamMemberSignIn {
+                providers: providers.iter().map(|p| p.to_string()).collect(),
+                invited,
+                ..Default::default()
+            })
+        };
+        assert!(link_only(&member(None)));
+        assert!(link_only(&member(signed(&[], false))));
+        assert!(!link_only(&member(signed(&["google"], false))));
+        // A sign-in invite not used yet: they will sign in to join.
+        assert!(!link_only(&member(signed(&[], true))));
+    }
+
+    #[test]
     fn a_teams_space_goes_beside_an_own_space_of_the_same_name() {
         let here = vec!["Product".to_string()];
         let server = "http://team.test:7879";
@@ -1072,6 +1142,7 @@ mod tests {
                 name: Some(name.into()),
             }),
             owner: false,
+            library_spaces: Vec::new(),
         }
     }
 

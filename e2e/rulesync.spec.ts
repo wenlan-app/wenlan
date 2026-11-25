@@ -20,6 +20,7 @@ test("UX-SKILL-25 Bring in shows settings in the same confirmation, then Status 
   await expect(setup.getByText("Not managed").first()).toBeVisible();
   await setup.getByRole("button", { name: "Bring in" }).click();
   const dialog = page.getByRole("alertdialog");
+  await expect(dialog.getByText("Wenlan imports ~/notes/team-rules.md once and leaves the file in place.")).toBeVisible();
   await expect(dialog.getByText("MCP servers, hooks and permissions")).toBeVisible();
   await expect(dialog.getByText("+ [mcp_servers.calendar]")).toBeVisible();
   await expect(dialog).not.toContainText("config.toml");

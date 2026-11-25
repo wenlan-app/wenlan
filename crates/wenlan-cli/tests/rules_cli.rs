@@ -369,32 +369,88 @@ fn personal_rules_dry_run_previews_safe_settings_only_with_the_flag() {
 
 #[test]
 fn personal_rules_dry_run_reads_existing_files_without_daemon_or_data_root() {
+    const SKILL: &str = ".agents/skills/only-skill/SKILL.md";
+    for files in [
+        &[(".claude/CLAUDE.md", "Claude-only rule.\n")][..],
+        &[(".codex/AGENTS.md", "Codex-only rule.\n")],
+        &[],
+        &[(SKILL, "---\nname: only-skill\ndescription: Fixture\n---\n")],
+    ] {
+        let state = tempfile::tempdir().unwrap();
+        let home = state.path().join("ai-tools/home");
+        fs::create_dir_all(&home).unwrap();
+        let has_skill = files.first().is_some_and(|(path, _)| *path == SKILL);
+        if has_skill {
+            fs::create_dir(home.join(".codex")).unwrap();
+        }
+        for (path, body) in files {
+            let path = home.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let preview = |format| {
+            personal_rules_cli(state.path())
+                .env("WENLAN_DEFAULT_SPACE", "Clinic")
+                .args(["rules", "adopt", "--dry-run", "--format", format])
+                .assert()
+                .success()
+        };
+        let json = preview("json");
+        let plan: AdoptionPlan = serde_json::from_slice(&json.get_output().stdout).unwrap();
+        assert!(plan.rule_sources.is_empty(), "{plan:?}");
+        assert!(plan.new_files.is_empty(), "{plan:?}");
+        assert_eq!(
+            plan.rule_lines,
+            Some(if has_skill { 0 } else { files.len() })
+        );
+        assert_eq!(plan.skills.len(), usize::from(has_skill));
+        for path in plan
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .chain(plan.skills.iter().map(|skill| skill.path.as_str()))
+        {
+            assert!(home.join(path).exists(), "{plan:?}");
+        }
+        let table = preview("table");
+        let table = std::str::from_utf8(&table.get_output().stdout).unwrap();
+        assert!(!table.contains("leaves the file in place."), "{table}");
+        if has_skill {
+            assert!(table.contains(".agents/skills/only-skill"), "{table}");
+            assert!(!home.join(".codex/AGENTS.md").exists());
+            assert!(!home.join(".agents/AGENTS.md").exists());
+        } else {
+            assert!(!table.contains(".agents"), "{table}");
+            assert!(!home.join(".agents").exists());
+        }
+        for (path, body) in files {
+            assert_eq!(fs::read_to_string(home.join(path)).unwrap(), *body);
+        }
+        assert!(!state.path().join("unused-data-root").exists());
+    }
+}
+
+#[test]
+fn personal_rules_dry_run_names_the_discovered_source() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
-    fs::create_dir_all(home.join(".agents")).unwrap();
-    fs::create_dir_all(home.join(".codex")).unwrap();
-    let master = home.join(".agents/AGENTS.md");
-    let codex = home.join(".codex/AGENTS.md");
-    fs::write(&master, "Keep shared rules.\n").unwrap();
-    fs::write(&codex, "Keep Codex rules.\n").unwrap();
-
-    let output = personal_rules_cli(state.path())
-        .env("WENLAN_DEFAULT_SPACE", "Clinic")
-        .args(["rules", "adopt", "--dry-run", "--format", "json"])
+    for (path, text) in [
+        (".claude/CLAUDE.md", "@~/notes/team-rules.md\n"),
+        ("notes/team-rules.md", "Use the team glossary.\n"),
+    ] {
+        let path = home.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    personal_rules_cli(state.path())
+        .args(["rules", "adopt", "--dry-run", "--format", "table"])
         .assert()
-        .success();
-    let plan: AdoptionPlan = serde_json::from_slice(&output.get_output().stdout).unwrap();
-    let change = plan
-        .files
-        .iter()
-        .find(|change| Path::new(&change.path) == Path::new(".codex/AGENTS.md"))
-        .expect("Codex migration plan");
-    assert_eq!((change.added, change.removed), (1, 0));
-    assert!(change.diff.contains("+Keep shared rules."));
-    assert_eq!(fs::read_to_string(master).unwrap(), "Keep shared rules.\n");
-    assert_eq!(fs::read_to_string(codex).unwrap(), "Keep Codex rules.\n");
-    assert!(!home.join(".claude").exists());
-    assert!(!state.path().join("unused-data-root").exists());
+        .success()
+        .stdout(predicate::str::contains(
+            "Wenlan imports ~/notes/team-rules.md once and leaves the file in place.",
+        ))
+        .stdout(predicate::str::contains(".agents").not());
 }
 
 #[test]
@@ -515,7 +571,7 @@ fn personal_rules_dry_run_labels_skill_sources() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            ".agents/skills/locked — skipped (Wenlan reads this shared source",
+            ".agents/skills/locked — tracked upstream from GitHub owner/project",
         ))
         .stdout(predicate::str::contains(
             ".codex/skills/handmade — plain copy in the personal master",
@@ -544,14 +600,15 @@ fn personal_rules_dry_run_shows_the_rendered_skill() {
 }
 
 #[test]
-fn personal_rules_dry_run_announces_retired_codex_script() {
+fn personal_rules_dry_run_previews_the_generated_codex_header_change() {
     let state = tempfile::tempdir().unwrap();
     let home = state.path().join("ai-tools/home");
     let script = home.join(".agents/scripts/sync-codex-agents.sh");
     let codex = home.join(".codex/AGENTS.md");
     fs::create_dir_all(script.parent().unwrap()).unwrap();
     fs::create_dir_all(codex.parent().unwrap()).unwrap();
-    let old = "<!-- Generated by ~/.agents/scripts/sync-codex-agents.sh. Edit the adapter, then rerun. -->";
+    let old = "<!-- Generated by a script. Source: `~/my-rules.md` -->";
+    fs::write(home.join("my-rules.md"), "A common rule.\n").unwrap();
     fs::write(&script, "#!/bin/sh\n").unwrap();
     let original = format!("{old}\nKeep my Codex rules.\n");
     fs::write(&codex, &original).unwrap();
@@ -591,16 +648,14 @@ fn personal_rules_dry_run_announces_retired_codex_script() {
     assert!(
         plan.notes
             .first()
-            .is_some_and(|note| note.contains("sync-codex-agents.sh becomes unused")),
-        "retired script not announced\n{context}"
+            .is_some_and(|note| note.contains("update the generated header")),
+        "header change not announced\n{context}"
     );
     personal_rules_cli(state.path())
         .args(["rules", "adopt", "--dry-run", "--format", "table"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "script stays in place for you to keep or remove",
-        ));
+        .stdout(predicate::str::contains("update the generated header"));
     assert_eq!(fs::read_to_string(codex).unwrap(), original);
     assert_eq!(fs::read_to_string(script).unwrap(), "#!/bin/sh\n");
 }
@@ -836,7 +891,6 @@ fn share_fixture(state: &Path) -> (Command, std::sync::mpsc::Receiver<(String, S
         "already_there": 2,
         "key_servers": ["billing", "search"],
         "key_tools": ["Codex", "Cursor"],
-        "shared_source_notice": "Also adds 2 lines to ~/.agents/AGENTS.md.",
         "rules": [
             {"number": 1, "line": "Run the release checklist.", "tools": ["Claude Code"], "kept": false},
             {"number": 2, "line": format!("Review {} for changes.", "規".repeat(60)), "tools": ["Claude Code"], "kept": false},
@@ -888,9 +942,6 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .success()
         .stdout(predicate::str::contains("\"plan_id\": \"0123456789ab\""))
         .stdout(predicate::str::contains("its name may contain a key"))
-        .stdout(predicate::str::contains(
-            "\"shared_source_notice\": \"Also adds 2 lines to ~/.agents/AGENTS.md.\"",
-        ))
         .stdout(predicate::str::contains("\"key_servers\""));
     assert!(shared(&requests).is_none());
 
@@ -900,9 +951,6 @@ fn rules_share_in_session_without_confirm_only_previews() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Share with your other tools"))
-        .stdout(predicate::str::contains(
-            "Also adds 2 lines to ~/.agents/AGENTS.md.",
-        ))
         .stdout(predicate::str::contains("Codex: 1 command, 1 MCP server"))
         .stdout(predicate::str::contains("  + command hello").not())
         .stdout(predicate::str::contains("2 items already in every tool"))
@@ -931,9 +979,6 @@ fn rules_share_in_session_without_confirm_only_previews() {
     .assert()
     .success()
     .stdout(predicate::str::contains("  + command hello"))
-    .stdout(predicate::str::contains(
-        "Also adds 2 lines to ~/.agents/AGENTS.md.",
-    ))
     .stdout(predicate::str::contains(
         "Stays in Claude Code: an MCP server in .claude.json: its name may contain a key",
     ));
@@ -1132,7 +1177,6 @@ fn personal_rule_changes_refuse_piped_or_ai_confirmation() {
         &["rules", "shared", "apply", "plan-1"][..],
         &["rules", "tool", "codex", "apply", "plan-1"][..],
         &["rules", "history", "restore", "version-1"][..],
-        &["rules", "shared", "source", "off"][..],
     ] {
         personal_rules_cli(state.path())
             .args(args)
@@ -1497,9 +1541,9 @@ fn personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacemen
         .args(["rules", "adopt", "--dry-run", "--format", "table"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("~/.agents is left untouched."))
+        .stdout(predicate::str::contains("leaves the file in place.").not())
         .stdout(predicate::str::contains(
-            "~/.agents/skills is inside the Git repository agents-harness. Wenlan reads the shared skills there and leaves that directory in place.",
+            "~/.agents/skills is inside the Git repository agents-harness. Wenlan will manage 1 skill folder there, and its writes can appear as changes in that repository.",
         ))
         .stdout(predicate::str::contains(
             "~/.claude/skills is inside the Git repository claude-config. Wenlan will manage 1 skill folder there, and its writes can appear as changes in that repository.",

@@ -1172,9 +1172,7 @@ struct SkillStore {
 
 impl SkillStore {
     fn open(data: &Path) -> Result<Self> {
-        let root = FileRoot::open(data)?
-            .guard_source_aliases()
-            .with_private_directories();
+        let root = FileRoot::open(data)?.with_private_directories();
         let seen = root.read(Path::new(SKILL_STATE), false)?;
         let state = match &seen {
             Snapshot::File { bytes, .. } => {
@@ -1266,7 +1264,6 @@ pub(crate) fn check_skill_format(data: &Path) -> Result<()> {
         Ok(_) => {}
     }
     match FileRoot::open(data)?
-        .guard_source_aliases()
         .with_private_directories()
         .read(path, false)?
     {
@@ -1281,10 +1278,7 @@ pub(crate) fn check_skill_format(data: &Path) -> Result<()> {
 
 /// Read under the same setup lock as the renderer and proposal operations.
 pub(crate) fn saved_skill_deliveries(data: &Path) -> Result<SavedSkillDeliveries> {
-    let mut state = SkillStore::open(data)?.state;
-    state
-        .approved_local
-        .retain(|path, _| !rulesync_personal::is_harness_path(path));
+    let state = SkillStore::open(data)?.state;
     let names = rulesync_personal::PERSONAL_TARGETS
         .iter()
         .map(|target| {
@@ -1333,7 +1327,7 @@ pub(crate) fn retained_new_skill_folders<'a>(
                 } else {
                     variants.tools.len() == 1
                         && rulesync_personal::PERSONAL_TARGETS.iter().any(|target| {
-                            folder.starts_with(target.skills.destination)
+                            target.skill_roots().any(|root| folder.starts_with(root))
                                 && variants.tools.contains_key(&target.tool)
                         })
                 }
@@ -1448,7 +1442,7 @@ pub(crate) struct SkillHome {
 
 impl SkillHome {
     pub(crate) fn open(home: &Path) -> Result<Self> {
-        let root = FileRoot::open_home(home)?.guard_source_aliases();
+        let root = FileRoot::open_home(home)?;
         let parent = Dir::open_ambient_dir(
             home.parent().context("tool home has no parent")?,
             cap_std::ambient_authority(),
@@ -1474,22 +1468,32 @@ impl SkillHome {
         Ok(Some(dir))
     }
 
-    fn candidates(&self) -> BTreeMap<PathBuf, SavedSkillTool> {
+    fn candidates(&self, unmanaged: &BTreeSet<PathBuf>) -> BTreeMap<PathBuf, SavedSkillTool> {
         let mut paths = BTreeMap::new();
         for target in rulesync_personal::PERSONAL_TARGETS {
-            let path = Path::new(target.skills.destination);
-            let Ok(Some(dir)) = self.below(path) else {
-                continue;
-            };
-            let Ok(entries) = dir.entries() else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                if name.to_str().is_some_and(skills::skill_name)
-                    && entry.file_type().is_ok_and(|kind| kind.is_dir())
+            for root in target.skill_roots() {
+                let path = Path::new(root);
+                if path.ancestors().any(|path| unmanaged.contains(path))
+                    || !self
+                        .dir
+                        .symlink_metadata(path)
+                        .is_ok_and(|metadata| metadata.is_dir())
                 {
-                    paths.insert(path.join(name), target.tool);
+                    continue;
+                }
+                let Ok(Some(dir)) = self.below(path) else {
+                    continue;
+                };
+                let Ok(entries) = dir.entries() else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    if name.to_str().is_some_and(skills::skill_name)
+                        && entry.file_type().is_ok_and(|kind| kind.is_dir())
+                    {
+                        paths.insert(path.join(name), target.tool);
+                    }
                 }
             }
         }
@@ -1667,7 +1671,7 @@ pub(crate) fn collect_tool_proposals(
     enrolled: &BTreeSet<SavedSkillTool>,
 ) -> Result<ToolProposals> {
     let home = SkillHome::open(home)?;
-    let mut candidates = home.candidates();
+    let mut candidates = home.candidates(unmanaged);
     candidates.extend(
         managed
             .iter()

@@ -1253,6 +1253,7 @@ export interface RulesSetupStatus {
   review_tools: Record<string, RulesSetupTool>;
   last_checked_at?: number;
   tools?: RulesToolStatus[];
+  rule_import_finished?: boolean;
 }
 
 export interface RulesToolStatus extends RulesSetupTool {
@@ -1279,6 +1280,7 @@ export interface RulesSettingsPlan {
 export interface RulesAdoptionPlan {
   token: string;
   files: RulesSetupChange[];
+  rule_sources?: string[];
   settings?: RulesSettingsPlan;
   notes?: string[];
   note_codes?: RulesSetupNotice[];
@@ -1554,7 +1556,16 @@ export interface TeamMemberKey {
 
 export interface TeamJoinResponse {
   url: string;
-  me: { member_id: string; name: string; spaces: TeamSpaceAccess[]; team?: TeamInfo | null; role?: TeamRole };
+  me: {
+    member_id: string;
+    name: string;
+    spaces: TeamSpaceAccess[];
+    /** Team-only library Spaces open to them: read through the team
+     *  server, not synced to this computer. Left out when none. */
+    library_spaces?: TeamSpaceAccess[];
+    team?: TeamInfo | null;
+    role?: TeamRole;
+  };
 }
 
 export async function teamStatus(): Promise<TeamStatus> {
@@ -3449,6 +3460,8 @@ export interface PageSentence {
   /** Another member of a shared Space wrote it: `shared_person:<member>` or
    *  `shared_ai:<member>`. */
   shared_by?: string;
+  /** The AI tool that wrote it (`claude-code`), where its name was kept. */
+  writer_tool?: string;
 }
 
 /** The page's newest AI write, for "AI updated N sentences" and its Undo. */
@@ -3673,7 +3686,9 @@ export type CodeBasisUnavailableReason =
   | "outside_repo"
   | "unreadable"
   | "too_large"
-  | "lines_not_found";
+  | "lines_not_found"
+  /** Pending: lines were added inside a stretch the page relies on. */
+  | "lines_added";
 
 export interface CodeBasisRef {
   /** Absolute. */
@@ -3723,16 +3738,17 @@ export interface CodeBasisPendingEntry {
   pending: CodeBasisRef[];
 }
 
-export interface CodeBasisCited {
+/** A code basis' lines as cited and as they read now, read by the daemon. */
+export interface CodeBasisLines {
   /**
-   * The git blob id (40 hex characters) of the whole file as it was when the
-   * note last cited or confirmed the lines; null for rows written before the
-   * id was kept.
+   * The row's own lines in the file as it was when the note last cited or
+   * confirmed them; null when that version is not in git.
    */
-  cited_blob: string | null;
-  /** Unix seconds. */
-  confirmed_at: number;
-  state: string;
+  cited: string[] | null;
+  /** The line number `cited` starts at in that version. */
+  cited_start?: number | null;
+  /** The file now, from the row's first line to its last plus `extra`; null when it cannot be read. */
+  now: string[] | null;
 }
 
 /** Notes whose code changed or went missing; `space` narrows it. */
@@ -3757,38 +3773,17 @@ export async function removePageCodeBasis(
   return invoke("remove_page_code_basis", { pageId, locator: codeBasisLocator(locator) });
 }
 
-export async function getPageCodeBasisCited(
+/**
+ * A code basis' lines then and now, for the before and after view. The daemon
+ * reads them, so a browser sees the same view as the app; `extra` lines past
+ * the row's end come along on the "now" side.
+ */
+export async function getPageCodeBasisLines(
   pageId: string,
   locator: CodeBasisLocator,
-): Promise<CodeBasisCited> {
-  return invoke("get_page_code_basis_cited", { pageId, locator: codeBasisLocator(locator) });
-}
-
-/**
- * The requested lines (1-based, inclusive) of a code file as it reads now.
- * Read in Rust like `readSourceText`: the webview cannot reach a repository.
- * Rejects when the file cannot be read.
- */
-export async function readCodeLines(
-  path: string,
-  lineStart: number,
-  lineEnd: number,
-): Promise<string[]> {
-  return invoke("read_code_lines", { path, lineStart, lineEnd });
-}
-
-/**
- * The requested lines (1-based, inclusive) of a file as git stored it: the
- * blob `blob` of the repository at `repoRoot`. Rejects when git is missing,
- * the object is gone or the repository moved.
- */
-export async function readGitBlobLines(
-  repoRoot: string,
-  blob: string,
-  lineStart: number,
-  lineEnd: number,
-): Promise<string[]> {
-  return invoke("read_git_blob_lines", { repoRoot, blob, lineStart, lineEnd });
+  extra: number,
+): Promise<CodeBasisLines> {
+  return invoke("get_page_code_basis_lines", { pageId, locator: codeBasisLocator(locator), extra });
 }
 
 export async function listOrphanLinks(minCount?: number): Promise<OrphanLinksResponse> {

@@ -12,8 +12,7 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
-use wenlan_core::rulesync_adopt::SHARED_RULES;
-use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
+use wenlan_core::rulesync_personal::case_alias_in;
 #[cfg(windows)]
 use wenlan_core::rulesync_personal::{
     check_windows_replacement, copy_windows_dacl, open_windows_tool_dir,
@@ -256,11 +255,7 @@ pub(crate) struct ApplyOptions<'a> {
 
 pub(crate) struct FileRoot {
     dir: Dir,
-    harness: Option<HarnessGuard>,
     tool_home: bool,
-    shared_rule_source: bool,
-    guard_source_aliases: bool,
-    retired_source: bool,
     private_directories: bool,
     #[cfg(test)]
     pub(crate) simulate_cross_volume: bool,
@@ -283,11 +278,7 @@ impl FileRoot {
         let ambient_parent = Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
         Ok(Self {
             dir: ambient_parent.open_dir_nofollow(Path::new(name))?,
-            harness: None,
             tool_home: false,
-            shared_rule_source: false,
-            guard_source_aliases: false,
-            retired_source: false,
             private_directories: false,
             #[cfg(test)]
             simulate_cross_volume: false,
@@ -300,61 +291,8 @@ impl FileRoot {
 
     pub(crate) fn open_home(home: &Path) -> io::Result<Self> {
         let mut root = Self::open(home)?;
-        root.harness = Some(HarnessGuard::new(home)?);
         root.tool_home = true;
         Ok(root)
-    }
-
-    /// Only an approved rule share and its recorded undo use this view.
-    /// Other harness paths and aliases keep the normal protection.
-    pub(crate) fn with_shared_rule_source(&self) -> io::Result<Self> {
-        if self.retired_source {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "retired rule sources cannot be opened as shared rule sources",
-            ));
-        }
-        Ok(Self {
-            dir: self.dir.try_clone()?,
-            harness: self.harness,
-            tool_home: self.tool_home,
-            shared_rule_source: true,
-            guard_source_aliases: self.guard_source_aliases,
-            retired_source: self.retired_source,
-            private_directories: self.private_directories,
-            #[cfg(test)]
-            simulate_cross_volume: self.simulate_cross_volume,
-            #[cfg(test)]
-            fail_key_file_after_rename: self.fail_key_file_after_rename,
-            #[cfg(all(test, not(windows)))]
-            refuse_windows_acl_in_test: self.refuse_windows_acl_in_test,
-        })
-    }
-
-    /// Treat files below this root as retired rule sources: only read a
-    /// regular file when its opened identity is verified and has one link.
-    pub(crate) fn for_retired_source(mut self) -> Self {
-        self.guard_source_aliases = true;
-        self.retired_source = true;
-        self
-    }
-
-    /// Refuse reads through file aliases while retaining the normal rule view.
-    pub(crate) fn guard_source_aliases(mut self) -> Self {
-        self.guard_source_aliases = true;
-        self
-    }
-
-    pub(crate) fn open_data(home: &Path, path: &Path) -> io::Result<Self> {
-        Self::open(path)?.guard_data(home, path)
-    }
-
-    pub(crate) fn guard_data(mut self, home: &Path, path: &Path) -> io::Result<Self> {
-        let guard = HarnessGuard::new(home)?;
-        guard.check_absolute(path)?;
-        guard.check(&self.dir.dir_metadata()?)?;
-        self.harness = Some(guard);
-        Ok(self)
     }
 
     pub(crate) fn with_private_directories(mut self) -> Self {
@@ -418,33 +356,26 @@ impl FileRoot {
         let Some(parent) = self.open_parent(relative_parent, false)? else {
             return Ok(Snapshot::Absent);
         };
-        read_leaf_with(
-            &parent,
-            name,
-            false,
-            false,
-            self.guard_source_aliases,
-            |file, metadata| {
-                if repair_if_matches.is_none() {
-                    require_private_permissions(metadata, "personal rules file")?;
+        read_leaf_with(&parent, name, false, false, |file, metadata| {
+            if repair_if_matches.is_none() {
+                require_private_permissions(metadata, "personal rules file")?;
+            }
+            let bytes = read_file_contents(file)?;
+            #[cfg(unix)]
+            if repair_if_matches == Some(bytes.as_slice())
+                && metadata.permissions().mode() & 0o7777 != 0o600
+            {
+                if cap_std::fs::MetadataExt::nlink(metadata) != 1 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "cannot make a hard-linked personal rules file private",
+                    ));
                 }
-                let bytes = read_file_contents(file)?;
-                #[cfg(unix)]
-                if repair_if_matches == Some(bytes.as_slice())
-                    && metadata.permissions().mode() & 0o7777 != 0o600
-                {
-                    if cap_std::fs::MetadataExt::nlink(metadata) != 1 {
-                        return Err(io::Error::new(
-                            io::ErrorKind::PermissionDenied,
-                            "cannot make a hard-linked personal rules file private",
-                        ));
-                    }
-                    file.set_permissions(cap_std::fs::Permissions::from_mode(0o600))?;
-                    file.sync_all()?;
-                }
-                Ok(bytes)
-            },
-        )
+                file.set_permissions(cap_std::fs::Permissions::from_mode(0o600))?;
+                file.sync_all()?;
+            }
+            Ok(bytes)
+        })
     }
 
     pub(crate) fn read(&self, path: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
@@ -459,83 +390,18 @@ impl FileRoot {
         self.read_entry(&parent, name, allow_symlink)
     }
 
-    /// Read a live entry while recovering the exact stage recorded for it.
-    /// A multi-link file is allowed only when every link is accounted for by
-    /// this stage's known journal names and the exact stage sibling.
-    pub(crate) fn read_for_stage_recovery(
-        &self,
-        path: &Path,
-        allow_symlink: bool,
-        id: &str,
-    ) -> io::Result<Snapshot> {
-        let (relative_parent, name) = entry_path(path)?;
-        self.check_tool_path(path)?;
-        let personal = self.tool_home && is_personal_entry(path);
-        if personal {
-            require_ascii_personal_path(path)?;
-        }
-        let Some(parent) = self.open_parent_checked(relative_parent, false, personal)? else {
-            return Ok(Snapshot::Absent);
-        };
-        #[cfg(windows)]
-        if self.tool_home {
-            self.check_directory_leaf(&parent, name)?;
-        }
-        if !self.guard_source_aliases {
-            return self.read_entry(&parent, name, allow_symlink);
-        }
-        let stage_leaf = stage_name(id)?;
-        let stage_name_path = Path::new(&stage_leaf);
-        let stage = match parent.open_dir_nofollow(stage_name_path) {
-            Ok(stage) => stage,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return self.read_entry(&parent, name, allow_symlink);
-            }
-            Err(error) => return Err(error),
-        };
-        let sibling = PathBuf::from(format!("{stage_leaf}-file"));
-        read_leaf_with_journal_links(
-            &parent,
-            name,
-            allow_symlink,
-            personal,
-            &stage,
-            false,
-            &parent,
-            true,
-            true,
-            &[name, sibling.as_path()],
-        )
-    }
-
     fn read_entry(&self, parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
+        #[cfg(not(windows))]
+        let _ = self;
         #[cfg(windows)]
         if self.tool_home {
-            return read_leaf_with(
-                parent,
-                name,
-                allow_symlink,
-                false,
-                self.guard_source_aliases,
-                |file, _| {
-                    check_windows_replacement(file)?;
-                    read_file_contents(file)
-                },
-            )
+            return read_leaf_with(parent, name, allow_symlink, false, |file, _| {
+                check_windows_replacement(file)?;
+                read_file_contents(file)
+            })
             .map_err(windows_access_error);
         }
-        read_leaf_with(
-            parent,
-            name,
-            allow_symlink,
-            false,
-            self.guard_source_aliases,
-            |file, _| read_file_contents(file),
-        )
-    }
-
-    fn reader(&self, personal: bool) -> ReadLeaf {
-        reader_for_mode(personal, self.guard_source_aliases)
+        read_leaf(parent, name, allow_symlink)
     }
 
     #[cfg(windows)]
@@ -581,7 +447,6 @@ impl FileRoot {
         can_restore_parent: impl Fn(&Path) -> bool,
     ) -> io::Result<Option<std::ffi::OsString>> {
         let (parents, leaf) = entry_path(path)?;
-        self.check_tool_path(path)?;
         let mut directory = Some(self.dir.try_clone()?);
         let mut prefix = PathBuf::new();
         for part in parents {
@@ -629,15 +494,10 @@ impl FileRoot {
         #[cfg(windows)]
         if self.tool_home {
             self.check_directory_leaf(&parent, name)?;
-            return read_single_link_guarded_by_mode(
-                &parent,
-                name,
-                allow_symlink,
-                self.guard_source_aliases,
-            )
-            .map_err(windows_access_error);
+            return read_single_link_leaf(&parent, name, allow_symlink)
+                .map_err(windows_access_error);
         }
-        read_single_link_guarded_by_mode(&parent, name, allow_symlink, self.guard_source_aliases)
+        read_single_link_leaf(&parent, name, allow_symlink)
     }
 
     pub(crate) fn children(&self, path: &Path) -> io::Result<BTreeSet<PathBuf>> {
@@ -807,16 +667,16 @@ impl FileRoot {
         {
             return Err(invalid_path());
         }
-        self.check_tool_path(path)?;
-        self.check_tool_path(temp)?;
         require_ascii_personal_path(path)?;
         require_ascii_personal_path(temp)?;
         let parent = self
             .open_parent_checked(relative_parent, false, true)?
             .ok_or_else(invalid_path)?;
+        #[cfg(windows)]
         self.check_directory_leaf(&parent, name)?;
-        let read = self.reader(true);
-        if *seen != self.read_entry(&parent, name, false)? || *seen != read(&parent, name, false)? {
+        if *seen != self.read_entry(&parent, name, false)?
+            || *seen != read_single_link_leaf(&parent, name, false)?
+        {
             return Ok(ApplyOutcome::ChangedSincePlan);
         }
         if seen == desired {
@@ -867,7 +727,7 @@ impl FileRoot {
             .open_parent_checked(relative_parent, false, true)?
             .ok_or_else(invalid_path)?;
         if !same_directory(&parent, &current_parent)?
-            || !matches_leaf_with(&parent, name, seen, read)?
+            || !matches_leaf_with(&parent, name, seen, read_single_link_leaf)?
         {
             self.remove_key_temp_in(&parent, temp_name)?;
             return Ok(ApplyOutcome::ChangedSincePlan);
@@ -928,7 +788,6 @@ impl FileRoot {
         if destination_parent != relative_parent {
             return Err(invalid_path());
         }
-        self.check_tool_path(temp)?;
         require_ascii_personal_path(temp)?;
         let Some(parent) = self.open_parent_checked(relative_parent, false, true)? else {
             return Ok(());
@@ -958,12 +817,15 @@ impl FileRoot {
         before_commit: impl FnOnce(),
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
-        self.check_tool_path(path)?;
         let personal = self.tool_home && is_personal_entry(path);
         if personal {
             require_ascii_personal_path(path)?;
         }
-        let read = self.reader(personal);
+        let read: ReadLeaf = if personal {
+            read_single_link_leaf
+        } else {
+            read_leaf
+        };
         if let Snapshot::File { bytes, .. } = desired {
             check_file_size(bytes.len() as u64)?;
         }
@@ -998,6 +860,7 @@ impl FileRoot {
                 },
             );
         };
+        #[cfg(windows)]
         self.check_directory_leaf(&parent, name)?;
         // A personal file must also pass the single-link reader.
         if *seen != self.read_entry(&parent, name, true)? || *seen != read(&parent, name, true)? {
@@ -1028,6 +891,7 @@ impl FileRoot {
                     return Ok(ApplyOutcome::ChangedSincePlan);
                 }
             }
+            #[cfg(windows)]
             self.check_directory_leaf(&current_parent, name)?;
             #[cfg(windows)]
             check_windows_replacement(&directory)?;
@@ -1066,6 +930,7 @@ impl FileRoot {
             else {
                 return Ok(ApplyOutcome::ChangedSincePlan);
             };
+            #[cfg(windows)]
             self.check_directory_leaf(&current_parent, name)?;
             if !same_directory(&parent, &current_parent)?
                 || !matches_leaf_with(&parent, name, seen, read)?
@@ -1085,7 +950,6 @@ impl FileRoot {
                 displaced.as_ref(),
                 read,
                 personal,
-                self.guard_source_aliases,
             ) {
                 Err(error)
                     if !staged.preserve
@@ -1131,8 +995,6 @@ impl FileRoot {
         let Some(parent) = self.open_parent(relative_parent, false)? else {
             return Ok(());
         };
-        let personal = self.tool_home && is_personal_entry(path);
-        let read = self.reader(personal);
         #[cfg(not(windows))]
         let _ = leaf;
         #[cfg(windows)]
@@ -1146,13 +1008,19 @@ impl FileRoot {
         #[cfg(windows)]
         if *desired == Snapshot::Absent && *actual == Snapshot::Absent {
             if let Some((saved_dir, saved)) = recovery_location(&parent, options.displaced)? {
-                let entry = read(&saved_dir, saved, true)?;
+                let entry = read_leaf(&saved_dir, saved, true)?;
                 if matches!(entry, Snapshot::File { .. }) && *seen != entry {
                     check_recovery_file(&saved_dir, saved)?;
                     return keep_changed_deletion(&saved_dir, saved, &parent, leaf, actual);
                 }
             }
         }
+        let personal = self.tool_home && is_personal_entry(path);
+        let read: ReadLeaf = if personal {
+            read_single_link_leaf
+        } else {
+            read_leaf
+        };
         if *desired == Snapshot::Absent || personal && matches!(seen, Snapshot::File { .. }) {
             if let Some((saved_dir, saved)) = recovery_location(&parent, options.displaced)? {
                 check_displaced_entry(&saved_dir, saved, &parent, leaf, seen, read)?;
@@ -1183,8 +1051,6 @@ impl FileRoot {
                     desired,
                     actual,
                     options.displaced,
-                    personal,
-                    self.guard_source_aliases,
                 );
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
@@ -1197,14 +1063,7 @@ impl FileRoot {
             // original. Release only that alias before checking its link count.
             remove_unused_recovery_link(dir, staged, (dir, Path::new(MERGED)))?;
         }
-        let entry = read_stage_journal_leaf(
-            &stage,
-            staged,
-            leaf,
-            personal,
-            self.guard_source_aliases,
-            false,
-        )?;
+        let entry = read_leaf(dir, staged, true)?;
         #[cfg(windows)]
         if *desired == Snapshot::Absent && matches!(entry, Snapshot::File { .. }) && *seen != entry
         {
@@ -1214,14 +1073,7 @@ impl FileRoot {
             return keep_changed_deletion(dir, staged, &parent, leaf, actual);
         }
         if *desired == Snapshot::Absent {
-            check_displaced_stage_entry(
-                &stage,
-                staged,
-                leaf,
-                seen,
-                personal,
-                self.guard_source_aliases,
-            )?;
+            check_displaced_entry(dir, staged, &parent, leaf, seen, read)?;
         }
         // Only an incoming link to a different file proves that the
         // original was exchanged into the stage.
@@ -1253,14 +1105,7 @@ impl FileRoot {
             Err(error) => return Err(error),
         };
         if personal && exchanged && *desired != Snapshot::Absent && *seen != Snapshot::Absent {
-            check_displaced_stage_entry(
-                &stage,
-                staged,
-                leaf,
-                seen,
-                personal,
-                self.guard_source_aliases,
-            )?;
+            check_displaced_entry(dir, staged, &parent, leaf, seen, read)?;
         }
         #[cfg(windows)]
         let restored = personal
@@ -1296,7 +1141,7 @@ impl FileRoot {
                 }
                 #[cfg(unix)]
                 displaced.0.open(".")?.sync_all()?;
-            } else if !matches_leaf_with(dir, staged, seen, read)? || desired != actual {
+            } else if !matches_leaf(dir, staged, seen)? || desired != actual {
                 return Err(io::Error::other(format!(
                     "an unexpected entry is saved in {}/{STAGED}. Check it before retrying",
                     stage.name,
@@ -1322,11 +1167,7 @@ impl FileRoot {
         create: bool,
         personal: bool,
     ) -> io::Result<Option<Dir>> {
-        self.check_tool_path(path)?;
         let mut parent = self.dir.try_clone()?;
-        if let Some(guard) = &self.harness {
-            guard.check(&parent.dir_metadata()?)?;
-        }
         if self.private_directories {
             require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
         }
@@ -1360,11 +1201,6 @@ impl FileRoot {
                 require_plain_personal_directory(&directory)?;
             }
             parent = directory;
-            if let Some(guard) = &self.harness {
-                if !(self.shared_rule_source && path == Path::new(".agents")) {
-                    guard.check(&parent.dir_metadata()?)?;
-                }
-            }
             if self.private_directories {
                 require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
             }
@@ -1372,58 +1208,20 @@ impl FileRoot {
         Ok(Some(parent))
     }
 
-    fn check_tool_path(&self, path: &Path) -> io::Result<()> {
-        if self.tool_home
-            && is_harness_path(path)
-            && !(self.shared_rule_source && is_shared_rule_source_path(path))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "inside the read-only ~/.agents harness. Choose a path outside it",
-            ));
-        }
-        Ok(())
-    }
-
+    #[cfg(windows)]
     fn check_directory_leaf(&self, parent: &Dir, name: &Path) -> io::Result<()> {
-        if self.shared_rule_source
-            && name == Path::new(".agents")
-            && same_directory(parent, &self.dir)?
-        {
-            return Ok(());
-        }
-        if let Some(guard) = &self.harness {
+        if self.tool_home {
             match parent.symlink_metadata(name) {
                 Ok(metadata) if metadata.is_dir() => {
-                    #[cfg(windows)]
-                    let directory = if self.tool_home {
-                        open_windows_tool_dir(parent, name)?
-                    } else {
-                        parent.open_dir_nofollow(name)?
-                    };
-                    #[cfg(not(windows))]
-                    let directory = parent.open_dir_nofollow(name)?;
-                    guard.check(&directory.dir_metadata()?)?;
+                    open_windows_tool_dir(parent, name)?;
                 }
                 Ok(_) => (),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-                Err(error) => {
-                    #[cfg(windows)]
-                    let error = if self.tool_home {
-                        windows_access_error(error)
-                    } else {
-                        error
-                    };
-                    return Err(error);
-                }
+                Err(error) => return Err(windows_access_error(error)),
             }
         }
         Ok(())
     }
-}
-
-pub(crate) fn is_shared_rule_source_path(path: &Path) -> bool {
-    path == Path::new(SHARED_RULES) || path == Path::new(".agents")
 }
 
 fn invalid_path() -> io::Error {
@@ -1457,17 +1255,6 @@ fn same_identity(first: &Metadata, second: &Metadata) -> bool {
     (first.dev(), first.ino()) == (second.dev(), second.ino())
 }
 
-#[cfg(windows)]
-fn same_verified_file_identity(first: &Metadata, second: &Metadata) -> bool {
-    match (
-        wenlan_core::rulesync_personal_files::file_identity_and_link_count(first),
-        wenlan_core::rulesync_personal_files::file_identity_and_link_count(second),
-    ) {
-        (Some((first, _)), Some((second, _))) => first == second,
-        _ => false,
-    }
-}
-
 fn create_directory(parent: &Dir, name: &Path) -> io::Result<()> {
     #[allow(unused_mut)]
     let mut builder = DirBuilder::new();
@@ -1497,277 +1284,13 @@ fn require_private_permissions(metadata: &Metadata, description: &str) -> io::Re
 }
 
 fn read_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
-    read_leaf_with(parent, name, allow_symlink, false, false, |file, _| {
+    read_leaf_with(parent, name, allow_symlink, false, |file, _| {
         read_file_contents(file)
     })
 }
 
 fn read_single_link_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
-    read_leaf_with(
-        parent,
-        name,
-        allow_symlink,
-        true,
-        false,
-        single_link_contents,
-    )
-}
-
-fn read_guarded_leaf(parent: &Dir, name: &Path, allow_symlink: bool) -> io::Result<Snapshot> {
-    read_leaf_with(parent, name, allow_symlink, false, true, |file, _| {
-        read_file_contents(file)
-    })
-}
-
-fn read_single_link_guarded_leaf(
-    parent: &Dir,
-    name: &Path,
-    allow_symlink: bool,
-) -> io::Result<Snapshot> {
-    read_leaf_with(
-        parent,
-        name,
-        allow_symlink,
-        true,
-        true,
-        single_link_contents,
-    )
-}
-
-fn read_single_link_guarded_by_mode(
-    parent: &Dir,
-    name: &Path,
-    allow_symlink: bool,
-    guard_source_aliases: bool,
-) -> io::Result<Snapshot> {
-    if guard_source_aliases {
-        read_single_link_guarded_leaf(parent, name, allow_symlink)
-    } else {
-        read_single_link_leaf(parent, name, allow_symlink)
-    }
-}
-
-#[cfg(windows)]
-fn read_leaf_matching_identity(
-    parent: &Dir,
-    name: &Path,
-    expected: &Metadata,
-) -> io::Result<Snapshot> {
-    let Some((identity, _)) =
-        wenlan_core::rulesync_personal_files::file_identity_and_link_count(expected)
-    else {
-        return Err(retired_source_link_denied());
-    };
-    read_leaf_with_expected_identity(
-        parent,
-        name,
-        false,
-        false,
-        false,
-        Some(identity),
-        |file, _| read_file_contents(file),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn read_leaf_with_journal_links(
-    parent: &Dir,
-    name: &Path,
-    allow_symlink: bool,
-    personal: bool,
-    stage_dir: &Dir,
-    target_is_stage_dir: bool,
-    external_dir: &Dir,
-    target_is_external_dir: bool,
-    check_personal_acl: bool,
-    external_names: &[&Path],
-) -> io::Result<Snapshot> {
-    let entry = match parent.symlink_metadata(name) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Snapshot::Absent),
-        Err(error) => return Err(error),
-    };
-    if !entry.is_file() || entry.is_symlink() {
-        return read_leaf_with(
-            parent,
-            name,
-            allow_symlink,
-            personal,
-            true,
-            |file, metadata| {
-                if personal && check_personal_acl {
-                    single_link_contents(file, metadata)
-                } else {
-                    read_file_contents(file)
-                }
-            },
-        );
-    }
-    let Some((identity, link_count)) =
-        wenlan_core::rulesync_personal_files::file_identity_and_link_count(&entry)
-    else {
-        return Err(retired_source_link_denied());
-    };
-    if link_count == 1 {
-        return read_leaf_with(
-            parent,
-            name,
-            allow_symlink,
-            personal,
-            true,
-            |file, metadata| {
-                if personal && check_personal_acl {
-                    single_link_contents(file, metadata)
-                } else {
-                    read_file_contents(file)
-                }
-            },
-        );
-    }
-    require_private_permissions(&stage_dir.dir_metadata()?, "rulesync recovery stage")?;
-
-    let internal_links = matching_journal_link_count(stage_dir, name, target_is_stage_dir, &entry)?;
-    let external_links = matching_external_link_count(
-        external_dir,
-        external_names,
-        target_is_external_dir,
-        name,
-        &entry,
-    )?;
-    if internal_links + external_links + 1 != link_count {
-        return Err(retired_source_link_denied());
-    }
-
-    read_leaf_with_expected_identity(
-        parent,
-        name,
-        allow_symlink,
-        personal,
-        false,
-        Some(identity),
-        |file, opened| {
-            if wenlan_core::rulesync_personal_files::file_identity_and_link_count(opened)
-                != Some((identity, link_count))
-                || matching_journal_link_count(stage_dir, name, target_is_stage_dir, opened)?
-                    + matching_external_link_count(
-                        external_dir,
-                        external_names,
-                        target_is_external_dir,
-                        name,
-                        opened,
-                    )?
-                    + 1
-                    != link_count
-            {
-                return Err(retired_source_link_denied());
-            }
-            if personal && check_personal_acl {
-                journal_personal_file_contents(file, opened)
-            } else {
-                read_file_contents(file)
-            }
-        },
-    )
-}
-
-fn matching_journal_link_count(
-    stage_dir: &Dir,
-    target_name: &Path,
-    target_is_stage_dir: bool,
-    target_metadata: &Metadata,
-) -> io::Result<u64> {
-    #[cfg(windows)]
-    const JOURNAL_LINKS: [&str; 5] = [STAGED, INCOMING, HELD, MERGED, REPLACEMENT];
-    #[cfg(not(windows))]
-    const JOURNAL_LINKS: [&str; 2] = [STAGED, INCOMING];
-    let mut count = 0;
-    for alias in JOURNAL_LINKS {
-        let alias_path = Path::new(alias);
-        if target_is_stage_dir && target_name == alias_path {
-            continue;
-        }
-        count += matching_link_count(stage_dir, alias_path, target_metadata)?;
-    }
-    Ok(count)
-}
-
-fn matching_external_link_count(
-    external_dir: &Dir,
-    external_names: &[&Path],
-    target_is_external_dir: bool,
-    target_name: &Path,
-    target_metadata: &Metadata,
-) -> io::Result<u64> {
-    let mut count = 0;
-    for alias in external_names {
-        if target_is_external_dir && *alias == target_name {
-            continue;
-        }
-        count += matching_link_count(external_dir, alias, target_metadata)?;
-    }
-    Ok(count)
-}
-
-fn matching_link_count(dir: &Dir, name: &Path, target: &Metadata) -> io::Result<u64> {
-    match dir.symlink_metadata(name) {
-        Ok(metadata)
-            if wenlan_core::rulesync_personal_files::file_identity_and_link_count(&metadata)
-                .zip(wenlan_core::rulesync_personal_files::file_identity_and_link_count(target))
-                .is_some_and(|(left, right)| left.0 == right.0) =>
-        {
-            Ok(1)
-        }
-        Ok(_) => Ok(0),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
-        Err(error) => Err(error),
-    }
-}
-
-fn journal_personal_file_contents(
-    file: &cap_std::fs::File,
-    _metadata: &Metadata,
-) -> io::Result<Vec<u8>> {
-    #[cfg(windows)]
-    if _metadata.permissions().readonly() {
-        return Err(readonly_personal_file());
-    }
-    #[cfg(unix)]
-    wenlan_core::rulesync_personal_files::require_plain_unix_acl(file)?;
-    #[cfg(windows)]
-    check_windows_replacement(file)?;
-    read_file_contents(file)
-}
-
-fn read_stage_journal_leaf(
-    stage: &Stage<'_>,
-    name: &Path,
-    live_name: &Path,
-    personal: bool,
-    guard_source_aliases: bool,
-    check_personal_acl: bool,
-) -> io::Result<Snapshot> {
-    if !guard_source_aliases {
-        return read_leaf_with(&stage.dir, name, true, personal, false, |file, metadata| {
-            if personal && check_personal_acl {
-                single_link_contents(file, metadata)
-            } else {
-                read_file_contents(file)
-            }
-        });
-    }
-    let sibling = PathBuf::from(stage.incoming_sibling());
-    read_leaf_with_journal_links(
-        &stage.dir,
-        name,
-        true,
-        personal,
-        &stage.dir,
-        true,
-        stage.parent,
-        false,
-        check_personal_acl,
-        &[live_name, sibling.as_path()],
-    )
+    read_leaf_with(parent, name, allow_symlink, true, single_link_contents)
 }
 
 fn single_link_contents(file: &cap_std::fs::File, metadata: &Metadata) -> io::Result<Vec<u8>> {
@@ -1791,27 +1314,6 @@ fn read_leaf_with(
     name: &Path,
     allow_symlink: bool,
     personal: bool,
-    guard_source_aliases: bool,
-    read: impl FnOnce(&cap_std::fs::File, &Metadata) -> io::Result<Vec<u8>>,
-) -> io::Result<Snapshot> {
-    read_leaf_with_expected_identity(
-        parent,
-        name,
-        allow_symlink,
-        personal,
-        guard_source_aliases,
-        None,
-        read,
-    )
-}
-
-fn read_leaf_with_expected_identity(
-    parent: &Dir,
-    name: &Path,
-    allow_symlink: bool,
-    personal: bool,
-    guard_source_aliases: bool,
-    expected_identity: Option<(u64, u64)>,
     read: impl FnOnce(&cap_std::fs::File, &Metadata) -> io::Result<Vec<u8>>,
 ) -> io::Result<Snapshot> {
     let metadata = match parent.symlink_metadata(name) {
@@ -1857,17 +1359,6 @@ fn read_leaf_with_expected_identity(
             "unsupported file type",
         ));
     }
-    if expected_identity.is_some_and(|identity| {
-        wenlan_core::rulesync_personal_files::file_identity_and_link_count(&metadata)
-            .map(|(actual, _)| actual)
-            != Some(identity)
-    }) {
-        return Err(io::Error::other("file identity changed before read"));
-    }
-    if expected_identity.is_some_and(|(_, inode)| inode == 0) {
-        return Err(retired_source_link_denied());
-    }
-    let entry_identity = guard_source_aliases.then(|| directory_entry_identity(&metadata));
     check_file_size(metadata.len())?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
@@ -1882,33 +1373,11 @@ fn read_leaf_with_expected_identity(
             "file type changed",
         ));
     }
-    if expected_identity.is_some_and(|identity| {
-        wenlan_core::rulesync_personal_files::file_identity_and_link_count(&metadata)
-            .map(|(actual, _)| actual)
-            != Some(identity)
-    }) {
-        return Err(io::Error::other("file identity changed before read"));
-    }
-    if expected_identity.is_some_and(|(_, inode)| inode == 0) {
-        return Err(retired_source_link_denied());
-    }
-    if let Some(entry_identity) = entry_identity {
-        if entry_identity.is_none() || directory_entry_identity(&metadata) != entry_identity {
-            return Err(retired_source_link_denied());
-        }
-    }
     check_file_size(metadata.len())?;
     Ok(Snapshot::File {
         bytes: read(&file, &metadata)?,
         mode: FileMode::of(&metadata),
     })
-}
-
-fn retired_source_link_denied() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "the file has multiple hard links or its identity cannot be verified",
-    )
 }
 
 fn read_file_contents(file: &cap_std::fs::File) -> io::Result<Vec<u8>> {
@@ -1934,13 +1403,8 @@ fn check_file_size(len: u64) -> io::Result<()> {
 
 type ReadLeaf = fn(&Dir, &Path, bool) -> io::Result<Snapshot>;
 
-fn reader_for_mode(personal: bool, guard_source_aliases: bool) -> ReadLeaf {
-    match (personal, guard_source_aliases) {
-        (true, true) => read_single_link_guarded_leaf,
-        (true, false) => read_single_link_leaf,
-        (false, true) => read_guarded_leaf,
-        (false, false) => read_leaf,
-    }
+fn matches_leaf(parent: &Dir, name: &Path, expected: &Snapshot) -> io::Result<bool> {
+    matches_leaf_with(parent, name, expected, read_leaf)
 }
 
 fn matches_leaf_with(
@@ -2043,40 +1507,6 @@ fn check_displaced_entry(
         Err(error) => error.to_string(),
     };
     let outcome = match restore_held_file(held_dir, held, parent, name) {
-        Ok(true) => "A newer or protected entry was put back.".into(),
-        Ok(false) => {
-            "The destination is occupied. The newer or protected entry is still in recovery.".into()
-        }
-        Err(error) => {
-            format!("Could not put the entry back ({error}). Check the retained recovery files.")
-        }
-    };
-    Err(io::Error::other(format!(
-        "{outcome} The interrupted change is still pending ({reason})."
-    )))
-}
-
-fn check_displaced_stage_entry(
-    stage: &Stage<'_>,
-    held: &Path,
-    live_name: &Path,
-    seen: &Snapshot,
-    personal: bool,
-    guard_source_aliases: bool,
-) -> io::Result<()> {
-    match stage.dir.symlink_metadata(held) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-        Ok(_) => (),
-    }
-    let reason =
-        match read_stage_journal_leaf(stage, held, live_name, personal, guard_source_aliases, true)
-        {
-            Ok(entry) if entry == *seen => return Ok(()),
-            Ok(_) => "the displaced entry differs from the approved snapshot".to_owned(),
-            Err(error) => error.to_string(),
-        };
-    let outcome = match restore_held_file(&stage.dir, held, stage.parent, live_name) {
         Ok(true) => "A newer or protected entry was put back.".into(),
         Ok(false) => {
             "The destination is occupied. The newer or protected entry is still in recovery.".into()
@@ -2273,7 +1703,6 @@ impl Drop for Stage<'_> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-#[allow(clippy::too_many_arguments)]
 fn commit(
     stage: &mut Stage<'_>,
     name: &Path,
@@ -2282,7 +1711,6 @@ fn commit(
     displaced: Option<&(Dir, &Path)>,
     read: ReadLeaf,
     _personal_file: bool,
-    _guard_source_aliases: bool,
 ) -> io::Result<ApplyOutcome> {
     use rustix::fs::{renameat_with, RenameFlags};
 
@@ -2317,11 +1745,11 @@ fn commit(
     let restore = if *desired == Snapshot::Absent {
         renameat_with(&stage.dir, held, parent, name, RenameFlags::NOREPLACE)
             .map_err(io::Error::from)
-    } else if matches!(matches_leaf_with(parent, name, desired, read), Ok(true)) {
+    } else if matches!(matches_leaf(parent, name, desired), Ok(true)) {
         renameat_with(&stage.dir, held, parent, name, RenameFlags::EXCHANGE)
             .map_err(io::Error::from)
             .and_then(|()| {
-                if matches_leaf_with(&stage.dir, held, desired, read)? {
+                if matches_leaf(&stage.dir, held, desired)? {
                     Ok(())
                 } else {
                     Err(io::Error::other("target changed during recovery"))
@@ -2344,16 +1772,14 @@ fn commit(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-#[allow(clippy::too_many_arguments)]
 fn commit(
     stage: &mut Stage<'_>,
     name: &Path,
     seen: &Snapshot,
     desired: &Snapshot,
     displaced: Option<&(Dir, &Path)>,
-    read: ReadLeaf,
+    _read: ReadLeaf,
     personal_file: bool,
-    guard_source_aliases: bool,
 ) -> io::Result<ApplyOutcome> {
     commit_windows(
         stage,
@@ -2361,9 +1787,7 @@ fn commit(
         seen,
         desired,
         displaced,
-        read,
         personal_file,
-        guard_source_aliases,
         || {},
         || {},
     )
@@ -2377,19 +1801,20 @@ fn commit_windows(
     seen: &Snapshot,
     desired: &Snapshot,
     displaced: Option<&(Dir, &Path)>,
-    read: ReadLeaf,
     personal_file: bool,
-    guard_source_aliases: bool,
     before_displace: impl FnOnce(),
     after_displace: impl FnOnce(),
 ) -> io::Result<ApplyOutcome> {
-    #[cfg(not(windows))]
-    let _ = guard_source_aliases;
     let file_replacement = matches!(seen, Snapshot::File { .. })
         && matches!(desired, Snapshot::Absent | Snapshot::File { .. });
     if personal_file && file_replacement && displaced.is_none() {
         return Err(io::Error::other("missing file recovery location"));
     }
+    let read: ReadLeaf = if personal_file {
+        read_single_link_leaf
+    } else {
+        read_leaf
+    };
     if let Some(displaced) = displaced {
         if file_replacement {
             return commit_windows_personal_file(
@@ -2422,7 +1847,7 @@ fn commit_windows(
         }
         (Snapshot::File { .. }, Snapshot::File { .. }) => {
             #[cfg(windows)]
-            return replace_windows_live_file(stage, name, seen, read, guard_source_aliases);
+            return replace_windows_live_file(stage, name, seen);
             #[cfg(not(windows))]
             stage.dir.rename(STAGED, stage.parent, name)?;
         }
@@ -2611,40 +2036,22 @@ fn replace_windows_live_file(
     stage: &mut Stage<'_>,
     name: &Path,
     seen: &Snapshot,
-    read: ReadLeaf,
-    guard_source_aliases: bool,
 ) -> io::Result<ApplyOutcome> {
     let old = open_windows_entry(stage.parent, name)?;
-    let expected = old.metadata()?;
-    if guard_source_aliases && directory_entry_identity(&expected).is_none() {
-        return Err(retired_source_link_denied());
-    }
     let incoming = open_windows_entry(&stage.dir, Path::new(STAGED))?;
     prepare_windows_file_replacement(&old, &incoming)?;
     drop(incoming);
+    let expected = old.metadata()?;
     drop(old);
 
     // The no-backup form of ReplaceFileW can fail after removing the live
     // name. Keep a link to its original inode until the call has completed.
     stage.parent.hard_link(name, &stage.dir, HELD)?;
     let held = Path::new(HELD);
-    let held_metadata = stage.dir.symlink_metadata(held)?;
-    let live_metadata = stage.parent.symlink_metadata(name)?;
-    let same_expected_identity = if guard_source_aliases {
-        same_verified_file_identity(&expected, &held_metadata)
-            && same_verified_file_identity(&expected, &live_metadata)
-    } else {
-        same_identity(&expected, &held_metadata) && same_identity(&expected, &live_metadata)
-    };
-    if !same_expected_identity {
-        return Ok(ApplyOutcome::ChangedSincePlan);
-    }
-    let matches_seen = if guard_source_aliases {
-        read_leaf_matching_identity(stage.parent, name, &expected)? == *seen
-    } else {
-        matches_leaf_with(stage.parent, name, seen, read)?
-    };
-    if !matches_seen {
+    if !same_identity(&expected, &stage.dir.symlink_metadata(held)?)
+        || !same_identity(&expected, &stage.parent.symlink_metadata(name)?)
+        || !matches_leaf(stage.parent, name, seen)?
+    {
         return Ok(ApplyOutcome::ChangedSincePlan);
     }
 
@@ -2727,12 +2134,9 @@ fn recover_windows_entry(
     desired: &Snapshot,
     actual: &Snapshot,
     displaced: Option<(&FileRoot, &Path)>,
-    personal: bool,
-    guard_source_aliases: bool,
 ) -> io::Result<()> {
     let held = Path::new(HELD);
-    let matches_original =
-        read_stage_journal_leaf(stage, held, name, personal, guard_source_aliases, true)? == *seen;
+    let matches_original = matches_leaf(&stage.dir, held, seen)?;
     let live_is_held = stage.parent.symlink_metadata(name).is_ok_and(|live| {
         stage
             .dir
@@ -2937,9 +2341,7 @@ mod tests {
             &seen,
             &desired,
             Some(&previous),
-            read_single_link_leaf,
             true,
-            false,
             || {},
             || {
                 let editor = temp.path().join("editor.tmp");
@@ -2969,97 +2371,6 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let root = FileRoot::open(scratch.path()).unwrap();
         (scratch, root)
-    }
-
-    #[test]
-    fn guarded_source_root_refuses_hard_link_alias_before_reading() {
-        let home = tempfile::tempdir().unwrap();
-        let managed = home.path().join("managed");
-        fs::create_dir(&managed).unwrap();
-        let retired = home.path().join(".agents/AGENTS.md");
-        fs::create_dir_all(retired.parent().unwrap()).unwrap();
-        fs::write(&retired, b"retired source secret").unwrap();
-        fs::hard_link(&retired, managed.join("AGENTS.md")).unwrap();
-
-        let root = FileRoot::open(&managed).unwrap().guard_source_aliases();
-        let shared_view = root.with_shared_rule_source().unwrap();
-        let mut read_called = false;
-        let error = read_leaf_with(
-            &shared_view.dir,
-            Path::new("AGENTS.md"),
-            false,
-            false,
-            shared_view.guard_source_aliases,
-            |file, _| {
-                read_called = true;
-                read_file_contents(file)
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert!(!read_called, "the hard-linked file must not be read");
-        assert!(FileRoot::open(&managed)
-            .unwrap()
-            .for_retired_source()
-            .with_shared_rule_source()
-            .is_err());
-
-        fs::remove_file(managed.join("AGENTS.md")).unwrap();
-        fs::write(managed.join("AGENTS.md"), b"ordinary managed rules").unwrap();
-        assert!(matches!(
-            root.read(Path::new("AGENTS.md"), false).unwrap(),
-            Snapshot::File { bytes, .. } if bytes == b"ordinary managed rules"
-        ));
-
-        let path = Path::new("AGENTS.md");
-        let seen = root.read(path, false).unwrap();
-        let desired = Snapshot::file(b"updated rules".to_vec());
-        let error = root
-            .apply_inner(path, &seen, &desired, direct(false), || {
-                fs::remove_file(managed.join(path)).unwrap();
-                fs::hard_link(&retired, managed.join(path)).unwrap();
-            })
-            .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(fs::read(&retired).unwrap(), b"retired source secret");
-    }
-
-    #[test]
-    fn stage_recovery_allows_only_accounted_internal_hard_links() {
-        let home = tempfile::tempdir().unwrap();
-        let managed = home.path().join("managed");
-        fs::create_dir(&managed).unwrap();
-        let root = FileRoot::open(&managed).unwrap().guard_source_aliases();
-        let stage_id = "0123456789abcdef0123456789abcdef";
-        let stage_path = managed.join(stage_name(stage_id).unwrap());
-        let stage_name_path = Path::new(stage_path.file_name().unwrap());
-        create_directory(&root.dir, stage_name_path).unwrap();
-        let stage = root.dir.open_dir_nofollow(stage_name_path).unwrap();
-
-        let path = Path::new("rules.md");
-        fs::write(managed.join(path), b"managed rules").unwrap();
-        root.dir
-            .hard_link(path, &stage, Path::new(INCOMING))
-            .unwrap();
-        assert!(matches!(
-            root.read_for_stage_recovery(path, false, stage_id).unwrap(),
-            Snapshot::File { bytes, .. } if bytes == b"managed rules"
-        ));
-
-        fs::remove_file(stage_path.join(INCOMING)).unwrap();
-        fs::remove_file(managed.join(path)).unwrap();
-        let retired = home.path().join(".agents/AGENTS.md");
-        fs::create_dir_all(retired.parent().unwrap()).unwrap();
-        fs::write(&retired, b"retired source secret").unwrap();
-        fs::hard_link(&retired, managed.join(path)).unwrap();
-        root.dir
-            .hard_link(path, &stage, Path::new(INCOMING))
-            .unwrap();
-        let error = root
-            .read_for_stage_recovery(path, false, stage_id)
-            .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(fs::read(&retired).unwrap(), b"retired source secret");
     }
 
     #[test]
@@ -3169,8 +2480,6 @@ mod tests {
             &seen,
             &desired,
             Some(&(root.dir.try_clone().unwrap(), recovery)),
-            read_leaf,
-            false,
             false,
             || fs::rename(&incoming, &path).unwrap(),
             || {},

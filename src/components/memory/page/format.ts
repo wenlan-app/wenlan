@@ -56,6 +56,16 @@ function ruleSaveLabel(t: TFunction, agent: string | null | undefined, removed: 
   return t(removed ? "revisionLabel.writer.ruleRemovedNamed" : "revisionLabel.writer.ruleSavedNamed", { agent: name });
 }
 
+/** The AI tool that wrote something, by its own name where it was kept, or
+ * null. A tool that calls itself the terminal, the person or Wenlan is not
+ * named as itself. */
+export function aiToolName(t: TFunction, agent: string | null | undefined): string | null {
+  const from = agent?.trim() ?? "";
+  const selfNamed = from === SAVED_FROM_TERMINAL || from === RULE_REMOVED_IN_APP
+    || from.startsWith(SELF_NAMED_TOOL_PREFIX);
+  return selfNamed ? null : writerAgentName(t, from);
+}
+
 /** Who made a page revision, in words the reader can use. Never the raw
  * `edited_by` slug: an unrecognized writer reads as a plain "Updated".
  * `charDelta` is the change's size where it is known; it tells a saved rule
@@ -74,13 +84,7 @@ export function revisionWriterLabel(
       : t("revisionLabel.writer.agentRefresh");
   }
   if (editedBy === "agent_create") {
-    // The AI tool that made the page, by its own name where it was kept.
-    // A tool that calls itself the terminal, the person or Wenlan is not
-    // named as itself.
-    const from = agent?.trim() ?? "";
-    const selfNamed = from === SAVED_FROM_TERMINAL || from === RULE_REMOVED_IN_APP
-      || from.startsWith(SELF_NAMED_TOOL_PREFIX);
-    const name = selfNamed ? null : writerAgentName(t, from);
+    const name = aiToolName(t, agent);
     return name
       ? t("revisionLabel.writer.agentCreateNamed", { agent: name })
       : t("revisionLabel.writer.agentCreate");

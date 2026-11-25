@@ -540,22 +540,6 @@ Arguments:
 
 - `<PLAN_ID>`: Plan ID printed by a propose command.
 
-##### `wenlan rules shared source`
-
-Preview the shared source changes and stop following after you confirm.
-
-```text
-wenlan rules shared source [OPTIONS] <COMMAND>
-```
-
-###### `wenlan rules shared source off`
-
-Stop following the shared source file and keep the saved personal rules.
-
-```text
-wenlan rules shared source off [OPTIONS]
-```
-
 #### `wenlan rules tool`
 
 Rules that belong to one named tool.

@@ -67,7 +67,6 @@ fn credential_message(reason: &str) -> Option<String> {
     if !matches!(
         layer,
         "shared"
-            | "shared-source"
             | "claudecode"
             | "codexcli"
             | "geminicli"
@@ -239,7 +238,7 @@ mod tests {
                 {"layer":{"kind":"tool","tool":"codex"},"text":"Tool rule."}
             ]})))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id":"plan_1","expires_at":2000000000,"proposer":"codex","following_source":true,
+                "id":"plan_1","expires_at":2000000000,"proposer":"codex",
                 "changes":[
                     {"layer":{"kind":"shared"},"before":"","after":"Shared rule.","diff":"+Shared rule.","affected_tools":["codex","claude"]},
                     {"layer":{"kind":"tool","tool":"codex"},"before":"","after":"Tool rule.","diff":"+Tool rule.","affected_tools":["codex"]}

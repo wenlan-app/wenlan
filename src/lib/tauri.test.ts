@@ -1323,23 +1323,8 @@ describe('page links wrappers', () => {
     await tauri.removePageCodeBasis('page-1', row);
     expect(mockInvoke).toHaveBeenLastCalledWith('remove_page_code_basis', { pageId: 'page-1', locator });
 
-    await tauri.getPageCodeBasisCited('page-1', row);
-    expect(mockInvoke).toHaveBeenLastCalledWith('get_page_code_basis_cited', { pageId: 'page-1', locator });
-
-    await tauri.readCodeLines('/repo/src/lib.rs', 10, 20);
-    expect(mockInvoke).toHaveBeenLastCalledWith('read_code_lines', {
-      path: '/repo/src/lib.rs',
-      lineStart: 10,
-      lineEnd: 20,
-    });
-
-    await tauri.readGitBlobLines('/repo', '0123456789abcdef0123456789abcdef01234567', 10, 20);
-    expect(mockInvoke).toHaveBeenLastCalledWith('read_git_blob_lines', {
-      repoRoot: '/repo',
-      blob: '0123456789abcdef0123456789abcdef01234567',
-      lineStart: 10,
-      lineEnd: 20,
-    });
+    await tauri.getPageCodeBasisLines('page-1', row, 50);
+    expect(mockInvoke).toHaveBeenLastCalledWith('get_page_code_basis_lines', { pageId: 'page-1', locator, extra: 50 });
   });
 
   it('updatePage forwards the basis to confirm', async () => {

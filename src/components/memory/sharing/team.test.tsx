@@ -124,6 +124,25 @@ describe("JoinSharedDialog code mode", () => {
     expect(teamRememberMembership).toHaveBeenCalledWith(link);
   });
 
+  it("lists team-only library Spaces instead of saying nothing is open, and never syncs them", async () => {
+    vi.mocked(teamJoin).mockResolvedValue({
+      url: "https://team.example.com",
+      me: { member_id: "me", name: "Bo", team: { id: "t1", name: "Acme" }, spaces: [], library_spaces: [{ space: "Roadmap", access: "write", id: "g1" }, { space: "Notes", access: "read", id: "g2" }] },
+    });
+    wrap(<JoinSharedDialog onClose={() => undefined} />);
+    const link = "https://team.example.com/join#wlt_lib";
+    await userEvent.click(screen.getByLabelText("Invite link"));
+    await userEvent.paste(link);
+    expect(await screen.findByText("You're joining as Bo. You'll get:")).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing is open to you yet/)).not.toBeInTheDocument();
+    expect(screen.getByText("Roadmap")).toBeInTheDocument();
+    expect(screen.getByText("Notes · Read only")).toBeInTheDocument();
+    expect(screen.getByText("Your AI tools read these from the team server. They don't show in this app yet.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
+    await waitFor(() => expect(teamRememberMembership).toHaveBeenCalledWith(link));
+    expect(joinTeamSpace).not.toHaveBeenCalled();
+  });
+
   it("puts a team Space beside a personal one of the same name, never into it", async () => {
     vi.mocked(listSpaces).mockResolvedValue([{ id: "1", name: "Product" } as never]);
     vi.mocked(teamJoin).mockResolvedValue({ url: "https://team.example.com", me: { member_id: "me", name: "Dee", team: { id: "t1", name: "Acme" }, spaces: [{ space: "Product", access: "write" }] } });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
-  CodeBasisCited,
   CodeBasisConfirmResult,
+  CodeBasisLines,
   CodeBasisLocator,
   CodeBasisPendingEntry,
   CodeBasisRef,
@@ -102,24 +102,21 @@ export class PageCodeBasisStore {
     return { removed: this.rows.length !== before };
   }
 
-  cited(pageId: string, locator: CodeBasisLocator): CodeBasisCited {
+  /**
+   * The `get_page_code_basis_lines` command: the row's lines in its cited blob
+   * (null when the blob is unknown or lost) and in the file now (null when the
+   * file is missing), `extra` lines past the end.
+   */
+  lines(pageId: string, locator: CodeBasisLocator, extra: number): CodeBasisLines {
     const row = this.rows.find((entry) => sameRow(entry, pageId, locator));
     if (!row) throw new Error("this note does not rely on those lines (404)");
-    return { cited_blob: row.citedBlob, confirmed_at: 1_783_700_000, state: row.state };
-  }
-
-  /** The `read_git_blob_lines` command: the requested lines of a blob, or the error a lost object gives. */
-  readBlobLines(blob: string, lineStart: number, lineEnd: number): string[] {
-    const text = this.blobs[blob];
-    if (text === undefined) throw new Error("git could not find that version of the file");
-    return sliceLines(text, lineStart, lineEnd);
-  }
-
-  /** The `read_code_lines` command: the requested lines of a file, or the error a missing file gives. */
-  readLines(path: string, lineStart: number, lineEnd: number): string[] {
-    const text = this.scenario.files?.[path];
-    if (text === undefined) throw new Error(`No such file or directory (os error 2): ${path}`);
-    return sliceLines(text, lineStart, lineEnd);
+    const blob = row.citedBlob ? this.blobs[row.citedBlob] : undefined;
+    const now = this.read(row.repoRoot, row.path);
+    return {
+      cited: blob === undefined ? null : sliceLines(blob, row.lineStart, row.lineEnd),
+      cited_start: blob === undefined ? null : row.lineStart,
+      now: now === null ? null : sliceLines(now, row.lineStart, row.lineEnd + extra),
+    };
   }
 
   private read(repoRoot: string, path: string): string | null {

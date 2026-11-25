@@ -113,6 +113,14 @@ pub enum CodeBasisVerdict {
     },
     /// The content changed, or the lines could not be found.
     Pending,
+    /// Lines were added between this row and the one right above it, which
+    /// the note relied on together as one stretch (a list, a block). The row
+    /// grows to `span` to take in the added lines and waits for a look
+    /// ([`crate::code_basis::LINES_ADDED`]); its own lines read the same.
+    LinesAdded {
+        span: LineSpan,
+        stamp: Option<FileStamp>,
+    },
     /// The file could not be read; the word is the reason.
     Unavailable(&'static str),
     /// The file was renamed and the row follows it to `path`, at `span`
@@ -161,7 +169,10 @@ fn ref_from(row: &libsql::Row) -> Result<CodeBasisRef, libsql::Error> {
         // Only the reason for an unavailable row (or a pending one whose
         // lines are lost) and the first-seen time of a pending one mean
         // anything to a reader.
-        reason: if state == CODE_BASIS_STATE_UNAVAILABLE {
+        reason: if state == CODE_BASIS_STATE_UNAVAILABLE
+            || (state == CODE_BASIS_STATE_PENDING
+                && reason.as_deref() == Some(crate::code_basis::LINES_ADDED))
+        {
             reason
         } else if lines_lost {
             Some(crate::code_basis::LINES_NOT_FOUND.to_string())
@@ -1174,6 +1185,36 @@ async fn try_move_row(
 }
 
 /// One verdict, on the caller's transaction.
+/// Mark `row` `pending`, keeping the first time it was seen changed.
+async fn mark_pending(
+    conn: &libsql::Connection,
+    row: &CodeBasisRow,
+    now: i64,
+) -> Result<(), libsql::Error> {
+    let r = &row.reference;
+    // The first time the content was seen changed is kept while the
+    // row stays pending.
+    conn.execute(
+        "UPDATE page_code_basis \
+             SET changed_at = CASE WHEN state = 'pending' AND changed_at IS NOT NULL \
+                                   THEN changed_at ELSE ?7 END, \
+                 state = 'pending', unavailable_reason = NULL \
+             WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+               AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
+        libsql::params![
+            row.page_id.as_str(),
+            r.repo_root.as_str(),
+            r.path.as_str(),
+            i64::from(r.line_start),
+            i64::from(r.line_end),
+            row.anchor_json.as_str(),
+            now
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
 async fn apply_verdict(
     conn: &libsql::Connection,
     row: &CodeBasisRow,
@@ -1285,14 +1326,36 @@ async fn apply_verdict(
             )
             .await?;
         }
-        CodeBasisVerdict::Pending => {
-            // The first time the content was seen changed is kept while the
-            // row stays pending.
+        CodeBasisVerdict::Pending => mark_pending(conn, row, now).await?,
+        CodeBasisVerdict::LinesAdded { span, stamp } => {
+            // Another reliance of the note already on those lines: the row
+            // waits for a look where it is.
+            let mut taken = conn
+                .query(
+                    "SELECT 1 FROM page_code_basis \
+                     WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+                       AND line_start = ?4 AND line_end = ?5 \
+                       AND NOT (line_start = ?6 AND line_end = ?7)",
+                    libsql::params![
+                        row.page_id.as_str(),
+                        r.repo_root.as_str(),
+                        r.path.as_str(),
+                        i64::from(span.start),
+                        i64::from(span.end),
+                        i64::from(r.line_start),
+                        i64::from(r.line_end)
+                    ],
+                )
+                .await?;
+            if taken.next().await?.is_some() {
+                return mark_pending(conn, row, now).await;
+            }
             conn.execute(
                 "UPDATE page_code_basis \
                  SET changed_at = CASE WHEN state = 'pending' AND changed_at IS NOT NULL \
                                        THEN changed_at ELSE ?7 END, \
-                     state = 'pending', unavailable_reason = NULL \
+                     state = 'pending', unavailable_reason = ?8, \
+                     line_start = ?9, line_end = ?10, file_len = ?11, file_mtime_ns = ?12 \
                  WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                    AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
                 libsql::params![
@@ -1302,7 +1365,12 @@ async fn apply_verdict(
                     i64::from(r.line_start),
                     i64::from(r.line_end),
                     row.anchor_json.as_str(),
-                    now
+                    now,
+                    crate::code_basis::LINES_ADDED,
+                    i64::from(span.start),
+                    i64::from(span.end),
+                    stamp.map(|s| s.len),
+                    stamp.map(|s| s.mtime_ns)
                 ],
             )
             .await?;

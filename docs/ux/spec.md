@@ -373,6 +373,13 @@ and wait for evidence that people need them.
   text. Such a write is refused and the page stays as it was; damage already
   there is reported each night, and nothing is repaired until you approve it.
   原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 寫入不能把頁弄壞；已經壞的每晚列出來，等你同意才修）
+- **UX-WHO-9** `shipped` A citation's card opens with one line: whether
+  Wenlan checked that the cited source supports the sentence, and who wrote
+  the sentence, naming the AI tool where its name was kept ("Written by
+  Claude Code"). Info's "This sentence" names the tool the same way. Without
+  a kept name it says only that an AI wrote it; no name is guessed. It never
+  claims the sentence is correct.
+  原文：「同意」（2026-11-24 23:38 PT，回覆草圖：點 [1] 的小卡最上面多一行「✓ 出處核對過 · Claude Code 寫的」；資訊面板「這一句」的「AI 寫的」改成寫工具名；舊頁面沒記到工具的還是寫「AI 寫的」）
 
 ## While you chat (in your own AI tool)
 
@@ -899,8 +906,8 @@ and wait for evidence that people need them.
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
   each connected AI tool's own always-read file, in one part marked as
-  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, the `GEMINI.md`
-  Gemini CLI and Antigravity both read, the `copilot-instructions.md` Copilot
+  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, Gemini CLI's
+  `~/.gemini/GEMINI.md`, Antigravity's `~/.gemini/config/GEMINI.md`, the `copilot-instructions.md` Copilot
   CLI and Copilot in VS Code both read, Windsurf's `global_rules.md`,
   OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
   there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
@@ -1203,15 +1210,25 @@ and wait for evidence that people need them.
   it out when every target already has its files. Tests
   `rulesync_preview_names_tools_that_get_new_files` and
   `personal_preview_lists_tools_that_get_new_files`.
-  The preview says `~/.agents` is left untouched. Wenlan reads its shared
-  sources and replaces adopted links at the tool paths. Personal Codex
-  copies use `~/.codex/skills`.
+  At first setup, Wenlan imports a rule source referenced by a tool's rule
+  file through a Claude import, a symlink, or a generated header that names
+  the source. Each tool keeps its own remaining lines in its Wenlan layer.
+  With no reference, each tool's file becomes its own layer. When tools point
+  to different sources, each source becomes part of its tool's layer and
+  Share can offer their common lines. After import, edits to shared rules
+  happen in Wenlan. Setup is the only time Wenlan reads referenced rule
+  sources. Those files stay in place. Codex's personal skills use
+  `~/.agents/skills`. Wenlan continues to recognize older Codex copies
+  in `~/.codex/skills`. Cursor's own skills use `~/.cursor/skills`.
+  Tests `rulesync_adoption_without_a_shared_source_keeps_only_the_tool_files`,
+  `rulesync_adoption_imports_claude_source_at_arbitrary_path`,
+  `rulesync_adoption_imports_codex_symlink_at_arbitrary_path`, and
+  `ux_skill_26_share_offers_common_lines_from_different_imported_sources`.
   The preview shows which skills track a verified upstream and which
   become plain copies. `wenlan rules review` offers available
   upstream versions for review without changing the master or tool files.
-  Codex adoption replaces the legacy harness-generated header with a
-  Wenlan-managed header. The preview says the old sync script becomes
-  unused for this file and stays in place.
+  Codex adoption replaces a generated header with a Wenlan-managed header
+  when it recognizes the source. The preview shows the header change.
   With `WENLAN_RULESYNC=1`, adoption also covers the personal folders for
   Gemini CLI, Antigravity, GitHub Copilot CLI, Cursor, OpenCode, and Muse Code.
   The initial plan names the tools it skips because their folders are
@@ -1251,7 +1268,7 @@ and wait for evidence that people need them.
   or preserve the permissions of the destination it would have to replace.
   原文（2026-11-22）：「有 CLI，那你就能幫我執行，只在 AI 也要能支援」
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
-  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
+  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_previews_the_generated_codex_header_change`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_share_writes_codex_and_cursor_skills_at_their_native_paths`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
   Tests `rulesync_restore_keeps_accepted_tool_only_lines_in_byte_order`,
   `rulesync_restore_blocks_a_settled_rewrite_of_an_original_rule`,
   `rulesync_restore_then_adopt_keeps_the_rule_tool_only`,
@@ -1504,8 +1521,9 @@ and wait for evidence that people need them.
   keeps the adopted version in place. Dismiss applies to that release.
 - **UX-SKILL-22** `shipped` Bring in appears before adoption and opens the
   daemon’s plan with affected tools, counts, reasons for skipped items,
-  and settings changes. The shared setup stays in place. Approval binds the
-  entire plan. Restore asks again and says later edits stay for review.
+  and settings changes. For each referenced rule file Wenlan finds, the preview
+  names the file and says it will stay in place after import. Approval binds
+  the entire plan. Restore asks again and says later edits stay for review.
 - **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
   localized codes. A missing or unknown code shows a generic message.
   Cards, previews, adoption details and feedback hide paths and file names
@@ -1521,30 +1539,15 @@ and wait for evidence that people need them.
   interrupted stage, or blocking skill proposal stops all tool writes in that
   round. Changed receipts surface for review. A clear round delivers approved
   content through the same writer as Sync now.
-  Sync now and the background check follow the person's edits and deletions in
-  `~/.agents/AGENTS.md` without a review card. Wenlan merges these edits with
-  the saved shared rules using the last text it read or wrote as the common
-  version. Older setups without a common version keep approved edits in Wenlan
-  and start tracking the source from its current text. When both sides insert
-  the same new rule, the source's position is used once. Each tool keeps its
-  own rule lines. A possible credential stays in the source. Wenlan records
-  its line number and protects any saved rules that the line might have
-  replaced. If both sides change the same lines differently, or a previously
-  populated source is missing or empty, delivery pauses. Status shows one
-  message with the reason and how to retry. The background check leaves the
-  last successful check time, saved rules and tool copies in place.
-  With source following switched off (planned), status reports that state;
-  watch and sync use the saved master without reading or recreating the source.
+  Sync and the background check deliver the rules saved in Wenlan. For a
+  setup that previously followed an external source, the next sync keeps the
+  saved rules and tool files as they are. Status says once that shared rules
+  are now edited in Wenlan.
   Tests `rulesync_watch_delivery_open_card`, `rulesync_watch_delivery_busy_lock`,
-  `rulesync_watch_delivery_receipt_mismatch`, and `rulesync_watch_delivery_positive`.
-  Tests `rulesync_watch_delivers_shared_source_edits_without_review`,
-  `rulesync_watch_stops_on_a_shared_source_conflict`,
-  `rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays`,
-  `rulesync_sync_keeps_approved_shared_edits_without_source_history`,
-  `rulesync_sync_retains_shared_rules_under_credentials_and_accepts_version_tags`,
-  `rulesync_sync_pauses_for_missing_or_empty_shared_rules_source`,
-  `rulesync_sync_merges_a_shared_line_inserted_on_both_sides_only_once`, and
-  `rulesync_shared_source_conflict_reports_once_and_leaves_files_intact`.
+  `rulesync_watch_delivery_receipt_mismatch`, `rulesync_watch_delivery_positive`,
+  `ux_skill_24_sync_and_watch_ignore_changes_to_the_imported_rules_file`, and
+  `ux_skill_24_legacy_source_followers_keep_their_rules_and_get_one_status_notice`.
+
 - **UX-SKILL-25** `shipped` Local rules setup uses the same four action names
   in the app, CLI help and command hints. In order they are Bring in, Status,
   To review, and Restore (搬進來、狀態、待確認、還原 in Traditional Chinese and
@@ -1563,8 +1566,9 @@ and wait for evidence that people need them.
   with the same name. Portable overlay lines move to the end of the shared
   rules and leave each overlay that held them. Each distinct line is offered
   once, and lines already shared are left in place. The preview reads the
-  current reviewed rule files. Each tool keeps imported Claude Code content,
-  its tool-specific lines and the sections under a local heading or lead-in.
+  current reviewed rule files. Each tool keeps its tool-specific lines,
+  legacy Claude imports with recorded origins, and sections under a local
+  heading or lead-in.
   The short preview shows each moving line, shortened when needed to fit
   100 columns, and summarizes lines that stay. `--details` explains each
   line that stays. A line that may hold a credential stays local. Details show
@@ -1573,19 +1577,10 @@ and wait for evidence that people need them.
   out and review the file.
   `--details` numbers portable lines. The person can keep any of those lines
   locally with `--keep-rule N[,N]` in the same preview and confirmation.
-  The preview accounts for edits to `~/.agents/AGENTS.md` before choosing
-  which lines to move. When the shared file is safe to write, the short,
-  detailed, and JSON previews say “Also adds N lines to ~/.agents/AGENTS.md.”
-  The plan ID binds the safe shared text, credential locations, numbered
-  lines, keep choices, and reviewed versions of the tool files. On
-  confirmation, Wenlan appends only the selected lines to that file and
-  delivers them to the tool copies. If the shared file may hold a credential,
-  the preview explains that confirmation updates the tool copies and tells
-  the person how to include the shared file before confirming. A conflict
-  leaves the previous shared master and receipts in force. The person's
-  confirmed Restore uses the adoption backups and preserves added rules in
-  their originating tools. It restores `~/.agents/AGENTS.md` from its backup
-  only when the file remains as Wenlan last wrote it and it had no intervening edits.
+  The plan ID binds the saved shared rules, numbered lines, keep choices,
+  and reviewed versions of the tool files. Confirmation saves the selected
+  lines in Wenlan and delivers them to the managed tools. Restore uses the
+  adoption backups and preserves added rules in their originating tools.
   Safe personal MCP
   servers in managed tools are offered even if Wenlan does not yet manage the
   entry; on confirmation they are first adopted with the usual receipts and
@@ -1618,7 +1613,6 @@ and wait for evidence that people need them.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
   `ux_skill_26_rulesync_share_moves_common_rules_and_preserves_tool_only_files`,
   `rulesync_share_offers_other_tools_rules_when_a_live_tool_file_holds_a_key`,
-  `rulesync_share_offers_rules_when_the_shared_source_holds_a_key`,
   `rulesync_adoption_does_not_duplicate_shared_rules_via_a_protected_claude_import`,
   `rulesync_share_classifies_imports_tool_references_and_empty_headings`,
   `rulesync_share_redacts_a_credential_even_in_a_tool_line_or_key_block`,
@@ -1632,8 +1626,8 @@ and wait for evidence that people need them.
   `rulesync_share_mid_batch_conflict_restores_peers_and_keeps_the_old_receipts`,
   `rulesync_share_keeps_scoped_sections_and_preserves_repeated_lines_in_order`,
   `rulesync_share_keeps_flattened_imports_local_with_or_without_saved_provenance`,
-  `rulesync_share_updates_and_restores_the_shared_source`,
-  `rulesync_share_plans_against_an_edited_source_and_appends_only_approved_lines`,
+  `rulesync_share_never_writes_back_to_an_imported_source`,
+  `ux_skill_26_share_offers_common_lines_from_different_imported_sources`,
   `rules_share_short_preview_shows_each_moving_line_at_terminal_width`,
   `ux_skill_26_rules_share_keep_rule_reaches_preview_and_confirm`,
   `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,
@@ -1722,14 +1716,6 @@ and wait for evidence that people need them.
   Tests `ux_skill_28_plan_applies_shared_and_overlay_with_origins`,
   `personal_rule_plan_expiry_requires_a_fresh_preview`, and
   `personal_rule_history_restore_applies_as_one_new_history_entry`.
-- **UX-SKILL-29** `shipped` The person can stop following a shared source
-  after previewing and confirming the saved master and source state. Pending
-  writes, conflicts or unknown restore provenance must be resolved first. Once
-  off, watch, sync, share, adoption and restore neither read nor recreate the
-  source; the personal master and undo history remain available.
-  Tests `ux_skill_29_source_off_status_sync_share_adopt_and_restore_never_open_or_recreate_source`
-  and `source_off_refuses_pending_writes_and_unknown_donor_provenance`.
-
 ## From the terminal
 
 - **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in

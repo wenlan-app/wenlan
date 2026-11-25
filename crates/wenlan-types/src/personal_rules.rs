@@ -75,8 +75,6 @@ pub struct PersonalRulePlan {
     /// Unix time in seconds; the daemon also enforces the in-memory expiry.
     pub expires_at: i64,
     pub proposer: Option<String>,
-    /// Whether the saved shared layer still follows the prior shared source.
-    pub following_source: bool,
     pub changes: Vec<PersonalRulePlanChange>,
     pub blocked_tools: Vec<String>,
     /// Named or previously enrolled tools that will not receive this change.

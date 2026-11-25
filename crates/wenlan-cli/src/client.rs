@@ -991,26 +991,6 @@ impl WenlanClient {
         .await
     }
 
-    pub(crate) async fn preview_shared_source_off_as_person(
-        &self,
-    ) -> Result<wenlan_types::rulesync::SharedSourceOffPreview> {
-        self.post_json_as_person(
-            "/api/rules/setup/shared-source/off/preview",
-            &serde_json::json!({}),
-            None,
-            true,
-        )
-        .await
-    }
-
-    pub(crate) async fn turn_shared_source_off_as_person(
-        &self,
-        request: &wenlan_types::rulesync::SharedSourceOffRequest,
-    ) -> Result<wenlan_types::rulesync::RulesSetupStatus> {
-        self.post_json_as_person("/api/rules/setup/shared-source/off", request, None, true)
-            .await
-    }
-
     async fn rules_request<R: DeserializeOwned>(&self, path: &str, post: bool) -> Result<R> {
         anyhow::ensure!(
             self.is_local(),

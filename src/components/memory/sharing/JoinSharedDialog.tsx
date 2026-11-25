@@ -125,6 +125,9 @@ export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinS
     ? `${serverSpace} (${checked.response.me.team?.name?.trim() || hostName(checked.response.url)})`
     : serverSpace);
   const joiningTeam = teamLabel(t, checked?.response.me.team);
+  // Team-only library Spaces: listed so nobody is told nothing is open to
+  // them, never synced here (their pages are read through the team server).
+  const libraryOnly = checked?.response.me.library_spaces ?? [];
   const joinAll = async () => {
     if (!checked || pending) return;
     setPending(true);
@@ -255,7 +258,7 @@ export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinS
         )}
         {mode === "code" && checked && (
           <div className="share-field team-join-confirm">
-            <p className="team-join-as">{checked.response.me.spaces.length > 0
+            <p className="team-join-as">{checked.response.me.spaces.length > 0 || libraryOnly.length > 0
               ? t("team.join.asGets", { name: checked.response.me.name })
               : t("team.join.asNothing", { name: checked.response.me.name })}</p>
             {checked.response.me.spaces.length > 0 && (
@@ -266,6 +269,18 @@ export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinS
                   </li>
                 ))}
               </ul>
+            )}
+            {libraryOnly.length > 0 && (
+              <>
+                <ul className="share-rows team-join-list" data-testid="team-join-library">
+                  {libraryOnly.map((entry) => (
+                    <li key={entry.space}>
+                      <span className="share-row-name">{entry.access === "read" ? t("team.joinAccessFor", { space: entry.space, access: t("team.readOnly") }) : entry.space}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="share-hint">{t("team.join.libraryNote")}</p>
+              </>
             )}
             <p className="share-hint">{t("team.join.privacy")}</p>
           </div>

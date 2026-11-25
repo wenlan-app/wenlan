@@ -874,6 +874,11 @@ pub(super) async fn terminal(
         .into_response();
     }
     let team_path = team::team_path();
+    // A team started on this computer before its starter was recorded as
+    // owner (0.22.7 and earlier): the person at this terminal started it.
+    if let Err(error) = super::own_started_team(&shared, &team_path).await {
+        tracing::warn!(%error, "[team] the owner of the team started here was not recorded");
+    }
     let host =
         HOST.get_or_init(|| Host::new(&team_path, wenlan_core::team_library::memories_enabled()));
     let db = shared.read().await.db.clone();

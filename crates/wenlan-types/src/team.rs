@@ -197,6 +197,10 @@ pub struct TeamMembershipInfo {
     /// This person owns the team and manages it from this computer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub owner: bool,
+    /// Team-only library Spaces open to this person, as the server last
+    /// said (`TeamMe::library_spaces`). Not synced here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library_spaces: Vec<TeamSpaceAccess>,
 }
 
 /// Body of `POST /api/team/members`.
@@ -337,6 +341,13 @@ pub struct TeamMe {
     pub member_id: String,
     pub name: String,
     pub spaces: Vec<TeamSpaceAccess>,
+    /// Team-only Spaces in the team library open to this member, each with
+    /// its library id. Their pages are read through the team server (AI
+    /// tools, the web app); they are not copied to members' computers, so
+    /// they are kept apart from `spaces`, which computers sync. Left out
+    /// when there are none (and by an older server).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library_spaces: Vec<TeamSpaceAccess>,
     /// The team. Left out by an older server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<TeamInfo>,

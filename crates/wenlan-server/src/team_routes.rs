@@ -263,6 +263,33 @@ async fn own_name(state: &SharedState) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Records the person here as the owner of a team this computer is the
+/// server of when the team has none: one started from the app or
+/// `wenlan team start` before the starter was recorded. A server nobody sits
+/// at (`WENLAN_TEAM_ADDR`, the personal cloud) makes its own owner.
+async fn own_started_team(state: &SharedState, path: &std::path::Path) -> Result<(), ServerError> {
+    if env_value(TEAM_ADDR_ENV).is_some() || env_value(crate::cloud_pass::ACCOUNT_ENV).is_some() {
+        return Ok(());
+    }
+    let unowned = {
+        let path = path.to_path_buf();
+        blocking(move || {
+            let file = team::read_team(&path)?;
+            let hosted = team::hosted_spaces(&shared_space::settings_path())?.len();
+            Ok(hosts_a_team(&file, hosted) && !team::has_owner(&path)?)
+        })
+        .await?
+    };
+    if !unowned {
+        return Ok(());
+    }
+    let name = own_name(state)
+        .await
+        .unwrap_or_else(|| OWNER_STAND_IN.to_string());
+    let path = path.to_path_buf();
+    blocking(move || team::ensure_owner(&path, &name).map(|_| ())).await
+}
+
 fn json_of<T: serde::Serialize>(value: &T) -> Option<serde_json::Value> {
     serde_json::to_value(value).ok()
 }
@@ -744,6 +771,9 @@ pub async fn handle_start_team(
         blocking(move || {
             let path = team::team_path();
             team::rename_team(&path, &name)?;
+            // The person starting the team here is its owner: publishing
+            // from this computer acts as them.
+            team::ensure_owner(&path, &person)?;
             team::set_listen(&path, Some(&listen), url.as_deref())
         })
         .await?;
@@ -2485,14 +2515,27 @@ async fn team_me(
 ) -> crate::member_view::MemberResponse {
     let settings = state.settings_path.clone();
     let team_path = state.team_path.clone();
+    let library = state.library.as_ref().map(|host| host.library.clone());
+    let member_id = member.id.clone();
     let read = tokio::task::spawn_blocking(move || {
         let hosted = team::hosted_spaces(&settings)?;
         let file = team::read_team(&team_path)?;
-        Ok::<_, wenlan_core::error::WenlanError>((hosted, file))
+        // Computers sync only hosted Spaces, so team-only library groups
+        // are listed apart: a member granted one is not told nothing is
+        // open to them.
+        let library_spaces = match library.map(|library| library.reader(&member_id, None)) {
+            None => Vec::new(),
+            Some(Ok(reader)) => reader.team_only_spaces(),
+            Some(Err(error)) => {
+                tracing::warn!(%error, "[team] the team library cannot be read for /me");
+                Vec::new()
+            }
+        };
+        Ok::<_, wenlan_core::error::WenlanError>((hosted, file, library_spaces))
     })
     .await;
     match read {
-        Ok(Ok((hosted, file))) => {
+        Ok(Ok((hosted, file, library_spaces))) => {
             let mut me = wenlan_types::team::TeamMe {
                 signed_in_with: Some(match credential {
                     team::Credential::BrowserSession => {
@@ -2503,9 +2546,9 @@ async fn team_me(
                 ..member.me(&hosted)
             };
             if state.library.is_some() {
-                // Legacy sync only follows migrated hosted Spaces. Team-only
-                // groups are discoverable from the library endpoint.
+                // Legacy sync only follows migrated hosted Spaces.
                 me.spaces.retain(|space| space.id.is_some());
+                me.library_spaces = library_spaces;
             }
             crate::member_view::team::me(me, team::people_sharing_with(&file, &member, &hosted))
         }

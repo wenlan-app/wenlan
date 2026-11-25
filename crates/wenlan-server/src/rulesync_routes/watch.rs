@@ -12,7 +12,6 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use fs2::FileExt;
 
-use super::shared_source::SharedSourceBlocked;
 use super::{
     group_drafts, inspect_rule, needs_conflict_card, record_rule_edit, snapshot_has_credentials,
     storage::{save_manifest, BlobHash, StoredSetup, MANIFEST},
@@ -23,7 +22,7 @@ use crate::state::SharedState;
 use wenlan_core::rulesync_renderer::RenderSession;
 use wenlan_core::rulesync_team;
 
-use wenlan_core::rulesync_personal::{enabled, is_harness_path};
+use wenlan_core::rulesync_personal::enabled;
 
 static LAST_CHECK: AtomicI64 = AtomicI64::new(0);
 
@@ -35,7 +34,6 @@ pub(super) fn last_checked_at() -> Option<i64> {
 #[derive(Default)]
 pub struct RulesWatch {
     rules: BTreeMap<PathBuf, WatchedRule>,
-    shared_source_blocked: bool,
     #[cfg(test)]
     reads: usize,
 }
@@ -118,7 +116,6 @@ impl RulesWatch {
 
         let data_root = FileRoot::open(data)
             .context("open rules setup directory")?
-            .guard_source_aliases()
             .with_private_directories();
         let lock = data_root
             .open_existing_private_lock()
@@ -148,37 +145,19 @@ impl RulesWatch {
         }
 
         let home = resolve_home().context("resolve tool home")?;
-        let data_root = data_root
-            .guard_data(&home, data)
-            .context("validate rules setup directory")?;
-        let root = FileRoot::open_home(&home)
-            .context("open tool home")?
-            .guard_source_aliases();
-        let root = if stored.state.shared_source_following {
-            root
-        } else {
-            root.for_retired_source()
-        };
+        let root = FileRoot::open_home(&home).context("open tool home")?;
         let setup = Setup::new(home, data.to_owned());
         let mut manifest = stored
             .load_contents(&data_root)
             .context("load rules setup receipts")?;
-        match setup.follow_shared_source(&mut manifest) {
-            Ok(()) => self.shared_source_blocked = false,
-            Err(error) if error.is::<SharedSourceBlocked>() => {
-                if !std::mem::replace(&mut self.shared_source_blocked, true) {
-                    tracing::warn!("{error}");
-                }
-                return Ok(false);
-            }
-            Err(error) => return Err(error),
+        if setup.finish_legacy_rule_import(&mut manifest)? {
+            return Ok(true);
         }
         self.rules
             .retain(|path, _| stored.state.delivered.contains_key(path));
         let mut changed = Vec::new();
         for (path, delivery) in stored.state.active_deliveries() {
             if !matches!(delivery.kind, Kind::Rule { .. })
-                || is_harness_path(path)
                 || stored.state.recovery_issues.contains_key(path)
             {
                 self.rules.remove(path);
@@ -377,88 +356,45 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_watch_delivers_shared_source_edits_without_review() {
-        let f = Fixture::new();
-        f.adopt_from_plan();
-        let source = f
-            .text(super::super::SHARED_RULES)
-            .replace("One rule.", "Edited in the shared source.");
-        f.write(super::super::SHARED_RULES, &source);
+    fn ux_skill_24_sync_and_watch_ignore_changes_to_the_imported_rules_file() {
+        use crate::rulesync_routes::tests::SHARED_RULES;
 
-        round(&mut RulesWatch::default(), &f).unwrap();
-        let manifest = f.setup.load().unwrap().unwrap();
-        assert_eq!(manifest.master.shared, source);
-        assert!(f
-            .text(CLAUDE)
-            .contains("Edited in the shared source.\nSecond rule.\nClaude only."));
-        assert!(f
-            .text(CODEX)
-            .contains("Edited in the shared source.\nSecond rule.\nCodex only."));
-        assert_eq!(f.text(super::super::SHARED_RULES), source);
-        assert!(f.setup.status().unwrap().proposals.is_empty());
-    }
-
-    #[test]
-    fn rulesync_watch_stops_on_a_shared_source_conflict() {
         let f = Fixture::new();
-        f.adopt_from_plan();
-        let path = super::super::SHARED_RULES;
-        let original = f.text(path);
-        let mut manifest = f.setup.load().unwrap().unwrap();
-        manifest.master.shared = original.replace("One rule.", "Changed in Wenlan.");
-        f.setup.save(&manifest).unwrap();
+        let adapter = ".agents/adapters/claude/CLAUDE.md";
+        fs::create_dir_all(f.setup.home.join(adapter).parent().unwrap()).unwrap();
+        f.write(adapter, "@~/.agents/AGENTS.md\nClaude adapter rule.\n");
         f.write(
-            path,
-            &original.replace("One rule.", "Inserted in the source.\nOne rule."),
+            CLAUDE,
+            "@~/.agents/adapters/claude/CLAUDE.md\nClaude only.\n",
         );
-        let before = files(&f.setup.home);
-        let before_data = files(&f.setup.data);
-        let mut watch = RulesWatch::default();
-
-        for _ in 0..2 {
-            assert!(!round(&mut watch, &f).unwrap());
-            assert!(watch.shared_source_blocked);
-            let status = f.setup.status().unwrap();
-            assert!(!status.in_sync);
-            let conflict_notes = status
-                .notes
-                .iter()
-                .filter(|note| note.contains("paused") && note.contains("Edit either side"))
-                .collect::<Vec<_>>();
-            assert_eq!(conflict_notes.len(), 1, "{status:?}");
-            let note = conflict_notes[0];
-            assert!(
-                note.contains("paused") && note.contains("Edit either side"),
-                "{note}"
-            );
-            assert!(note.contains(super::super::SYNC_COMMAND), "{note}");
-            assert_eq!(files(&f.setup.home), before);
-            assert_eq!(files(&f.setup.data), before_data);
-        }
-        f.write(path, &original);
-        assert!(round(&mut watch, &f).unwrap());
-        assert!(!watch.shared_source_blocked);
-        assert!(f.text(CODEX).contains("Changed in Wenlan."));
-        let status = f.setup.status().unwrap();
-        assert!(status.notes.is_empty() && status.proposals.is_empty());
-    }
-
-    #[test]
-    fn rulesync_watch_never_opens_or_recreates_the_retired_source() {
-        let f = Fixture::new();
+        let shared = f.text(SHARED_RULES);
+        f.write(CODEX, &format!("<!-- Generated by ~/.agents/scripts/sync-codex-agents.sh. Rerun. -->\n{shared}Codex only.\n"));
         f.adopt_from_plan();
-        let preview = f.setup.preview_source_off().unwrap();
-        f.setup
-            .turn_source_off(&wenlan_types::rulesync::SharedSourceOffRequest {
-                plan_id: preview.plan_id,
-                token: preview.token,
-            })
-            .unwrap();
-        let source = f.setup.home.join(super::super::SHARED_RULES);
+
+        let claude = format!("{shared}Claude adapter rule.\nClaude only.\n");
+        let codex = f.text(CODEX);
+        assert_eq!(f.text(CLAUDE), claude);
+        assert!(codex.starts_with("<!-- Managed by Wenlan."));
+        assert!(codex.ends_with(&format!("{shared}Codex only.\n")));
+
+        f.write(SHARED_RULES, "Changed outside Wenlan.\n");
+        let sync = f.sync_with("");
+        assert!(
+            sync.written.is_empty() && sync.blocked.is_empty(),
+            "{sync:?}"
+        );
+        assert!(round(&mut RulesWatch::default(), &f).unwrap());
+        assert_eq!(f.setup.load().unwrap().unwrap().master.shared, shared);
+        assert_eq!(f.text(CLAUDE), claude);
+        assert_eq!(f.text(CODEX), codex);
+        assert_eq!(f.text(SHARED_RULES), "Changed outside Wenlan.\n");
+
+        let source = f.setup.home.join(SHARED_RULES);
         fs::remove_file(&source).unwrap();
         fs::create_dir(&source).unwrap();
-
+        accept_rule(&f);
         assert!(round(&mut RulesWatch::default(), &f).unwrap());
+        assert_delivered(&f);
         assert!(source.is_dir());
     }
 

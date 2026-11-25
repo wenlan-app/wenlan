@@ -2652,32 +2652,38 @@ fn zed_file(scratch: &Scratch) -> PathBuf {
 }
 
 #[tokio::test]
-async fn ux_skill_8_gemini_and_antigravity_share_one_file_and_one_part() {
+async fn ux_skill_8_gemini_and_antigravity_use_distinct_rules_files() {
     let _lock = crate::TEST_DATA_DIR_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
     let (scratch, page) = scratch_with_own_rule(&["gemini-cli", "antigravity"]).await;
     let file = scratch.home.join(".gemini/GEMINI.md");
-    tool_folder_for(&file);
+    let antigravity = scratch.home.join(".gemini/config/GEMINI.md");
+    tool_folder_for(&antigravity);
     std::fs::write(&file, "# Mine\n\nUse pnpm.\n").unwrap();
+    std::fs::write(&antigravity, "# Antigravity rules\n").unwrap();
 
     sync_tools(&scratch).await;
     let text = read(&file);
     assert!(text.starts_with("# Mine\n\nUse pnpm.\n\n<!-- WENLAN:RULES:START -->"));
     assert!(text.contains(&format!("- {OWN_RULE}\n")));
-    assert_eq!(text.matches(PART_START).count(), 1, "one part for both");
+    assert_eq!(text.matches(PART_START).count(), 1);
+    let antigravity_text = read(&antigravity);
+    assert!(antigravity_text.starts_with("# Antigravity rules\n"));
+    assert!(antigravity_text.contains(&format!("- {OWN_RULE}\n")));
+    assert_eq!(antigravity_text.matches(PART_START).count(), 1);
     let tools = delivery(&scratch).await;
-    for tool in ["gemini-cli", "antigravity"] {
+    for (tool, path) in [("gemini-cli", &file), ("antigravity", &antigravity)] {
         let row = row(&tools, tool);
         assert_eq!(row.state, RulesDeliveryState::Delivered, "{tool}");
-        assert_eq!(row.path.as_deref(), Some(file.to_string_lossy().as_ref()));
+        assert_eq!(row.path.as_deref(), Some(path.to_string_lossy().as_ref()));
     }
 
-    // One of the two turned off: the other still reads the file.
     turn_off(&scratch, "gemini-cli").await;
     sync_tools(&scratch).await;
-    assert_eq!(read(&file), text);
+    assert_eq!(read(&file), "# Mine\n\nUse pnpm.\n");
+    assert_eq!(read(&antigravity), antigravity_text);
     let tools = delivery(&scratch).await;
     assert_eq!(
         state_of(&tools, "gemini-cli"),
@@ -2692,18 +2698,18 @@ async fn ux_skill_8_gemini_and_antigravity_share_one_file_and_one_part() {
     person_saves(&scratch, &page, "Nothing here now.\n").await;
     sync_tools(&scratch).await;
     assert_eq!(read(&file), "# Mine\n\nUse pnpm.\n");
+    assert_eq!(read(&antigravity), "# Antigravity rules\n");
     assert_eq!(
         state_of(&delivery(&scratch).await, "antigravity"),
         RulesDeliveryState::NoRules
     );
 
-    // Back again, then both turned off: the part goes again.
     person_saves(&scratch, &page, &format!("- {OWN_RULE}\n")).await;
     sync_tools(&scratch).await;
-    assert_eq!(read(&file), text);
+    assert_eq!(read(&antigravity), antigravity_text);
     turn_off(&scratch, "antigravity").await;
     sync_tools(&scratch).await;
-    assert_eq!(read(&file), "# Mine\n\nUse pnpm.\n");
+    assert_eq!(read(&antigravity), "# Antigravity rules\n");
 }
 
 #[tokio::test]
@@ -3018,6 +3024,7 @@ async fn ux_skill_8_no_tool_folder_is_made_and_a_tool_not_connected_gets_nothing
         ".codex/AGENTS.md",
         ".claude/CLAUDE.md",
         ".gemini/GEMINI.md",
+        ".gemini/config/GEMINI.md",
         ".copilot/copilot-instructions.md",
         ".codeium/windsurf/memories/global_rules.md",
         ".config/opencode/AGENTS.md",

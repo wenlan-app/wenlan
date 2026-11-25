@@ -196,6 +196,7 @@ main|post|/api/pages/{id}/sentences/flag|wenlan_server::sentence_routes::handle_
 main|post|/api/pages/{id}/sentences/revert|wenlan_server::sentence_routes::handle_revert_sentences
 main|post|/api/pages/{id}/sentences/recheck|wenlan_server::sentence_routes::handle_recheck_sentence
 main|post|/api/pages/{id}/code-basis/cited|wenlan_server::code_basis_routes::handle_code_basis_cited
+main|post|/api/pages/{id}/code-basis/lines|wenlan_server::code_basis_routes::handle_code_basis_lines
 main|post|/api/steep/claim|wenlan_server::steep_routes::handle_steep_claim
 main|post|/api/steep/commit|wenlan_server::steep_routes::handle_steep_commit
 main|post|/api/steep/new/claim|wenlan_server::steep_new_routes::handle_steep_new_claim
@@ -402,8 +403,6 @@ main|post|/api/rules/setup/share/preview|wenlan_server::rulesync_routes::share_p
 main|post|/api/rules/setup/restore|wenlan_server::rulesync_routes::restore
 main|post|/api/rules/setup/skill-updates|wenlan_server::rulesync_routes::skill_updates
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
-main|post|/api/rules/setup/shared-source/off/preview|wenlan_server::rulesync_routes::shared_source_off_preview
-main|post|/api/rules/setup/shared-source/off|wenlan_server::rulesync_routes::shared_source_off
 main|post|/api/rules/personal/show|wenlan_server::rulesync_routes::personal_rules::show
 main|post|/api/rules/personal/propose|wenlan_server::rulesync_routes::personal_rules::propose
 main|get|/api/rules/personal/plan/{id}|wenlan_server::rulesync_routes::personal_rules::plan

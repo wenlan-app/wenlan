@@ -376,6 +376,74 @@ pub(crate) async fn cited_excerpt(db: &MemoryDB, row: &CodeBasisRow) -> Option<E
     Some(render_excerpt(&lines, span.start, span.end, None))
 }
 
+/// Most lines a side-by-side view may ask for past a row's end.
+const MAX_LINES_EXTRA: u32 = 200;
+
+/// A row's lines as cited and as they read now, for a side-by-side view in
+/// any interface. The cited side is the row's own anchored lines found again
+/// in the version of the file it was cited from (a moved row's stored span is
+/// not where they were); the stored span when they cannot be found there.
+/// `None` when the note has no such row.
+pub async fn code_basis_lines(
+    db: &MemoryDB,
+    page_id: &str,
+    locator: &CodeBasisLocator,
+    extra: u32,
+) -> Result<Option<wenlan_types::CodeBasisLinesResponse>, WenlanError> {
+    let Some(row) = db.get_code_basis_row(page_id, locator).await? else {
+        return Ok(None);
+    };
+    let r = &row.reference;
+    let stored = LineSpan {
+        start: r.line_start,
+        end: r.line_end,
+    };
+    let blob = db
+        .get_code_basis_cited(page_id, locator)
+        .await?
+        .and_then(|cited| cited.cited_blob);
+    let then = match blob {
+        Some(blob) => read_git_blob(&r.repo_root, &blob).await,
+        None => None,
+    };
+    let (cited, cited_start) = match then {
+        Some(text) => {
+            let span = match code_anchor::relocate(&text, Some(stored), &row.anchor) {
+                Relocation::Unchanged { span } | Relocation::Moved { span } => span,
+                Relocation::Changed { .. } | Relocation::Unresolved => stored,
+            };
+            (
+                Some(lines_in(&text, span.start, span.end)),
+                Some(span.start),
+            )
+        }
+        None => (None, None),
+    };
+    let now = read_code_file_stamped(&r.repo_root, &r.path)
+        .await
+        .ok()
+        .map(|(text, _, _)| {
+            lines_in(
+                &text,
+                r.line_start,
+                r.line_end.saturating_add(extra.min(MAX_LINES_EXTRA)),
+            )
+        });
+    Ok(Some(wenlan_types::CodeBasisLinesResponse {
+        cited,
+        cited_start,
+        now,
+    }))
+}
+
+/// Lines `start..=end` (1-based) of `text`, clamped to the file.
+fn lines_in(text: &str, start: u32, end: u32) -> Vec<String> {
+    let lines = source_lines(text);
+    let from = (start.max(1) as usize - 1).min(lines.len());
+    let to = (end as usize).clamp(from, lines.len());
+    lines[from..to].to_vec()
+}
+
 /// The file as it reads now, around the lines the row relies on.
 struct CurrentCode {
     text: String,
@@ -404,8 +472,17 @@ async fn read_current(row: &CodeBasisRow) -> Reading {
         start: r.line_start,
         end: r.line_end,
     };
+    let lines_added = r.state == crate::code_basis::CODE_BASIS_STATE_PENDING
+        && r.reason.as_deref() == Some(crate::code_basis::LINES_ADDED);
     let span = match code_anchor::relocate(&text, Some(hint), &row.anchor) {
         Relocation::Changed { span } => span,
+        // Lines were added above the row's own (`LINES_ADDED`): it spans
+        // them, and its own lines still close the span.
+        Relocation::Moved { span } | Relocation::Unchanged { span }
+            if lines_added && span.end == hint.end && hint.start < span.start =>
+        {
+            hint
+        }
         Relocation::Unchanged { .. } | Relocation::Moved { .. } => return Reading::NothingToJudge,
         Relocation::Unresolved => return Reading::Unresolved,
     };

@@ -2096,7 +2096,9 @@ async fn update_page_db_impl(
                 entry["restored_from"] = serde_json::Value::from(version);
             }
             if let Some((_, ref stats_summary)) = citations {
-                entry["citations_summary"] = serde_json::Value::String(stats_summary.clone());
+                if !stats_summary.is_empty() {
+                    entry["citations_summary"] = serde_json::Value::String(stats_summary.clone());
+                }
             }
 
             // Read existing changelog and append the new entry

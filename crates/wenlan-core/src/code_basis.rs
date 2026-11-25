@@ -46,6 +46,13 @@ pub const CODE_BASIS_STATE_UNAVAILABLE: &str = "unavailable";
 /// more: no model can say what they became, so a person looks.
 pub const LINES_NOT_FOUND: &str = "lines_not_found";
 
+/// `reason` of a `pending` row whose own lines read the same, but lines were
+/// added between it and the row right above it that the note relied on with
+/// it as one stretch (a step added to a cited list). What the note says about
+/// the stretch as a whole ("four steps") may no longer hold, so the row takes
+/// in the added lines and is judged like any changed lines.
+pub const LINES_ADDED: &str = "lines_added";
+
 /// What a file looked like to `stat` when it was last read: length and
 /// modification time. A check whose file still shows the same stamp skips
 /// reading and hashing it.
@@ -530,7 +537,128 @@ pub async fn classify_code_basis_rows(
             ));
         }
     }
+    flag_lines_added_between(rows, &mut verdicts);
     verdicts
+}
+
+/// Where a row's lines are now, when they read the same as cited: its new
+/// span for `Unchanged` and `Moved`, its stored span for a row left out
+/// because its file did not change. `None` for any other verdict.
+fn same_lines_now(row: &CodeBasisRow, verdict: Option<&CodeBasisVerdict>) -> Option<LineSpan> {
+    let stored = LineSpan {
+        start: row.reference.line_start,
+        end: row.reference.line_end,
+    };
+    match verdict {
+        None | Some(CodeBasisVerdict::Unchanged { .. }) => Some(stored),
+        Some(CodeBasisVerdict::Moved { span, .. }) => Some(*span),
+        // Changed, missing or unreadable lines already wait on their own.
+        _ => None,
+    }
+}
+
+/// A note that relies on lines next to each other (each step of a list, say)
+/// relies on them as one stretch. When lines appear between two of them, each
+/// row's own lines still read the same, so each alone is only `moved`, yet
+/// the note may now be wrong ("four steps" with five). The lower row of each
+/// such pair becomes [`CodeBasisVerdict::LinesAdded`], spanning the added
+/// lines and its own, so it is judged like any changed lines.
+fn flag_lines_added_between<'a>(
+    rows: &'a [CodeBasisRow],
+    verdicts: &mut [(&'a CodeBasisRow, CodeBasisVerdict)],
+) {
+    let index: HashMap<*const CodeBasisRow, usize> = verdicts
+        .iter()
+        .enumerate()
+        .map(|(at, (row, _))| (*row as *const CodeBasisRow, at))
+        .collect();
+    // One group per note and file, in cited order.
+    let mut groups: HashMap<(&str, &str, &str), Vec<&'a CodeBasisRow>> = HashMap::new();
+    for row in rows {
+        groups
+            .entry((
+                row.page_id.as_str(),
+                row.reference.repo_root.as_str(),
+                row.reference.path.as_str(),
+            ))
+            .or_default()
+            .push(row);
+    }
+    let mut flagged: Vec<(usize, LineSpan, Option<FileStamp>)> = Vec::new();
+    // Rows whose pair was judged here, added lines or not.
+    let mut judged: HashSet<usize> = HashSet::new();
+    for group in groups.values_mut() {
+        group.sort_by_key(|row| (row.reference.line_start, row.reference.line_end));
+        for pair in group.windows(2) {
+            let (above, below) = (pair[0], pair[1]);
+            // Only rows that were next to each other when cited.
+            if below.reference.line_start != above.reference.line_end.saturating_add(1) {
+                continue;
+            }
+            let verdict_of = |row: &CodeBasisRow| {
+                index
+                    .get(&(row as *const CodeBasisRow))
+                    .map(|at| &verdicts[*at].1)
+            };
+            let (Some(above_now), Some(below_now)) = (
+                same_lines_now(above, verdict_of(above)),
+                same_lines_now(below, verdict_of(below)),
+            ) else {
+                continue;
+            };
+            // A row left out read nothing; its file did not change.
+            let Some(&at) = index.get(&(below as *const CodeBasisRow)) else {
+                continue;
+            };
+            judged.insert(at);
+            // Still in order, with lines between them now.
+            if below_now.start <= above_now.end.saturating_add(1) {
+                continue;
+            }
+            let stamp = match &verdicts[at].1 {
+                CodeBasisVerdict::Unchanged { stamp } | CodeBasisVerdict::Moved { stamp, .. } => {
+                    *stamp
+                }
+                _ => None,
+            };
+            let span = LineSpan {
+                start: above_now.end + 1,
+                end: below_now.end,
+            };
+            flagged.push((at, span, stamp));
+        }
+    }
+    // A row already waiting on added lines whose pair could not be judged
+    // this time (the row above changed or went missing) keeps waiting: its
+    // own lines reading the same says nothing about the added ones. It keeps
+    // the added lines in front of its own, wherever they are now.
+    for (at, (row, verdict)) in verdicts.iter().enumerate() {
+        let r = &row.reference;
+        if judged.contains(&at)
+            || r.state != CODE_BASIS_STATE_PENDING
+            || r.reason.as_deref() != Some(LINES_ADDED)
+        {
+            continue;
+        }
+        let (own, stamp) = match verdict {
+            CodeBasisVerdict::Moved { span, stamp, .. } => (*span, *stamp),
+            _ => continue,
+        };
+        let added = r.line_end.saturating_sub(r.line_start) + 1;
+        let own_len = own.end - own.start + 1;
+        let before = added.saturating_sub(own_len);
+        flagged.push((
+            at,
+            LineSpan {
+                start: own.start.saturating_sub(before).max(1),
+                end: own.end,
+            },
+            stamp,
+        ));
+    }
+    for (at, span, stamp) in flagged {
+        verdicts[at].1 = CodeBasisVerdict::LinesAdded { span, stamp };
+    }
 }
 
 /// Re-read the files behind every code basis in `space` (`None`: every Space)

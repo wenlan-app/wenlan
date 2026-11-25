@@ -265,7 +265,7 @@ pub(crate) fn open(
     let repo = repo_wiki::repository_top_level(repo)?;
     let key = fingerprint(&repo)?;
     let state_path = PathBuf::from(format!("checkouts/{key}.json"));
-    let root = setup.data_files()?.guard_source_aliases();
+    let root = setup.data_files()?;
     let state = root.read(&state_path, false)?;
     let checkout = match &state {
         Snapshot::Absent => Checkout {
@@ -335,7 +335,7 @@ fn refresh_entries(
     can_restore_rejection: bool,
     entries: impl IntoIterator<Item = std::io::Result<std::fs::DirEntry>>,
 ) -> Result<RulesSyncReport> {
-    let root = setup.data_files()?.guard_source_aliases();
+    let root = setup.data_files()?;
     let mut result = report("Checked checkout rules");
     for entry in entries {
         let refresh_entry = || -> Result<()> {
@@ -737,20 +737,17 @@ impl Job<'_> {
             let path = &pending.path;
             let destination = self.directory.join(path);
             let stage = pending.stage.as_ref().context(UnsupportedRulesyncState)?;
-            let recovered = self
-                .root
-                .read_for_stage_recovery(&destination, false, &stage.id)
-                .and_then(|current| {
-                    self.root.recover_stage(
-                        &destination,
-                        &stage.seen,
-                        &stage.desired,
-                        &current,
-                        stage.options(self.root),
-                    )?;
-                    self.sync_parents(&destination)?;
-                    Ok(current)
-                });
+            let recovered = self.root.read(&destination, false).and_then(|current| {
+                self.root.recover_stage(
+                    &destination,
+                    &stage.seen,
+                    &stage.desired,
+                    &current,
+                    stage.options(self.root),
+                )?;
+                self.sync_parents(&destination)?;
+                Ok(current)
+            });
             if let Ok(current) = recovered {
                 let digest = fingerprint(&current)?;
                 if digest == pending.digest {

@@ -9,6 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
+pub const AGENT_SKILLS_DIR: &str = ".agents/skills";
+pub(crate) const CURSOR_SKILLS_DIR: &str = ".cursor/skills";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillsBase {
     Home,
@@ -31,8 +34,8 @@ pub fn skills_location(tool: &str) -> Option<SkillsLocation> {
         "claude_code" | "claude-code" => (SkillsBase::Home, &[".claude", "skills"]),
         // OpenAI's user-scope Agent Skills directory for Codex. The installed
         // version and documentation receipt belong in the delivery/PR record.
-        "codex_cli" | "codex" => (SkillsBase::Home, &[".agents", "skills"]),
-        "cursor" => (SkillsBase::Home, &[".agents", "skills"]),
+        "codex_cli" | "codex" => (SkillsBase::Home, &[AGENT_SKILLS_DIR]),
+        "cursor" => (SkillsBase::Home, &[CURSOR_SKILLS_DIR]),
         "gemini_cli" | "gemini-cli" => (SkillsBase::Home, &[".gemini", "skills"]),
         "antigravity" => (SkillsBase::Home, &[".gemini", "config", "skills"]),
         "copilot_cli" | "copilot-cli" | "github-copilot" | "vscode" => {
@@ -41,7 +44,7 @@ pub fn skills_location(tool: &str) -> Option<SkillsLocation> {
         "windsurf" => (SkillsBase::Home, &[".codeium", "windsurf", "skills"]),
         "kiro" | "kiro-cli" => (SkillsBase::Home, &[".kiro", "skills"]),
         "opencode" => (SkillsBase::Home, &[".config", "opencode", "skills"]),
-        "kimi_code" | "kimi-code" => (SkillsBase::Home, &[".agents", "skills"]),
+        "kimi_code" | "kimi-code" => (SkillsBase::Home, &[AGENT_SKILLS_DIR]),
         "kimi_desktop" | "kimi-desktop" => (
             SkillsBase::ConfigDir,
             &["kimi-desktop", "daimon-share", "daimon", "skills"],
@@ -192,14 +195,18 @@ pub fn rules_location(tool: &str, windows: bool) -> Option<RulesLocation> {
             ..block("claude-code", RulesBase::Home, &[".claude"], &["CLAUDE.md"])
         },
         "codex_cli" | "codex" => block("codex", RulesBase::CodexHome, &[], &["AGENTS.md"]),
-        // Gemini CLI and Antigravity read the same file.
         "gemini_cli" | "gemini-cli" => RulesLocation {
             at_imports: true,
             ..block("gemini-cli", RulesBase::Home, &[".gemini"], &["GEMINI.md"])
         },
         "antigravity" => RulesLocation {
             at_imports: true,
-            ..block("antigravity", RulesBase::Home, &[".gemini"], &["GEMINI.md"])
+            ..block(
+                "antigravity",
+                RulesBase::Home,
+                &[".gemini", "config"],
+                &["GEMINI.md"],
+            )
         },
         // Copilot CLI and Copilot in VS Code read the same file.
         "copilot_cli" | "copilot-cli" | "github-copilot" => block(
@@ -330,7 +337,7 @@ mod tests {
     fn shared_agent_skill_paths_follow_upstream_global_paths() {
         let home = Path::new("/scratch/home");
         for (tool, expected) in [
-            ("cursor", ".agents/skills"),
+            ("cursor", ".cursor/skills"),
             ("gemini-cli", ".gemini/skills"),
             ("antigravity", ".gemini/config/skills"),
             ("github-copilot", ".copilot/skills"),
@@ -359,7 +366,7 @@ mod tests {
             ("claude-code", ".claude/CLAUDE.md"),
             ("codex", ".codex/AGENTS.md"),
             ("gemini-cli", ".gemini/GEMINI.md"),
-            ("antigravity", ".gemini/GEMINI.md"),
+            ("antigravity", ".gemini/config/GEMINI.md"),
             ("copilot-cli", ".copilot/copilot-instructions.md"),
             ("github-copilot", ".copilot/copilot-instructions.md"),
             ("vscode", ".copilot/copilot-instructions.md"),

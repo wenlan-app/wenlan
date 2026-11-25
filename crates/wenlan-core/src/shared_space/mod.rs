@@ -284,6 +284,10 @@ pub struct Membership {
     /// grant also fences any earlier pull that hasn't completed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rule_grants: Option<BTreeMap<String, Option<String>>>,
+    /// Team-only library Spaces open to them, as the server last said.
+    /// Only for showing: they are not synced here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library_spaces: Vec<wenlan_types::team::TeamSpaceAccess>,
 }
 
 /// Keeps that this person is on the team at `url` as `me` says, with
@@ -304,6 +308,7 @@ pub fn remember_membership(
         member_id: me.member_id.clone(),
         owner: me.role == wenlan_types::team::TeamRole::Owner,
         rule_grants: Some(grants.clone()),
+        library_spaces: me.library_spaces.clone(),
     };
     change_settings(path, |store| {
         let mut changed = false;
@@ -581,6 +586,7 @@ pub fn membership_infos_at(
             url: url.clone(),
             team: store.teams.get(url).cloned(),
             owner: membership.owner,
+            library_spaces: membership.library_spaces.clone(),
         })
         .collect())
 }

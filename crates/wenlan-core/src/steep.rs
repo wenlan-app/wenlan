@@ -1703,7 +1703,16 @@ pub async fn commit(
             (!code_rows.is_empty()).then(|| page.as_ref().is_some_and(|page| owned(page, true)))
         },
         knowledge_path,
-        Some((citations_json, stats.summary())),
+        // A note that cites no memory (one rewritten only for its code) has
+        // no citation counts to show on its revision.
+        Some((
+            citations_json,
+            if stats.cited_any() {
+                stats.summary()
+            } else {
+                String::new()
+            },
+        )),
         if basis_work {
             snapshot.bases.clone()
         } else {
@@ -1753,7 +1762,7 @@ pub async fn commit(
         page_id,
         outcome,
         revision_card_id: result.revision_card_id,
-        citations: Some(stats.summary()),
+        citations: stats.cited_any().then(|| stats.summary()),
         judged: None,
         replayed: false,
     })

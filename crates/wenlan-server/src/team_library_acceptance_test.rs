@@ -413,7 +413,23 @@ async fn step4_review_publishes_only_approved_snapshot_and_retries_once() {
     // A host's terminal review also checks the personal original again,
     // before it can create any team copy or save a personal receipt.
     use wenlan_types::team_library::{TeamOriginal, TeamTerminalAction, TeamTerminalReply};
-    team::owner_key(&f.state.team_path, "Owner").unwrap();
+    // Without an owner (a team started here before 0.22.8) the terminal is
+    // refused; the owner recorded when the team starts here can publish.
+    let host = f.state.library.as_ref().unwrap();
+    assert!(!team::has_owner(&f.state.team_path).unwrap());
+    assert!(matches!(
+        library::terminal_action(
+            host,
+            &f.state,
+            &local,
+            TeamTerminalAction::Withdraw {
+                item_id: "none".into()
+            },
+        )
+        .await,
+        Err(wenlan_core::team_library::LibraryError::Denied)
+    ));
+    team::ensure_owner(&f.state.team_path, "Host").unwrap();
     let original = local
         .get_memory_detail("writer-approved-id")
         .await
@@ -423,7 +439,6 @@ async fn step4_review_publishes_only_approved_snapshot_and_retries_once() {
         "kind":"memory","title":"Terminal snap","body":"approved terminal text"
     }))
     .unwrap();
-    let host = f.state.library.as_ref().unwrap();
     let reply = library::terminal_action(
         host,
         &f.state,

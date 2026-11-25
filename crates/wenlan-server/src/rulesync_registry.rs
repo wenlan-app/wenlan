@@ -38,11 +38,10 @@ pub(crate) fn installed_sources() -> Result<BTreeMap<String, BTreeMap<PathBuf, V
 
 /// A person can also take skills in from each of the delivery folders.
 pub(crate) fn scan_sources(root: &Path, home: &Path) -> Vec<LocalSkill> {
-    let mut dirs: Vec<_> = rulesync_personal::PERSONAL_TARGETS
+    let dirs: Vec<_> = rulesync_personal::PERSONAL_TARGETS
         .iter()
-        .map(|target| home.join(target.skills.destination))
+        .flat_map(|target| target.skill_roots().map(|root| home.join(root)))
         .collect();
-    dirs.push(home.join(".agents/skills"));
     registry::scan_local_in_home(root, &dirs, home)
 }
 

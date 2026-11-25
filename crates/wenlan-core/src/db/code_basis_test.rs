@@ -1877,3 +1877,221 @@ async fn an_unchanged_write_records_no_code_basis_on_a_note_outside_the_space() 
     );
     assert!(rows(&db, "n1").await.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Lines added inside a stretch the note relies on
+// ---------------------------------------------------------------------------
+
+const CHECKLIST: &str = "# Release checklist\n\n\
+- Pass the Windows tests.\n\
+- Confirm the package version.\n\
+- Run the TypeScript check.\n\
+- Review the release notes.\n";
+
+/// The README film case: a page cites each step of a four-step list (lines
+/// 3, 4, 5, 6) and says "four steps"; a fifth step is added after line 3.
+#[tokio::test]
+async fn a_step_added_between_cited_steps_needs_a_look() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "How we release", SPACE).await;
+    let repo = Repo::new();
+    repo.write("docs/release-checklist.md", CHECKLIST);
+    let steps: Vec<_> = (3..=6)
+        .map(|line| repo.input("docs/release-checklist.md", line, line))
+        .collect();
+    rely(&db, "n1", &steps).await;
+
+    repo.write(
+        "docs/release-checklist.md",
+        &CHECKLIST.replace(
+            "- Pass the Windows tests.\n",
+            "- Pass the Windows tests.\n- Pass the Linux tests.\n",
+        ),
+    );
+    recheck_code_basis(&db, None).await.unwrap();
+
+    let now: Vec<_> = rows(&db, "n1")
+        .await
+        .into_iter()
+        .map(|r| (r.line_start, r.line_end, r.state, r.reason))
+        .collect();
+    assert_eq!(
+        now,
+        vec![
+            (3, 3, CODE_BASIS_STATE_OK.to_string(), None),
+            // The step right under the new one takes it in and waits.
+            (
+                4,
+                5,
+                CODE_BASIS_STATE_PENDING.to_string(),
+                Some(crate::code_basis::LINES_ADDED.to_string())
+            ),
+            (6, 6, CODE_BASIS_STATE_MOVED.to_string(), None),
+            (7, 7, CODE_BASIS_STATE_MOVED.to_string(), None),
+        ]
+    );
+    assert_eq!(
+        brief_code_basis_pending(&db, SPACE).await.unwrap(),
+        Some(1),
+        "the page is flagged"
+    );
+
+    // What the model and the steep are shown: the added step and the one under it.
+    let all = db.list_code_basis_rows(None).await.unwrap();
+    let grown = all
+        .iter()
+        .find(|row| row.reference.line_start == 4)
+        .unwrap();
+    let (_, span, excerpt) = crate::code_basis_recheck::current_code_excerpt(grown)
+        .await
+        .expect("an excerpt for the added lines");
+    assert_eq!((span.start, span.end), (4, 5));
+    assert!(excerpt.contains("Pass the Linux tests."), "{excerpt}");
+
+    // A second check keeps it as it is.
+    recheck_code_basis(&db, None).await.unwrap();
+    let again = rows(&db, "n1").await;
+    assert_eq!(
+        (
+            again[1].line_start,
+            again[1].line_end,
+            again[1].state.as_str()
+        ),
+        (4, 5, CODE_BASIS_STATE_PENDING)
+    );
+
+    // The step taken out again: nothing was added any more.
+    repo.write("docs/release-checklist.md", CHECKLIST);
+    recheck_code_basis(&db, None).await.unwrap();
+    let back: Vec<_> = rows(&db, "n1")
+        .await
+        .into_iter()
+        .map(|r| (r.line_start, r.line_end, r.reason))
+        .collect();
+    assert_eq!(
+        back,
+        vec![(3, 3, None), (4, 4, None), (5, 5, None), (6, 6, None)]
+    );
+}
+
+/// The film's second edit: after a step was added, the step above it is
+/// reworded too. The added step still waits; it is not washed out to "Up to
+/// date" because its own line reads the same.
+#[tokio::test]
+async fn added_lines_keep_waiting_when_the_step_above_changes_too() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "How we release", SPACE).await;
+    let repo = Repo::new();
+    repo.write("docs/release-checklist.md", CHECKLIST);
+    // The cited version is in git, as it is once the checklist is committed.
+    for args in [
+        &["init", "-q"][..],
+        &["hash-object", "-w", "docs/release-checklist.md"][..],
+    ] {
+        let ran = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.root())
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(ran.status.success(), "git {args:?}");
+    }
+    let steps: Vec<_> = (3..=6)
+        .map(|line| repo.input("docs/release-checklist.md", line, line))
+        .collect();
+    rely(&db, "n1", &steps).await;
+    let added = CHECKLIST.replace(
+        "- Pass the Windows tests.\n",
+        "- Pass the Windows tests.\n- Pass the Linux tests.\n",
+    );
+    repo.write("docs/release-checklist.md", &added);
+    recheck_code_basis(&db, None).await.unwrap();
+
+    repo.write(
+        "docs/release-checklist.md",
+        &added.replace(
+            "- Pass the Windows tests.",
+            "- Pass the Windows and macOS tests.",
+        ),
+    );
+    recheck_code_basis(&db, None).await.unwrap();
+
+    let now: Vec<_> = rows(&db, "n1")
+        .await
+        .into_iter()
+        .map(|r| (r.line_start, r.line_end, r.state, r.reason))
+        .collect();
+    assert_eq!(
+        now,
+        vec![
+            (3, 3, CODE_BASIS_STATE_PENDING.to_string(), None),
+            (
+                4,
+                5,
+                CODE_BASIS_STATE_PENDING.to_string(),
+                Some(crate::code_basis::LINES_ADDED.to_string())
+            ),
+            (6, 6, CODE_BASIS_STATE_MOVED.to_string(), None),
+            (7, 7, CODE_BASIS_STATE_MOVED.to_string(), None),
+        ]
+    );
+
+    // Both sides for the before and after view, read by the daemon: the
+    // row's own step as cited, and the added step with it now.
+    let lines = crate::code_basis_recheck::code_basis_lines(
+        &db,
+        "n1",
+        &repo.locator("docs/release-checklist.md", 4, 5),
+        1,
+    )
+    .await
+    .unwrap()
+    .expect("the row is there");
+    assert_eq!(
+        lines.cited,
+        Some(vec!["- Confirm the package version.".to_string()])
+    );
+    assert_eq!(lines.cited_start, Some(4));
+    assert_eq!(
+        lines.now,
+        Some(vec![
+            "- Pass the Linux tests.".to_string(),
+            "- Confirm the package version.".to_string(),
+            "- Run the TypeScript check.".to_string(),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn a_line_added_between_rows_that_were_apart_is_only_a_move() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(20));
+    rely(
+        &db,
+        "n1",
+        &[repo.input("a.rs", 3, 4), repo.input("a.rs", 8, 9)],
+    )
+    .await;
+
+    // Added between the two, in lines the note never relied on.
+    let mut text: Vec<String> = numbered(20).lines().map(str::to_string).collect();
+    text.insert(5, "// new".to_string());
+    repo.write("a.rs", &(text.join("\n") + "\n"));
+    recheck_code_basis(&db, None).await.unwrap();
+
+    let now: Vec<_> = rows(&db, "n1")
+        .await
+        .into_iter()
+        .map(|r| (r.line_start, r.state))
+        .collect();
+    assert_eq!(
+        now,
+        vec![
+            (3, CODE_BASIS_STATE_OK.to_string()),
+            (9, CODE_BASIS_STATE_MOVED.to_string())
+        ]
+    );
+    assert_eq!(brief_code_basis_pending(&db, SPACE).await.unwrap(), Some(0));
+}
