@@ -427,3 +427,32 @@ fn status_on_a_members_computer_shows_the_team_it_joined() {
     );
     assert!(stdout.contains("  Product"), "{stdout}");
 }
+
+#[test]
+fn status_names_the_owner_apart_from_the_people_invited() {
+    let mut owner = member("o1", "Qi");
+    owner["role"] = json!("owner");
+    let (host, _requests) = common::spawn_stub(vec![
+        ("GET /api/team", team_status(vec![owner.clone()])),
+        ("GET /api/shared", json!({ "shares": [] }).to_string()),
+        ("GET /api/team/membership", "[]".to_string()),
+    ]);
+    let (ok, stdout, stderr) = run(&host, &["team", "status"]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("Owner: Qi"), "{stdout}");
+    assert!(stdout.contains("No one invited yet"), "{stdout}");
+
+    let (host, _requests) = common::spawn_stub(vec![
+        (
+            "GET /api/team",
+            team_status(vec![owner, member("m1", "Amy")]),
+        ),
+        ("GET /api/shared", json!({ "shares": [] }).to_string()),
+        ("GET /api/team/membership", "[]".to_string()),
+    ]);
+    let (ok, stdout, stderr) = run(&host, &["team", "status"]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("Owner: Qi"), "{stdout}");
+    assert!(stdout.contains("Amy"), "{stdout}");
+    assert!(!stdout.contains("\nQi "), "{stdout}");
+}
