@@ -27,9 +27,9 @@ use wenlan_core::rulesync_personal::credentials::{
 use wenlan_core::rulesync_personal::{
     additional_personal_files, additional_targets, adoption_plan, adoption_token, adoption_tool,
     check_delivery_paths, check_skill_frontmatter, describe_change, discover_adoption, fingerprint,
-    is_harness_path, line_changes, merge_rule_text, personal_target, stage_adopted_skill,
-    system_home, verify_adoption_token, write_root_rule, DeliveryWorktrees, GlobalOutput,
-    HarnessGuard, LineChange, LocalText, PersonalMaster, PersonalTarget, PERSONAL_TARGETS,
+    line_changes, merge_rule_text, personal_target, stage_adopted_skill, system_home,
+    verify_adoption_token, write_root_rule, DeliveryWorktrees, GlobalOutput, LineChange, LocalText,
+    PersonalMaster, PersonalTarget, PERSONAL_TARGETS,
 };
 use wenlan_core::rulesync_personal_files::{location_of, PersonalFeature};
 use wenlan_core::rulesync_renderer::{self, RenderSession};
@@ -476,9 +476,9 @@ pub(crate) fn tool_for_path(path: &Path) -> Option<&'static PersonalTarget> {
     if path == Path::new(".claude.json") || path == Path::new(".mcp.json") {
         return personal_target("claudecode");
     }
-    PERSONAL_TARGETS
-        .iter()
-        .find(|target| path.starts_with(target.folder()))
+    PERSONAL_TARGETS.iter().find(|target| {
+        path.starts_with(target.folder()) || target.skill_roots().any(|root| path.starts_with(root))
+    })
 }
 
 fn adoption_with_settings_token(adoption: &str, settings: &str) -> Result<String> {
@@ -493,9 +493,6 @@ fn path_blocked(blocked: &BTreeSet<PathBuf>, path: &Path) -> bool {
     path.ancestors()
         .any(|candidate| blocked.contains(candidate))
 }
-
-const HARNESS_READ_ONLY: &str =
-    "Wenlan leaves ~/.agents untouched. Use a tool path outside the harness.";
 
 #[derive(Debug)]
 pub(crate) struct UnsupportedRulesyncState;
@@ -677,11 +674,11 @@ impl Setup {
                     None => (),
                 },
                 Kind::Skill | Kind::RegistrySkill { .. } => {
-                    let folder = Path::new(target.skills.destination);
-                    if let Some(package) = path
-                        .ancestors()
-                        .find(|ancestor| ancestor.parent() == Some(folder))
-                    {
+                    if let Some(package) = path.ancestors().find(|ancestor| {
+                        target
+                            .skill_roots()
+                            .any(|root| ancestor.parent() == Some(Path::new(root)))
+                    }) {
                         skills.entry(target.agent).or_default().insert(package);
                     }
                 }
@@ -1498,7 +1495,7 @@ impl Setup {
     }
 
     pub(crate) fn data_files(&self) -> Result<FileRoot> {
-        Ok(FileRoot::open_data(&self.home, &self.data)?)
+        Ok(FileRoot::open(&self.data)?)
     }
 
     pub(crate) fn home_files(&self) -> Result<FileRoot> {
@@ -1506,12 +1503,6 @@ impl Setup {
     }
 
     pub(crate) fn lock(&self) -> Result<fs::File> {
-        let guard = wenlan_core::rulesync_personal::HarnessGuard::new(&self.home)?;
-        let data_parent = self.data.parent().context("rulesync has no data parent")?;
-        guard.check_absolute(data_parent)?;
-        if self.data.try_exists()? {
-            guard.check_absolute(&self.data)?;
-        }
         if !self.data.try_exists()? {
             let mut builder = fs::DirBuilder::new();
             #[cfg(unix)]
@@ -2764,18 +2755,6 @@ impl Setup {
                 );
                 continue;
             }
-            if is_harness_path(&path) {
-                block_path(
-                    result,
-                    &path,
-                    Code::SharedReadOnly,
-                    format!(
-                        "{}: {HARNESS_READ_ONLY} The retained backup is available for manual recovery.",
-                        path.display()
-                    ),
-                );
-                continue;
-            }
             let original = manifest.backup[&path].clone();
             if matches!(delivered.kind, Kind::PersonalSettings { .. }) {
                 match personal_settings::restore_operation(
@@ -3245,8 +3224,7 @@ impl Setup {
         let paths: Vec<_> = manifest
             .active_deliveries()
             .filter_map(|(path, record)| {
-                (matches!(record.kind, Kind::Rule { .. }) && !is_harness_path(path))
-                    .then_some(path.clone())
+                matches!(record.kind, Kind::Rule { .. }).then_some(path.clone())
             })
             .collect();
         let mut operations = Vec::new();
@@ -3603,7 +3581,7 @@ impl Setup {
             PERSONAL_TARGETS
                 .iter()
                 .filter(|target| !manifest.master.enrolls_target(target.id))
-                .map(|target| PathBuf::from(target.skills.destination)),
+                .flat_map(|target| target.skill_roots().map(PathBuf::from)),
         );
         let enrolled = PERSONAL_TARGETS
             .iter()
@@ -3945,14 +3923,23 @@ impl Setup {
                     .is_some_and(|local| local.files.contains_key(name))
                     .then(|| adopted.iter().find(|(path, skill)| matches(path, skill)))
                     .flatten();
-                let folder =
-                    if emitted == default_folder && manifest.delivered.contains_key(&emitted) {
-                        emitted.as_path()
-                    } else {
-                        selected
-                            .or(adopted_folder)
-                            .map_or(default_folder.as_path(), |(path, _)| path.as_path())
-                    };
+                let existing_delivery = target
+                    .skill_roots()
+                    .map(|root| Path::new(root).join(name))
+                    .find(|path| {
+                        manifest.delivered.get(path).is_some_and(|delivery| {
+                            matches!(delivery.kind, Kind::RegistryDirectory { .. })
+                        })
+                    });
+                let folder = if manifest.delivered.contains_key(&default_folder) {
+                    default_folder.as_path()
+                } else {
+                    selected
+                        .or(adopted_folder)
+                        .map(|(path, _)| path.as_path())
+                        .or(existing_delivery.as_deref())
+                        .unwrap_or(&default_folder)
+                };
                 if path_blocked(blocked, folder) {
                     continue;
                 }
@@ -3970,25 +3957,6 @@ impl Setup {
                         Code::GitUnreviewed,
                         format!("{}: {reason}", folder.display()),
                     );
-                    manifest
-                        .registry_skipped
-                        .entry(name.clone())
-                        .or_default()
-                        .insert(folder.to_owned());
-                    continue;
-                }
-                if folder == default_folder
-                    && is_harness_path(&emitted)
-                    && !manifest.delivered.contains_key(folder)
-                    && !matches!(
-                        FileRoot::open(&self.home)?.read(&emitted, true),
-                        Ok(Snapshot::Absent)
-                    )
-                {
-                    result.block(Code::SkillDuplicate, format!(
-                        "{}: Codex can already read a skill at {}. Choose another name to avoid a duplicate.",
-                        folder.display(), emitted.display()
-                    ));
                     manifest
                         .registry_skipped
                         .entry(name.clone())
@@ -4258,18 +4226,16 @@ impl Setup {
         for adopted in &manifest.master.skills {
             for (target, folders) in &adopted.locations {
                 if let Some(spec) = personal_target(target) {
-                    packages.extend(folders.iter().filter(|path| !is_harness_path(path)).map(
-                        |folder| {
-                            (
-                                folder.clone(),
-                                ManagedSkill {
-                                    tool: spec.tool,
-                                    files: BTreeMap::new(),
-                                    directories: BTreeMap::new(),
-                                },
-                            )
-                        },
-                    ));
+                    packages.extend(folders.iter().map(|folder| {
+                        (
+                            folder.clone(),
+                            ManagedSkill {
+                                tool: spec.tool,
+                                files: BTreeMap::new(),
+                                directories: BTreeMap::new(),
+                            },
+                        )
+                    }));
                 }
             }
         }
@@ -4277,7 +4243,7 @@ impl Setup {
             if matches!(record.kind, Kind::RegistryDirectory { .. }) {
                 if let Some(target) = PERSONAL_TARGETS
                     .iter()
-                    .find(|target| path.starts_with(target.skills.destination))
+                    .find(|target| target.skill_roots().any(|root| path.starts_with(root)))
                 {
                     packages.entry(path.clone()).or_insert(ManagedSkill {
                         tool: target.tool,
@@ -4643,7 +4609,6 @@ impl Setup {
     ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         // Preview may run before the rulesync data directory has been created.
         let parent = self.data.parent().context("rulesync has no data parent")?;
-        HarnessGuard::new(&self.home)?.check_absolute(parent)?;
         let stage = rulesync_renderer::new_stage(parent)?;
         let input = stage.path().join("master");
         let output = stage.path().join("output");
@@ -4683,7 +4648,7 @@ struct RegistryPackage<'a> {
 fn skill_case_alias(root: &FileRoot, path: &Path) -> std::io::Result<Option<PathBuf>> {
     let scope = PERSONAL_TARGETS
         .iter()
-        .map(|tool| Path::new(tool.skills.destination))
+        .flat_map(|tool| tool.skill_roots().map(Path::new))
         .find(|scope| path != *scope && path.starts_with(scope));
     match scope {
         Some(scope) => root.case_spelling(path, scope),
@@ -4951,7 +4916,7 @@ fn registry_removals(
     let mut removals = BTreeSet::new();
     let mut operations = Vec::new();
     for (path, record) in deliveries {
-        if path_blocked(blocked, path) || is_harness_path(path) {
+        if path_blocked(blocked, path) {
             continue;
         }
         let stale = path
@@ -5753,13 +5718,6 @@ fn inspect(home: &Path, root: &FileRoot, manifest: &Manifest) -> Result<Pullback
         if blocked.contains_key(path) {
             continue;
         }
-        if is_harness_path(path) {
-            blocked.insert(
-                path.clone(),
-                (Code::SharedReadOnly, HARNESS_READ_ONLY.into()),
-            );
-            continue;
-        }
         if !matches!(delivery.kind, Kind::Rule { .. } | Kind::PersonalFile) {
             continue;
         }
@@ -6232,17 +6190,12 @@ mod tests {
     }
 
     impl Fixture {
-        pub(super) fn new() -> Self {
+        pub(super) fn plain() -> Self {
             let _temp = tempfile::tempdir().unwrap();
             let home = _temp.path().join("home");
             let data = _temp.path().join("data");
-            fs::create_dir_all(home.join(".agents")).unwrap();
-            fs::create_dir(home.join(".claude")).unwrap();
-            fs::create_dir(home.join(".codex")).unwrap();
+            fs::create_dir(&home).unwrap();
             fs::create_dir(&data).unwrap();
-            fs::write(home.join(".agents/AGENTS.md"), SHARED).unwrap();
-            fs::write(home.join(CLAUDE), "@~/.agents/AGENTS.md\nClaude only.\n").unwrap();
-            fs::write(home.join(CODEX), format!("{SHARED}Codex only.\n")).unwrap();
             Self {
                 setup: Setup {
                     home,
@@ -6251,6 +6204,17 @@ mod tests {
                 },
                 _temp,
             }
+        }
+
+        pub(super) fn new() -> Self {
+            let fixture = Self::plain();
+            for dir in [".agents", ".claude", ".codex"] {
+                fs::create_dir(fixture.setup.home.join(dir)).unwrap();
+            }
+            fixture.write(SHARED_RULES, SHARED);
+            fixture.write(CLAUDE, "@~/.agents/AGENTS.md\nClaude only.\n");
+            fixture.write(CODEX, &format!("{SHARED}Codex only.\n"));
+            fixture
         }
 
         pub(super) fn adopt_from_plan(&self) -> RulesSyncReport {
@@ -6299,10 +6263,10 @@ mod tests {
         }
 
         pub(super) fn empty_rules() -> Self {
-            let fixture = Self::new();
-            fs::remove_file(fixture.setup.home.join(".agents/AGENTS.md")).unwrap();
-            fs::remove_file(fixture.setup.home.join(CLAUDE)).unwrap();
-            fs::remove_file(fixture.setup.home.join(CODEX)).unwrap();
+            let fixture = Self::plain();
+            for dir in [".claude", ".codex"] {
+                fs::create_dir(fixture.setup.home.join(dir)).unwrap();
+            }
             fixture
         }
 
@@ -6780,13 +6744,14 @@ mod tests {
     #[test]
     fn ux_cli_8_whitespace_only_shared_rules_leave_missing_files_absent() {
         let fixture = Fixture::empty_rules();
-        fixture.write(".agents/AGENTS.md", "\u{2003}\n");
+        fs::create_dir(fixture.setup.home.join("notes")).unwrap();
+        fixture.write("notes/rules.md", "\u{2003}\n");
+        fixture.write(CLAUDE, "@~/notes/rules.md\n");
         fixture.adopt_from_plan();
 
         let report = fixture.sync_generated(&[]);
 
         assert!(report.blocked.is_empty(), "{report:?}");
-        assert!(!fixture.setup.home.join(CLAUDE).exists());
         assert!(!fixture.setup.home.join(CODEX).exists());
     }
 
@@ -9029,7 +8994,7 @@ mod tests {
 
     #[test]
     fn rulesync_round4_restore_preserves_original_with_a_legacy_case_alias() {
-        let f = Fixture::new();
+        let f = Fixture::empty_rules();
         let original = Path::new(".claude/commands/Review.md");
         let alias = Path::new(".claude/commands/review.md");
         fs::create_dir_all(f.setup.home.join(original).parent().unwrap()).unwrap();
@@ -9037,7 +9002,7 @@ mod tests {
         let aliases = f.setup.home.join(alias).exists();
         f.adopt_from_plan();
         let mut manifest = f.setup.load().unwrap().unwrap();
-        let delivered = manifest.backup[original].clone();
+        let delivered = manifest.delivered[original].delivered.clone();
         if !aliases {
             fs::copy(f.setup.home.join(original), f.setup.home.join(alias)).unwrap();
         }
@@ -9056,9 +9021,16 @@ mod tests {
         f.setup.save(&manifest).unwrap();
 
         let restored = f.setup.restore().unwrap();
-        assert!(f.setup.home.join(original).is_file(), "{restored:?}");
-        assert_eq!(restored.blocked.is_empty(), !aliases, "{restored:?}");
-        assert_eq!(f.setup.load().unwrap().is_some(), aliases);
+        assert_eq!(f.text(original.to_str().unwrap()), "Original command.\n");
+        if aliases {
+            assert_block(&restored, "local setup backup", Code::NameConflict);
+            let retained = f.setup.load().unwrap().unwrap();
+            assert!(retained.backup.contains_key(original));
+            assert!(retained.backup.contains_key(alias));
+        } else {
+            assert!(restored.blocked.is_empty(), "{restored:?}");
+            assert_restored_unadopted_store(&f);
+        }
         assert_eq!(f.setup.home.join(alias).exists(), aliases);
     }
 
@@ -13043,7 +13015,7 @@ mod tests {
         assert_eq!(
             personal_skill_destination(personal_target("codexcli").unwrap().skills, shared)
                 .unwrap(),
-            Path::new(".codex/skills/public-skill")
+            shared
         );
         assert_eq!(
             personal_skill_destination(personal_target("claudecode").unwrap().skills, claude)
@@ -13057,325 +13029,6 @@ mod tests {
             Path::new(".gemini/skills/public-skill")
         );
         assert!(personal_skill_destination(gemini.skills, shared).is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rulesync_personal_lifecycle_keeps_the_harness_read_only() {
-        use std::os::unix::fs::symlink;
-
-        let f = Fixture::new();
-        let home = &f.setup.home;
-        let harness = home.join(".agents").canonicalize().unwrap();
-        let generated = ".agents/generated/codex/AGENTS.md";
-        let shared_skill = ".agents/skills/example/SKILL.md";
-        let asset = ".agents/skills/example/agents/openai.yaml";
-        let codex_folder = ".codex/skills/example";
-        let claude_folder = ".claude/skills/example";
-        let original_skill = "---\nname: example\ndescription: An example\n---\nBody.\n";
-        for path in [generated, shared_skill, asset, codex_folder, claude_folder] {
-            fs::create_dir_all(home.join(path).parent().unwrap()).unwrap();
-        }
-        fs::rename(home.join(CODEX), home.join(generated)).unwrap();
-        f.write(shared_skill, original_skill);
-        f.write(asset, "interface:\n  display_name: Example\n");
-        let original_links = BTreeMap::from([
-            (
-                Path::new(CODEX),
-                PathBuf::from("../.agents/./generated/codex/AGENTS.md"),
-            ),
-            (
-                Path::new(codex_folder),
-                PathBuf::from("../../.agents/./skills/example"),
-            ),
-            (
-                Path::new(claude_folder),
-                home.join(".agents/skills/example"),
-            ),
-        ]);
-        for (path, target) in &original_links {
-            symlink(target, home.join(path)).unwrap();
-        }
-
-        // Compare the whole source tree at each step, including original file
-        // modes and mtimes. Reading its content may change atime.
-        fn snapshot(
-            home: &Path,
-            root: &FileRoot,
-            path: &Path,
-            entries: &mut BTreeMap<PathBuf, (Snapshot, std::time::SystemTime)>,
-        ) {
-            let absolute = home.join(path);
-            let state = root.read(path, true).unwrap();
-            if state.is_directory() {
-                for entry in fs::read_dir(&absolute).unwrap() {
-                    snapshot(home, root, &path.join(entry.unwrap().file_name()), entries);
-                }
-            }
-            let modified = fs::symlink_metadata(&absolute).unwrap().modified().unwrap();
-            entries.insert(path.to_owned(), (state, modified));
-        }
-        let home_root = FileRoot::open(home).unwrap();
-        let harness_state = || {
-            let mut entries = BTreeMap::new();
-            snapshot(home, &home_root, Path::new(".agents"), &mut entries);
-            entries
-        };
-        let source_before = harness_state();
-        let check_before_or_restored_path = |path: &Path| {
-            // The batch installs a real directory before writing its
-            // children, or removes the children before restoring its link.
-            let leaf = original_links
-                .keys()
-                .find(|link| path.starts_with(link))
-                .copied()
-                .unwrap_or(path);
-            let destination = home
-                .join(leaf.parent().unwrap())
-                .canonicalize()
-                .unwrap()
-                .join(leaf.file_name().unwrap());
-            assert!(!destination.starts_with(&harness), "{destination:?}");
-        };
-        let assert_writes_outside = |report: &RulesSyncReport| {
-            assert!(report.blocked.is_empty(), "{report:?}");
-            for path in &report.written {
-                let destination = home.join(path).canonicalize().unwrap();
-                assert!(!destination.starts_with(&harness), "{destination:?}");
-            }
-        };
-
-        let adoption = discover_adoption(home).unwrap();
-        for path in adoption.files.keys() {
-            check_before_or_restored_path(path);
-        }
-        let changed_render = std::cell::Cell::new(false);
-        let render_skills = |target: &str, skills: &SkillPackages| {
-            let mut output = fixture_skill_renderer(target, skills)?;
-            if changed_render.get() && target == "codexcli" {
-                output
-                    .get_mut(Path::new(".agents/skills/example/SKILL.md"))
-                    .unwrap()
-                    .extend_from_slice(b"Updated rendered skill.\n");
-            }
-            Ok(output)
-        };
-        let plan = f
-            .setup
-            .preview_adoption_using(fixture_rule_renderer, render_skills)
-            .unwrap();
-        assert!(plan
-            .notes
-            .iter()
-            .any(|note| note.contains("imports rule sources once and leaves them in place")));
-        assert_eq!(harness_state(), source_before);
-        let adopted = f
-            .setup
-            .adopt_using(&plan.token, fixture_rule_renderer, render_skills)
-            .unwrap();
-        assert_writes_outside(&adopted);
-        assert_eq!(harness_state(), source_before);
-        assert!(!fs::symlink_metadata(home.join(CODEX)).unwrap().is_symlink());
-        for folder in [codex_folder, claude_folder] {
-            assert!(!fs::symlink_metadata(home.join(folder))
-                .unwrap()
-                .is_symlink());
-            assert_eq!(
-                f.text(&format!("{folder}/agents/openai.yaml")),
-                f.text(asset)
-            );
-        }
-
-        // A newly added source in the old harness is outside normal tool
-        // pull-back. The known tools still receive both sync and review writes.
-        let owner_skill = ".agents/skills/owner-only/SKILL.md";
-        fs::create_dir(home.join(owner_skill).parent().unwrap()).unwrap();
-        f.write(owner_skill, "Owner's source.\n");
-        let source_before = harness_state();
-        changed_render.set(true);
-        let generated_rules = vec!["Generated guidance.".into()];
-        let sync = |root: &FileRoot, manifest: &mut Manifest| {
-            f.setup.sync_locked(
-                root,
-                manifest,
-                &generated_rules,
-                fixture_rule_renderer,
-                render_skills,
-            )
-        };
-        let sync_with_lock = || {
-            let _lock = f.setup.lock().unwrap();
-            let mut manifest = f.setup.load().unwrap().unwrap();
-            f.setup.recover(&home_root, &mut manifest).unwrap();
-            sync(&home_root, &mut manifest).unwrap()
-        };
-        let synced = sync_with_lock();
-        assert_eq!(
-            synced.written,
-            [CLAUDE, CODEX, ".codex/skills/example/SKILL.md"]
-        );
-        assert!(synced.proposals.is_empty(), "{synced:?}");
-        assert_writes_outside(&synced);
-        assert_eq!(harness_state(), source_before);
-
-        let addition = "Reviewed rule.";
-        f.write(CODEX, &format!("{}{addition}\n", f.text(CODEX)));
-        let proposed = sync_with_lock();
-        assert_eq!(proposed.proposals.len(), 1, "{proposed:?}");
-        assert!(proposed.written.is_empty(), "{proposed:?}");
-        assert_eq!(harness_state(), source_before);
-        let decision = PullbackDecision {
-            id: proposed.proposals[0].id.clone(),
-            action: PullbackAction::AllTools,
-            file: None,
-        };
-        let reviewed = f.setup.review_using(&decision, sync).unwrap();
-        assert!(reviewed.proposals.is_empty(), "{reviewed:?}");
-        assert!(reviewed.written.iter().any(|path| path == CLAUDE));
-        assert_writes_outside(&reviewed);
-        for path in [CLAUDE, CODEX] {
-            assert_eq!(f.text(path).matches(addition).count(), 1);
-        }
-        assert_eq!(harness_state(), source_before);
-
-        let current_codex = f.text(CODEX);
-        let restored = f.setup.restore().unwrap();
-        assert_eq!(restored.blocked.len(), 1, "{restored:?}");
-        assert_block(
-            &restored,
-            "Restoring the original link would remove rules",
-            Code::RestoreBlocked,
-        );
-        assert_eq!(f.text(CODEX), current_codex);
-        assert!(!fs::symlink_metadata(home.join(CODEX)).unwrap().is_symlink());
-        assert_eq!(restored.written.len(), adopted.written.len() - 1);
-        for path in &restored.written {
-            check_before_or_restored_path(Path::new(path));
-        }
-        for (path, target) in original_links {
-            if path == Path::new(CODEX) {
-                continue;
-            }
-            assert_eq!(
-                fs::read_link(home.join(path)).unwrap().as_os_str(),
-                target.as_os_str()
-            );
-        }
-        assert_eq!(harness_state(), source_before);
-    }
-
-    #[test]
-    fn rulesync_rejects_a_batch_with_a_harness_destination_before_saving() {
-        let f = Fixture::new();
-        let root = FileRoot::open_home(&f.setup.home).unwrap();
-        let originals = FileRoot::open(&f.setup.home).unwrap();
-        let _lock = f.setup.lock().unwrap();
-        let mut manifest = Manifest::new(
-            PersonalMaster::new(&discover_adoption(&f.setup.home).unwrap()),
-            BTreeMap::new(),
-        );
-        let operations = [CODEX, ".agents/AGENTS.md"]
-            .into_iter()
-            .map(|path| Pending {
-                path: path.into(),
-                seen: originals.read(Path::new(path), true).unwrap(),
-                desired: Snapshot::file(b"unexpected replacement\n".to_vec()),
-                kind: None,
-                allow_link: true,
-            })
-            .collect();
-        let error = f
-            .setup
-            .apply_batch(&root, &mut manifest, operations, BatchMode::Adopt)
-            .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("inside the read-only ~/.agents harness"));
-        assert!(manifest.pending.is_empty());
-        assert!(!f.setup.data.join("personal.json").exists());
-        assert_eq!(f.text(CODEX), format!("{SHARED}Codex only.\n"));
-        assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
-    }
-
-    #[test]
-    fn rulesync_refuses_to_write_to_the_harness_even_with_a_receipt() {
-        let f = Fixture::new();
-        f.adopt_from_plan();
-        let protected = PathBuf::from(".agents/AGENTS.md");
-        let root = FileRoot::open(&f.setup.home).unwrap();
-        let mut manifest = f.setup.load().unwrap().unwrap();
-        manifest.backup.insert(protected.clone(), Snapshot::Absent);
-        manifest.delivered.insert(
-            protected.clone(),
-            Delivery {
-                kind: Kind::RegistrySkill {
-                    name: "legacy".into(),
-                },
-                delivered: root.read(&protected, true).unwrap(),
-                observed: None,
-                reviewed: false,
-                at: 0,
-                rule_revision: None,
-            },
-        );
-        f.setup.save(&manifest).unwrap();
-
-        let sync = f.sync_with("");
-        assert_eq!(
-            sync.blocked,
-            [format!("{}: {HARNESS_READ_ONLY}", protected.display())]
-        );
-        assert!(sync.proposals.is_empty(), "{sync:?}");
-        let restored = f.setup.restore().unwrap();
-        assert_eq!(restored.blocked.len(), 1, "{restored:?}");
-        assert!(restored.blocked[0].contains("retained backup"));
-        assert_eq!(restored.written.len(), 2);
-        assert_eq!(f.text(".agents/AGENTS.md"), SHARED);
-        assert!(f
-            .setup
-            .load()
-            .unwrap()
-            .unwrap()
-            .backup
-            .contains_key(&protected));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rulesync_data_lock_cannot_create_files_under_the_harness() {
-        let mut f = Fixture::new();
-        let link = f.setup.home.join("data-alias");
-        std::os::unix::fs::symlink(".agents", &link).unwrap();
-        f.setup.data = link.join("rulesync");
-        let error = f.setup.lock().unwrap_err();
-        assert!(error.to_string().contains("read-only ~/.agents"));
-        assert!(!f.setup.data.exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rulesync_preview_rejects_a_tool_directory_that_is_the_physical_harness() {
-        let f = Fixture::new();
-        let home = &f.setup.home;
-        fs::rename(home.join(".agents"), home.join("original-source")).unwrap();
-        std::os::unix::fs::symlink(".codex", home.join(".agents")).unwrap();
-        for adapter in [
-            ".codex/adapters/claude/CLAUDE.md",
-            ".codex/adapters/codex/AGENTS.codex.md",
-        ] {
-            fs::create_dir_all(home.join(adapter).parent().unwrap()).unwrap();
-            f.write(adapter, "");
-        }
-        f.write(CLAUDE, "Claude rule.\n");
-        let error = wenlan_core::rulesync_personal::plan_adoption(home).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains(".codex/AGENTS.md is inside the read-only ~/.agents harness"),
-            "{error:#}"
-        );
-        assert_eq!(f.text(CODEX), format!("{SHARED}Codex only.\n"));
-        assert!(!f.setup.data.join("personal.json").exists());
     }
 
     #[test]
@@ -13767,8 +13420,8 @@ mod tests {
         let before = f.setup.load().unwrap().unwrap();
         let cursor = ".cursor/AGENTS.md";
         let folder = f.setup.home.join(".cursor/skills/example");
-        let source = f.setup.home.join(".agents/skills/example");
-        let link = "../../.agents/skills/example";
+        let source = f.setup.home.join("library/example");
+        let link = "../../library/example";
         fs::create_dir_all(folder.parent().unwrap()).unwrap();
         fs::create_dir_all(&source).unwrap();
         fs::write(

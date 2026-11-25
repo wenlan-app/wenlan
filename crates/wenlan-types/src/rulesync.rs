@@ -65,7 +65,6 @@ pub enum RulesSetupCode {
     OfflineInventory,
     AddTools,
     CodexScript,
-    SharedUntouched,
     PersonalImportNotes,
     IgnoreUnsupported,
     GitRule,
@@ -95,7 +94,6 @@ pub enum RulesSetupCode {
     RuleCompareFailed,
     MetadataChanged,
     SkillUnmanaged,
-    SkillDuplicate,
     SkillDestinationExists,
     DestinationPermissions,
     SkillMasterMissing,
@@ -146,6 +144,9 @@ pub struct AdoptionPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_lines: Option<usize>,
     pub files: Vec<AdoptionChange>,
+    /// Display paths of the referenced rule files found during this preview.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_sources: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<SettingsPlan>,
     #[serde(default)]

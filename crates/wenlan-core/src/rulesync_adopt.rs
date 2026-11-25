@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Read-only import of the personal harness, before rulesync renders it.
+//! Discover the existing tool files before rulesync renders the adoption plan.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
@@ -21,13 +21,13 @@ use crate::rulesync_personal_files::{
     require_plain_personal_directory, PersonalFileLocation, LOCATIONS, MAX_FILE_BYTES,
     NON_ASCII_PERSONAL_NAME,
 };
+use crate::skill_locations::AGENT_SKILLS_DIR;
 
 #[path = "rulesync_skill_origin.rs"]
 mod skill_origin;
 pub(crate) use skill_origin::checkout_update;
 pub(crate) use skill_origin::git_repository_name;
 
-pub(crate) const SHARED_SKILLS: &str = ".agents/skills";
 const CODEX_MANAGED_HEADER: &str =
     "<!-- Managed by Wenlan. Use wenlan rules status --sync to collect local edits. -->";
 const MAX_RULE_BYTES: u64 = 1024 * 1024;
@@ -75,7 +75,7 @@ impl AdoptionSkip {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialLocations {
     pub rules: BTreeMap<PathBuf, RuleCredentialLocation>,
-    /// Path and tool, or no tool for a source in the shared harness.
+    /// Path and tool, or no tool for an unassigned shared skill.
     pub skills: BTreeMap<PathBuf, Option<String>>,
 }
 
@@ -369,13 +369,27 @@ fn discover_with_platform(
         is_windows,
         &mut credentials.rules,
     )?;
-    let mut skills = SkillDiscovery::new(&home, &mut sources, &mut files, &mut links, is_windows);
-    skills.scan(Path::new(SHARED_SKILLS), None)?;
+    let mut skills = SkillDiscovery::new(
+        &home,
+        &mut sources,
+        &mut files,
+        &mut links,
+        is_windows,
+        saved_rules.map_or(&imported_rule_paths, |(_, paths)| paths),
+    );
+    let shared_skills = Path::new(AGENT_SKILLS_DIR);
+    let shared_tool = targets
+        .iter()
+        .find(|target| target.skills_path.as_deref() == Some(shared_skills));
+    skills.scan(
+        shared_skills,
+        shared_tool.map(|target| target.tool.as_str()),
+    )?;
     for target in targets {
         if let Some(dir) = target
             .skills_path
             .as_deref()
-            .filter(|dir| *dir != Path::new(SHARED_SKILLS))
+            .filter(|dir| *dir != shared_skills)
         {
             skills.scan(dir, Some(&target.tool))?;
         }
@@ -1746,6 +1760,7 @@ struct SkillDiscovery<'a> {
     files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
     links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
     is_windows: bool,
+    rule_sources: &'a BTreeSet<PathBuf>,
     skills: BTreeMap<(String, PathBuf), SkillTree>,
     locations: BTreeMap<PathBuf, Option<SkillUpstream>>,
     skipped: BTreeMap<PathBuf, AdoptionSkip>,
@@ -1759,6 +1774,7 @@ impl<'a> SkillDiscovery<'a> {
         files: &'a mut BTreeMap<PathBuf, AdoptionFile>,
         links: &'a mut BTreeMap<PathBuf, AdoptionLink>,
         is_windows: bool,
+        rule_sources: &'a BTreeSet<PathBuf>,
     ) -> Self {
         Self {
             home,
@@ -1766,6 +1782,7 @@ impl<'a> SkillDiscovery<'a> {
             files,
             links,
             is_windows,
+            rule_sources,
             skills: BTreeMap::new(),
             locations: BTreeMap::new(),
             skipped: BTreeMap::new(),
@@ -1774,16 +1791,6 @@ impl<'a> SkillDiscovery<'a> {
     }
 
     fn scan(&mut self, path: &Path, tool: Option<&str>) -> Result<()> {
-        #[cfg(windows)]
-        if tool.is_some() {
-            if let Err(error) = self.home.windows_tool_directory(path) {
-                self.skipped.insert(
-                    path.to_owned(),
-                    AdoptionSkip::new(Code::SkillUnreadable, error.to_string()),
-                );
-                return Ok(());
-            }
-        }
         let node = match self.home.resolve(path) {
             Ok(Some(node)) if node.symlink_hops == 0 => node,
             Ok(None) => return Ok(()),
@@ -1805,6 +1812,16 @@ impl<'a> SkillDiscovery<'a> {
                 return Ok(());
             }
         };
+        #[cfg(windows)]
+        if tool.is_some() {
+            if let Err(error) = self.home.windows_tool_directory(path) {
+                self.skipped.insert(
+                    path.to_owned(),
+                    AdoptionSkip::new(Code::SkillUnreadable, error.to_string()),
+                );
+                return Ok(());
+            }
+        }
         for name in self
             .home
             .names(&node)
@@ -1866,6 +1883,17 @@ impl<'a> SkillDiscovery<'a> {
             }
             return Ok(());
         }
+        // Leave an imported rule file in place even when it lives inside a
+        // skill package that would otherwise be adopted.
+        if tool.is_some()
+            && self
+                .rule_sources
+                .iter()
+                .any(|source| source.starts_with(path))
+        {
+            self.skipped.insert(path.to_owned(), referenced_rule_skip());
+            return Ok(());
+        }
         let mut key = (name.to_owned(), node.path.clone());
         if tool.is_some() && node.link.is_some() && !self.skills.contains_key(&key) {
             if let Some((shared, _)) = self
@@ -1910,8 +1938,8 @@ impl<'a> SkillDiscovery<'a> {
         }
         self.sources.insert(path.to_owned());
         self.sources.extend(tree.sources.iter().cloned());
+        tree.skill.shared |= path.parent() == Some(Path::new(AGENT_SKILLS_DIR));
         let Some(tool) = tool else {
-            tree.skill.shared = true;
             self.skipped.insert(
                 path.to_owned(),
                 AdoptionSkip::new(Code::SharedSkill, "Wenlan reads this shared source for the personal master and manages tool copies separately"),
@@ -2906,7 +2934,10 @@ mod tests {
         assert_eq!(adoption.skills.len(), 4);
         let shared = &adoption.skills[0];
         assert!(shared.shared);
-        assert_eq!(shared.targets, BTreeSet::from(["claudecode".into()]));
+        assert_eq!(
+            shared.targets,
+            BTreeSet::from(["claudecode".into(), "codexcli".into()])
+        );
         assert_eq!(
             shared.locations["claudecode"],
             BTreeSet::from([PathBuf::from(".claude/skills/common")])
@@ -2926,7 +2957,10 @@ mod tests {
             assert_eq!(private.targets.len(), 1);
             assert_eq!(private.files[Path::new("SKILL.md")], body.as_bytes());
         }
-        assert!(adoption.skills[3].targets.is_empty());
+        assert_eq!(
+            adoption.skills[3].targets,
+            BTreeSet::from(["codexcli".into()])
+        );
         assert_eq!(
             adoption.files[Path::new(".claude/skills/common")],
             AdoptionFile {
@@ -2957,8 +2991,8 @@ mod tests {
             assert_eq!(change.before, change.after);
         }
         assert!(adoption
-            .skipped
-            .contains_key(Path::new(".agents/skills/common")));
+            .files
+            .contains_key(Path::new(".agents/skills/common/SKILL.md")));
         assert_eq!(
             fs::read_link(home.join(".claude/skills/common")).unwrap(),
             Path::new(raw_link)

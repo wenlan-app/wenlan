@@ -899,8 +899,8 @@ and wait for evidence that people need them.
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
   each connected AI tool's own always-read file, in one part marked as
-  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, the `GEMINI.md`
-  Gemini CLI and Antigravity both read, the `copilot-instructions.md` Copilot
+  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, Gemini CLI's
+  `~/.gemini/GEMINI.md`, Antigravity's `~/.gemini/config/GEMINI.md`, the `copilot-instructions.md` Copilot
   CLI and Copilot in VS Code both read, Windsurf's `global_rules.md`,
   OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
   there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
@@ -1203,8 +1203,9 @@ and wait for evidence that people need them.
   to different sources, each source becomes part of its tool's layer and
   Share can offer their common lines. After import, edits to shared rules
   happen in Wenlan. Setup is the only time Wenlan reads referenced rule
-  sources. Those files stay in place. The shared skill location remains
-  `~/.agents/skills`. Personal Codex copies use `~/.codex/skills`.
+  sources. Those files stay in place. Codex's personal skills use
+  `~/.agents/skills`. Wenlan continues to recognize older Codex copies
+  in `~/.codex/skills`. Cursor's own skills use `~/.cursor/skills`.
   Tests `rulesync_adoption_without_a_shared_source_keeps_only_the_tool_files`,
   `rulesync_adoption_imports_claude_source_at_arbitrary_path`,
   `rulesync_adoption_imports_codex_symlink_at_arbitrary_path`, and
@@ -1253,7 +1254,7 @@ and wait for evidence that people need them.
   or preserve the permissions of the destination it would have to replace.
   原文（2026-11-22）：「有 CLI，那你就能幫我執行，只在 AI 也要能支援」
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
-  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_previews_the_generated_codex_header_change`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
+  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_previews_the_generated_codex_header_change`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_share_writes_codex_and_cursor_skills_at_their_native_paths`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
   Tests `rulesync_restore_keeps_accepted_tool_only_lines_in_byte_order`,
   `rulesync_restore_blocks_a_settled_rewrite_of_an_original_rule`,
   `rulesync_restore_then_adopt_keeps_the_rule_tool_only`,
@@ -1507,8 +1508,9 @@ and wait for evidence that people need them.
   keeps the adopted version in place. Dismiss applies to that release.
 - **UX-SKILL-22** `shipped` Bring in appears before adoption and opens the
   daemon’s plan with affected tools, counts, reasons for skipped items,
-  and settings changes. The shared setup stays in place. Approval binds the
-  entire plan. Restore asks again and says later edits stay for review.
+  and settings changes. For each referenced rule file Wenlan finds, the preview
+  names the file and says it will stay in place after import. Approval binds
+  the entire plan. Restore asks again and says later edits stay for review.
 - **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
   localized codes. A missing or unknown code shows a generic message.
   Cards, previews, adoption details and feedback hide paths and file names

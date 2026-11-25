@@ -1553,6 +1553,14 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
     let mut out = String::from("Bring in\n");
+    for path in &plan.rule_sources {
+        writeln!(
+            &mut out,
+            "\nWenlan imports {} once and leaves the file in place.",
+            one_line(path)
+        )
+        .unwrap();
+    }
     for note in &plan.notes {
         writeln!(&mut out, "\n{}", one_line(note)).unwrap();
     }
@@ -2257,6 +2265,7 @@ mod tests {
             rule_lines: None,
             settings: None,
             files: Vec::new(),
+            rule_sources: Vec::new(),
             skills: Vec::new(),
             notes: Vec::new(),
             tools: Vec::new(),
@@ -2311,6 +2320,7 @@ mod tests {
                 notice_codes: Vec::new(),
                 text_diff: None,
             }],
+            rule_sources: Vec::new(),
             skills: Vec::new(),
             notes: Vec::new(),
             tools: Vec::new(),

@@ -22,7 +22,7 @@ use crate::state::SharedState;
 use wenlan_core::rulesync_renderer::RenderSession;
 use wenlan_core::rulesync_team;
 
-use wenlan_core::rulesync_personal::{enabled, is_harness_path};
+use wenlan_core::rulesync_personal::enabled;
 
 static LAST_CHECK: AtomicI64 = AtomicI64::new(0);
 
@@ -145,9 +145,6 @@ impl RulesWatch {
         }
 
         let home = resolve_home().context("resolve tool home")?;
-        let data_root = data_root
-            .guard_data(&home, data)
-            .context("validate rules setup directory")?;
         let root = FileRoot::open_home(&home).context("open tool home")?;
         let setup = Setup::new(home, data.to_owned());
         let mut manifest = stored
@@ -161,7 +158,6 @@ impl RulesWatch {
         let mut changed = Vec::new();
         for (path, delivery) in stored.state.active_deliveries() {
             if !matches!(delivery.kind, Kind::Rule { .. })
-                || is_harness_path(path)
                 || stored.state.recovery_issues.contains_key(path)
             {
                 self.rules.remove(path);

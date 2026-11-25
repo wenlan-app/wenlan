@@ -586,8 +586,7 @@ impl Setup {
             let Some((source_target, source)) =
                 skill.locations.iter().find_map(|(target, folders)| {
                     folders
-                        .iter()
-                        .find(|folder| !is_harness_path(folder))
+                        .first()
                         .map(|folder| (target.as_str(), folder.clone()))
                 })
             else {
@@ -1170,37 +1169,167 @@ mod tests {
 
     #[test]
     fn rulesync_adoption_without_a_shared_source_keeps_only_the_tool_files() {
-        for (claude, codex) in [(true, true), (true, false), (false, true), (false, false)] {
-            let f = Fixture::new();
-            fs::remove_file(f.setup.home.join(SHARED_RULES)).unwrap();
-            fs::remove_dir(f.setup.home.join(".agents")).unwrap();
-            let mut overlays = BTreeMap::new();
-            for (installed, path, tool, body) in [
-                (claude, CLAUDE_RULES, "claudecode", "Only in this tool.\n"),
-                (codex, CODEX_RULES, "codexcli", "Only in the other tool.\n"),
-            ] {
-                if installed {
-                    f.write(path, body);
-                    overlays.insert(tool.to_owned(), body.to_owned());
-                } else {
-                    fs::remove_file(f.setup.home.join(path)).unwrap();
-                    fs::remove_dir(f.setup.home.join(path).parent().unwrap()).unwrap();
-                }
+        const SKILL: &str = ".agents/skills/fixture/SKILL.md";
+        const SKILL_BODY: &str = "---\nname: fixture\ndescription: A Codex skill\n---\n";
+        const BODY: &str = "One tool's own rule.\n";
+        for (file, target) in [
+            (Some(CLAUDE_RULES), Some("claudecode")),
+            (Some(CODEX_RULES), Some("codexcli")),
+            (None, None),
+            (Some(SKILL), Some("codexcli")),
+        ] {
+            let f = Fixture::plain();
+            if file == Some(SKILL) {
+                fs::create_dir(f.setup.home.join(".codex")).unwrap();
             }
+            if let Some(file) = file {
+                write(&f, &[(file, if file == SKILL { SKILL_BODY } else { BODY })]);
+            }
+            let skills = usize::from(file == Some(SKILL));
+            let rules = usize::from(file.is_some() && skills == 0);
             let before = tree(&f.setup.home);
+            let check_report = |report: &RulesSyncReport| {
+                assert!(report.blocked.is_empty(), "{report:?}");
+                for path in report.written.iter().map(Path::new) {
+                    if path.starts_with(".agents") {
+                        assert!(before.contains_key(path), "{report:?}");
+                    }
+                }
+                if skills == 0 {
+                    assert!(!serde_json::to_string(report).unwrap().contains(".agents"));
+                }
+            };
+            let plan = f
+                .setup
+                .preview_adoption_using(fixture_rule_renderer, fixture_skill_renderer)
+                .unwrap();
+            assert!(plan.rule_sources.is_empty(), "{plan:?}");
+            assert_eq!(plan.rule_lines, Some(rules));
+            assert_eq!(plan.skills.len(), skills);
+            for path in plan
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .chain(plan.skills.iter().map(|skill| skill.path.as_str()))
+            {
+                assert!(before.contains_key(Path::new(path)), "{path}: {plan:?}");
+            }
+            if skills == 0 {
+                assert!(!serde_json::to_string(&plan).unwrap().contains(".agents"));
+            }
+            let adopted = f
+                .setup
+                .adopt_using(&plan.token, fixture_rule_renderer, fixture_skill_renderer)
+                .unwrap();
+            check_report(&adopted);
+            assert_eq!(tree(&f.setup.home), before);
 
-            adopt(&f);
-
-            let saved = f.setup.load().unwrap();
-            if overlays.is_empty() {
-                assert!(saved.is_none());
+            if let Some(target) = target {
+                let saved = f.setup.load().unwrap().unwrap();
+                assert!(saved.master.shared.is_empty());
+                assert_eq!(
+                    saved.master.overlays,
+                    BTreeMap::from([(target.into(), if rules == 0 { "" } else { BODY }.into())])
+                );
+                assert_eq!(saved.master.skills.len(), skills);
+                if skills == 1 {
+                    assert_eq!(
+                        saved.master.skills[0].locations[target],
+                        BTreeSet::from([Path::new(SKILL).parent().unwrap().to_owned()])
+                    );
+                    assert!(!f.setup.home.join(CODEX_RULES).exists());
+                }
+                let sync = f.sync_generated(&[]);
+                check_report(&sync);
+                assert!(sync.proposals.is_empty(), "{sync:?}");
+                assert_eq!(tree(&f.setup.home), before);
+                let share = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+                assert!(!serde_json::to_string(&share).unwrap().contains(".agents"));
+                assert!(
+                    share.rules.is_empty() && share.tools.is_empty(),
+                    "{share:?}"
+                );
+                let shared = f
+                    .setup
+                    .share_using(&share.token, fixture_skill_renderer)
+                    .unwrap();
+                check_report(&shared);
+                assert_eq!(shared.message, NOTHING_TO_SHARE);
+                assert_eq!(tree(&f.setup.home), before);
+                let restored = f.setup.restore().unwrap();
+                check_report(&restored);
             } else {
-                let master = saved.unwrap().master;
-                assert!(master.shared.is_empty());
-                assert_eq!(master.overlays, overlays);
+                assert!(f.setup.load().unwrap().is_none());
+                for error in [
+                    f.setup.sync(&[]).unwrap_err(),
+                    f.setup
+                        .preview_share_using(fixture_skill_renderer)
+                        .unwrap_err(),
+                    f.setup.restore().unwrap_err(),
+                ] {
+                    assert!(!error.to_string().contains(".agents"), "{error:#}");
+                }
             }
             assert_eq!(tree(&f.setup.home), before);
         }
+    }
+
+    #[test]
+    fn rulesync_share_writes_codex_and_cursor_skills_at_their_native_paths() {
+        let f = Fixture::plain();
+        let body = "---\nname: glossary\ndescription: A fixture skill\n---\n";
+        write(
+            &f,
+            &[
+                (CLAUDE_RULES, CLAUDE_RULE),
+                (CODEX_RULES, "Read local notes.\n"),
+                (".cursor/AGENTS.md", "Prefer short edits.\n"),
+                (".claude/skills/glossary/SKILL.md", body),
+                (
+                    ".cursor/skills/private/SKILL.md",
+                    "---\nname: private\ndescription: Cursor only\n---\n",
+                ),
+            ],
+        );
+        adopt(&f);
+        assert!(!f.setup.home.join(".agents").exists());
+        assert_eq!(
+            f.setup
+                .load()
+                .unwrap()
+                .unwrap()
+                .master
+                .skills
+                .iter()
+                .find(|skill| skill.name == "private")
+                .unwrap()
+                .targets,
+            BTreeSet::from(["cursor".into()])
+        );
+        let share = f.setup.preview_share_using(fixture_skill_renderer).unwrap();
+        let shared = f
+            .setup
+            .share_using(&share.token, fixture_skill_renderer)
+            .unwrap();
+        assert!(shared.blocked.is_empty(), "{shared:?}");
+        for destination in [
+            ".agents/skills/glossary/SKILL.md",
+            ".cursor/skills/glossary/SKILL.md",
+        ] {
+            assert_eq!(f.text(destination), body);
+        }
+        assert!(!f.setup.home.join(".codex/skills").exists());
+        assert!(!f.setup.home.join(".agents/AGENTS.md").exists());
+        let restored = f.setup.restore().unwrap();
+        assert!(restored.blocked.is_empty(), "{restored:?}");
+        assert!(f
+            .setup
+            .home
+            .join(".cursor/skills/private/SKILL.md")
+            .is_file());
+        assert!(!f.setup.home.join(".agents/skills/glossary").exists());
+        assert!(!f.setup.home.join(".cursor/skills/glossary").exists());
+        assert_eq!(f.text(".claude/skills/glossary/SKILL.md"), body);
     }
 
     #[test]

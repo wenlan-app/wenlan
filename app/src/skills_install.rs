@@ -456,7 +456,7 @@ mod tests {
         let home = PathBuf::from("/fixture/home");
         let config = PathBuf::from("/fixture/config");
         for (client_type, tail) in [
-            ("cursor", [".agents", "skills"].as_slice()),
+            ("cursor", [".cursor", "skills"].as_slice()),
             ("gemini_cli", &[".gemini", "skills"]),
             ("antigravity", &[".gemini", "config", "skills"]),
             ("copilot_cli", &[".copilot", "skills"]),

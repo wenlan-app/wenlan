@@ -1280,6 +1280,7 @@ export interface RulesSettingsPlan {
 export interface RulesAdoptionPlan {
   token: string;
   files: RulesSetupChange[];
+  rule_sources?: string[];
   settings?: RulesSettingsPlan;
   notes?: string[];
   note_codes?: RulesSetupNotice[];

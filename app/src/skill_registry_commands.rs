@@ -17,43 +17,9 @@ use wenlan_types::skill_registry::{
     SkillSearchResponse,
 };
 
-/// The skills folders of the AI tools installed on this computer. A tool
-/// counts as installed when its own folder exists (`~/.claude`, `~/.cursor`,
-/// ...). Codex reads the shared `~/.agents/skills`.
 fn tool_skill_dirs() -> Vec<PathBuf> {
     let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
-    let mut out: Vec<PathBuf> = Vec::new();
-    let mut push = |dir: PathBuf| {
-        if !out.contains(&dir) {
-            out.push(dir);
-        }
-    };
-    if let Some(home) = home.as_deref() {
-        if home.join(".claude").is_dir() {
-            push(home.join(".claude/skills"));
-        }
-        if home.join(".codex").is_dir() || home.join(".agents/skills").is_dir() {
-            push(home.join(".agents/skills"));
-        }
-    }
-    for client in [
-        "cursor",
-        "gemini_cli",
-        "copilot_cli",
-        "windsurf",
-        "kiro",
-        "opencode",
-        "kimi_code",
-    ] {
-        if let Some(Ok(dir)) =
-            crate::skills_install::skills_dir_for(client, home.as_deref(), config_dir.as_deref())
-        {
-            if dir.parent().is_some_and(|tool| tool.is_dir()) {
-                push(dir);
-            }
-        }
-    }
-    out
+    actions::tool_skill_dirs(home.as_deref(), config_dir.as_deref())
 }
 
 fn store() -> PathBuf {

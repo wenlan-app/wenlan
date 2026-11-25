@@ -12,7 +12,7 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 use wenlan_core::rulesync_adopt::MAX_ADOPTED_SKILL_BYTES;
-use wenlan_core::rulesync_personal::{case_alias_in, is_harness_path, HarnessGuard};
+use wenlan_core::rulesync_personal::case_alias_in;
 #[cfg(windows)]
 use wenlan_core::rulesync_personal::{
     check_windows_replacement, copy_windows_dacl, open_windows_tool_dir,
@@ -255,7 +255,6 @@ pub(crate) struct ApplyOptions<'a> {
 
 pub(crate) struct FileRoot {
     dir: Dir,
-    harness: Option<HarnessGuard>,
     tool_home: bool,
     private_directories: bool,
     #[cfg(test)]
@@ -279,7 +278,6 @@ impl FileRoot {
         let ambient_parent = Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
         Ok(Self {
             dir: ambient_parent.open_dir_nofollow(Path::new(name))?,
-            harness: None,
             tool_home: false,
             private_directories: false,
             #[cfg(test)]
@@ -293,21 +291,8 @@ impl FileRoot {
 
     pub(crate) fn open_home(home: &Path) -> io::Result<Self> {
         let mut root = Self::open(home)?;
-        root.harness = Some(HarnessGuard::new(home)?);
         root.tool_home = true;
         Ok(root)
-    }
-
-    pub(crate) fn open_data(home: &Path, path: &Path) -> io::Result<Self> {
-        Self::open(path)?.guard_data(home, path)
-    }
-
-    pub(crate) fn guard_data(mut self, home: &Path, path: &Path) -> io::Result<Self> {
-        let guard = HarnessGuard::new(home)?;
-        guard.check_absolute(path)?;
-        guard.check(&self.dir.dir_metadata()?)?;
-        self.harness = Some(guard);
-        Ok(self)
     }
 
     pub(crate) fn with_private_directories(mut self) -> Self {
@@ -462,7 +447,6 @@ impl FileRoot {
         can_restore_parent: impl Fn(&Path) -> bool,
     ) -> io::Result<Option<std::ffi::OsString>> {
         let (parents, leaf) = entry_path(path)?;
-        self.check_tool_path(path)?;
         let mut directory = Some(self.dir.try_clone()?);
         let mut prefix = PathBuf::new();
         for part in parents {
@@ -683,13 +667,12 @@ impl FileRoot {
         {
             return Err(invalid_path());
         }
-        self.check_tool_path(path)?;
-        self.check_tool_path(temp)?;
         require_ascii_personal_path(path)?;
         require_ascii_personal_path(temp)?;
         let parent = self
             .open_parent_checked(relative_parent, false, true)?
             .ok_or_else(invalid_path)?;
+        #[cfg(windows)]
         self.check_directory_leaf(&parent, name)?;
         if *seen != self.read_entry(&parent, name, false)?
             || *seen != read_single_link_leaf(&parent, name, false)?
@@ -805,7 +788,6 @@ impl FileRoot {
         if destination_parent != relative_parent {
             return Err(invalid_path());
         }
-        self.check_tool_path(temp)?;
         require_ascii_personal_path(temp)?;
         let Some(parent) = self.open_parent_checked(relative_parent, false, true)? else {
             return Ok(());
@@ -835,7 +817,6 @@ impl FileRoot {
         before_commit: impl FnOnce(),
     ) -> io::Result<ApplyOutcome> {
         let (relative_parent, name) = entry_path(path)?;
-        self.check_tool_path(path)?;
         let personal = self.tool_home && is_personal_entry(path);
         if personal {
             require_ascii_personal_path(path)?;
@@ -879,6 +860,7 @@ impl FileRoot {
                 },
             );
         };
+        #[cfg(windows)]
         self.check_directory_leaf(&parent, name)?;
         // A personal file must also pass the single-link reader.
         if *seen != self.read_entry(&parent, name, true)? || *seen != read(&parent, name, true)? {
@@ -909,6 +891,7 @@ impl FileRoot {
                     return Ok(ApplyOutcome::ChangedSincePlan);
                 }
             }
+            #[cfg(windows)]
             self.check_directory_leaf(&current_parent, name)?;
             #[cfg(windows)]
             check_windows_replacement(&directory)?;
@@ -947,6 +930,7 @@ impl FileRoot {
             else {
                 return Ok(ApplyOutcome::ChangedSincePlan);
             };
+            #[cfg(windows)]
             self.check_directory_leaf(&current_parent, name)?;
             if !same_directory(&parent, &current_parent)?
                 || !matches_leaf_with(&parent, name, seen, read)?
@@ -1183,11 +1167,7 @@ impl FileRoot {
         create: bool,
         personal: bool,
     ) -> io::Result<Option<Dir>> {
-        self.check_tool_path(path)?;
         let mut parent = self.dir.try_clone()?;
-        if let Some(guard) = &self.harness {
-            guard.check(&parent.dir_metadata()?)?;
-        }
         if self.private_directories {
             require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
         }
@@ -1221,9 +1201,6 @@ impl FileRoot {
                 require_plain_personal_directory(&directory)?;
             }
             parent = directory;
-            if let Some(guard) = &self.harness {
-                guard.check(&parent.dir_metadata()?)?;
-            }
             if self.private_directories {
                 require_private_permissions(&parent.dir_metadata()?, "rulesync data directory")?;
             }
@@ -1231,41 +1208,16 @@ impl FileRoot {
         Ok(Some(parent))
     }
 
-    fn check_tool_path(&self, path: &Path) -> io::Result<()> {
-        if self.tool_home && is_harness_path(path) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "inside the read-only ~/.agents harness. Choose a path outside it",
-            ));
-        }
-        Ok(())
-    }
-
+    #[cfg(windows)]
     fn check_directory_leaf(&self, parent: &Dir, name: &Path) -> io::Result<()> {
-        if let Some(guard) = &self.harness {
+        if self.tool_home {
             match parent.symlink_metadata(name) {
                 Ok(metadata) if metadata.is_dir() => {
-                    #[cfg(windows)]
-                    let directory = if self.tool_home {
-                        open_windows_tool_dir(parent, name)?
-                    } else {
-                        parent.open_dir_nofollow(name)?
-                    };
-                    #[cfg(not(windows))]
-                    let directory = parent.open_dir_nofollow(name)?;
-                    guard.check(&directory.dir_metadata()?)?;
+                    open_windows_tool_dir(parent, name)?;
                 }
                 Ok(_) => (),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-                Err(error) => {
-                    #[cfg(windows)]
-                    let error = if self.tool_home {
-                        windows_access_error(error)
-                    } else {
-                        error
-                    };
-                    return Err(error);
-                }
+                Err(error) => return Err(windows_access_error(error)),
             }
         }
         Ok(())

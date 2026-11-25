@@ -349,35 +349,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn rulesync_settings_refuse_a_physical_harness_alias() {
-        use std::os::unix::fs::symlink;
-        let temp = tempfile::tempdir().unwrap();
-        let setup = test_setup(temp.path());
-        let _lock = setup.lock().unwrap();
-        let home = &setup.home;
-        // Exercise the mixed-case lookup on case-insensitive volumes too.
-        fs::create_dir(home.join(".Codex")).unwrap();
-        if !home.join(".codex").exists() {
-            fs::rename(home.join(".Codex"), home.join(".codex")).unwrap();
-        }
-        let physical = fs::canonicalize(home.join(".codex")).unwrap();
-        fs::write(physical.join("config.toml"), b"# harness settings\n").unwrap();
-        symlink(&physical, home.join(".agents")).unwrap();
-        let root = FileRoot::open_home(home).unwrap();
-        let result = plan_rendered(&setup, &root, home, rendered("source")).and_then(|plan| {
-            let token = plan.response.token.clone();
-            apply_plan(&setup, &root, plan, &token)
-        });
-        assert!(result.is_err() || !result.unwrap().blocked.is_empty());
-        assert_eq!(
-            fs::read(physical.join("config.toml")).unwrap(),
-            b"# harness settings\n"
-        );
-        assert!(!home.join(".claude.json").exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
     fn run9_crash_settings_subprocess() {
         let Some(base) = std::env::var_os("WENLAN_TEST_SETTINGS_ROOT").map(PathBuf::from) else {
             return;

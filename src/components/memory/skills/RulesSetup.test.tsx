@@ -272,7 +272,7 @@ describe("setup settings", () => {
     expect(within(toolSummary).getByText("Cursor")).toBeInTheDocument();
     expect(dialog.getByText("Kept elsewhere, left as is.")).toBeInTheDocument();
     expect(dialog.getByText("OpenCode · This tool’s setup is missing.")).toBeInTheDocument();
-    expect(dialog.getByText("Where you keep your shared setup stays untouched.")).toBeInTheDocument();
+    expect(dialog.queryByText(/leaves the file in place/)).toBeNull();
     expect(dialog.getByText("MCP servers, hooks and permissions")).toBeVisible();
     expect(dialog.getByText("+ [mcp_servers.calendar]")).toBeVisible();
     expect(dialog.queryByText(/config\.toml/)).toBeNull();
@@ -283,6 +283,18 @@ describe("setup settings", () => {
     dialog = within(await screen.findByRole("alertdialog"));
     await user.click(dialog.getByRole("button", { name: "Bring in" }));
     expect(mock.mock.calls.filter(([command]) => command === "rules_setup_adopt")).toEqual([["rules_setup_adopt", { token: plan.token }]]);
+  });
+
+  it.each([
+    ["en", "Bring in", "Wenlan imports ~/notes/team rules.md once and leaves the file in place."],
+    ["zh-Hans", "搬进来", "Wenlan 只导入一次 ~/notes/team rules.md，原文件会留在原处。"],
+    ["zh-Hant", "搬進來", "Wenlan 只匯入一次 ~/notes/team rules.md，原始檔案會留在原處。"],
+  ] as const)("UX-SKILL-22: names the discovered rules source in %s", async (locale, bringIn, copy) => {
+    await i18n.changeLanguage(locale);
+    answers({ ...status, adopted: false, can_restore: false }, { ...plan, rule_sources: ["~/notes/team rules.md"] });
+    mount(<RulesSetupSettings />);
+    await userEvent.click(await screen.findByRole("button", { name: bringIn }));
+    expect(within(await screen.findByRole("alertdialog")).getByText(copy)).toBeVisible();
   });
 
   it("UX-SKILL-22: a plan containing only skips offers Close", async () => {

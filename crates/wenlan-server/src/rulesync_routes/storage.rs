@@ -118,24 +118,40 @@ impl StoredSetup {
     }
 }
 
-// Previous releases could journal a write to these two paths. Drop those
-// operations and their receipts without opening either path. Any interrupted
-// writes to tool files still use the ordinary recovery journal.
+// Retire journaled source writes using the recorded operation kind. Tool
+// files still use the ordinary recovery journal.
 fn discard_legacy_source_receipts<T>(manifest: &mut Manifest<T>) {
-    let paths = [Path::new(".agents/AGENTS.md"), Path::new(".agents")]
-        .into_iter()
-        .filter(|path| {
-            let receipt = manifest.delivered.get(*path);
-            receipt.is_some_and(|entry| matches!(entry.kind, Kind::SharedRuleSource))
-                || manifest
-                    .pending
-                    .iter()
-                    .any(|op| op.path == *path && matches!(op.kind, Some(Kind::SharedRuleSource)))
-                || manifest.legacy_source_following
-                    && receipt.is_none()
-                    && manifest.backup.contains_key(*path)
-        })
+    let mut paths = manifest
+        .delivered
+        .iter()
+        .filter(|(_, receipt)| matches!(receipt.kind, Kind::SharedRuleSource))
+        .map(|(path, _)| path.clone())
+        .chain(
+            manifest
+                .pending
+                .iter()
+                .filter(|op| matches!(op.kind, Some(Kind::SharedRuleSource)))
+                .map(|op| op.path.clone()),
+        )
         .collect::<BTreeSet<_>>();
+    if manifest.legacy_source_following {
+        // An interrupted legacy restore could already have cleared the
+        // kind. Keep tool backups and their parents for restore recovery.
+        paths.extend(
+            manifest
+                .backup
+                .keys()
+                .filter(|path| {
+                    !manifest.delivered.contains_key(*path)
+                        && !manifest.pending.iter().any(|op| op.path == **path)
+                        && super::tool_for_path(path).is_none()
+                        && !PERSONAL_TARGETS
+                            .iter()
+                            .any(|target| target.folder().starts_with(path))
+                })
+                .cloned(),
+        );
+    }
     if paths.is_empty() {
         return;
     }
@@ -210,7 +226,7 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
     let is_rules_or_skills_path = |path: &Path| {
         PERSONAL_TARGETS.iter().any(|target| {
             path == Path::new(target.rules.destination)
-                || path.starts_with(target.skills.destination)
+                || target.skill_roots().any(|root| path.starts_with(root))
         })
     };
     let snapshots = manifest
