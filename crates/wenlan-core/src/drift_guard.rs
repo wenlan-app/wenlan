@@ -13604,6 +13604,7 @@ fn personal_setup_violations(path: &str, source: &str) -> Vec<String> {
 fn product_code_does_not_assume_one_persons_setup() {
     let root = repo_root();
     let mut violations = Vec::new();
+    let mut scanned = Vec::new();
     for pattern in [
         ":(glob)crates/*/src/**/*.rs",
         ":(glob)app/src/**/*.rs",
@@ -13619,7 +13620,19 @@ fn product_code_does_not_assume_one_persons_setup() {
                 continue;
             };
             violations.extend(personal_setup_violations(&path, &source));
+            scanned.push(path);
         }
+    }
+    // Files directly under src/ must be scanned too, so a pattern that
+    // silently skips files fails here instead of passing.
+    for expected in [
+        "crates/wenlan-server/src/cmd_backfill.rs",
+        "crates/wenlan-core/src/rulesync_adopt.rs",
+    ] {
+        assert!(
+            scanned.iter().any(|path| path == expected),
+            "the personal-setup guard did not scan {expected}"
+        );
     }
     assert!(
         violations.is_empty(),

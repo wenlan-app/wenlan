@@ -788,17 +788,28 @@ pub fn check_delivery_paths<'a>(
     Ok(())
 }
 
+/// The switch lives in the data root. Test builds without `WENLAN_DATA_DIR`
+/// use the per-process scratch root, so tests never read the person's real
+/// switch.
+fn switch_path() -> std::path::PathBuf {
+    #[cfg(any(test, feature = "scratch-config"))]
+    if crate::env_compat::var_compat("WENLAN_DATA_DIR").is_none() {
+        return crate::config::scratch_root().join("rulesync.on");
+    }
+    crate::config::data_root().join("rulesync.on")
+}
+
 /// One switch for every writer to the person's tool folders.
 pub fn enabled() -> bool {
     match std::env::var_os("WENLAN_RULESYNC") {
         Some(value) => value == "1",
-        None => crate::config::data_root().join("rulesync.on").is_file(),
+        None => switch_path().is_file(),
     }
 }
 
 /// Persist the switch in the data root shared by the CLI and daemon.
 pub fn set_enabled(on: bool) -> Result<()> {
-    let path = crate::config::data_root().join("rulesync.on");
+    let path = switch_path();
     if on {
         std::fs::create_dir_all(path.parent().context("missing data root")?)?;
         if !path.is_file() {
@@ -2057,6 +2068,23 @@ pub mod sharing;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rulesync_switch_is_never_read_from_the_real_data_root_in_tests() {
+        temp_env::with_vars(
+            [
+                ("WENLAN_DATA_DIR", None::<&str>),
+                ("ORIGIN_DATA_DIR", None::<&str>),
+                ("WENLAN_RULESYNC", None::<&str>),
+            ],
+            || {
+                let real = dirs::data_local_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("wenlan");
+                assert!(!switch_path().starts_with(real));
+            },
+        );
+    }
 
     #[test]
     fn rulesync_preview_names_tools_that_get_new_files() {

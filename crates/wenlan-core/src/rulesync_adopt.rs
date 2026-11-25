@@ -2244,6 +2244,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn rulesync_linked_skill_approval_rejects_a_new_key() {
         let temp = tempfile::tempdir().unwrap();
