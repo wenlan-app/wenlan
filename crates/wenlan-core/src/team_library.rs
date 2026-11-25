@@ -859,6 +859,40 @@ impl Reader {
         }
     }
 
+    /// The team-only Spaces this member can use, with the access they can
+    /// actually use: groups made in the library, not hosted Spaces it
+    /// migrated (those reach members' computers as before). By name order.
+    pub fn team_only_spaces(&self) -> Vec<wenlan_types::team::TeamSpaceAccess> {
+        let Ok(member) = self.data.member(&self.actor) else {
+            return Vec::new();
+        };
+        let mut spaces: Vec<_> = self
+            .data
+            .manifest
+            .groups
+            .values()
+            .filter(|group| !self.data.manifest.migrated.contains(&group.id))
+            .filter(|group| self.pin.is_none() || self.pin.as_deref() == Some(&group.id))
+            .filter_map(|group| {
+                let mut access = self.data.access(member, Some(&group.id))?;
+                // Writing needs a person signed in with Google or GitHub
+                // (every library write asks for a fresh browser session).
+                // Someone who joined with only an invite link reads until
+                // they link an account, so they are told Read.
+                if member.role != TeamRole::Owner && member.identities.is_empty() {
+                    access = TeamAccess::Read;
+                }
+                Some(wenlan_types::team::TeamSpaceAccess {
+                    space: group.name.clone(),
+                    access,
+                    id: Some(group.id.clone()),
+                })
+            })
+            .collect();
+        spaces.sort_by(|a, b| a.space.cmp(&b.space));
+        spaces
+    }
+
     pub fn space(&self, name: &str) -> Option<String> {
         self.data
             .manifest

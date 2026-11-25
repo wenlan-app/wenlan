@@ -278,6 +278,7 @@ mod tests {
                     id: None,
                 })
                 .collect(),
+            library_spaces: Vec::new(),
             team: None,
             role: Default::default(),
             signed_in_with: None,
@@ -535,8 +536,15 @@ mod tests {
             id: "t1".into(),
             name: Some("Acme".into()),
         };
+        // A team-only library Space is kept for showing, not synced.
+        let roadmap = TeamSpaceAccess {
+            space: "Roadmap".into(),
+            access: TeamAccess::Write,
+            id: Some("g1".into()),
+        };
         let member = TeamMe {
             team: Some(acme.clone()),
+            library_spaces: vec![roadmap.clone()],
             ..me(&[])
         };
         super::super::remember_membership(&settings, URL, "wlt_secret", &member).unwrap();
@@ -547,6 +555,7 @@ mod tests {
                 url: URL.to_string(),
                 team: Some(acme),
                 owner: false,
+                library_spaces: vec![roadmap],
             }]
         );
         assert!(!serde_json::to_string(&listed)

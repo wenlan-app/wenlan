@@ -2515,14 +2515,27 @@ async fn team_me(
 ) -> crate::member_view::MemberResponse {
     let settings = state.settings_path.clone();
     let team_path = state.team_path.clone();
+    let library = state.library.as_ref().map(|host| host.library.clone());
+    let member_id = member.id.clone();
     let read = tokio::task::spawn_blocking(move || {
         let hosted = team::hosted_spaces(&settings)?;
         let file = team::read_team(&team_path)?;
-        Ok::<_, wenlan_core::error::WenlanError>((hosted, file))
+        // Computers sync only hosted Spaces, so team-only library groups
+        // are listed apart: a member granted one is not told nothing is
+        // open to them.
+        let library_spaces = match library.map(|library| library.reader(&member_id, None)) {
+            None => Vec::new(),
+            Some(Ok(reader)) => reader.team_only_spaces(),
+            Some(Err(error)) => {
+                tracing::warn!(%error, "[team] the team library cannot be read for /me");
+                Vec::new()
+            }
+        };
+        Ok::<_, wenlan_core::error::WenlanError>((hosted, file, library_spaces))
     })
     .await;
     match read {
-        Ok(Ok((hosted, file))) => {
+        Ok(Ok((hosted, file, library_spaces))) => {
             let mut me = wenlan_types::team::TeamMe {
                 signed_in_with: Some(match credential {
                     team::Credential::BrowserSession => {
@@ -2533,9 +2546,9 @@ async fn team_me(
                 ..member.me(&hosted)
             };
             if state.library.is_some() {
-                // Legacy sync only follows migrated hosted Spaces. Team-only
-                // groups are discoverable from the library endpoint.
+                // Legacy sync only follows migrated hosted Spaces.
                 me.spaces.retain(|space| space.id.is_some());
+                me.library_spaces = library_spaces;
             }
             crate::member_view::team::me(me, team::people_sharing_with(&file, &member, &hosted))
         }
