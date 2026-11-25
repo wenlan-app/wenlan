@@ -4792,10 +4792,20 @@ mod tests {
     #[test]
     fn rejects_more_ugly_titles() {
         assert!(looks_like_path("[obs/unix/2026-03-17"));
-        assert!(looks_like_path("/Users/lucian/second-brain/inbox/"));
+        assert!(looks_like_path("/Users/someone/notes/inbox/"));
         assert!(looks_like_path(
-            "[obsidian-main::/Users/lucian/second-brain/inbox/note.md::1]"
+            "[vault-main::/Users/someone/notes/inbox/note.md::1]"
         ));
+        // Any user's layout, any platform, any year.
+        assert!(looks_like_path("vault/home/alex/projects/plan"));
+        assert!(looks_like_path("journal/2027-01-05 standup"));
+        assert!(looks_like_path("[daily/2031-04-02"));
+        assert!(looks_like_path(r"C:\Users\ann\Documents\plan.md"));
+        assert!(looks_like_path("d:/notes/plan"));
+        assert!(looks_like_path(r"\\server\share\notes"));
+        assert!(!looks_like_path("A/B testing results"));
+        assert!(!looks_like_path("Roadmap 2027-2028"));
+        assert!(!looks_like_path("[Draft] Pricing plan"));
         assert!(looks_like_commit_message(
             "feat: add pin/unpin action to MemoryCard menu"
         ));

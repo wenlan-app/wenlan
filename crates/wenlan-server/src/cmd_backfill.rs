@@ -106,7 +106,7 @@ pub async fn run(dry_run: bool) -> anyhow::Result<()> {
     println!("Next steps to re-distill the freed sources:");
     println!("  - Sources with enrichment_steps rows will be eligible on the next distill cycle.");
     println!("  - Raw sources need re-enrichment first. Either:");
-    println!("    (a) Re-import: touch the original source files (e.g., `touch ~/second-brain/inbox/*.md`)");
+    println!("    (a) Re-import: touch the original source files (e.g., `touch <your notes folder>/*.md`)");
     println!("    (b) Wait for entity_backfill to gradually backfill entity_ids");
 
     Ok(())

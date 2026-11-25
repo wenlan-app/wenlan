@@ -108,18 +108,33 @@ pub(crate) fn looks_like_code(s: &str) -> bool {
 pub(crate) fn looks_like_path(s: &str) -> bool {
     let trimmed = s.trim_start();
     (trimmed.starts_with('[')
-        && (trimmed.contains("obs/")
-            || trimmed.contains("/2026-")
-            || trimmed.contains("/2025-")
-            || trimmed.contains(".md")
-            || trimmed.contains("::")))
+        && (trimmed.contains(".md") || trimmed.contains("::") || has_dated_segment(trimmed)))
         || trimmed.starts_with('/')
         || trimmed.starts_with("~/")
+        || trimmed.starts_with("\\\\")
+        || starts_with_drive_letter(trimmed)
         || trimmed.contains("/Users/")
-        || trimmed.contains("/2026-")
-        || trimmed.contains("/2025-")
-        || trimmed.contains("/inbox/")
-        || trimmed.contains("/second-brain/")
+        || trimmed.contains("/home/")
+        || has_dated_segment(trimmed)
+}
+
+/// A path segment that starts with a date such as `/2031-04-02`, for any year
+/// from 2000 to 2099.
+fn has_dated_segment(s: &str) -> bool {
+    s.as_bytes().windows(6).any(|w| {
+        w[0] == b'/'
+            && w[1] == b'2'
+            && w[2] == b'0'
+            && w[3].is_ascii_digit()
+            && w[4].is_ascii_digit()
+            && w[5] == b'-'
+    })
+}
+
+/// A Windows drive path such as `C:\` or `d:/`.
+fn starts_with_drive_letter(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
 }
 
 pub(crate) fn looks_like_commit_message(s: &str) -> bool {
