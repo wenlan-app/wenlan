@@ -152,6 +152,9 @@ computer is on one.
   `%LOCALAPPDATA%\wenlan\memorydb\` on Windows) into the container and
   restart it:
   `docker cp fastembed_cache wenlan:/data/wenlan/memorydb/ && docker restart wenlan`.
+- *Built from source* instead of the image: run `pnpm build:web` before
+  building `wenlan-server`. Without it the binary carries no web app, and `/`
+  and `/app` answer 503 with a page saying so.
 
 ### Keep it running
 

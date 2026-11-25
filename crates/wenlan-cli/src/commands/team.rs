@@ -564,6 +564,7 @@ fn joined_teams(
                 url: host.clone(),
                 team: share.team.clone(),
                 owner: false,
+                library_spaces: Vec::new(),
             });
         }
     }
@@ -624,13 +625,14 @@ async fn status(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> R
         }
         println!("Joined: {}", team_label(team));
         let spaces = team_shares(&shares, &team.url);
-        if spaces.is_empty() {
+        if spaces.is_empty() && team.library_spaces.is_empty() {
             println!("  No Spaces are open to you yet. They sync here when the team opens one.");
         }
         for share in spaces {
             let access = if share.read_only { " (read)" } else { "" };
             println!("  {}{access}", share.target);
         }
+        print_library_spaces(&team.library_spaces, "  ");
     }
     Ok(())
 }
@@ -728,17 +730,36 @@ fn print_key(
 fn print_open_spaces(joined: &TeamJoinResponse) {
     println!("Server: {}", joined.url);
     println!("You are {}.", joined.me.name);
-    if joined.me.spaces.is_empty() {
+    if joined.me.spaces.is_empty() && joined.me.library_spaces.is_empty() {
         println!("No Spaces are open to you yet.");
         return;
     }
-    println!("Spaces you can use:");
+    if !joined.me.spaces.is_empty() {
+        println!("Spaces you can use:");
+    }
     for s in &joined.me.spaces {
-        let access = match s.access {
-            TeamAccess::Read => "read only",
-            TeamAccess::Write => "read and write",
-        };
-        println!("  {} ({access})", s.space);
+        println!("  {} ({})", s.space, access_words(s.access));
+    }
+    print_library_spaces(&joined.me.library_spaces, "");
+}
+
+fn access_words(access: TeamAccess) -> &'static str {
+    match access {
+        TeamAccess::Read => "read only",
+        TeamAccess::Write => "read and write",
+    }
+}
+
+/// Team-only Spaces in the team library: open to this person, read through
+/// the team server, never copied to this computer. Says so, so nobody is
+/// told nothing is open to them.
+fn print_library_spaces(spaces: &[TeamSpaceAccess], indent: &str) {
+    if spaces.is_empty() {
+        return;
+    }
+    println!("{indent}In the team library (your AI tools read these from the team server; they are not copied to this computer):");
+    for s in spaces {
+        println!("{indent}  {} ({})", s.space, access_words(s.access));
     }
 }
 
@@ -839,7 +860,7 @@ async fn join_all(
     };
     output(format, quiet, &joined, || {
         println!("Joined {team} as {}.", joined.me.name);
-        if joined.spaces.is_empty() {
+        if joined.spaces.is_empty() && joined.me.library_spaces.is_empty() {
             println!("No Spaces are open to you yet. They sync here when the team opens one.");
         }
         for space in &joined.spaces {
@@ -860,6 +881,7 @@ async fn join_all(
                 );
             }
         }
+        print_library_spaces(&joined.me.library_spaces, "");
     })
 }
 
@@ -1076,6 +1098,7 @@ mod tests {
                 name: Some(name.into()),
             }),
             owner: false,
+            library_spaces: Vec::new(),
         }
     }
 

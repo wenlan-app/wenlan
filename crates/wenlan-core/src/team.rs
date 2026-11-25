@@ -326,6 +326,7 @@ impl Member {
                     access,
                 })
                 .collect(),
+            library_spaces: Vec::new(),
             team: self.team.clone(),
             role: self.role,
             signed_in_with: None,

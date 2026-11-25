@@ -1553,7 +1553,16 @@ export interface TeamMemberKey {
 
 export interface TeamJoinResponse {
   url: string;
-  me: { member_id: string; name: string; spaces: TeamSpaceAccess[]; team?: TeamInfo | null; role?: TeamRole };
+  me: {
+    member_id: string;
+    name: string;
+    spaces: TeamSpaceAccess[];
+    /** Team-only library Spaces open to them: read through the team
+     *  server, not synced to this computer. Left out when none. */
+    library_spaces?: TeamSpaceAccess[];
+    team?: TeamInfo | null;
+    role?: TeamRole;
+  };
 }
 
 export async function teamStatus(): Promise<TeamStatus> {

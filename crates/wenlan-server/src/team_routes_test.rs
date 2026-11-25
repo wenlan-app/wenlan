@@ -2788,3 +2788,69 @@ async fn a_cloud_wenlan_opens_only_to_its_own_accounts_pass() {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused:?}");
     }
 }
+
+#[tokio::test]
+async fn me_lists_team_only_library_spaces_apart_from_synced_ones() {
+    // `wenlan team create-space Roadmap` makes a team-only library Space;
+    // `team invite Bo --access Roadmap` opens it to Bo. Bo's computer syncs
+    // only hosted Spaces, so it must not be in `spaces`, but it must be
+    // listed: before, /me said nothing was open to Bo at all.
+    let mut f = fixture();
+    f.set_hosted_mode(HostedMode::Migrated);
+    let (owner, _) = team::owner_key(&f.state.team_path, "Owner").unwrap();
+    let library = wenlan_core::team_library::Library::new(f.state.team_path.clone(), false);
+    let roadmap = library.create_group(&owner.id, "Roadmap", false).unwrap();
+    let secret = library.create_group(&owner.id, "Secret", true).unwrap();
+    let grant = |space: &str| TeamSpaceAccess {
+        space: space.into(),
+        access: TeamAccess::Write,
+        id: None,
+    };
+    let (bo_member, bo) =
+        team::invite_with_key(&f.state.team_path, "Bo", &[grant("Roadmap")]).unwrap();
+
+    let (status, body) = call(&f.state, Method::GET, "/team/v1/me", Some(&bo), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
+    assert!(me.spaces.is_empty(), "{me:?}");
+    assert_eq!(
+        me.library_spaces,
+        vec![TeamSpaceAccess {
+            space: "Roadmap".into(),
+            access: TeamAccess::Write,
+            id: Some(roadmap.id.clone()),
+        }]
+    );
+
+    // The library agrees with what /me says Bo can use (the HTTP library
+    // route also migrates hosted Spaces, which needs the host database).
+    let info = library.reader(&bo_member.id, None).unwrap().info();
+    let names: Vec<_> = info
+        .spaces
+        .iter()
+        .map(|group| group.name.as_str())
+        .collect();
+    assert_eq!(names, ["Roadmap"]);
+    assert!(!String::from_utf8_lossy(&body).contains(&secret.id));
+
+    // A member of the whole team reads every unrestricted library Space,
+    // never a restricted one they were not added to; synced hosted Spaces
+    // stay where they were.
+    let (status, body) = call(
+        &f.state,
+        Method::GET,
+        "/team/v1/me",
+        Some(&f.writer.1),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let me: wenlan_types::team::TeamMe = serde_json::from_slice(&body).unwrap();
+    assert!(
+        me.library_spaces
+            .iter()
+            .all(|space| space.space != "Secret"),
+        "{me:?}"
+    );
+    assert!(me.spaces.iter().all(|space| space.id.is_some()), "{me:?}");
+}
