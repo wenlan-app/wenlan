@@ -152,6 +152,7 @@ fn settings_only() -> Manifest {
     let master = PersonalMaster {
         shared: String::new(),
         overlays: BTreeMap::new(),
+        unenrolled_overlays: BTreeSet::new(),
         claude_imported_rules: None,
         codex_sync_replaced: false,
         skills: Vec::new(),

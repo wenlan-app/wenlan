@@ -14,7 +14,7 @@ wenlan connect cursor --dry-run   # preview before editing JSON config
 wenlan connect cursor --all-tools # list every tool, not only the everyday ones
 ```
 
-`wenlan connect` lists the 24 everyday tools (`--tool-profile daily`): a client loads every listed tool's definition into each conversation, and the full list of 64 is more than twice the size. The tools left out (health checks and repairs, review queues, entities, folders, version history) still answer when called by name, and `wenlan tool list` and `wenlan tool call` reach them from a terminal. `--all-tools`, the plugins, and a bare `wenlan-mcp` list everything.
+`wenlan connect` lists the 26 everyday tools (`--tool-profile daily`): a client loads every listed tool's definition into each conversation, and the full list of 67 is more than twice the size. The tools left out (health checks and repairs, review queues, entities, folders, version history) still answer when called by name, and `wenlan tool list` and `wenlan tool call` reach them from a terminal. `--all-tools`, the plugins, and a bare `wenlan-mcp` list everything.
 
 MCP-only setup with `--all-tools` gives agents the whole tool surface: capture and recall, reading and writing wiki pages, the Space-owned Brief with `update_brief` for handoff, and the internal `distill` tool for page synthesis. It does not install the Claude Code slash skills (`/wenlan`, `/brief`, `/handoff`), which wrap the tools in a guided flow; install the Wenlan plugin if you want them. Steep is that guided, on-demand knowledge-maintenance workflow. The connected AI reads its relevant Skill procedure and uses MCP; it may delegate a bounded enrichment or judgment step to a small AI helper. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic Steep instead runs eligible background jobs with their configured models, not with arbitrary connected AI tools.
 
@@ -62,7 +62,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 65 tools. The table below calls
+The local stdio surface is locked at exactly 67 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -78,6 +78,8 @@ queue.
 | `list_pages` | List wiki pages (id, title, summary, Space, status, last modified, creation kind, source count, review lock) to browse what exists. |
 | `read_page` | Read one wiki page in full, including its version and review lock, together with the source memories it cites, the notes it relies on (`basis`), the code it relies on (`code_basis`), plain links that changed (`linked_changed`), and, with `map: true`, its mind map as a small text tree with a link that opens it in Wenlan. |
 | `read_space_rules` | Read the working rules for one Space, with source page titles and rule ids. A rule the person asked to be saved says which tool it was saved from. |
+| `read_personal_rules` | Read shared personal rules or one named tool's overlay from the Wenlan store. Choose the layer explicitly; local stdio only. |
+| `propose_personal_rules` | Propose one plan and diff containing one or more edits to explicitly named shared or tool layers. Changes nothing; after the person confirms the exact plan, they apply it with `wenlan rules shared apply <plan-id>`. Local stdio only. |
 | `report_space_rule_use` | Report that one rule changed your plan using the same Space, rule id and fixed `changed_plan` outcome; no free text is accepted. |
 | `add_rule` | Save one working rule when the user explicitly asks ("save this as a rule: ..."), with their own words in `person_asked`. It counts at once, reaches the user's AI tools, and is listed as saved from this tool. One rule per call; for a Space unless `every_space` is set. Local stdio only. |
 | `remove_rule` | Remove a rule saved that way, by the rule id `read_space_rules` gives, when the user explicitly asks, with their own words in `person_asked`. Local stdio only. |

@@ -365,15 +365,16 @@ fn manifest_counts_match_the_spec() {
     // team publication review, which echoes the supplied draft).
     // The personal review queue and release-notice dismissal bring this to 421.
     // Sharing items with every tool and its preview bring it to 423.
+    // Personal-rule plans, history and source-off add nine local routes.
     assert_eq!(
         HTTP_READERS.len(),
-        423,
+        432,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
     // with `add_rule` and `remove_rule`, 64 with `save_skill`, and 65 with
-    // the canonical `handoff` Brief writer.
-    assert_eq!(MCP_READERS.len(), 65, "#[tool( declarations");
+    // the canonical `handoff` Brief writer, and 67 with personal rule read and propose.
+    assert_eq!(MCP_READERS.len(), 67, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -381,7 +382,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        435,
+        444,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -389,7 +390,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        418,
+        427,
         "main builder entries"
     );
     assert_eq!(
@@ -597,7 +598,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        413 // 23 personal setup (sharing and its preview included), checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes, POST /api/handoff and the team publication review, all with no page markers.
+        422 // The nine personal-rule routes also have no page markers.
     );
 }
 

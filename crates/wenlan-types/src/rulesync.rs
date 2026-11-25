@@ -440,6 +440,9 @@ pub enum PullbackKind {
 pub struct RulesSetupStatus {
     pub enabled: bool,
     pub adopted: bool,
+    /// Whether rulesync still follows the shared personal source file.
+    #[serde(default = "default_shared_source_following")]
+    pub shared_source_following: bool,
     pub can_adopt: bool,
     pub can_restore: bool,
     pub in_sync: bool,
@@ -453,6 +456,26 @@ pub struct RulesSetupStatus {
     /// Plain notices about local rules and settings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+fn default_shared_source_following() -> bool {
+    true
+}
+
+/// A safe preview for stopping the shared personal source import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedSourceOffPreview {
+    pub plan_id: String,
+    pub token: String,
+    pub source_missing: bool,
+    pub diff: String,
+}
+
+/// The exact source-off preview the person confirmed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedSourceOffRequest {
+    pub plan_id: String,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

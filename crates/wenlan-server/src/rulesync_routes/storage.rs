@@ -78,21 +78,6 @@ impl Setup {
         let root = self.data_files()?.with_private_directories();
         save_manifest(&root, manifest)
     }
-
-    pub(super) fn retire_backup(&self) -> Result<()> {
-        let root = self.data_files()?.with_private_directories();
-        let path = Path::new(MANIFEST);
-        let seen = root.read(path, false)?;
-        ensure!(
-            root.apply(path, &seen, &Snapshot::Absent, false)? == ApplyOutcome::Applied,
-            "the restored state changed at the end of restore"
-        );
-        root.sync_directory(Path::new(""))?;
-        if let Err(error) = root.remove_private_directory(Path::new(BLOBS)) {
-            tracing::warn!(%error, "could not remove the restored personal rules blobs");
-        }
-        Ok(())
-    }
 }
 
 impl StoredSetup {
@@ -137,6 +122,18 @@ fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
     use wenlan_core::rulesync_personal::credentials::contains_credential_bytes;
 
     let master = &manifest.master;
+    super::personal_rules::validate_personal_metadata(manifest)?;
+    ensure!(
+        master.unenrolled_overlays.iter().all(|tool| {
+            master.overlays.contains_key(tool)
+                && PERSONAL_TARGETS.iter().any(|target| target.id == tool)
+                && !master
+                    .skills
+                    .iter()
+                    .any(|skill| skill.targets.contains(tool))
+        }),
+        UnsupportedRulesyncState
+    );
     let rule_text = std::iter::once(&master.shared)
         .chain(&manifest.shared_source_base)
         .chain(master.overlays.values())
@@ -297,11 +294,17 @@ fn map_contents<From, To>(
         master: PersonalMaster {
             shared: master.shared.clone(),
             overlays: master.overlays.clone(),
+            unenrolled_overlays: master.unenrolled_overlays.clone(),
             claude_imported_rules: master.claude_imported_rules.clone(),
             codex_sync_replaced: master.codex_sync_replaced,
             skills,
             overrides: master.overrides.clone(),
         },
+        personal_rule_origins: manifest.personal_rule_origins.clone(),
+        personal_rule_history: manifest.personal_rule_history.clone(),
+        personal_rule_journal: manifest.personal_rule_journal.clone(),
+        shared_source_following: manifest.shared_source_following,
+        source_off_archive: manifest.source_off_archive.clone(),
         shared_source_base: manifest.shared_source_base.clone(),
         shared_source_restore_blocked: manifest.shared_source_restore_blocked,
         backup: manifest
@@ -316,6 +319,7 @@ fn map_contents<From, To>(
             .iter()
             .map(|(path, snap)| Ok((path.clone(), map_snapshot(snap)?)))
             .collect::<Result<_>>()?,
+        restored_tool_file_fingerprints: manifest.restored_tool_file_fingerprints.clone(),
         #[cfg(windows)]
         windows_backup_owners: manifest.windows_backup_owners.clone(),
         delivered: manifest

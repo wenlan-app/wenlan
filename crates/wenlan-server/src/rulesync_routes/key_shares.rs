@@ -605,7 +605,7 @@ impl Setup {
         let Some(manifest) = self.load_if_present()? else {
             return Ok(());
         };
-        let root = FileRoot::open_home(&self.home)?;
+        let root = self.home_files()?;
         for write in &manifest.keys.writes {
             anyhow::ensure!(
                 write.temp == settings_temp(&write.destination)?,

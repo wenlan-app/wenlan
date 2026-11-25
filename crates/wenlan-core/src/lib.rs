@@ -101,6 +101,7 @@ pub mod rulesync_adopt;
 pub mod rulesync_personal;
 pub mod rulesync_personal_files;
 pub mod rulesync_renderer;
+pub mod rulesync_rule_plan;
 pub mod rulesync_settings;
 pub mod rulesync_skill;
 pub mod rulesync_team;

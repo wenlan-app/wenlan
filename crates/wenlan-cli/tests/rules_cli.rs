@@ -1126,6 +1126,37 @@ fn personal_rules_setup_requires_interactive_confirmation() {
 }
 
 #[test]
+fn personal_rule_changes_refuse_piped_or_ai_confirmation() {
+    let state = tempfile::tempdir().unwrap();
+    for args in [
+        &["rules", "shared", "apply", "plan-1"][..],
+        &["rules", "tool", "codex", "apply", "plan-1"][..],
+        &["rules", "history", "restore", "version-1"][..],
+        &["rules", "shared", "source", "off"][..],
+    ] {
+        personal_rules_cli(state.path())
+            .args(args)
+            .write_stdin("yes\n")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "There is no flag or piped approval",
+            ));
+        personal_rules_cli(state.path())
+            .env("WENLAN_AGENT_NAME", "fixture-agent")
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("outside an AI session"));
+        for_agent_session(personal_rules_cli(state.path()).args(args))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("outside an AI session"));
+    }
+    assert!(!state.path().join("unused-data-root").exists());
+}
+
+#[test]
 fn personal_rules_settings_preview_refuses_non_local_daemon() {
     let state = tempfile::tempdir().unwrap();
     personal_rules_cli(state.path())

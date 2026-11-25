@@ -67,7 +67,7 @@ async fn execute<T: Send + 'static>(
     let result = tokio::task::spawn_blocking(move || {
         let setup = Setup::system()?;
         let _lock = setup.lock()?;
-        let root = FileRoot::open_home(&setup.home).context("open local AI-tool home")?;
+        let root = setup.home_files().context("open local AI-tool home")?;
         let plan = if let Some(source) = source {
             let rendered = rulesync_settings::render_source(&setup.binary, &setup.data, &source)?;
             plan_rendered(&setup, &root, &source, rendered)?

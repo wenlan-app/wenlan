@@ -177,8 +177,13 @@ pub(super) fn plan(
                 .get(path)
                 .and_then(|backup| text(backup).ok())
                 .unwrap_or("");
-            let imported =
-                legacy_claude_imported_rules(home, path, original, &manifest.master.shared);
+            let imported = legacy_claude_imported_rules(
+                home,
+                path,
+                original,
+                &manifest.master.shared,
+                manifest.shared_source_following,
+            );
             let mut native: BTreeSet<_> = original.lines().map(str::to_owned).collect();
             // The current tool file can contain bytes Wenlan previously
             // flattened into it. Only later authored additions are new
@@ -321,6 +326,7 @@ pub(super) struct RuleShareUpdate {
     kept: BTreeSet<String>,
     authored: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
     source_append: Option<SourceAppend>,
+    history: Option<personal_rules::RulePlanUpdate>,
 }
 
 struct SourceAppend {
@@ -330,6 +336,9 @@ struct SourceAppend {
 
 impl RuleShareUpdate {
     pub(super) fn commit(self, manifest: &mut Manifest) {
+        if let Some(history) = self.history {
+            history.commit(manifest);
+        }
         manifest.master.shared = self.shared;
         manifest.master.overlays = self.overlays;
         manifest.master.overrides = self.overrides;
@@ -366,6 +375,7 @@ impl Setup {
         let mut master = PersonalMaster {
             shared: manifest.master.shared.clone(),
             overlays: manifest.master.overlays.clone(),
+            unenrolled_overlays: manifest.master.unenrolled_overlays.clone(),
             claude_imported_rules: manifest.master.claude_imported_rules.clone(),
             codex_sync_replaced: manifest.master.codex_sync_replaced,
             skills: Vec::new(),
@@ -453,10 +463,11 @@ impl Setup {
             }
             // A protected source cannot enter the share journal. The same
             // approved rules still go into the master and the tool copies.
-            if !manifest
-                .credentials
-                .rules
-                .contains_key(Path::new(SHARED_RULES))
+            if manifest.shared_source_following
+                && !manifest
+                    .credentials
+                    .rules
+                    .contains_key(Path::new(SHARED_RULES))
             {
                 source_append = Some(stage_source_append(
                     root,
@@ -474,6 +485,7 @@ impl Setup {
                 kept,
                 authored,
                 source_append,
+                history: None,
             },
             operations,
         }))
@@ -483,9 +495,16 @@ impl Setup {
         &self,
         root: &FileRoot,
         manifest: &mut Manifest,
-        change: RuleShareChange,
+        mut change: RuleShareChange,
         result: &mut RulesSyncReport,
+        person_confirmed: bool,
     ) -> Result<()> {
+        let mut next = manifest.master.clone();
+        next.shared.clone_from(&change.update.shared);
+        next.overlays.clone_from(&change.update.overlays);
+        next.overrides.clone_from(&change.update.overrides);
+        change.update.history =
+            personal_rules::stage_master_history(self, manifest, next, person_confirmed, false)?;
         let changed: BTreeSet<_> = change
             .operations
             .iter()
@@ -496,12 +515,28 @@ impl Setup {
             change.update.commit(manifest);
             return self.save(manifest);
         }
-        for (path, outcome) in self.apply_batch(
+        let expected = change.operations.len();
+        let applied = self.apply_batch(
             root,
             manifest,
             change.operations,
             BatchMode::ShareRules(change.update),
-        )? {
+        );
+        if !applied.as_ref().is_ok_and(|outcomes| {
+            outcomes.len() == expected
+                && outcomes
+                    .iter()
+                    .all(|(_, outcome)| *outcome == ApplyOutcome::Applied)
+        }) {
+            self.recover_pending(root, manifest)?;
+            return match applied {
+                Ok(_) => Err(anyhow::anyhow!(
+                    "A tool file changed while sharing rules. Run `wenlan rules sync`."
+                )),
+                Err(error) => Err(error),
+            };
+        }
+        for (path, outcome) in applied? {
             ensure!(
                 outcome == ApplyOutcome::Applied,
                 "{} changed while sharing rules. Run `wenlan rules sync`.",
@@ -524,6 +559,10 @@ fn stage_source_append(
     approved: &[&str],
     operations: &mut Vec<Pending>,
 ) -> Result<SourceAppend> {
+    ensure!(
+        manifest.shared_source_following,
+        "The shared source is retired; sharing uses the saved Wenlan master."
+    );
     let source_root = root.with_shared_rule_source()?;
     let path = PathBuf::from(SHARED_RULES);
     let directory = path.parent().expect("shared rules directory");
@@ -641,6 +680,8 @@ type BeforeWrite = (PathBuf, Box<dyn FnOnce()>);
 #[cfg(test)]
 thread_local! {
     static BEFORE_WRITE: std::cell::RefCell<Option<BeforeWrite>> = const { std::cell::RefCell::new(None) };
+    static FAIL_FINAL_CHECKPOINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_FINAL_CHECKPOINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -654,4 +695,54 @@ pub(super) fn before_rule_share_write(path: &Path) {
 #[cfg(test)]
 pub(super) fn at_rule_share_write(path: &str, hook: impl FnOnce() + 'static) {
     BEFORE_WRITE.with(|slot| assert!(slot.replace(Some((path.into(), Box::new(hook)))).is_none()));
+}
+
+#[cfg(test)]
+pub(super) fn fail_next_rule_final_checkpoint() {
+    FAIL_FINAL_CHECKPOINT.with(|flag| assert!(!flag.replace(true)));
+}
+
+#[cfg(test)]
+pub(super) fn before_rule_final_checkpoint() -> Result<()> {
+    ensure!(
+        !FAIL_FINAL_CHECKPOINT.with(|flag| flag.replace(false)),
+        "Synthetic final checkpoint failure."
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn fail_after_next_rule_final_checkpoint() {
+    FAIL_AFTER_FINAL_CHECKPOINT.with(|flag| assert!(!flag.replace(true)));
+}
+
+#[cfg(test)]
+pub(super) fn after_rule_final_checkpoint() -> Result<()> {
+    ensure!(
+        !FAIL_AFTER_FINAL_CHECKPOINT.with(|flag| flag.replace(false)),
+        "Synthetic post-checkpoint failure."
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_share_imports_do_not_open_the_retired_shared_source() {
+        let home = tempfile::tempdir().unwrap();
+        let source = home.path().join(SHARED_RULES);
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "Retired source only rule.\n").unwrap();
+
+        let imported = legacy_claude_imported_rules(
+            home.path(),
+            Path::new(".claude/CLAUDE.md"),
+            "@~/.agents/AGENTS.md\n",
+            "",
+            false,
+        );
+        assert!(!imported.contains("Retired source only rule."));
+    }
 }

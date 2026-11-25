@@ -157,6 +157,8 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "read_page",
     "get_page_sources",
     "read_space_rules",
+    "read_personal_rules",
+    "propose_personal_rules",
     "report_space_rule_use",
     "add_rule",
     "remove_rule",
@@ -7069,6 +7071,12 @@ fn url_encode_simple(value: &str) -> String {
 #[path = "research_dispute_tools.rs"]
 mod research_dispute_tools;
 pub use research_dispute_tools::{ProposeResearchDisputeParams, ReadResearchDisputeParams};
+#[path = "personal_rule_tools.rs"]
+mod personal_rule_tools;
+pub use personal_rule_tools::{
+    PersonalRuleEditParam, PersonalRuleLayerParam, ProposePersonalRulesParams,
+    ReadPersonalRulesParams,
+};
 #[path = "research_tools.rs"]
 mod research_tools;
 pub use research_tools::{
@@ -7290,7 +7298,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Search memories by query. Use when the user asks 'do you remember', 'what do you know about', 'look up', or when you need a specific fact before acting.\n\nWrite queries as natural language — the search engine handles semantic matching. For precision, use filters (memory_type, space) to narrow results. If you get too many results, add filters rather than making the query longer.\n\nFor higher retrieval quality at the cost of latency, pass `rerank: true` to opt into the cross-encoder reranker (requires WENLAN_RERANKER_ENABLED=1 on the daemon).\n\nThis is for targeted lookups. To resume work from a Space-owned project snapshot, use brief instead. Search records the query and accessed memory IDs in local activity history for auditability; it does not rewrite stored knowledge.",
+        description = "Search memories when the user asks what you remember or you need a specific fact. Write natural-language queries; narrow with memory_type or space filters instead of longer queries. For higher quality at added latency, set `rerank: true` (requires WENLAN_RERANKER_ENABLED=1 on the daemon). For a Space-owned project snapshot, use brief instead. Searches record the query and accessed memory IDs in local activity history; they do not change stored knowledge.",
         annotations(
             title = "Recall",
             read_only_hint = false,
@@ -8066,6 +8074,38 @@ impl WenlanMcpServer {
         self.read_research_dispute_impl(params).await
     }
     #[tool(
+        description = "Read personal rules. Name a shared or tool layer; ask if unspecified. Local stdio only.",
+        annotations(
+            title = "Read personal rules",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn read_personal_rules(
+        &self,
+        Parameters(params): Parameters<ReadPersonalRulesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.read_personal_rules_impl(params).await
+    }
+    #[tool(
+        description = "Propose one plan for all edits. Name each shared or tool layer; ask if unspecified. No rules change until the person reviews and types yes in `wenlan rules shared apply <plan-id>`. Local stdio only; no MCP apply.",
+        annotations(
+            title = "Propose personal rules",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn propose_personal_rules(
+        &self,
+        Parameters(params): Parameters<ProposePersonalRulesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.propose_personal_rules_impl(params).await
+    }
+    #[tool(
         description = "Read the Sources handoff run's frozen rules, selection, target and coverage. Do not broaden its scope.",
         annotations(
             read_only_hint = true,
@@ -8333,6 +8373,8 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     // on this computer.
     "add_rule",
     "remove_rule",
+    "read_personal_rules",
+    "propose_personal_rules",
     // The person's own skills folders, and a search this computer makes.
     "list_skills",
     "search_skills",
@@ -16566,6 +16608,8 @@ mod tests {
             ("check_reply", (false, false, false)),
             ("read_page", (true, false, false)),
             ("read_space_rules", (true, false, false)),
+            ("read_personal_rules", (true, false, false)),
+            ("propose_personal_rules", (false, false, false)),
             ("add_rule", (false, false, false)),
             ("remove_rule", (false, true, false)),
             ("list_skills", (true, false, false)),
@@ -16999,10 +17043,12 @@ mod tests {
             "propose_note_change",
             "read_entity",
             "read_page",
+            "read_personal_rules",
             "read_source",
             "read_organize_run",
             "update_organize_run",
             "propose_source_classifications",
+            "propose_personal_rules",
             "propose_research_dispute",
             "read_research_dispute",
             "recall",

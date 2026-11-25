@@ -118,6 +118,7 @@ impl RulesWatch {
 
         let data_root = FileRoot::open(data)
             .context("open rules setup directory")?
+            .guard_source_aliases()
             .with_private_directories();
         let lock = data_root
             .open_existing_private_lock()
@@ -150,7 +151,14 @@ impl RulesWatch {
         let data_root = data_root
             .guard_data(&home, data)
             .context("validate rules setup directory")?;
-        let root = FileRoot::open_home(&home).context("open tool home")?;
+        let root = FileRoot::open_home(&home)
+            .context("open tool home")?
+            .guard_source_aliases();
+        let root = if stored.state.shared_source_following {
+            root
+        } else {
+            root.for_retired_source()
+        };
         let setup = Setup::new(home, data.to_owned());
         let mut manifest = stored
             .load_contents(&data_root)
@@ -390,8 +398,13 @@ mod tests {
             assert!(watch.shared_source_blocked);
             let status = f.setup.status().unwrap();
             assert!(!status.in_sync);
-            assert_eq!(status.notes.len(), 1, "{status:?}");
-            let note = &status.notes[0];
+            let conflict_notes = status
+                .notes
+                .iter()
+                .filter(|note| note.contains("paused") && note.contains("Edit either side"))
+                .collect::<Vec<_>>();
+            assert_eq!(conflict_notes.len(), 1, "{status:?}");
+            let note = conflict_notes[0];
             assert!(
                 note.contains("paused") && note.contains("Edit either side"),
                 "{note}"
@@ -406,6 +419,25 @@ mod tests {
         assert!(f.text(CODEX).contains("Changed in Wenlan."));
         let status = f.setup.status().unwrap();
         assert!(status.notes.is_empty() && status.proposals.is_empty());
+    }
+
+    #[test]
+    fn rulesync_watch_never_opens_or_recreates_the_retired_source() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let preview = f.setup.preview_source_off().unwrap();
+        f.setup
+            .turn_source_off(&wenlan_types::rulesync::SharedSourceOffRequest {
+                plan_id: preview.plan_id,
+                token: preview.token,
+            })
+            .unwrap();
+        let source = f.setup.home.join(super::super::SHARED_RULES);
+        fs::remove_file(&source).unwrap();
+        fs::create_dir(&source).unwrap();
+
+        assert!(round(&mut RulesWatch::default(), &f).unwrap());
+        assert!(source.is_dir());
     }
 
     #[cfg(unix)]

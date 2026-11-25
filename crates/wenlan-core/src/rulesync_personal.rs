@@ -76,8 +76,7 @@ pub fn case_alias_in(directory: &Dir, name: &OsStr) -> io::Result<Option<OsStrin
     ))
 }
 
-pub const RULE_PRECEDENCE: &str =
-    "When instructions disagree, project rules come first, followed by team rules and personal rules.";
+pub const RULE_PRECEDENCE: &str = "When instructions disagree, project rules come first, followed by team rules and personal rules.";
 
 #[cfg(any(windows, test))]
 const WINDOWS_INHERITED_ACE: u8 = 0x10;
@@ -639,7 +638,7 @@ mod windows_acl {
                     Some(ERROR_ACCESS_DENIED | ERROR_PRIVILEGE_NOT_HELD)
                 ) =>
             {
-                return Ok(())
+                return Ok(());
             }
             Err(error) => return Err(error),
         };
@@ -1012,7 +1011,7 @@ pub fn discover_adoption(home: &Path) -> Result<Adoption> {
     let (installed, skipped) = installed_targets(home, PERSONAL_TARGETS.iter())?;
     let tools = installed.iter().map(|target| target.id);
     let files = rulesync_adopt::discover_personal_files(home, tools, &BTreeSet::new())?;
-    let mut adoption = discover_targets(home, &installed, None, Some(files))?;
+    let mut adoption = discover_targets(home, &installed, None, Some(files), true)?;
     adoption.settings = crate::rulesync_settings::personal::Adoption::discover(home)?;
     record_skipped_tools(&mut adoption, skipped);
     Ok(adoption)
@@ -1034,14 +1033,114 @@ pub fn discover_additional_adoption(
     shared: &str,
     known_files: &BTreeSet<PathBuf>,
 ) -> Result<Adoption> {
+    discover_additional_adoption_with_reenrollment(
+        home,
+        master,
+        shared,
+        known_files,
+        true,
+        &BTreeMap::new(),
+    )
+}
+
+/// Discover newly installed tools without opening the retired shared source.
+pub fn discover_additional_adoption_without_source(
+    home: &Path,
+    master: &PersonalMaster,
+    shared: &str,
+    known_files: &BTreeSet<PathBuf>,
+) -> Result<Adoption> {
+    discover_additional_adoption_with_reenrollment(
+        home,
+        master,
+        shared,
+        known_files,
+        false,
+        &BTreeMap::new(),
+    )
+}
+
+/// Discover additional tools while allowing a saved overlay to replace a
+/// differing restored file only when its exact original bytes are recognized.
+pub fn discover_additional_adoption_with_reenrollment(
+    home: &Path,
+    master: &PersonalMaster,
+    shared: &str,
+    known_files: &BTreeSet<PathBuf>,
+    follow_shared_source: bool,
+    restored_tool_file_fingerprints: &BTreeMap<String, String>,
+) -> Result<Adoption> {
     let installed = additional_targets(home, master)?;
     let tools = master
         .overlays
         .keys()
         .map(String::as_str)
         .chain(installed.iter().map(|target| target.id));
-    let files = rulesync_adopt::discover_personal_files(home, tools, known_files)?;
-    let mut adoption = discover_targets(home, &installed, Some(shared), Some(files))?;
+    let files = rulesync_adopt::discover_personal_files_with_source_mode(
+        home,
+        tools,
+        known_files,
+        follow_shared_source,
+    )?;
+    let mut adoption = discover_targets(
+        home,
+        &installed,
+        Some(shared),
+        Some(files),
+        follow_shared_source,
+    )?;
+    // An overlay saved before enrollment remains the person's authority.
+    // A different existing tool file needs explicit reconciliation; it must
+    // not be silently replaced by either copy during Bring in.
+    for tool in &master.unenrolled_overlays {
+        let Some(saved) = master.overlays.get(tool) else {
+            bail!("A saved tool rule layer is missing. Leave the setup unchanged and repair it first.");
+        };
+        let Some(imported) = adoption.overlays.get_mut(tool) else {
+            continue;
+        };
+        let restored_file_matches =
+            if let Some(expected) = restored_tool_file_fingerprints.get(tool) {
+                let target = personal_target(tool).context("unknown saved tool rule layer")?;
+                match adoption
+                    .files
+                    .get(Path::new(target.rules.destination))
+                    .map(|file| &file.before)
+                {
+                    Some(AdoptionEntry::File(bytes)) => fingerprint(bytes)? == *expected,
+                    Some(
+                        AdoptionEntry::Missing
+                        | AdoptionEntry::Symlink { .. }
+                        | AdoptionEntry::Directory,
+                    )
+                    | None => false,
+                }
+            } else {
+                false
+            };
+        ensure!(
+            saved.is_empty()
+                || imported.is_empty()
+                || *imported == *saved
+                || restored_file_matches,
+            "{tool}: the saved tool rules and existing tool file differ. Reconcile them before Bring in."
+        );
+        if !saved.is_empty() {
+            imported.clone_from(saved);
+            let target = personal_target(tool).context("unknown saved tool rule layer")?;
+            if let Some(file) = adoption.files.get_mut(Path::new(target.rules.destination)) {
+                file.after = AdoptionEntry::File(
+                    rulesync_adopt::personal_rule_body(
+                        shared,
+                        saved,
+                        tool,
+                        adoption.codex_sync_replaced,
+                    )
+                    .into_bytes(),
+                );
+            }
+        }
+    }
     adoption.settings = crate::rulesync_settings::personal::Adoption::discover(home)?;
     adoption.added_tools = installed
         .iter()
@@ -1054,14 +1153,18 @@ pub fn additional_personal_files(
     home: &Path,
     master: &PersonalMaster,
     known_files: &BTreeSet<PathBuf>,
+    follow_shared_source: bool,
 ) -> Result<Vec<PathBuf>> {
     let tools = master.overlays.keys().map(String::as_str);
-    Ok(
-        rulesync_adopt::discover_personal_files(home, tools, known_files)?
-            .files
-            .into_keys()
-            .collect(),
-    )
+    Ok(rulesync_adopt::discover_personal_files_with_source_mode(
+        home,
+        tools,
+        known_files,
+        follow_shared_source,
+    )?
+    .files
+    .into_keys()
+    .collect())
 }
 
 fn installed_targets<'a>(
@@ -1136,13 +1239,18 @@ fn discover_targets(
     installed: &[&PersonalTarget],
     shared: Option<&str>,
     personal_files: Option<rulesync_adopt::PersonalFileDiscovery>,
+    follow_shared_source: bool,
 ) -> Result<Adoption> {
     let targets: Vec<_> = installed
         .iter()
         .map(|target| target.adoption_input())
         .collect();
     let mut adoption = if let Some(shared) = shared {
-        rulesync_adopt::discover_with_shared(home, &targets, shared)?
+        if follow_shared_source {
+            rulesync_adopt::discover_with_shared(home, &targets, shared)?
+        } else {
+            rulesync_adopt::discover_without_shared_source(home, &targets, shared)?
+        }
     } else {
         rulesync_adopt::discover(home, &targets)?
     };
@@ -1323,7 +1431,7 @@ pub fn plan_adoption_offline(home: &Path) -> Result<AdoptionPlan> {
     } else {
         let (installed, skipped) =
             installed_targets(home, [&CLAUDE_TARGET, &CODEX_TARGET].into_iter())?;
-        let mut adoption = discover_targets(home, &installed, None, None)?;
+        let mut adoption = discover_targets(home, &installed, None, None, true)?;
         record_skipped_tools(&mut adoption, skipped);
         legacy_skill_previews(&mut adoption);
         let mut plan = adoption_plan(&adoption)?;
@@ -1614,6 +1722,10 @@ pub fn adoption_plan(adoption: &Adoption) -> Result<AdoptionPlan> {
 pub struct PersonalMaster<Content = Vec<u8>> {
     pub shared: String,
     pub overlays: BTreeMap<String, String>,
+    /// Saved tool rules can exist before a tool is brought in, or after its
+    /// setup is restored. They are not evidence that the tool is enrolled.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub unenrolled_overlays: BTreeSet<String>,
     /// None denotes a setup saved before Claude import provenance was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_imported_rules: Option<BTreeSet<String>>,
@@ -1630,7 +1742,7 @@ pub struct LocalText {
 
 impl PersonalMaster {
     pub fn enrolls_target(&self, target: &str) -> bool {
-        self.overlays.contains_key(target)
+        (self.overlays.contains_key(target) && !self.unenrolled_overlays.contains(target))
             || self
                 .skills
                 .iter()
@@ -1641,6 +1753,7 @@ impl PersonalMaster {
         Self {
             shared: adoption.shared.clone(),
             overlays: adoption.overlays.clone(),
+            unenrolled_overlays: BTreeSet::new(),
             claude_imported_rules: adoption.claude_imported_rules.clone(),
             codex_sync_replaced: adoption.codex_sync_replaced,
             skills: adoption.skills.clone(),
@@ -2113,6 +2226,48 @@ pub mod sharing;
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn off_mode_additional_personal_discovery_does_not_read_source_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let home = tempfile::tempdir().unwrap();
+        let source = home.path().join(rulesync_adopt::SHARED_RULES);
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "Retired source secret-like content.\n").unwrap();
+        let command = home.path().join(".claude/commands/retired.md");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        symlink(&source, &command).unwrap();
+        let master = PersonalMaster {
+            shared: String::new(),
+            overlays: BTreeMap::from([("claudecode".into(), String::new())]),
+            unenrolled_overlays: BTreeSet::new(),
+            claude_imported_rules: None,
+            codex_sync_replaced: false,
+            skills: Vec::new(),
+            overrides: BTreeMap::new(),
+        };
+
+        let adoption = discover_additional_adoption_without_source(
+            home.path(),
+            &master,
+            "Saved master.\n",
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert!(!adoption
+            .personal_files
+            .contains_key(Path::new(".claude/commands/retired.md")));
+        assert!(adoption
+            .skipped_personal_files
+            .contains_key(Path::new(".claude/commands/retired.md")));
+        assert!(
+            additional_personal_files(home.path(), &master, &BTreeSet::new(), false)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[test]
     fn rulesync_preview_names_tools_that_get_new_files() {
         let home = tempfile::tempdir().unwrap();
@@ -2370,6 +2525,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Repeated rule.\n".into(),
             overlays: BTreeMap::from([("cursor".into(), "Repeated rule.\n".into())]),
+            unenrolled_overlays: BTreeSet::new(),
             claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
@@ -2389,6 +2545,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Shared rule.\n".into(),
             overlays: BTreeMap::from([("codexcli".into(), "Codex rule.\n".into())]),
+            unenrolled_overlays: BTreeSet::new(),
             claude_imported_rules: None,
             codex_sync_replaced: true,
             skills: Vec::new(),
@@ -2409,6 +2566,7 @@ mod tests {
         let mut master = PersonalMaster {
             shared: "Shared rule.\n".into(),
             overlays: BTreeMap::from([("cursor".into(), "Cursor rule.\n".into())]),
+            unenrolled_overlays: BTreeSet::new(),
             claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),
@@ -2441,6 +2599,7 @@ mod tests {
                 "cursor".into(),
                 "First rule.\nMiddle rule.\nLast rule.\n".into(),
             )]),
+            unenrolled_overlays: BTreeSet::new(),
             claude_imported_rules: None,
             codex_sync_replaced: false,
             skills: Vec::new(),

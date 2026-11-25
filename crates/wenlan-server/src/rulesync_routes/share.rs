@@ -184,6 +184,7 @@ impl Setup {
         key_consent: bool,
     ) -> Result<SharingPlan> {
         self.check_adoption_home(expected_home)?;
+        let _lock = self.lock()?;
         let session = RenderSession::new(&self.binary);
         self.build_share_preview(keep_rule, key_consent, |renderer, skills| {
             self.render_skills(&session, renderer, skills)
@@ -198,14 +199,14 @@ impl Setup {
         self.build_share_preview(None, true, render_skills)
     }
 
-    fn build_share_preview(
+    pub(super) fn build_share_preview(
         &self,
         keep_rule: Option<&[usize]>,
         key_consent: bool,
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<SharingPlan> {
         let manifest = self.share_manifest()?;
-        let root = FileRoot::open_home(&self.home)?;
+        let root = self.home_files()?;
         let source = SharedSource::read(&self.home, &manifest)?;
         let Share {
             mut plan,
@@ -225,6 +226,7 @@ impl Setup {
         request: &ShareRequest,
         keys: KeyAnswer,
         generated: &[String],
+        person_confirmed: bool,
     ) -> Result<RulesSyncReport> {
         if let Some(home) = &request.approval.home {
             self.check_adoption_home(home)?;
@@ -236,6 +238,7 @@ impl Setup {
             keys,
             request.keep_rule.as_deref(),
             generated,
+            person_confirmed,
             (
                 |target: &str, source: &str| {
                     let layers = match layers.get() {
@@ -276,16 +279,18 @@ impl Setup {
             answer,
             None,
             &[],
+            true,
             (super::tests::fixture_rule_renderer, render_skills),
         )
     }
 
-    fn apply_share(
+    pub(super) fn apply_share(
         &self,
         token: &str,
         answer: KeyAnswer,
         keep_rule: Option<&[usize]>,
         generated: &[String],
+        person_confirmed: bool,
         (render_rule, render_skills): (
             impl Fn(&str, &str) -> Result<SkillFiles>,
             impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
@@ -293,7 +298,7 @@ impl Setup {
     ) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let mut manifest = self.share_manifest()?;
-        let root = FileRoot::open_home(&self.home)?;
+        let root = self.home_files()?;
         let source = SharedSource::read(&self.home, &manifest)?;
         self.claim_key_intents(&root, &mut manifest)?;
         let share = self.plan_share(&root, &manifest, &source, keep_rule, &render_skills)?;
@@ -334,9 +339,7 @@ impl Setup {
                 base.get(..*end)
                     .is_some_and(|shared| shared != manifest.master.shared_rule_text(target))
             });
-        if source.record(&mut manifest) {
-            self.save(&manifest)?;
-        }
+        source.record_with_history(self, &mut manifest)?;
         if source_changed {
             // Deliver the reconciled rules before moving the approved lines.
             // Its receipt checks still protect local edits in each tool.
@@ -380,7 +383,7 @@ impl Setup {
         let mut adopted =
             personal_settings::adopt(&self.home, &root, &manifest, unmanaged, &mut operations)?;
         if let Some(change) = rule_change {
-            self.apply_rule_shares(&root, &mut manifest, change, &mut result)?;
+            self.apply_rule_shares(&root, &mut manifest, change, &mut result, person_confirmed)?;
         }
         let outcomes = if operations.is_empty() {
             Vec::new()
@@ -569,7 +572,9 @@ impl Setup {
                 rule_stays: rules.stays.clone(),
                 rule_notes: rules.notes.clone(),
                 shared_source_notice: (count != 0).then(|| {
-                    if source.credential_lines.is_empty() {
+                    if !manifest.shared_source_following {
+                        "The shared source is off. These rules will be saved in Wenlan and delivered to managed tools.".into()
+                    } else if source.credential_lines.is_empty() {
                         let unit = if count == 1 { "line" } else { "lines" };
                         format!("Also adds {count} {unit} to ~/.agents/AGENTS.md.")
                     } else {
@@ -1115,6 +1120,28 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_share_preview_names_saved_store_when_source_is_off() {
+        let f = Fixture::new();
+        rule_fixture(&f);
+        adopt(&f);
+        let off = f.setup.preview_source_off().unwrap();
+        f.setup
+            .turn_source_off(&SharedSourceOffRequest {
+                plan_id: off.plan_id,
+                token: off.token,
+            })
+            .unwrap();
+        let source_before = f.text(SHARED_RULES);
+        let plan = preview_rules(&f, &[]);
+        assert!(!plan.rules.is_empty());
+        let notice = plan.shared_source_notice.as_deref().unwrap();
+        assert!(notice.contains("source is off"), "{notice}");
+        assert!(!notice.contains("adds") || !notice.contains("~/.agents/AGENTS.md"));
+        apply_rules(&f, &plan, &[]).unwrap();
+        assert_eq!(f.text(SHARED_RULES), source_before);
+    }
+
+    #[test]
     fn rulesync_share_offers_other_tools_rules_when_a_live_tool_file_holds_a_key() {
         const VALUE: &str = "sk-claudeRuleFixtureOnly123456789";
         const CHANGED: &str = "sk-claudeRuleFixtureOnly987654321";
@@ -1251,6 +1278,7 @@ mod tests {
             KeyAnswer::No,
             Some(keep),
             &[],
+            true,
             (fixture_rule_renderer, fixture_skill_renderer),
         )
     }
@@ -1718,6 +1746,7 @@ mod tests {
                 KeyAnswer::No,
                 Some(&[]),
                 &[],
+                true,
                 (render, fixture_skill_renderer),
             )
             .unwrap_err();
@@ -1797,13 +1826,19 @@ mod tests {
             adopt(&f);
             let plan = preview_rules(&f, &[]);
             let result = apply_rules(&f, &plan, &[]).unwrap();
-            assert!(
-                result.written.iter().any(|path| path == SOURCE),
-                "{result:?}"
-            );
             let saved = f.setup.load().unwrap().unwrap();
-            assert_eq!(f.text(SOURCE), saved.master.shared);
-            assert!(f.text(SOURCE).contains(COMMON_RULE));
+            if existing {
+                assert!(
+                    result.written.iter().any(|path| path == SOURCE),
+                    "{result:?}"
+                );
+                assert_eq!(f.text(SOURCE), saved.master.shared);
+                assert!(f.text(SOURCE).contains(COMMON_RULE));
+            } else {
+                assert!(!result.written.iter().any(|path| path == SOURCE));
+                assert!(!f.setup.home.join(SOURCE).exists());
+                assert!(saved.master.shared.contains(COMMON_RULE));
+            }
             let result = f.setup.restore().unwrap();
             assert!(result.blocked.is_empty(), "{result:?}");
             assert_eq!(tree(&f.setup.home), before);
@@ -2355,6 +2390,7 @@ mod tests {
                 KeyAnswer::No,
                 Some(&[]),
                 &[],
+                true,
                 (render, fixture_skill_renderer),
             )
             .unwrap_err();

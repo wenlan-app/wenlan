@@ -429,13 +429,13 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // skill-update card add two more Global routes. The person-key-gated team
     // publication review adds one more Global route. Sharing what a person
     // already has across tools (share and its preview) adds two more Global
-    // routes.
-    assert_eq!(rows.len(), 175);
+    // routes. Personal-rule plans, history and source-off add nine Global routes.
+    assert_eq!(rows.len(), 184);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        53
+        62
     );
     assert_eq!(
         rows.iter()
@@ -479,7 +479,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 53, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 62, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

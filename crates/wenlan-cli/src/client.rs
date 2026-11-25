@@ -933,6 +933,84 @@ impl WenlanClient {
         self.rules_request("/api/rules/setup/review", false).await
     }
 
+    pub(crate) async fn show_personal_rule(
+        &self,
+        request: &wenlan_types::personal_rules::PersonalRuleShowRequest,
+    ) -> Result<wenlan_types::personal_rules::PersonalRuleShow> {
+        self.post_json("/api/rules/personal/show", request).await
+    }
+
+    pub(crate) async fn propose_personal_rules(
+        &self,
+        request: &wenlan_types::personal_rules::PersonalRuleProposeRequest,
+    ) -> Result<wenlan_types::personal_rules::PersonalRulePlan> {
+        self.post_json("/api/rules/personal/propose", request).await
+    }
+
+    pub(crate) async fn personal_rule_plan(
+        &self,
+        id: &str,
+    ) -> Result<wenlan_types::personal_rules::PersonalRulePlan> {
+        validate_personal_rule_id(id)?;
+        self.get_json(&format!("/api/rules/personal/plan/{id}"), false)
+            .await
+    }
+
+    pub(crate) async fn apply_personal_rule_plan(
+        &self,
+        request: &wenlan_types::personal_rules::PersonalRuleApplyRequest,
+    ) -> Result<wenlan_types::personal_rules::PersonalRuleVersion> {
+        self.post_json_as_person("/api/rules/personal/apply", request, None, true)
+            .await
+    }
+
+    pub(crate) async fn personal_rule_history(
+        &self,
+    ) -> Result<Vec<wenlan_types::personal_rules::PersonalRuleVersionSummary>> {
+        self.get_json("/api/rules/personal/history", false).await
+    }
+
+    pub(crate) async fn personal_rule_version(
+        &self,
+        id: &str,
+    ) -> Result<wenlan_types::personal_rules::PersonalRuleVersion> {
+        validate_personal_rule_id(id)?;
+        self.get_json(&format!("/api/rules/personal/history/{id}"), false)
+            .await
+    }
+
+    pub(crate) async fn propose_personal_rule_restore(
+        &self,
+        id: &str,
+    ) -> Result<wenlan_types::personal_rules::PersonalRulePlan> {
+        validate_personal_rule_id(id)?;
+        self.post_json(
+            &format!("/api/rules/personal/history/{id}/propose"),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    pub(crate) async fn preview_shared_source_off_as_person(
+        &self,
+    ) -> Result<wenlan_types::rulesync::SharedSourceOffPreview> {
+        self.post_json_as_person(
+            "/api/rules/setup/shared-source/off/preview",
+            &serde_json::json!({}),
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn turn_shared_source_off_as_person(
+        &self,
+        request: &wenlan_types::rulesync::SharedSourceOffRequest,
+    ) -> Result<wenlan_types::rulesync::RulesSetupStatus> {
+        self.post_json_as_person("/api/rules/setup/shared-source/off", request, None, true)
+            .await
+    }
+
     async fn rules_request<R: DeserializeOwned>(&self, path: &str, post: bool) -> Result<R> {
         anyhow::ensure!(
             self.is_local(),
@@ -1751,6 +1829,17 @@ impl WenlanClient {
             .await
             .context("parsing /api/pages/export response")
     }
+}
+
+fn validate_personal_rule_id(id: &str) -> Result<()> {
+    anyhow::ensure!(
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'),
+        "that is not a personal rule version or plan id"
+    );
+    Ok(())
 }
 
 /// A response the daemon answered with a non-success status.

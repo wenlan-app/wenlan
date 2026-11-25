@@ -1171,7 +1171,9 @@ struct SkillStore {
 
 impl SkillStore {
     fn open(data: &Path) -> Result<Self> {
-        let root = FileRoot::open(data)?.with_private_directories();
+        let root = FileRoot::open(data)?
+            .guard_source_aliases()
+            .with_private_directories();
         let seen = root.read(Path::new(SKILL_STATE), false)?;
         let state = match &seen {
             Snapshot::File { bytes, .. } => {
@@ -1263,6 +1265,7 @@ pub(crate) fn check_skill_format(data: &Path) -> Result<()> {
         Ok(_) => {}
     }
     match FileRoot::open(data)?
+        .guard_source_aliases()
         .with_private_directories()
         .read(path, false)?
     {
@@ -1444,7 +1447,7 @@ pub(crate) struct SkillHome {
 
 impl SkillHome {
     pub(crate) fn open(home: &Path) -> Result<Self> {
-        let root = FileRoot::open_home(home)?;
+        let root = FileRoot::open_home(home)?.guard_source_aliases();
         let parent = Dir::open_ambient_dir(
             home.parent().context("tool home has no parent")?,
             cap_std::ambient_authority(),

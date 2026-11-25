@@ -1125,6 +1125,9 @@ async fn remove(
 /// `wenlan rules`: read the rules, or save and remove one of your own.
 #[derive(Subcommand, Debug)]
 pub enum RulesCmd {
+    /// Read, propose, or confirm changes to personal rules for AI tools.
+    #[command(flatten)]
+    Personal(super::rulesync::PersonalRulesCmd),
     /// Save a rule your AI tools follow from now on (what an AI tool does with add_rule).
     Add {
         /// The rule, as one sentence.
@@ -1185,12 +1188,25 @@ pub fn save_rule_request(text: &str, every_space: bool, kind: Option<RuleKind>) 
     if every_space {
         words.push("--every-space");
     }
+    let typed = typed_command(&words);
+    let normalized_text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized_typed = typed.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Debug-style quoting escapes some characters. In that case retain the
+    // person's exact rule words so the daemon can check them verbatim.
+    let person_asked = if normalized_typed.contains(&normalized_text) {
+        typed
+    } else {
+        format!(
+            "wenlan rules add {text}{}",
+            if every_space { " --every-space" } else { "" }
+        )
+    };
     SaveRuleRequest {
         text: text.to_string(),
         kind: kind.map(Into::into),
         space: None,
         every_space,
-        person_asked: typed_command(&words),
+        person_asked,
     }
 }
 
@@ -1233,6 +1249,7 @@ pub async fn run_rules(
 ) -> Result<()> {
     match command {
         None => read_space_rules(client, format, quiet).await,
+        Some(RulesCmd::Personal(_)) => unreachable!("personal rules run before Space commands"),
         Some(RulesCmd::Add {
             text,
             every_space,
@@ -1348,6 +1365,14 @@ fn rules_for_a_person(response: &SpaceRulesResponse) -> String {
 mod tests {
     use super::*;
     use wenlan_types::SkillLine;
+
+    #[test]
+    fn personal_rule_save_keeps_quoted_rule_words_available_verbatim() {
+        let text = "Use \"short\" explanations.";
+        let request = save_rule_request(text, false, None);
+        assert!(request.person_asked.contains(text));
+        assert_eq!(request.text, text);
+    }
 
     #[test]
     fn ux_skill_16_review_needs_one_scope_and_has_no_confirmation_flag() {

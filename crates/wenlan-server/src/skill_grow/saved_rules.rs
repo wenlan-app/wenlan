@@ -301,6 +301,18 @@ pub(super) async fn save_rule_in(
     let text = skill_grow::saved_rule_text(kind, &req.text)
         .map_err(|reason| ServerError::ValidationError(refused(reason)))?;
     let person_asked = persons_words(&req.person_asked)?;
+    // An unnamed caller can also be an AI tool. Require the exact submitted
+    // words for every immediate save; the terminal's own quote already
+    // includes its argument. This is cooperative, not proof of who spoke.
+    let normalized_quote = person_asked
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !normalized_quote.contains(&text) {
+        return Err(ServerError::ValidationError(refused(
+            "the rule must be included exactly in the person's quoted words; otherwise propose it and have the person confirm the exact rule before saving",
+        )));
+    }
     let (db, page_root) = db_and_page_root(state).await?;
     let page_root = page_root.as_deref();
     // Never general unless asked by name, and never over a connection

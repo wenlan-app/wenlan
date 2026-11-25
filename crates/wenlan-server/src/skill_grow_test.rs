@@ -4102,6 +4102,86 @@ async fn ux_skill_14_a_saved_rule_counts_at_once_and_names_its_tool() {
     assert!(matches!(again, ServerError::Conflict(_)), "{again}");
 }
 
+#[tokio::test]
+async fn ux_skill_14_immediate_ai_saves_need_exact_person_words() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    scratch
+        .db
+        .create_space("Project", None, false)
+        .await
+        .unwrap();
+
+    let paraphrased = saved_rules::save_rule_in(
+        &scratch.shared,
+        &caller(Some("codex"), Some("Project")),
+        None,
+        wenlan_types::SaveRuleRequest {
+            text: "Keep responses short.".into(),
+            person_asked: "Please make the answers concise.".into(),
+            ..Default::default()
+        },
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+    .unwrap_err();
+    let refusal = refusal_text(paraphrased);
+    assert!(refusal.contains("included exactly"), "{refusal}");
+    assert!(refusal.contains("have the person confirm"), "{refusal}");
+    assert!(
+        scratch.db.saved_rules_pages().await.unwrap().is_empty(),
+        "a paraphrased AI proposal must not create a saved rule"
+    );
+
+    // An unnamed or session-only tool cannot bypass the same check.
+    let mut session_only = HeaderMap::new();
+    session_only.insert(
+        wenlan_types::SESSION_HEADER,
+        HeaderValue::from_static("codex:test"),
+    );
+    let refusal = saved_rules::save_rule_in(
+        &scratch.shared,
+        &session_only,
+        None,
+        wenlan_types::SaveRuleRequest {
+            text: "Keep responses short.".into(),
+            person_asked: "Please make the answers concise.".into(),
+            ..Default::default()
+        },
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(refusal_text(refusal).contains("included exactly"));
+
+    // A person session can immediately save the exact words it supplied.
+    let dictated = saved_rules::save_rule_in(
+        &scratch.shared,
+        &person_headers(),
+        None,
+        wenlan_types::SaveRuleRequest {
+            text: "Keep responses short.".into(),
+            space: Some("Project".into()),
+            person_asked: "Keep responses short.".into(),
+            ..Default::default()
+        },
+        scratch.skill_dirs(),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(dictated.status, wenlan_types::SavedRuleStatus::Saved);
+    let ledger = scratch.db.saved_rules_pages().await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0].saves.len(), 1);
+    assert_eq!(ledger[0].saves[0].text, "Keep responses short.");
+}
+
 /// UX-SKILL-14: only the save route gives a rule. An AI tool that writes a
 /// bullet onto the "Rules I saved" page the ordinary way, even one sent as
 /// asked by the person, gets no rule: that still needs the person's accept.
