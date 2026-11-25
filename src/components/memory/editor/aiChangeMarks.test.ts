@@ -49,6 +49,14 @@ describe("AI change marks", () => {
     expect(befores(v)).toEqual(["Before:The flat is a short walk."]);
   });
 
+  it("shows what a sentence said before as words, not its Markdown", () => {
+    const v = mount({
+      beforeLabel: "Before:",
+      marks: [{ text: "The flat is a three-minute walk.", before: "The flat is `5 min` from [[Old Town]].[1]" }],
+    });
+    expect(befores(v)).toEqual(["Before:The flat is 5 min from Old Town."]);
+  });
+
   it("clears the marks when the person hides them, and never edits the text", () => {
     const v = mount(settings);
     v.dispatch({ effects: setAiChangeMarks.of(null) });

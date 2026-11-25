@@ -6,16 +6,17 @@ import type { CodeBasisRef } from "../../../lib/tauri";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
-  getPageCodeBasisCited: vi.fn(),
-  readCodeLines: vi.fn(),
-  readGitBlobLines: vi.fn(),
+  getPageCodeBasisLines: vi.fn(),
   clipboardWrite: vi.fn(),
 }));
 
-import { clipboardWrite, getPageCodeBasisCited, readCodeLines, readGitBlobLines } from "../../../lib/tauri";
+import { clipboardWrite, getPageCodeBasisLines } from "../../../lib/tauri";
 import { CodeBasisDialog } from "./CodeBasisDialog";
 
-const BLOB = "0123456789abcdef0123456789abcdef01234567";
+/** What the daemon answers: the lines as cited (null: not in git) and now (null: unreadable). */
+function lines(cited: string[] | null, now: string[] | null, citedStart?: number) {
+  vi.mocked(getPageCodeBasisLines).mockResolvedValue({ cited, now, cited_start: citedStart });
+}
 
 const row = (over: Partial<CodeBasisRef> = {}): CodeBasisRef => ({
   repo_root: "/repo", path: "src/parser.rs", line_start: 10, line_end: 12, state: "pending", ...over,
@@ -34,17 +35,13 @@ function renderDialog(props: Partial<React.ComponentProps<typeof CodeBasisDialog
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  vi.mocked(getPageCodeBasisCited).mockReset();
-  vi.mocked(readCodeLines).mockReset();
-  vi.mocked(readGitBlobLines).mockReset();
+  vi.mocked(getPageCodeBasisLines).mockReset();
   vi.mocked(clipboardWrite).mockReset();
 });
 
 describe("CodeBasisDialog", () => {
   it("shows the lines as cited next to the lines now, numbered from the first line", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["fn parse() {", "    old();", "}"]);
-    vi.mocked(readCodeLines).mockResolvedValue(["fn parse() {", "    new();", "}"]);
+    lines(["fn parse() {", "    old();", "}"], ["fn parse() {", "    new();", "}"], 10);
     renderDialog();
 
     const dialog = await screen.findByRole("dialog", { name: "src/parser.rs lines 10–12" });
@@ -58,9 +55,7 @@ describe("CodeBasisDialog", () => {
     expect(before.querySelectorAll(".code-basis__line")).toHaveLength(3);
     expect(Array.from(after.querySelectorAll(".code-basis__number")).map((node) => node.textContent))
       .toEqual(["10", "11", "12"]);
-    expect(getPageCodeBasisCited).toHaveBeenCalledWith("page-1", expect.objectContaining({ line_start: 10, line_end: 12 }));
-    expect(readGitBlobLines).toHaveBeenCalledWith("/repo", BLOB, 10, 12);
-    expect(readCodeLines).toHaveBeenCalledWith("/repo/src/parser.rs", 10, 62);
+    expect(getPageCodeBasisLines).toHaveBeenCalledWith("page-1", expect.objectContaining({ line_start: 10, line_end: 12 }), 50);
     // The rows sit in one sideways scroller, which is the box's only focus target.
     for (const box of [before, after]) {
       expect(box.querySelectorAll("[tabindex]")).toHaveLength(1);
@@ -69,9 +64,7 @@ describe("CodeBasisDialog", () => {
   });
 
   it("tints the lines that exist on one side only and leaves equal lines plain", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["fn parse() {", "    old();", "}"]);
-    vi.mocked(readCodeLines).mockResolvedValue(["fn parse() {", "    new();", "    more();", "}"]);
+    lines(["fn parse() {", "    old();", "}"], ["fn parse() {", "    new();", "    more();", "}"]);
     renderDialog();
 
     const before = await screen.findByTestId("code-basis-before");
@@ -85,9 +78,7 @@ describe("CodeBasisDialog", () => {
   });
 
   it("marks nothing when the lines read the same", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["a();", "b();"]);
-    vi.mocked(readCodeLines).mockResolvedValue(["a();", "b();"]);
+    lines(["a();", "b();"], ["a();", "b();"]);
     renderDialog();
 
     await screen.findByTestId("code-basis-after");
@@ -95,8 +86,7 @@ describe("CodeBasisDialog", () => {
   });
 
   it("says there is nothing to compare when the lines were never committed", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+    lines(null, ["new();"]);
     renderDialog();
 
     expect(await screen.findByText("The lines as cited were never committed to git, so there is nothing to compare"))
@@ -107,24 +97,32 @@ describe("CodeBasisDialog", () => {
     expect(document.querySelectorAll("[data-change]")).toHaveLength(0);
     expect(document.querySelector(".code-basis__columns--single")).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "When cited" })).toBeNull();
-    expect(readGitBlobLines).not.toHaveBeenCalled();
   });
 
-  it("says the same when git cannot read the cited version", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockRejectedValue("git could not find that version of the file");
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+  it("numbers the cited side from where the lines sat in the cited version", async () => {
+    // A step was added above: the row now spans the new line and its own.
+    lines(["3. Run tests"], ["3. Check Windows", "3. Run tests"], 11);
+    renderDialog({ row: row({ line_start: 11, line_end: 12, reason: "lines_added" }) });
+
+    const before = await screen.findByTestId("code-basis-before");
+    const after = await screen.findByTestId("code-basis-after");
+    const numbers = (el: HTMLElement) =>
+      Array.from(el.querySelectorAll(".code-basis__number")).map((node) => node.textContent);
+    expect(numbers(before)).toEqual(["11"]);
+    expect(numbers(after)).toEqual(["11", "12"]);
+    expect(after.querySelector(".code-basis__line--added")).toHaveTextContent("3. Check Windows");
+  });
+
+  it("says the file cannot be read now only when the daemon could not read it", async () => {
+    lines(["old();"], null);
     renderDialog();
 
-    expect(await screen.findByText(/never committed to git/)).toBeInTheDocument();
-    expect(await screen.findByTestId("code-basis-after")).toHaveTextContent("new();");
-    expect(screen.queryByTestId("code-basis-before")).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveTextContent("The file cannot be read now");
+    expect(await screen.findByTestId("code-basis-before")).toHaveTextContent("old();");
   });
 
   it("says the file cannot be read now when reading fails, and still shows what was cited", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "unavailable" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["old();"]);
-    vi.mocked(readCodeLines).mockRejectedValue("No such file or directory");
+    lines(["old();"], null);
     renderDialog({ row: row({ state: "unavailable", reason: "file_missing" }) });
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The file cannot be read now");
@@ -135,9 +133,7 @@ describe("CodeBasisDialog", () => {
   });
 
   it("confirms, closes, and copies the location for two seconds", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["old();"]);
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+    lines(["old();"], ["new();"]);
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);
     const { onConfirm, onClose } = renderDialog();
     await screen.findByTestId("code-basis-after");
@@ -156,8 +152,7 @@ describe("CodeBasisDialog", () => {
   });
 
   it("closes on Escape", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
-    vi.mocked(readCodeLines).mockResolvedValue([]);
+    lines(null, []);
     const { onClose } = renderDialog();
 
     fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });

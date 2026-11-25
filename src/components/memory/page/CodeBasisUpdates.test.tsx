@@ -10,20 +10,16 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listCodeBasisPending: vi.fn(),
   confirmPageCodeBasis: vi.fn(),
   removePageCodeBasis: vi.fn(),
-  getPageCodeBasisCited: vi.fn(),
+  getPageCodeBasisLines: vi.fn(),
   getResolvedRouting: vi.fn(),
-  readCodeLines: vi.fn(),
-  readGitBlobLines: vi.fn(),
 }));
 
 import {
   confirmPageCodeBasis,
-  getPageCodeBasisCited,
+  getPageCodeBasisLines,
   getResolvedRouting,
   listBasisPending,
   listCodeBasisPending,
-  readCodeLines,
-  readGitBlobLines,
   removePageCodeBasis,
 } from "../../../lib/tauri";
 import { CodeBasisUpdatesSection } from "./CodeBasisUpdatesSection";
@@ -59,7 +55,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   for (const fn of [listBasisPending, listCodeBasisPending, confirmPageCodeBasis, removePageCodeBasis,
-    getPageCodeBasisCited, getResolvedRouting, readCodeLines, readGitBlobLines]) vi.mocked(fn).mockReset();
+    getPageCodeBasisLines, getResolvedRouting]) vi.mocked(fn).mockReset();
 });
 
 describe("useCodeBasisPending", () => {
@@ -127,9 +123,7 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
   });
 
   it("shows the lines side by side from a row", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: "0123456789abcdef0123456789abcdef01234567", confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["old();"]);
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+    vi.mocked(getPageCodeBasisLines).mockResolvedValue({ cited: ["old();"], now: ["new();"] });
     renderWith(<CodeBasisUpdatesSection entries={[entry()]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Parser notes" }));

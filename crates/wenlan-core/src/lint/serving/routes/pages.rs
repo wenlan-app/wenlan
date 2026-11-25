@@ -42,6 +42,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Post,"/api/pages/{id}/sentences/recheck","page_sentences",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Post,"/api/pages/code-basis/recheck","page_code_basis",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,NoGate,Rejected,Forbidden),
     row!(Post,"/api/pages/{id}/code-basis/cited","page_code_basis",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
+    row!(Post,"/api/pages/{id}/code-basis/lines","page_code_basis",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/steep/worklist","steep_worklist",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,NoGate,Rejected,Forbidden),
     row!(Post,"/api/steep/claim","steep_claim",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/pages/{id}/map","page_map",HeaderOnly,UnauthenticatedLocal,PageWorkspace,ParentCollectionFiltered,Rejected,Forbidden),

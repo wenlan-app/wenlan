@@ -99,6 +99,33 @@ pub struct CodeBasisCitedResponse {
     pub state: String,
 }
 
+/// Body of `POST /api/pages/{id}/code-basis/lines`: which row, and how many
+/// lines past its end to read now (an insertion inside the span pushes its
+/// last lines down).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeBasisLinesRequest {
+    pub locator: CodeBasisLocator,
+    #[serde(default)]
+    pub extra: u32,
+}
+
+/// Reply of `POST /api/pages/{id}/code-basis/lines`: a row's lines as cited
+/// and as they read now, read by the daemon, so every interface (the app and
+/// a browser alike) can show them side by side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeBasisLinesResponse {
+    /// The row's own lines in the file as it was when cited or last
+    /// confirmed. `null` when that version is not in git.
+    pub cited: Option<Vec<String>>,
+    /// The line number `cited` starts at in that version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_start: Option<u32>,
+    /// The file now, from the row's first line to its last plus `extra`.
+    /// `null` when the file cannot be read.
+    pub now: Option<Vec<String>>,
+}
+
 /// One note with code bases that need a look, from
 /// `POST /api/pages/code-basis/recheck`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

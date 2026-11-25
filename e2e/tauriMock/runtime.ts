@@ -372,19 +372,11 @@ export class TauriMockRuntime {
         return this.pageCodeBasis.confirm(requiredString(command, args, "pageId"), locatorArg(command, args));
       case "remove_page_code_basis":
         return this.pageCodeBasis.remove(requiredString(command, args, "pageId"), locatorArg(command, args));
-      case "get_page_code_basis_cited":
-        return this.pageCodeBasis.cited(requiredString(command, args, "pageId"), locatorArg(command, args));
-      case "read_git_blob_lines":
-        return this.pageCodeBasis.readBlobLines(
-          requiredString(command, args, "blob"),
-          requiredNumber(command, args, "lineStart"),
-          requiredNumber(command, args, "lineEnd"),
-        );
-      case "read_code_lines":
-        return this.pageCodeBasis.readLines(
-          requiredString(command, args, "path"),
-          requiredNumber(command, args, "lineStart"),
-          requiredNumber(command, args, "lineEnd"),
+      case "get_page_code_basis_lines":
+        return this.pageCodeBasis.lines(
+          requiredString(command, args, "pageId"),
+          locatorArg(command, args),
+          requiredNumber(command, args, "extra"),
         );
       case "get_page_sources": {
         const pageId = requiredString(command, args, "pageId");

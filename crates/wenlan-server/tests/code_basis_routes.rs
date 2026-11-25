@@ -494,6 +494,55 @@ async fn the_cited_route_serves_the_blob_id_the_row_was_written_or_confirmed_aga
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// The lines route reads both sides for a browser, which cannot reach the
+/// repository: the cited side is null when that version is not in git, the
+/// "now" side runs `extra` lines past the row, and an unknown row is 404.
+#[tokio::test]
+async fn the_lines_route_reads_the_code_now_for_any_interface() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    make_brief(&db).await;
+    let repo = Repo::new("src/lib.rs", &numbered(40));
+    let (status, created) =
+        new_note(&router, "Library", json!([repo.span("src/lib.rs", 10, 12)])).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = typed::<CreatePageResponse>(created).id;
+    let uri = format!("/api/pages/{id}/code-basis/lines");
+    let locator = json!({
+        "repo_root": repo.root(), "path": "src/lib.rs", "line_start": 10, "line_end": 12
+    });
+
+    let (status, lines) = call(
+        &router,
+        Method::POST,
+        &uri,
+        Some(json!({ "locator": locator, "extra": 2 })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{lines}");
+    // Not a git repository here: nothing to compare against.
+    assert_eq!(lines["cited"], json!(null));
+    assert_eq!(
+        lines["now"],
+        json!(["line 10", "line 11", "line 12", "line 13", "line 14"])
+    );
+
+    let unknown = json!({
+        "repo_root": repo.root(), "path": "src/lib.rs", "line_start": 1, "line_end": 2
+    });
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &uri,
+        Some(json!({ "locator": unknown })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// The sentence and verdict the everyday model leaves reach the note's own read
 /// while the row is pending, the Brief says every pending note was judged, and
 /// a confirm takes both away again.
