@@ -43,6 +43,9 @@ export function usePageLook({ pageId, supported, version }: {
     retry: false,
     staleTime: 5_000,
     refetchInterval: 15_000,
+    // The interval pauses while the window is hidden; a view an AI tool saved
+    // meanwhile shows the moment the window is back, not up to 15 s later.
+    refetchOnWindowFocus: true,
   });
   const look: PageLook | null = enabled ? (query.data?.look ?? null) : null;
 
