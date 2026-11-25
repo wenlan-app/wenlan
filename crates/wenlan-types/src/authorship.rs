@@ -182,6 +182,12 @@ pub struct PageSentence {
     /// so the app can name them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_by: Option<String>,
+    /// The AI tool that wrote it (`claude-code`), as that tool named itself
+    /// when it wrote the version that last changed this sentence. Only for an
+    /// AI sentence written on this computer whose tool name was kept; never
+    /// guessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer_tool: Option<String>,
 }
 
 /// Where a sentence proposal stands.

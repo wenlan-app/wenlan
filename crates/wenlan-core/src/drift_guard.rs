@@ -13530,3 +13530,121 @@ fn page_basis_refresh_guard_detects_an_unrefreshed_writer() {
     )
     .is_empty());
 }
+
+// ── Teeth: no maintainer-only setup in product code ──
+
+/// Names that only exist on one maintainer's machine. Product code must work
+/// for a stranger's home, so these may appear only in tests and fixtures.
+const PERSONAL_SETUP_TOKENS: &[&str] = &["second-brain", "lucian"];
+
+/// Product lines allowed to keep a token, each with the reason.
+const PERSONAL_SETUP_ALLOWED: &[(&str, &str)] = &[
+    // Migration 38 already ran on existing databases; history is not rewritten.
+    (
+        "crates/wenlan-core/src/db.rs",
+        "OR title LIKE '%/second-brain/%'",
+    ),
+];
+
+fn is_product_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    !(lower.contains("test")
+        || lower.contains("/tests/")
+        || lower.contains("/fixtures/")
+        || lower.contains("/eval/")
+        || lower.contains("/__mocks__/")
+        || lower.ends_with(".md")
+        || lower.ends_with(".json"))
+}
+
+/// The part of a source file that ships: Rust files stop at their trailing
+/// `#[cfg(test)]` module.
+fn shipped_part<'a>(path: &str, source: &'a str) -> &'a str {
+    if !path.ends_with(".rs") {
+        return source;
+    }
+    source
+        .find("\n#[cfg(test)]\nmod ")
+        .map_or(source, |at| &source[..at])
+}
+
+fn personal_setup_violations(path: &str, source: &str) -> Vec<String> {
+    if !is_product_path(path) {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    for (number, line) in shipped_part(path, source).lines().enumerate() {
+        let lower = line.to_ascii_lowercase();
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") || trimmed.starts_with('#') && !path.ends_with(".rs") {
+            continue;
+        }
+        if PERSONAL_SETUP_ALLOWED
+            .iter()
+            .any(|(file, text)| *file == path && line.contains(text))
+        {
+            continue;
+        }
+        for token in PERSONAL_SETUP_TOKENS {
+            if lower.contains(token) {
+                found.push(format!("{path}:{}: names `{token}`", number + 1));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn product_code_does_not_assume_one_persons_setup() {
+    let root = repo_root();
+    let mut violations = Vec::new();
+    for pattern in [
+        "crates/*/src/**/*.rs",
+        "app/src/**/*.rs",
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "plugin/hooks/**",
+        "plugin-codex/hooks/**",
+        "scripts/first-run/**",
+        "install.sh",
+    ] {
+        for path in git_ls_files(&root, pattern) {
+            let Ok(source) = std::fs::read_to_string(root.join(&path)) else {
+                continue;
+            };
+            violations.extend(personal_setup_violations(&path, &source));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "product code names one person's folders or scripts; it must work for any \
+         user's home (move it to a test fixture or make it general):\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn personal_setup_guard_catches_product_lines_and_skips_tests() {
+    assert_eq!(
+        personal_setup_violations(
+            "crates/wenlan-core/src/x.rs",
+            "fn f() { let p = \"~/second-brain/inbox\"; }\n"
+        ),
+        ["crates/wenlan-core/src/x.rs:1: names `second-brain`"]
+    );
+    assert!(personal_setup_violations(
+        "crates/wenlan-core/src/x.rs",
+        "fn f() {}\n#[cfg(test)]\nmod tests { const H: &str = \"/Users/lucian\"; }\n"
+    )
+    .is_empty());
+    assert!(personal_setup_violations(
+        "crates/wenlan-core/src/x_test.rs",
+        "const H: &str = \"/Users/lucian\";\n"
+    )
+    .is_empty());
+    assert!(personal_setup_violations(
+        "crates/wenlan-core/src/db.rs",
+        "    OR title LIKE '%/second-brain/%' OR title LIKE '%/inbox/%' \\\n"
+    )
+    .is_empty());
+}

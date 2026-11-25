@@ -14,6 +14,8 @@ interface CitationPopoverProps {
   onOpenMemory: (sourceId: string, citation?: PageCitation) => void;
   /** Why the last attempt to open this citation's file or link was refused. */
   openFailure: string | null;
+  /** Who wrote the sentence this citation backs. */
+  writer?: string | null;
   onOpenTarget: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -28,6 +30,7 @@ export default function CitationPopover({
   anchorRef,
   onOpenMemory,
   openFailure,
+  writer = null,
   onMouseEnter,
   onMouseLeave,
   onEscape,
@@ -41,6 +44,7 @@ export default function CitationPopover({
       role="tooltip"
       dataCitationPopover
       externalOpenFailure={openFailure}
+      citationWriter={writer}
       onDismiss={onEscape}
       onOpenMemory={onOpenMemory}
       onPointerEnter={onMouseEnter}

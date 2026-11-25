@@ -185,6 +185,7 @@ async fn setting_a_look_puts_the_html_and_says_what_the_person_sees() {
             page: "pg_trip".into(),
             html: Some("<h1 id=t></h1>".into()),
             path: None,
+            replace: None,
             session: None,
         })
         .await
@@ -216,6 +217,7 @@ async fn a_refusal_reason_reaches_the_ai_word_for_word() {
             page: "pg_trip".into(),
             html: Some("<p>x</p>".into()),
             path: None,
+            replace: None,
             session: None,
         })
         .await
@@ -260,6 +262,7 @@ async fn a_look_can_be_given_as_a_file() {
             page: "pg_trip".into(),
             html: None,
             path: Some(file.display().to_string()),
+            replace: None,
             session: None,
         })
         .await
@@ -270,12 +273,14 @@ async fn a_look_can_be_given_as_a_file() {
             page: "pg_trip".into(),
             html: None,
             path: Some("relative/look.html".into()),
+            replace: None,
             session: None,
         },
         SetPageLookParams {
             page: "pg_trip".into(),
             html: None,
             path: None,
+            replace: None,
             session: None,
         },
     ] {
@@ -385,10 +390,41 @@ async fn at_home_reads_and_sets_the_home_screen_look() {
             page: "@home".into(),
             html: Some("<h1 id=t></h1>".into()),
             path: None,
+            replace: None,
             session: None,
         })
         .await
         .unwrap();
     assert_ne!(saved.is_error, Some(true));
     assert!(text_of(&saved).contains("home screen now shows this look"));
+}
+
+#[tokio::test]
+async fn a_home_view_says_when_it_replaced_one_and_passes_replace_on() {
+    let mock = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/api/pages/home/look"))
+        .and(body_partial_json(
+            serde_json::json!({"html": "<p>v2</p>", "replace": true}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "page_id": "home", "look_id": 2, "created": true, "replaced": true
+        })))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let server = server(mock.uri());
+    let ok = server
+        .set_page_look_impl(SetPageLookParams {
+            page: "@home".into(),
+            html: Some("<p>v2</p>".into()),
+            path: None,
+            replace: Some(true),
+            session: None,
+        })
+        .await
+        .unwrap();
+    let text = text_of(&ok);
+    assert!(text.contains("in place of its earlier home view"), "{text}");
+    assert!(!text.contains("Nothing changed"), "{text}");
 }

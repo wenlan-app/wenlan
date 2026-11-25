@@ -74,6 +74,7 @@ describe("PageInfo code section", () => {
         code({ path: "src/lex.rs", line_start: 3, line_end: 3, state: "pending" }),
         code({ path: "src/gone.rs", line_start: 1, line_end: 2, state: "unavailable", reason: "file_missing" }),
         code({ path: "src/shifted.rs", line_start: 40, line_end: 50, state: "moved" }),
+        code({ path: "src/steps.md", line_start: 4, line_end: 5, state: "pending", reason: "lines_added" }),
       ],
     });
 
@@ -84,7 +85,9 @@ describe("PageInfo code section", () => {
       "src/parser.rs:10\u201324Up to date",
       "src/lex.rs:3ChangedChanged, the next steep looks at it",
       "src/gone.rs:1\u20132Not found",
-      "src/shifted.rs:40\u201350Moved",
+      // Only shifted: the numbers already follow, so it reads as up to date.
+      "src/shifted.rs:40\u201350Up to date",
+      "src/steps.md:4\u20135Lines addedChanged, the next steep looks at it",
     ]);
     const path = rows[0].querySelector(".note-info-code-path");
     expect(path).toHaveTextContent("src/parser.rs:10\u201324");

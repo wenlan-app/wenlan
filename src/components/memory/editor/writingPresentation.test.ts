@@ -9,6 +9,7 @@ import { installCodeMirrorDomPolyfills } from "./editorTestUtils";
 import { prepareMarkdownSource, serializeMarkdownSource } from "./markdownSourceContract";
 import {
   filePathName,
+  orderedMarkerEm,
   setWritingCompositionActive,
   writingPresentation,
 } from "./writingPresentation";
@@ -257,9 +258,18 @@ describe("writingPresentation", () => {
     expect(lines.map((line) => line.style.paddingLeft)).toEqual([
       "calc(1.35em)",
       "calc(2.75em)",
-      "calc(1.51em)",
+      "calc(1.64em)",
     ]);
     expect(lines[0].style.textIndent).toMatch(/^calc\(-/);
+  });
+
+  it("keeps an ordered marker on one line, wide enough for a monospace font", () => {
+    const view = makeView("1. Tag the version\n2. Watch the deploy", { selection: EditorSelection.single(0) });
+    const markers = [...view.contentDOM.querySelectorAll<HTMLElement>('[data-writing-list-marker="ordered"]')];
+    expect(markers.map((marker) => marker.textContent)).toEqual(["1.", "2."]);
+    // Two characters at a monospace 0.6em are 1.2em; the box leaves room for the gap too.
+    expect(parseFloat(markers[0].style.width)).toBeGreaterThanOrEqual(1.2 + 0.35);
+    expect(orderedMarkerEm(3)).toBeGreaterThanOrEqual(1.8 + 0.35);
   });
 
   it("spaces a heading the same with or without blank source lines around it", () => {

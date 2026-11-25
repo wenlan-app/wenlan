@@ -3450,6 +3450,8 @@ export interface PageSentence {
   /** Another member of a shared Space wrote it: `shared_person:<member>` or
    *  `shared_ai:<member>`. */
   shared_by?: string;
+  /** The AI tool that wrote it (`claude-code`), where its name was kept. */
+  writer_tool?: string;
 }
 
 /** The page's newest AI write, for "AI updated N sentences" and its Undo. */
@@ -3674,7 +3676,9 @@ export type CodeBasisUnavailableReason =
   | "outside_repo"
   | "unreadable"
   | "too_large"
-  | "lines_not_found";
+  | "lines_not_found"
+  /** Pending: lines were added inside a stretch the page relies on. */
+  | "lines_added";
 
 export interface CodeBasisRef {
   /** Absolute. */

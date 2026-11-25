@@ -37,6 +37,7 @@ use wenlan_types::authorship::{
 };
 use wenlan_types::authorship::{LastAiUpdate, SentenceRevertResponse};
 use wenlan_types::pages::PageCitation;
+use wenlan_types::responses::PageChangelogEntry;
 
 use crate::authorship::{self, GatePlan, SentenceUnit, VersionText};
 use crate::db::sentence_history::NewHistoryEntry;
@@ -1155,6 +1156,7 @@ pub async fn page_sentences(
     } else {
         HashMap::new()
     };
+    let tools = ai_writer_tools(db, &page.id, &rows).await?;
     let sentences = units
         .iter()
         .zip(&rows)
@@ -1198,6 +1200,9 @@ pub async fn page_sentences(
                     .shared
                     .then(|| writers.get(&row.since_version).cloned())
                     .flatten(),
+                writer_tool: (row.author == SentenceAuthor::Ai && !row.shared)
+                    .then(|| tools.get(&row.since_version).cloned())
+                    .flatten(),
             }
         })
         .collect();
@@ -1210,6 +1215,47 @@ pub async fn page_sentences(
         proposals: pending,
         last_ai_update,
     })
+}
+
+/// Which AI tool wrote each version that last changed an AI sentence here,
+/// where the tool's name was kept: the name an AI write gave
+/// (`x-agent-name`, in the page's changelog), or for the page's first
+/// version the tool that made it. A version whose writer named no tool is
+/// left out, so the sentence says only that an AI wrote it.
+async fn ai_writer_tools(
+    db: &MemoryDB,
+    page_id: &str,
+    rows: &[SentenceAuthorship],
+) -> Result<HashMap<i64, String>, WenlanError> {
+    let wanted: HashSet<i64> = rows
+        .iter()
+        .filter(|row| row.author == SentenceAuthor::Ai && !row.shared)
+        .map(|row| row.since_version)
+        .collect();
+    let mut tools = HashMap::new();
+    if wanted.is_empty() {
+        return Ok(tools);
+    }
+    let changelog = db.get_page_changelog(page_id).await?;
+    // An unreadable changelog names no tool; it never fails the page.
+    for entry in PageChangelogEntry::parse_changelog(&changelog).unwrap_or_default() {
+        if !wanted.contains(&entry.version) {
+            continue;
+        }
+        if let Some(agent) = entry
+            .agent
+            .map(|agent| agent.trim().to_string())
+            .filter(|agent| !agent.is_empty())
+        {
+            tools.insert(entry.version, agent);
+        }
+    }
+    if wanted.contains(&1) && !tools.contains_key(&1) {
+        if let Some(agent) = db.page_birth_agent(page_id).await? {
+            tools.insert(1, agent);
+        }
+    }
+    Ok(tools)
 }
 
 /// Is this history version an AI write (not the person's, not a mechanical

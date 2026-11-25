@@ -373,6 +373,13 @@ and wait for evidence that people need them.
   text. Such a write is refused and the page stays as it was; damage already
   there is reported each night, and nothing is repaired until you approve it.
   原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 寫入不能把頁弄壞；已經壞的每晚列出來，等你同意才修）
+- **UX-WHO-9** `shipped` A citation's card opens with one line: whether
+  Wenlan checked that the cited source supports the sentence, and who wrote
+  the sentence, naming the AI tool where its name was kept ("Written by
+  Claude Code"). Info's "This sentence" names the tool the same way. Without
+  a kept name it says only that an AI wrote it; no name is guessed. It never
+  claims the sentence is correct.
+  原文：「同意」（2026-11-24 23:38 PT，回覆草圖：點 [1] 的小卡最上面多一行「✓ 出處核對過 · Claude Code 寫的」；資訊面板「這一句」的「AI 寫的」改成寫工具名；舊頁面沒記到工具的還是寫「AI 寫的」）
 
 ## While you chat (in your own AI tool)
 
