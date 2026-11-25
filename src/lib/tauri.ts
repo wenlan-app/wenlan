@@ -1351,6 +1351,7 @@ export interface RulesSyncReport {
   written: string[];
   blocked: string[];
   blocked_codes?: RulesSetupNotice[];
+  notice_codes?: RulesSetupNotice[];
   proposals: PullbackCard[];
   message: string;
 }

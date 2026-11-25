@@ -969,13 +969,18 @@ and wait for evidence that people need them.
   rule text that looks like a credential is refused. A wiki pull request
   carries the bound project's rules and its opted-in team section. Anyone
   with repository read access can read that copy (UX-SKILL-7).
-  Planned for a later PR: a hand edit of a team or project line becomes a
-  proposal to that Space's Write holders. A Write holder decides it; if the
-  editor holds Write, their one confirmation covers the change.
+  A hand edit in a team or project section becomes a proposal to that
+  Space's Write holders. The tool file keeps the edit while it waits for a
+  decision. If the editor holds Write, they can apply it with one
+  confirmation. If a Write holder rejects it, the next sync the person
+  starts restores the approved lines and shows a notice.
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
   原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
-  Tests `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`
-  and `rulesync_checkout_recovers_then_prunes_revoked_skill_before_a_render_failure`.
+  Tests `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`,
+  `rulesync_checkout_recovers_then_prunes_revoked_skill_before_a_render_failure`,
+  `rulesync_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection`,
+  `rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it`,
+  and `rulesync_write_holder_applies_their_team_hand_edit_with_one_confirmation`.
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
   规则; any depth, any app language), each top-level bullet the person wrote is
@@ -999,22 +1004,24 @@ and wait for evidence that people need them.
   Space only; a page in no Space and outside every Space's folder gives rules
   used in every Space. The setting and a No do not silence them;
   `#not-for-ai-tools` on the page does.
-  An edit pulled back from a tool has unknown authorship. A deletion or
-  replacement of an existing line stays with that tool by default. New text
-  and conflicting edits to the same line wait for the person to review them
-  using `wenlan rules review`. The person can accept a change for one tool or
-  share it across tools. Sharing an edit to a uniquely matched overlay rule
-  moves the revised lines into the shared rules and keeps the rest of that
-  overlay local.
+  A hand edit to a tool-only line, or a new line inside that tool's overlay,
+  updates that overlay without asking and appears in rule history. A hand
+  edit to a shared personal line asks once whether to use it in all tools or
+  only that tool. When Wenlan cannot tell where lines came from, new text
+  and competing edits wait for `wenlan rules review`. A deletion or
+  replacement stays with its tool while waiting for the same scope answer.
+  Sharing a matched overlay edit in that review keeps the rest of the
+  overlay local. If one save changes a known overlay and other rules, the
+  tool file keeps the edits and asks the person to sync each layer separately.
+  Team and project edits follow UX-SKILL-9.
   With personal-rule plans, an AI-proposed personal rule or change
   confirmed for its exact text counts as the person's for that version
   (UX-SKILL-14). Existing eligible rules retain their status in the planned
   one-store migration. Page rule editing and migration come in a later PR.
-  Also planned for a later PR: a hand edit to a tool-only line silently
-  updates that tool's overlay; a hand edit to a shared personal line asks
-  once whether to use it in all tools or only that tool. Team and project
-  edits follow UX-SKILL-9.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
+  Tests `rulesync_tagged_overlay_edits_and_insertions_use_history_without_review`,
+  `rulesync_untagged_delivery_keeps_the_legacy_scope_review`, and
+  `rulesync_leaves_a_mixed_overlay_and_shared_save_in_place`.
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
   by you" for a rule the person wrote themselves (UX-SKILL-10). Who wrote a
@@ -1487,8 +1494,7 @@ and wait for evidence that people need them.
   tool when edits compete. The terminal calls that answer `revert` and points
   people who try `revert` on a scope card to `tool-only`. The app previews
   the selected choice and asks for confirmation.
-  The planned hand-edit behavior in UX-SKILL-10 replaces this card for a
-  tool-only line; it still asks once for a shared personal line.
+  Tool-only edits with a known overlay skip this card (UX-SKILL-10).
   Tests `rulesync_conflict_review_refuses_dismiss_and_suggests_revert`,
   `rulesync_scope_review_refuses_revert_and_suggests_tool_only`,
   `rulesync_review_lists_only_applicable_rule_answers`, and

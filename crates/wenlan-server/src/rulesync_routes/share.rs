@@ -1585,25 +1585,33 @@ mod tests {
     fn rulesync_share_reclassifies_accepted_edits_and_binds_the_donor_revision() {
         let f = Fixture::new();
         rule_fixture(&f);
+        // Keep both ends of the code fence inside the delivered overlay.
+        f.write(
+            CODEX_RULES,
+            &format!("{}## Local notes\n", f.text(CODEX_RULES)),
+        );
         adopt(&f);
         let accept = |edited: &str| {
             f.write(CODEX_RULES, edited);
             let report = f.sync_with("");
-            let card = report
+            if let Some(card) = report
                 .proposals
                 .iter()
                 .find(|card| card.files == [CODEX_RULES])
-                .unwrap();
-            f.setup
-                .review_using(
-                    &PullbackDecision {
-                        id: card.id.clone(),
-                        action: PullbackAction::ToolOnly,
-                        file: None,
-                    },
-                    |root, manifest| f.sync_review(root, manifest),
-                )
-                .unwrap();
+            {
+                f.setup
+                    .review_using(
+                        &PullbackDecision {
+                            id: card.id.clone(),
+                            action: PullbackAction::ToolOnly,
+                            file: None,
+                        },
+                        |root, manifest| f.sync_review(root, manifest),
+                    )
+                    .unwrap();
+            } else {
+                assert!(report.blocked.is_empty(), "{report:?}");
+            }
         };
         let old = preview_rules(&f, &[]);
         // The blank line changes the donor's approved revision without
@@ -1625,7 +1633,11 @@ mod tests {
         let edited = f
             .text(CODEX_RULES)
             .replace(REVIEW_RULE, &format!("```text\n{REVIEW_RULE}\n```"));
-        accept(&format!("{edited}Check the final exit status.\n"));
+        accept(&edited);
+        accept(&format!(
+            "{}Check the final exit status.\n",
+            f.text(CODEX_RULES)
+        ));
         let current = preview_rules(&f, &[]);
         assert!(current
             .rule_stays
@@ -1655,7 +1667,7 @@ mod tests {
             &[
                 (CLAUDE_RULES, CLAUDE_RULE),
                 (CODEX_RULES, "Use Codex for local work."),
-                (GEMINI_RULES, COMMON_RULE),
+                (GEMINI_RULES, &format!("{COMMON_RULE}\n")),
             ],
         );
         adopt(&f);

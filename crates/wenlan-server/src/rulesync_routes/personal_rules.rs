@@ -812,7 +812,11 @@ pub(super) fn discard_history_journal(setup: &Setup, manifest: &mut Manifest) ->
     setup.save(manifest)
 }
 
-fn read_version(setup: &Setup, manifest: &Manifest, id: &str) -> Result<PersonalRuleVersion> {
+pub(super) fn read_version(
+    setup: &Setup,
+    manifest: &Manifest,
+    id: &str,
+) -> Result<PersonalRuleVersion> {
     ensure!(
         manifest
             .personal_rule_history
@@ -1065,6 +1069,38 @@ pub(super) fn stage_master_history(
     person_confirmed: bool,
     allow_extension: bool,
 ) -> Result<Option<RulePlanUpdate>> {
+    stage_master_history_with_origin(
+        setup,
+        manifest,
+        next,
+        person_confirmed.into(),
+        allow_extension,
+    )
+}
+
+pub(super) enum MasterChangeOrigin<'a> {
+    Person,
+    ToolEdit(&'a str),
+    Source,
+}
+
+impl From<bool> for MasterChangeOrigin<'_> {
+    fn from(person_confirmed: bool) -> Self {
+        if person_confirmed {
+            Self::Person
+        } else {
+            Self::Source
+        }
+    }
+}
+
+fn stage_master_history_with_origin(
+    setup: &Setup,
+    manifest: &mut Manifest,
+    next: PersonalMaster,
+    origin: MasterChangeOrigin<'_>,
+    allow_extension: bool,
+) -> Result<Option<RulePlanUpdate>> {
     let mut layers = BTreeSet::from([PersonalRuleLayer::Shared]);
     layers.extend(
         manifest
@@ -1110,13 +1146,20 @@ pub(super) fn stage_master_history(
     }
     let changes = preview_personal_rule_edits(&manifest.master, &edits)?;
     let at = chrono::Utc::now().timestamp();
-    let confirmer = person_confirmed.then(|| "person".to_owned());
+    let confirmer = matches!(origin, MasterChangeOrigin::Person).then(|| "person".to_owned());
+    let proposer = match origin {
+        MasterChangeOrigin::ToolEdit(tool) => {
+            let name = personal_target(tool).map_or(tool, |target| target.tool.display_name());
+            Some(format!("{name} hand edit"))
+        }
+        _ => None,
+    };
     let mut origins = manifest.personal_rule_origins.clone();
     for change in &changes {
         let old = origins.iter().find(|record| record.layer == change.layer);
         let origin = PersonalRuleOrigin {
             author: confirmer.clone(),
-            proposer: None,
+            proposer: proposer.clone(),
             confirmer: confirmer.clone(),
             layer: change.layer.clone(),
             time: Some(at),
@@ -1148,7 +1191,7 @@ pub(super) fn stage_master_history(
             cause: "change".into(),
             time: Some(at),
             author: confirmer.clone(),
-            proposer: None,
+            proposer,
             confirmer,
             layers: changes.iter().map(|change| change.layer.clone()).collect(),
         },
@@ -1205,13 +1248,22 @@ pub(super) fn checkpoint_master_change(
     before: Manifest,
     person_confirmed: bool,
 ) -> Result<()> {
+    checkpoint_master_change_with_origin(setup, manifest, before, person_confirmed.into())
+}
+
+pub(super) fn checkpoint_master_change_with_origin(
+    setup: &Setup,
+    manifest: &mut Manifest,
+    before: Manifest,
+    origin: MasterChangeOrigin<'_>,
+) -> Result<()> {
     let mut next = std::mem::replace(manifest, before);
     let allow_extension = !manifest.extension_paths.is_empty();
-    if let Some(update) = stage_master_history(
+    if let Some(update) = stage_master_history_with_origin(
         setup,
         manifest,
         next.master.clone(),
-        person_confirmed,
+        origin,
         allow_extension,
     )? {
         update.commit(&mut next);

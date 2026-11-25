@@ -100,6 +100,7 @@ impl Fixture {
             &server,
             grant.access,
             &pages,
+            &member.id,
         )
         .unwrap();
         let settings = self.root.path().join(name).join(SETTINGS_FILE);
@@ -193,6 +194,40 @@ fn grant(space: &str, access: TeamAccess) -> TeamSpaceAccess {
         access,
         id: None,
     }
+}
+
+#[tokio::test]
+async fn rulesync_team_rejection_reaches_only_the_proposer_without_a_revision_change() {
+    let fixture = Fixture::new().await;
+    let (settings, mirror, _) = fixture.pull("reader", &fixture.reader.1, PROJECT).await;
+    let original = rulesync_team::load_project_layers(&settings)
+        .unwrap()
+        .remove(0);
+    let proposal = fixture.send_reader_proposal(&settings, &mirror, "Await review.\n");
+    fixture
+        .decide(
+            &fixture.writer.0,
+            CredentialKind::BrowserSession,
+            &proposal,
+            false,
+        )
+        .unwrap();
+
+    fixture.pull("reader", &fixture.reader.1, PROJECT).await;
+    let updated = rulesync_team::load_project_layers(&settings)
+        .unwrap()
+        .remove(0);
+    assert_eq!(updated.revision, original.revision);
+    assert_eq!(updated.markdown, original.markdown);
+    assert_eq!(
+        updated.proposal_decisions,
+        BTreeMap::from([(proposal, false)])
+    );
+
+    let (writer, _, _) = fixture.pull("writer", &fixture.writer.1, PROJECT).await;
+    assert!(rulesync_team::load_project_layers(&writer).unwrap()[0]
+        .proposal_decisions
+        .is_empty());
 }
 
 #[tokio::test]
@@ -521,6 +556,7 @@ async fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project()
         &folder,
         TeamAccess::Read,
         &pages,
+        &fixture.reader.0.id,
     )
     .unwrap();
     let manifest = list.rules.as_ref().unwrap();

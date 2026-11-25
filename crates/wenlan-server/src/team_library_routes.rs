@@ -818,6 +818,7 @@ pub(super) async fn legacy_inventory(
             folder,
             wenlan_types::team::TeamAccess::Read,
             &team::SharedFolderPages::default(),
+            &member.id,
         )?;
         list.files
             .extend(reader.legacy_paths(&id).map(str::to_owned));

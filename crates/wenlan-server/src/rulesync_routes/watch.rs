@@ -14,7 +14,7 @@ use fs2::FileExt;
 
 use super::shared_source::SharedSourceBlocked;
 use super::{
-    group_drafts, inspect_rule, needs_conflict_card, record_scope_review, snapshot_has_credentials,
+    group_drafts, inspect_rule, needs_conflict_card, record_rule_edit, snapshot_has_credentials,
     storage::{save_manifest, BlobHash, StoredSetup, MANIFEST},
     Code, Kind, Manifest, Setup,
 };
@@ -215,8 +215,8 @@ impl RulesWatch {
         let mut changed = false;
         for group in group_drafts(&drafts) {
             if !needs_conflict_card(&drafts, &group) {
-                record_scope_review(&mut manifest, &drafts[group[0]])
-                    .context("record scope review")?;
+                record_rule_edit(&setup, &mut manifest, &drafts[group[0]])
+                    .context("record tool rule edit")?;
                 changed = true;
             }
         }
@@ -305,7 +305,7 @@ mod tests {
     fn edit(f: &Fixture) {
         f.write(
             CODEX,
-            &f.text(CODEX).replace("Codex only.", "Edited in Codex."),
+            &f.text(CODEX).replace("Second rule.", "Edited in Codex."),
         );
     }
 
@@ -343,6 +343,28 @@ mod tests {
                 "round did not deliver to {path}"
             );
         }
+    }
+
+    #[test]
+    fn rulesync_watch_follows_a_tagged_overlay_edit_without_opening_a_card() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        f.write(
+            CODEX,
+            &f.text(CODEX)
+                .replace("Codex only.", "Updated Codex overlay."),
+        );
+        let mut watch = RulesWatch::default();
+        round(&mut watch, &f).unwrap();
+        round(&mut watch, &f).unwrap();
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(f.setup.status().unwrap().proposals.is_empty());
+        assert_eq!(
+            manifest.master.overlays["codexcli"],
+            "Updated Codex overlay.\n"
+        );
+        assert_eq!(manifest.personal_rule_history.len(), 2);
+        assert!(!f.text(CLAUDE).contains("Updated Codex overlay."));
     }
 
     #[test]
@@ -790,7 +812,7 @@ mod tests {
         };
         f.write(
             CLAUDE,
-            &f.text(CLAUDE).replace("Claude only.", "Edited in Claude."),
+            &f.text(CLAUDE).replace("One rule.", "Edited in Claude."),
         );
         // A non-regular replacement cannot be inspected as a delivered rule.
         let claude = f.setup.home.join(CLAUDE);

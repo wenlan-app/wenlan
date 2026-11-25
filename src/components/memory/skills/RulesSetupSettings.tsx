@@ -28,7 +28,7 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
   const review = useRulesSetupReview(true);
   const [dialog, setDialog] = useState<RulesAdoptionPlan | "restore" | null>(null);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<{ failed: boolean; message: string; remaining?: (RulesSetupNotice | undefined)[] } | null>(null);
+  const [feedback, setFeedback] = useState<{ failed: boolean; message: string; notices?: (RulesSetupNotice | undefined)[] } | null>(null);
 
   async function preview() {
     setBusy(true);
@@ -48,11 +48,11 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
     setFeedback(null);
     try {
       const result = await action();
-      if (result.blocked.length > 0) {
-        setFeedback({ failed: false, message: t("rulesSetup.setupRemaining"), remaining: result.blocked.map((_, index) => result.blocked_codes?.[index]) });
-      } else {
-        setFeedback({ failed: false, message: success });
-      }
+      setFeedback({
+        failed: false,
+        message: result.blocked.length ? t("rulesSetup.setupRemaining") : success,
+        notices: [...(result.notice_codes ?? []), ...result.blocked.map((_, index) => result.blocked_codes?.[index])],
+      });
     } catch {
       setFeedback({ failed: true, message: t("rulesSetup.changeFailed") });
     } finally {
@@ -113,8 +113,8 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
         {feedback && (
           <div className="rules-setup-feedback" role={feedback.failed ? "alert" : "status"} aria-label={feedback.message}>
             <p>{feedback.message}</p>
-            {feedback.remaining && <ul className="rules-setup-files">
-              {feedback.remaining.map((notice, index) => <li key={index}>{rulesSetupNotice(t, i18n.language, notice)}</li>)}
+            {!!feedback.notices?.length && <ul className="rules-setup-files">
+              {feedback.notices.map((notice, index) => <li key={index}>{rulesSetupNotice(t, i18n.language, notice)}</li>)}
             </ul>}
           </div>
         )}

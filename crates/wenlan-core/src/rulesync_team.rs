@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
@@ -34,6 +34,8 @@ pub struct TeamRuleLayer {
     pub project: Option<TeamRulesProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<TeamProjectSkill>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub proposal_decisions: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -135,10 +137,18 @@ fn load_scope_layers(
     };
     for space in spaces {
         if let Some(hosted) = hosted_rules_in(&file, settings_path, &space)? {
-            let Some(rules) = hosted.head()? else {
+            let history = hosted.history();
+            let Some(rules) = approved_head(&history, &hosted.page_id)? else {
                 continue;
             };
-            let local = hosted.layer(settings_path, &rules)?;
+            let mut local = hosted.layer(settings_path, rules)?;
+            if let Some(owner) = file
+                .members
+                .iter()
+                .find(|member| member.role == TeamRole::Owner && member.is_active())
+            {
+                local.proposal_decisions = decisions_for(&history, &hosted.page_id, &owner.id);
+            }
             layers.insert(local.id.clone(), local);
         }
     }
@@ -469,15 +479,28 @@ pub fn hosted_manifest(
     settings_path: &Path,
     space: &str,
 ) -> Result<Option<TeamRulesManifest>, WenlanError> {
+    hosted_manifest_for(team_path, settings_path, space, None)
+}
+
+fn hosted_manifest_for(
+    team_path: &Path,
+    settings_path: &Path,
+    space: &str,
+    member: Option<&str>,
+) -> Result<Option<TeamRulesManifest>, WenlanError> {
     let Some(hosted) = hosted_rules(team_path, settings_path, space)? else {
         return Ok(None);
     };
-    let Some(rules) = hosted.head()? else {
+    let history = hosted.history();
+    let Some(rules) = approved_head(&history, &hosted.page_id)? else {
         return Ok(None);
     };
     Ok(Some(TeamRulesManifest {
         skills: hosted.skills(settings_path)?,
-        file: hosted.file_path(&rules),
+        file: hosted.file_path(rules),
+        proposal_decisions: member
+            .map(|member| decisions_for(&history, &hosted.page_id, member))
+            .unwrap_or_default(),
         team: hosted.info,
         page_id: hosted.page_id,
         project: hosted.project,
@@ -492,8 +515,9 @@ pub fn hosted_file_list(
     folder: &Path,
     access: TeamAccess,
     pages: &team::SharedFolderPages,
+    member: &str,
 ) -> Result<TeamFileList, WenlanError> {
-    let rules = hosted_manifest(team_path, settings_path, space)?;
+    let rules = hosted_manifest_for(team_path, settings_path, space, Some(member))?;
     let mut files = team::list_folder_files(folder, pages);
     // Space pulls require the manifest's approved path in the file list.
     if let Some(rules) = rules.as_ref().filter(|rules| !files.contains(&rules.file)) {
@@ -582,6 +606,7 @@ fn layer(
         synced_at,
         project,
         skills,
+        proposal_decisions: BTreeMap::new(),
     })
 }
 
@@ -656,14 +681,20 @@ pub(crate) fn pulled_layer(
     }
     check_approved(&rules, id)?;
     check_skills(manifest.project.is_some(), &manifest.skills)?;
-    layer(
+    let mut layer = layer(
         &manifest.team,
         manifest.project.clone(),
         &rules,
         now(),
         manifest.skills.clone(),
-    )
-    .map(Some)
+    )?;
+    if !manifest.proposal_decisions.keys().all(|id| is_sha(id)) {
+        return Err(validation("invalid team Rules proposal decision"));
+    }
+    layer
+        .proposal_decisions
+        .clone_from(&manifest.proposal_decisions);
+    Ok(Some(layer))
 }
 
 /// Queue edits to the last approved layer for the next shared Space push.
@@ -819,6 +850,41 @@ pub(crate) fn approved_proposal(version: &version::PageVersion) -> Option<&str> 
         .get(ACCEPTS)?
         .as_str()
         .filter(|sha| is_sha(sha))
+}
+
+fn decisions_for(
+    history: &version::FolderRead,
+    page: &str,
+    member: &str,
+) -> BTreeMap<String, bool> {
+    let submitted: HashSet<_> = history
+        .proposals
+        .get(page)
+        .into_iter()
+        .flatten()
+        .filter(|proposal| proposal.meta.author.member == member)
+        .map(|proposal| proposal.sha.as_str())
+        .collect();
+    history
+        .decisions
+        .get(page)
+        .into_iter()
+        .flatten()
+        .filter_map(|decision| {
+            let decision = decision.meta.decides.as_ref()?;
+            Some((decision.proposal.as_str(), decision.accepted))
+        })
+        .chain(
+            history
+                .pages
+                .get(page)
+                .into_iter()
+                .flatten()
+                .filter_map(|version| Some((approved_proposal(version)?, true))),
+        )
+        .filter(|(proposal, _)| submitted.contains(proposal))
+        .map(|(proposal, accepted)| (proposal.to_owned(), accepted))
+        .collect()
 }
 
 fn already_decided(history: &version::FolderRead, page: &str, proposal: &str) -> bool {

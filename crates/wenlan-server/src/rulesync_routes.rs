@@ -65,6 +65,7 @@ mod personal_rules;
 mod personal_settings;
 mod restore_rules;
 mod review_list;
+mod rule_line_layers;
 mod settings;
 mod share;
 mod share_rules;
@@ -365,6 +366,13 @@ enum Operation {
     Review(PullbackDecision),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SyncCaller {
+    Person,
+    Agent,
+    Background,
+}
+
 /// A request that names an AI session or an agent. The CLI sends these
 /// headers from `WENLAN_SESSION`/`--session` and `--agent-name`/
 /// `WENLAN_AGENT_NAME`. They are cooperative: a program under the same
@@ -437,7 +445,14 @@ async fn execute(
                 )
             }
             Operation::Restore(options) => setup.restore_with_options(options),
-            Operation::Sync => setup.sync_for_caller(&generated, ai_caller),
+            Operation::Sync => setup.sync_for_caller(
+                &generated,
+                if ai_caller {
+                    SyncCaller::Agent
+                } else {
+                    SyncCaller::Person
+                },
+            ),
             Operation::Review(request) => setup.review(&request, &generated),
         }
     })
@@ -451,7 +466,7 @@ async fn execute(
 pub(crate) fn sync_from_pages(generated: &[String]) -> Result<()> {
     let setup = Setup::system()?;
     if setup.data.join("personal.json").is_file() {
-        let report = setup.sync(generated)?;
+        let report = setup.sync_for_caller(generated, SyncCaller::Background)?;
         if !report.blocked.is_empty() {
             tracing::warn!(
                 files = report.blocked.len(),
@@ -636,7 +651,8 @@ impl Setup {
             && manifest.pending.is_empty()
             && manifest.extension_paths.is_empty()
             && manifest.delivery_issues.is_empty()
-            && manifest.scope_reviews.is_empty();
+            && manifest.scope_reviews.is_empty()
+            && manifest.shared_rule_proposals.is_empty();
         status.in_sync &= !stale_key_receipt;
         status.shared_source_following = manifest.shared_source_following;
         if manifest.adopted
@@ -897,7 +913,7 @@ pub(crate) fn sync_registry_now() -> Result<RulesSyncReport> {
     setup.recover(&root, &mut manifest)?;
     ensure!(manifest.adopted, "finish restoring the local setup first");
     result.message = "Checked installed skills".into();
-    let blocked = setup.pull_back(&root, &mut manifest, &mut result)?;
+    let blocked = setup.pull_back(&root, &mut manifest, &mut result, false)?;
     let session = RenderSession::new(&setup.binary);
     let saved = rulesync_registry::saved_skill_deliveries(&setup.data)?;
     setup.sync_registry(
@@ -980,6 +996,8 @@ enum Kind {
         /// Byte offsets in base at the end of the shared and authored text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         authored_ends: Option<[usize; 2]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        line_layers: Vec<rule_line_layers::Layer>,
     },
     SharedRuleSource,
     Skill,
@@ -1015,6 +1033,7 @@ impl Kind {
                 master.shared_rule_text(target).len(),
                 master.base_rule_text(target, &[]).len(),
             ]),
+            line_layers: Vec::new(),
         }
     }
 }
@@ -1214,6 +1233,8 @@ struct Manifest<Content = Vec<u8>> {
     unmanaged_personal_files: BTreeMap<PathBuf, String>,
     worktree_writes: BTreeMap<PathBuf, PathBuf>,
     scope_reviews: BTreeMap<String, ScopeReview>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    shared_rule_proposals: BTreeMap<PathBuf, rulesync_layers::ProposalReceipts>,
     // The watch can add a new card while keeping earlier cards intact.
     // Old manifests have at most one card per path and need no head entry.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1303,6 +1324,7 @@ impl Manifest {
             unmanaged_personal_files: BTreeMap::new(),
             worktree_writes: BTreeMap::new(),
             scope_reviews: BTreeMap::new(),
+            shared_rule_proposals: BTreeMap::new(),
             scope_review_heads: BTreeMap::new(),
             delivery_issues: BTreeMap::new(),
             dismissed_skill_updates: BTreeMap::new(),
@@ -2683,15 +2705,17 @@ impl Setup {
         let mut result = report("Restored the managed files from the local setup backup");
         let (in_place, kept) = self.restore_key_files(&root, &mut manifest, &mut result)?;
         if !manifest.settings_only {
-            let (written, blocked) = crate::rulesync_checkout::refresh(
+            let checkouts = crate::rulesync_checkout::refresh(
                 self,
                 &RenderSession::new(&self.binary),
                 &wenlan_core::shared_space::settings_path(),
                 None,
                 &[],
+                false,
             );
-            result.written.extend(written);
-            result.extend_blocks(Code::CheckoutNeedsReview, blocked);
+            result.written.extend(checkouts.written);
+            result.blocked.extend(checkouts.blocked);
+            result.blocked_codes.extend(checkouts.blocked_codes);
         }
         self.restore_deliveries(&root, &mut manifest, &mut result, false, &in_place)?;
         for (path, original) in &manifest.backup {
@@ -3298,16 +3322,12 @@ impl Setup {
         self.apply_batch(root, manifest, approved, BatchMode::Continue)
     }
 
-    fn sync(&self, generated: &[String]) -> Result<RulesSyncReport> {
-        self.sync_for_caller(generated, false)
-    }
-
-    fn sync_for_caller(&self, generated: &[String], ai_caller: bool) -> Result<RulesSyncReport> {
+    fn sync_for_caller(&self, generated: &[String], caller: SyncCaller) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let root = self.home_files()?;
         let mut manifest = self.load()?.context("run wenlan rules adopt first")?;
         rulesync_registry::check_skill_format(&self.data)?;
-        let recovered = if ai_caller {
+        let recovered = if caller == SyncCaller::Agent {
             if !manifest.extension_paths.is_empty() || !manifest.pending.is_empty() {
                 return Ok(report(
                     "A tool update was interrupted. Open Wenlan to finish or undo it.",
@@ -3318,7 +3338,7 @@ impl Setup {
         } else {
             self.recover(&root, &mut manifest)?
         };
-        let mut result = self.sync_member(&root, &mut manifest, generated)?;
+        let mut result = self.sync_member(&root, &mut manifest, generated, caller)?;
         if let Some(recovery) = recovered {
             result.message = format!("{}.\n{}", recovery.message, result.message);
             result.written.extend(recovery.written);
@@ -3337,6 +3357,7 @@ impl Setup {
         root: &FileRoot,
         manifest: &mut Manifest,
         generated: &[String],
+        caller: SyncCaller,
     ) -> Result<RulesSyncReport> {
         ensure!(manifest.adopted, "finish restoring the local setup first");
         let mut result = report("Checked the local tool setup");
@@ -3345,28 +3366,67 @@ impl Setup {
         }
         let settings = wenlan_core::shared_space::settings_path();
         let layers = rulesync_team::load_layers(&settings)?;
-        self.capture_team_edits(root, manifest, &settings, &layers)?;
         let session = RenderSession::new(&self.binary);
-        let (checkout_writes, checkout_conflicts) = crate::rulesync_checkout::refresh(
+        let checkouts = crate::rulesync_checkout::refresh(
             self,
             &session,
             &settings,
             Some(&manifest.master),
             generated,
+            caller == SyncCaller::Person,
         );
-        self.sync_deliveries(
+        self.sync_member_files(
             root,
             manifest,
-            generated,
+            (generated, caller),
+            (&settings, &layers),
             (
                 &|target, source| self.render_member_rule(&session, target, source, &layers),
                 &|renderer, skills| self.render_skills(&session, renderer, skills),
             ),
             &mut result,
         )?;
-        result.written.extend(checkout_writes);
-        result.extend_blocks(Code::CheckoutNeedsReview, checkout_conflicts);
+        if !checkouts.notice_codes.is_empty() {
+            rulesync_layers::report_rejection(&mut result);
+        }
+        result.written.extend(checkouts.written);
+        result.blocked.extend(checkouts.blocked);
+        result.blocked_codes.extend(checkouts.blocked_codes);
         Ok(result)
+    }
+
+    fn sync_member_files<R, S>(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        (generated, caller): (&[String], SyncCaller),
+        (settings, layers): (&Path, &[TeamRuleLayer]),
+        renderers: (&R, &S),
+        result: &mut RulesSyncReport,
+    ) -> Result<()>
+    where
+        R: Fn(&str, &str) -> Result<SkillFiles>,
+        S: Fn(&str, &SkillPackages) -> Result<SkillFiles>,
+    {
+        let can_restore = caller == SyncCaller::Person;
+        let rejected = self.capture_team_edits(root, manifest, settings, layers, can_restore)?;
+        let held = BTreeSet::new();
+        self.sync_deliveries(
+            root,
+            manifest,
+            (generated, caller != SyncCaller::Agent),
+            renderers,
+            result,
+            if can_restore { &held } else { &rejected },
+        )?;
+        if result
+            .written
+            .iter()
+            .any(|path| rejected.contains(Path::new(path)))
+        {
+            rulesync_layers::report_rejection(result);
+        }
+        Ok(())
     }
 
     pub(crate) fn checkout(
@@ -3388,7 +3448,8 @@ impl Setup {
         manifest: &mut Manifest,
         settings: &Path,
         layers: &[TeamRuleLayer],
-    ) -> Result<()> {
+        can_restore: bool,
+    ) -> Result<BTreeSet<PathBuf>> {
         let accessible: BTreeMap<_, _> = layers
             .iter()
             .map(|layer| Ok((rulesync_layers::key(layer)?, layer)))
@@ -3451,7 +3512,8 @@ impl Setup {
         }
         self.apply_batch(root, manifest, operations, BatchMode::Continue)?;
 
-        let mut observed_edits = false;
+        let mut changed = false;
+        let mut rejected = BTreeSet::new();
         for path in paths {
             let record = &manifest.delivered[&path];
             let previous = record.observed.as_ref().unwrap_or(&record.delivered);
@@ -3461,49 +3523,63 @@ impl Setup {
             if snapshot_has_credentials(&current) {
                 continue;
             }
-            let (Ok(before), Ok(after)) = (text(previous), text(&current)) else {
+            let (Ok(before), Ok(after)) = (text(&record.delivered), text(&current)) else {
                 continue;
             };
-            if previous != &current && !record.reviewed {
-                let Ok(changes) = rulesync_layers::edits(before, after) else {
+            let Ok(edits) = rulesync_layers::edits(before, after) else {
+                continue;
+            };
+            if edits.is_empty() {
+                changed |= manifest.shared_rule_proposals.remove(&path).is_some();
+                continue;
+            }
+            if edits.iter().any(|(key, _)| !keys.contains(*key)) {
+                continue;
+            }
+            let mut receipts = manifest
+                .shared_rule_proposals
+                .remove(&path)
+                .unwrap_or_default();
+            let old = receipts.clone();
+            let review = rulesync_layers::review_edits(settings, &accessible, edits, &mut receipts);
+            changed |= receipts != old;
+            if !receipts.is_empty() {
+                manifest
+                    .shared_rule_proposals
+                    .insert(path.clone(), receipts);
+            }
+            if let Ok(rulesync_layers::SharedReview::Decided {
+                rejected: was_rejected,
+            }) = review
+            {
+                if was_rejected {
+                    rejected.insert(path.clone());
+                    // A background refresh has no person to receive the notice.
+                    if !can_restore {
+                        continue;
+                    }
+                }
+                // A settled proposal permits replacing only the exact snapshot
+                // we checked. Leave any simultaneous personal edit in place.
+                if rulesync_layers::only_personal(text(previous)?)?
+                    != rulesync_layers::only_personal(after)?
+                {
                     continue;
-                };
-                if !changes.is_empty() {
-                    if changes
-                        .iter()
-                        .any(|(key, _)| !accessible.contains_key(*key))
-                    {
-                        continue;
-                    }
-                    // Leave a mixed or stale edit in place for the member to separate.
-                    if rulesync_layers::only_personal(before)?
-                        != rulesync_layers::only_personal(after)?
-                    {
-                        continue;
-                    }
-                    for (key, change) in changes {
-                        if let Some(layer) = accessible.get(key) {
-                            rulesync_team::queue_proposal(
-                                settings,
-                                &layer.id,
-                                change.revision,
-                                &rulesync_layers::proposed_markdown(layer, &change)?,
-                            )?;
-                        }
-                    }
+                }
+                if previous != &current {
                     manifest
                         .delivered
                         .get_mut(&path)
                         .expect("managed rule")
-                        .observe(current.clone());
-                    observed_edits = true;
+                        .observe(current);
+                    changed = true;
                 }
             }
         }
-        if observed_edits {
+        if changed {
             self.save(manifest)?;
         }
-        Ok(())
+        Ok(rejected)
     }
 
     #[cfg(test)]
@@ -3526,9 +3602,10 @@ impl Setup {
         self.sync_deliveries(
             root,
             manifest,
-            generated,
+            (generated, true),
             (&render_rule, &render_skills),
             &mut result,
+            &BTreeSet::new(),
         )?;
         Ok(result)
     }
@@ -3537,9 +3614,10 @@ impl Setup {
         &self,
         root: &FileRoot,
         manifest: &mut Manifest,
-        generated: &[String],
+        (generated, accept_overlay_edits): (&[String], bool),
         renderers: (&R, &S),
         result: &mut RulesSyncReport,
+        held_for_notice: &BTreeSet<PathBuf>,
     ) -> Result<()>
     where
         R: Fn(&str, &str) -> Result<SkillFiles>,
@@ -3568,7 +3646,8 @@ impl Setup {
                 "\nFound {count} additional command or subagent file(s). Run `wenlan rules adopt` to review and add them."
             ));
         }
-        let blocked = self.pull_back(root, manifest, result)?;
+        let mut blocked = self.pull_back(root, manifest, result, accept_overlay_edits)?;
+        blocked.extend(held_for_notice.iter().cloned());
         self.deliver_locked(root, manifest, generated, renderers, &blocked, result)
     }
 
@@ -3583,9 +3662,10 @@ impl Setup {
         render_skills: impl Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     ) -> Result<()> {
         let mut result = report("Checked the local tool setup");
-        let blocked = self.pull_back(root, manifest, &mut result)?;
+        let blocked = self.pull_back(root, manifest, &mut result, true)?;
         if !blocked.is_empty()
             || !result.proposals.is_empty()
+            || !manifest.shared_rule_proposals.is_empty()
             || rulesync_registry::has_pending_skill_reviews(&self.data)?
             || Self::has_settings_receipt_mismatch(root, manifest)?
             || crate::rulesync_settings_routes::has_settings_review(self, root)?
@@ -3749,6 +3829,7 @@ impl Setup {
         root: &FileRoot,
         manifest: &mut Manifest,
         result: &mut RulesSyncReport,
+        accept_overlay_edits: bool,
     ) -> Result<BTreeSet<PathBuf>> {
         let skills = self.managed_skills(manifest);
         let mut unmanaged = manifest.unmanaged_skills.clone();
@@ -3802,7 +3883,17 @@ impl Setup {
             .iter()
             .filter(|draft| !cards.iter().any(|card| card.paths.contains(&draft.path)))
         {
-            record_scope_review(manifest, draft)?;
+            if matches!(draft.scope, DraftScope::Overlay(_)) && !accept_overlay_edits {
+                blocked.insert(
+                    draft.path.clone(),
+                    (
+                        Code::ChangedSinceDelivery,
+                        "Sync the tool edit from Wenlan to save it.".into(),
+                    ),
+                );
+                continue;
+            }
+            record_rule_edit(self, manifest, draft)?;
             changed = true;
         }
         if changed {
@@ -4462,7 +4553,7 @@ impl Setup {
 
     fn review(&self, request: &PullbackDecision, generated: &[String]) -> Result<RulesSyncReport> {
         self.review_using(request, |root, manifest| {
-            self.sync_member(root, manifest, generated)
+            self.sync_member(root, manifest, generated, SyncCaller::Background)
         })
     }
 
@@ -5739,7 +5830,7 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
         return Ok(());
     }
     if let Some(kind) = operation.kind {
-        let (kind, delivered) = match kind {
+        let (mut kind, delivered) = match kind {
             Kind::Settings => {
                 settings::settle(manifest, &operation.path);
                 (Kind::Settings, operation.desired)
@@ -5757,6 +5848,8 @@ fn settle(manifest: &mut Manifest, operation: Pending) -> Result<()> {
             Kind::SettingsParent => return Ok(()),
             kind => (kind, operation.desired),
         };
+        rule_line_layers::record(&mut kind, &delivered);
+        manifest.shared_rule_proposals.remove(&operation.path);
         let rule_revision =
             matches!(kind, Kind::Rule { .. }).then(|| uuid::Uuid::new_v4().simple().to_string());
         manifest.delivered.insert(
@@ -5811,7 +5904,7 @@ fn is_rule_or_skill(kind: &Kind) -> bool {
     )
 }
 
-fn snapshot_has_credentials(snapshot: &Snapshot) -> bool {
+pub(crate) fn snapshot_has_credentials(snapshot: &Snapshot) -> bool {
     matches!(snapshot, Snapshot::File { bytes, .. } if contains_credential_bytes(bytes))
 }
 
@@ -5862,6 +5955,7 @@ struct Draft {
 
 enum DraftScope {
     Rule(Vec<LineChange>),
+    Overlay(String),
     PersonalFile(personal_files::Scope),
 }
 
@@ -6103,9 +6197,16 @@ fn inspect_rule(
         blocked.insert(path.to_owned(), (Code::RuleEncoding, "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into()));
         return Ok(None);
     };
-    if !rulesync_layers::edits(before, after).is_ok_and(|edits| edits.is_empty()) {
-        blocked.insert(path.to_owned(), (Code::SharedRuleChanged, "A shared section or its markers changed. Your edits are still in this file. If you no longer have access, copy the edits you want to keep outside the shared section, remove the section, and sync again. Otherwise restore it from the shared Rules page.".into()));
-        return Ok(None);
+    match rulesync_layers::edits(before, after) {
+        Ok(edits) if edits.is_empty() => (),
+        Ok(_) => {
+            blocked.insert(path.to_owned(), (Code::SharedRulePending, "A shared rule edit is still in this file while Wenlan checks its proposal. If you no longer have access, copy any edits you want to keep outside the shared section and sync again.".into()));
+            return Ok(None);
+        }
+        Err(_) => {
+            blocked.insert(path.to_owned(), (Code::SharedRuleChanged, "The shared section markers changed. Your edits are still in this file. Restore the markers and sync again.".into()));
+            return Ok(None);
+        }
     }
     let before = rulesync_layers::only_personal(before)?;
     let after = rulesync_layers::only_personal(after)?;
@@ -6120,12 +6221,21 @@ fn inspect_rule(
         blocked.insert(path.to_owned(), (Code::MetadataChanged, "The file metadata changed without a rules edit. Check its permissions and sync again.".into()));
         return Ok(None);
     }
-    let needs_review = delivery.reviewed || changes.iter().any(|change| change.removed.is_empty());
+    let scope = match rule_line_layers::overlay_edit(delivery, &before, &after, &changes) {
+        Some(rule_line_layers::OverlayEdit::ToolOnly(overlay)) => DraftScope::Overlay(overlay),
+        Some(rule_line_layers::OverlayEdit::Mixed) => {
+            blocked.insert(path.to_owned(), (Code::MixedRuleLayers, "This save changes both tool-only and other rules. Your edits are still in the file. Sync each layer separately to keep tool-only rules private.".into()));
+            return Ok(None);
+        }
+        None => DraftScope::Rule(changes),
+    };
+    let needs_review = matches!(&scope, DraftScope::Rule(changes)
+        if delivery.reviewed || changes.iter().any(|change| change.removed.is_empty()));
     let (_, _, diff) = describe_change(&path.display().to_string(), &before, &after);
     Ok(Some(Draft {
         path: path.to_owned(),
         current,
-        scope: DraftScope::Rule(changes),
+        scope,
         diff,
         diff_codes: Vec::new(),
         needs_review,
@@ -6227,6 +6337,48 @@ fn record_scope_review(manifest: &mut Manifest, draft: &Draft) -> Result<()> {
             },
         });
     Ok(())
+}
+
+fn record_rule_edit(setup: &Setup, manifest: &mut Manifest, draft: &Draft) -> Result<()> {
+    let DraftScope::Overlay(overlay) = &draft.scope else {
+        return record_scope_review(manifest, draft);
+    };
+    let Kind::Rule {
+        target,
+        base,
+        authored_ends: Some([shared, authored]),
+        ..
+    } = &manifest.delivered[&draft.path].kind
+    else {
+        unreachable!("an overlay edit has tagged personal layers");
+    };
+    let target = target.clone();
+    let previous_overlay = rule_line_layers::overlay_source(base, *shared, *authored)
+        .context("invalid tool overlay boundary")?;
+    let current_overlay = manifest
+        .master
+        .overlays
+        .get(&target)
+        .map_or("", String::as_str);
+    let overlay = merge_rule_text(previous_overlay, overlay, current_overlay)?;
+    let authored =
+        restore_rules::AuthoredRules::for_tool_edit(manifest, &draft.path, &draft.current)?;
+    let before = manifest.clone();
+    manifest.master.overlays.insert(target.clone(), overlay);
+    manifest
+        .delivered
+        .get_mut(&draft.path)
+        .expect("managed rule")
+        .observe(draft.current.clone());
+    if let Some(authored) = authored {
+        manifest.authored_rules.insert(draft.path.clone(), authored);
+    }
+    personal_rules::checkpoint_master_change_with_origin(
+        setup,
+        manifest,
+        before,
+        personal_rules::MasterChangeOrigin::ToolEdit(&target),
+    )
 }
 
 /// Fold an older tool-only override into its overlay only when doing so
@@ -6332,6 +6484,7 @@ pub(crate) fn report(message: &str) -> RulesSyncReport {
         written: Vec::new(),
         blocked: Vec::new(),
         blocked_codes: Vec::new(),
+        notice_codes: Vec::new(),
         kept_in_place: Vec::new(),
         proposals: Vec::new(),
         message: message.into(),
@@ -8353,13 +8506,154 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_tagged_overlay_edits_and_insertions_use_history_without_review() {
+        use wenlan_types::personal_rules::PersonalRuleLayer;
+
+        let f = Fixture::new();
+        f.write(
+            CODEX,
+            &format!("{SHARED}Codex first.\nCodex middle.\nCodex last.\n"),
+        );
+        f.adopt_from_plan();
+        let history_len = f.setup.load().unwrap().unwrap().personal_rule_history.len();
+        for (old, edit, text) in [
+            ("Codex first.", "Codex revised.", "Codex revised."),
+            (
+                "Codex middle.\n",
+                "Codex middle.\nNew overlay line.\n",
+                "New overlay line.",
+            ),
+        ] {
+            f.write(CODEX, &f.text(CODEX).replace(old, edit));
+            assert!(f.setup.status().unwrap().proposals.is_empty());
+            let result = f.sync_with("");
+            assert!(
+                result.proposals.is_empty() && result.blocked.is_empty(),
+                "{result:?}"
+            );
+            assert!(f.text(CODEX).contains(text));
+            assert!(!f.text(CLAUDE).contains(text));
+        }
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert_eq!(
+            manifest.master.overlays["codexcli"],
+            "Codex revised.\nCodex middle.\nNew overlay line.\nCodex last.\n"
+        );
+        assert_eq!(manifest.master.shared, SHARED);
+        let versions: Vec<_> = manifest.personal_rule_history[history_len..]
+            .iter()
+            .map(|id| personal_rules::read_version(&f.setup, &manifest, id).unwrap())
+            .filter(|version| version.summary.cause != "baseline")
+            .collect();
+        assert_eq!(versions.len(), 2);
+        for version in versions {
+            assert_eq!(version.summary.proposer.as_deref(), Some("Codex hand edit"));
+            assert_eq!(version.summary.confirmer, None);
+            assert_eq!(
+                version.summary.layers,
+                [PersonalRuleLayer::Tool {
+                    tool: "codexcli".into()
+                }]
+            );
+        }
+        assert!(f.sync_with("").proposals.is_empty());
+        assert_eq!(
+            f.setup.load().unwrap().unwrap().personal_rule_history,
+            manifest.personal_rule_history
+        );
+    }
+
+    fn forget_layer_tags(f: &Fixture, path: &str) {
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let Kind::Rule { line_layers, .. } =
+            &mut manifest.delivered.get_mut(Path::new(path)).unwrap().kind
+        else {
+            panic!("not an enrolled rule");
+        };
+        assert!(!line_layers.is_empty());
+        line_layers.clear();
+        f.setup.save(&manifest).unwrap();
+    }
+
+    #[test]
+    fn rulesync_agent_sync_does_not_apply_an_overlay_edit() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let before = f.setup.load().unwrap().unwrap();
+        let edited = f.text(CODEX).replace("Codex only.", "Local file edit.");
+        f.write(CODEX, &edited);
+        let report = f.setup.sync_for_caller(&[], SyncCaller::Agent).unwrap();
+        let after = f.setup.load().unwrap().unwrap();
+        assert_eq!(after.master.overlays, before.master.overlays);
+        assert_eq!(after.personal_rule_history, before.personal_rule_history);
+        assert_eq!(f.text(CODEX), edited);
+        assert!(report
+            .blocked_codes
+            .iter()
+            .any(|notice| notice.code == Code::ChangedSinceDelivery));
+        assert!(f.sync_with("").proposals.is_empty());
+        assert_eq!(
+            f.setup.load().unwrap().unwrap().master.overlays["codexcli"],
+            "Local file edit.\n"
+        );
+    }
+
+    #[test]
+    fn rulesync_untagged_delivery_keeps_the_legacy_scope_review() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        forget_layer_tags(&f, CODEX);
+        f.write(
+            CODEX,
+            &f.text(CODEX).replace("Codex only.", "Legacy local change."),
+        );
+        let pending = f.sync_with("");
+        assert_eq!(pending.proposals.len(), 1, "{pending:?}");
+        assert_eq!(pending.proposals[0].kind, PullbackKind::Scope);
+        assert_eq!(pending.proposals[0].files, [CODEX]);
+        assert!(f.text(CODEX).contains("Legacy local change."));
+        assert!(!f.text(CLAUDE).contains("Legacy local change."));
+    }
+
+    #[test]
+    fn rulesync_leaves_a_mixed_overlay_and_shared_save_in_place() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let state = f.setup.load().unwrap().unwrap();
+        let edited = f
+            .text(CODEX)
+            .replace("One rule.", "New shared advice.")
+            .replace("Codex only.", "Private Codex advice.");
+        f.write(CODEX, &edited);
+
+        let result = f.sync_with("");
+        assert!(result.proposals.is_empty(), "{result:?}");
+        assert_eq!(result.blocked_codes.len(), 1);
+        assert_eq!(result.blocked_codes[0].code, Code::MixedRuleLayers);
+        assert!(result
+            .blocked
+            .iter()
+            .any(|text| text.contains("Sync each layer separately")));
+        assert_eq!(f.text(CODEX), edited);
+        assert!(!f.text(CLAUDE).contains("Private Codex advice."));
+        let after = f.setup.load().unwrap().unwrap();
+        assert_eq!(after.master.shared, state.master.shared);
+        assert_eq!(after.master.overlays, state.master.overlays);
+        assert_eq!(after.personal_rule_history, state.personal_rule_history);
+    }
+
+    #[test]
     fn rulesync_scope_review_refuses_revert_and_suggests_tool_only() {
         let f = Fixture::new();
         f.adopt_from_plan();
-        let changed = f.text(CODEX).replace("Codex only.", "Edited in Codex.");
+        let changed = f.text(CODEX).replace("Second rule.", "Edited in Codex.");
         f.write(CODEX, &changed);
         let card = pullback_file(&f.sync_with(""), CODEX);
         assert_eq!(card.kind, PullbackKind::Scope);
+        assert_eq!(
+            f.sync_with("").proposals.as_slice(),
+            std::slice::from_ref(&card)
+        );
         let decision = PullbackDecision {
             id: card.id,
             action: PullbackAction::Revert,
@@ -8461,9 +8755,11 @@ mod tests {
             .text(CODEX)
             .replace("Codex only.", "Reviewed local rewrite.");
         f.write(CODEX, &edited);
-        let card = pullback_file(&f.sync_with(""), CODEX);
-        review_file(&f, &card, PullbackAction::ToolOnly, None).unwrap();
-        assert!(f.sync_with("").proposals.is_empty());
+        let sync = f.sync_with("");
+        assert!(
+            sync.proposals.is_empty() && sync.blocked.is_empty(),
+            "{sync:?}"
+        );
 
         let restored = f.setup.restore().unwrap();
         assert_block(&restored, "original rule", Code::RestoreBlocked);
@@ -8855,7 +9151,7 @@ mod tests {
             BTreeSet::from([command.into()])
         );
         assert!(!interrupted.pending.is_empty());
-        let sync = f.setup.sync(&[]).unwrap();
+        let sync = f.setup.sync_for_caller(&[], SyncCaller::Person).unwrap();
         assert!(
             sync.message.contains("Earlier tools are still managed"),
             "{sync:?}"
@@ -8908,7 +9204,7 @@ mod tests {
         assert!(manifest.adopted && manifest.extension_paths.contains(command));
         drop(lock);
 
-        let recovered = f.setup.sync(&[]).unwrap();
+        let recovered = f.setup.sync_for_caller(&[], SyncCaller::Person).unwrap();
         assert!(
             recovered
                 .message
@@ -8943,7 +9239,7 @@ mod tests {
         }));
         f.write(command, "Edited while Wenlan was stopped.\n");
 
-        let recovered = f.setup.sync(&[]).unwrap();
+        let recovered = f.setup.sync_for_caller(&[], SyncCaller::Person).unwrap();
         assert!(
             !recovered
                 .blocked
@@ -12313,7 +12609,10 @@ mod tests {
         let bytes = serde_json::to_vec(&journal).unwrap();
         fs::write(&path, &bytes).unwrap();
 
-        for result in [f.setup.sync(&[]), f.setup.restore()] {
+        for result in [
+            f.setup.sync_for_caller(&[], SyncCaller::Person),
+            f.setup.restore(),
+        ] {
             let message = format!("{:#}", result.unwrap_err());
             assert!(message.contains("wenlan rules restore"), "{message}");
             assert!(message.contains("adopt again"), "{message}");
@@ -12563,6 +12862,7 @@ mod tests {
         fs::create_dir_all(f.setup.home.join(edited).parent().unwrap()).unwrap();
         f.write(edited, "OpenCode only.\nKeep this local.\n");
         f.adopt_from_plan();
+        forget_layer_tags(&f, edited);
         f.write(
             edited,
             &f.text(edited).replace("OpenCode only.", "Now shared."),
@@ -12719,6 +13019,117 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection() {
+        team_hand_edit(false);
+    }
+
+    #[test]
+    fn rulesync_write_holder_applies_their_team_hand_edit_with_one_confirmation() {
+        team_hand_edit(true);
+    }
+
+    fn team_hand_edit(accept: bool) {
+        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section, APPROVED};
+        use wenlan_core::team::{self, CredentialKind};
+
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, owner, writer) = hosted_fixture(&f.setup.data);
+        let sync = |caller| {
+            let root = f.setup.home_files().unwrap();
+            let _lock = f.setup.lock().unwrap();
+            let mut manifest = f.setup.load().unwrap().unwrap();
+            let layers = rulesync_team::load_layers(&settings).unwrap();
+            let section = render_fixture_section(&layers[0]);
+            let mut result = report("Checked the local tool setup");
+            f.setup
+                .sync_member_files(
+                    &root,
+                    &mut manifest,
+                    (&[], caller),
+                    (&settings, &layers),
+                    (
+                        &|target, source| {
+                            fixture_rule_renderer(target, &format!("{section}{source}"))
+                        },
+                        &fixture_skill_renderer,
+                    ),
+                    &mut result,
+                )
+                .unwrap();
+            result
+        };
+        assert!(sync(SyncCaller::Person).blocked.is_empty());
+        let approved = f.text(CODEX);
+        let edited = approved.replace(APPROVED, "Use the revised checklist.\n");
+        assert_ne!(approved, edited);
+        f.write(CODEX, &edited);
+        let members = settings.with_file_name(team::TEAM_FILE);
+        let pending = || {
+            rulesync_team::pending_proposals(
+                &members,
+                &settings,
+                rulesync_team::SPACE,
+                &writer.id,
+                CredentialKind::BrowserSession,
+            )
+            .unwrap()
+        };
+        for _ in 0..2 {
+            let report = sync(SyncCaller::Person);
+            assert_eq!(f.text(CODEX), edited);
+            assert!(!f.text(CLAUDE).contains("revised checklist"));
+            assert!(report.proposals.is_empty(), "{report:?}");
+            assert!(
+                report
+                    .blocked_codes
+                    .iter()
+                    .any(|notice| notice.code == Code::SharedRulePending),
+                "{report:?}"
+            );
+            assert_eq!(pending().len(), 1);
+        }
+        let [proposal]: [_; 1] = pending().try_into().unwrap();
+        assert_eq!(proposal.markdown, "Use the revised checklist.\n");
+        if accept {
+            assert_eq!(proposal.author, owner.id);
+            rulesync_team::decide_local_proposal(&settings, &proposal.id, true).unwrap();
+        } else {
+            rulesync_team::decide_proposal(
+                &members,
+                &settings,
+                rulesync_team::SPACE,
+                &writer.id,
+                CredentialKind::BrowserSession,
+                &proposal.id,
+                false,
+            )
+            .unwrap();
+        }
+        assert!(pending().is_empty());
+        if !accept {
+            assert!(sync(SyncCaller::Background).notice_codes.is_empty());
+            assert_eq!(f.text(CODEX), edited);
+        }
+        let report = sync(SyncCaller::Person);
+        assert!(
+            report.proposals.is_empty() && report.blocked.is_empty(),
+            "{report:?}"
+        );
+        if accept {
+            assert!(report.notice_codes.is_empty());
+            assert!(f.text(CODEX).contains("Use the revised checklist."));
+            assert!(f.text(CLAUDE).contains("Use the revised checklist."));
+            assert!(rulesync_team::decide_local_proposal(&settings, &proposal.id, true).is_err());
+        } else {
+            assert_eq!(f.text(CODEX), approved);
+            assert_eq!(report.notice_codes, [Code::SharedRuleRejected.into()]);
+            assert!(report.message.contains("restored the approved rules"));
+            assert!(sync(SyncCaller::Person).notice_codes.is_empty());
+        }
+    }
+
+    #[test]
     fn rulesync_revokes_only_the_inaccessible_section_before_personal_review() {
         let f = Fixture::new();
         f.adopt_from_plan();
@@ -12730,6 +13141,7 @@ mod tests {
             synced_at: String::new(),
             project: None,
             skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
         };
         let section = |key: &str, wording: &str| {
             format!(
@@ -12758,6 +13170,7 @@ mod tests {
                     &mut manifest,
                     &f.setup.data.join("settings.toml"),
                     &[retained],
+                    true,
                 )
                 .unwrap();
         }
@@ -12797,6 +13210,7 @@ mod tests {
                     &mut manifest,
                     &f.setup.data.join("settings.toml"),
                     &[],
+                    true,
                 )
                 .unwrap();
         }
@@ -12845,6 +13259,7 @@ mod tests {
                     &mut manifest,
                     &f.setup.data.join("settings.toml"),
                     &[],
+                    true,
                 )
                 .unwrap();
         }
@@ -13993,7 +14408,7 @@ mod tests {
             allow_link: false,
         });
         f.setup.save(&manifest).unwrap();
-        let receipt = f.setup.sync_for_caller(&[], true).unwrap();
+        let receipt = f.setup.sync_for_caller(&[], SyncCaller::Agent).unwrap();
         assert!(receipt.message.contains("interrupted"), "{receipt:?}");
         assert_eq!(f.setup.load().unwrap().unwrap().pending.len(), 1);
     }
@@ -14024,6 +14439,7 @@ mod tests {
                     source: String::new(),
                     base: String::new(),
                     authored_ends: None,
+                    line_layers: Vec::new(),
                 }),
                 allow_link: false,
             });
@@ -14045,7 +14461,7 @@ mod tests {
         assert_eq!(f.text(gemini), "Adopted rules.\n");
         f.write(gemini, "Original overlay.\n");
         drop(_lock);
-        let ai_receipt = f.setup.sync_for_caller(&[], true).unwrap();
+        let ai_receipt = f.setup.sync_for_caller(&[], SyncCaller::Agent).unwrap();
         assert!(ai_receipt.message.contains("interrupted"), "{ai_receipt:?}");
         assert_eq!(f.text(cursor), "Adopted rules.\n");
         let _lock = f.setup.lock().unwrap();

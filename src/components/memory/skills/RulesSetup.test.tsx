@@ -342,6 +342,21 @@ describe("UX-SKILL-23: localized setup messages and labels without paths or file
     expect(text).not.toContain(raw);
   };
 
+  it("UX-SKILL-9: shows a restored shared rule as sync feedback", async () => {
+    await i18n.changeLanguage("zh-Hant");
+    mock.mockImplementation(async (command) => command === "rules_setup_status" ? status
+      : command === "rules_setup_review_list" ? queue(status) : {
+        ...receipt,
+        message: raw,
+        notice_codes: [{ code: "shared_rule_rejected" }],
+      });
+    mount(<RulesSetupSettings />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: i18n.t("rulesSetup.sync") }));
+    const feedback = await screen.findByRole("status", { name: i18n.t("rulesSetup.syncDone") });
+    expect(within(feedback).getByText(messages.shared_rule_rejected)).toBeVisible();
+    assertSafe(feedback.textContent ?? "");
+  });
+
   it("UX-SKILL-23: renders every code through Traditional Chinese feedback", async () => {
     await i18n.changeLanguage("zh-Hant");
     const codes = Object.keys(messages) as (keyof typeof messages)[];

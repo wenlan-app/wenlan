@@ -20,7 +20,8 @@ use crate::rulesync_apply::{ApplyOptions, ApplyOutcome, FileRoot, Snapshot};
 use crate::rulesync_layers;
 use crate::rulesync_routes::{
     prepare_checkout_displaced, read_stage, rendered_skill_with_assets, report,
-    require_local_person, text, with_bytes, write_skill_files, Setup, UnsupportedRulesyncState,
+    require_local_person, snapshot_has_credentials, text, with_bytes, write_skill_files, Setup,
+    UnsupportedRulesyncState,
 };
 use crate::state::SharedState;
 
@@ -52,6 +53,8 @@ struct Checkout {
     skills: BTreeMap<PathBuf, SkillDelivery>,
     pending: Option<PendingDelivery>,
     unresolved: Vec<PendingDelivery>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    shared_rule_proposals: BTreeMap<PathBuf, rulesync_layers::ProposalReceipts>,
 }
 
 const CHECKOUT_FORMAT: u32 = 1;
@@ -144,6 +147,9 @@ impl Checkout {
                 );
             }
         } else {
+            if pending.rules_baseline.is_none() {
+                self.shared_rule_proposals.remove(&pending.path);
+            }
             self.files
                 .insert(pending.path, pending.rules_baseline.unwrap_or(snapshot));
         }
@@ -276,6 +282,7 @@ pub(crate) fn open(
         settings: shared_space::settings_path(),
         root: &root,
         directory: &directory,
+        can_restore_rejection: true,
     };
     let result = job.run(&state_path, state, checkout, Some(master), generated)?;
     Ok(CheckoutRulesReceipt {
@@ -290,22 +297,31 @@ pub(crate) fn refresh(
     settings: &Path,
     master: Option<&PersonalMaster>,
     generated: &[String],
-) -> (Vec<String>, Vec<String>) {
+    can_restore_rejection: bool,
+) -> RulesSyncReport {
     let result = (|| {
         let entries = match std::fs::read_dir(setup.data.join("checkouts")) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok((Vec::new(), Vec::new()))
+                return Ok(report("Checked checkout rules"))
             }
             Err(error) => return Err(error.into()),
         };
-        refresh_entries(setup, session, settings, master, generated, entries)
+        refresh_entries(
+            setup,
+            session,
+            settings,
+            master,
+            generated,
+            can_restore_rejection,
+            entries,
+        )
     })();
     match result {
         Ok(receipt) => receipt,
         Err(error) => {
             tracing::warn!(%error, "[rules setup] checkout receipts could not be read");
-            (Vec::new(), Vec::new())
+            report("Checked checkout rules")
         }
     }
 }
@@ -316,67 +332,74 @@ fn refresh_entries(
     settings: &Path,
     master: Option<&PersonalMaster>,
     generated: &[String],
+    can_restore_rejection: bool,
     entries: impl IntoIterator<Item = std::io::Result<std::fs::DirEntry>>,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<RulesSyncReport> {
     let root = setup.data_files()?.guard_source_aliases();
-    let mut written = Vec::new();
-    let mut blocked = Vec::new();
+    let mut result = report("Checked checkout rules");
     for entry in entries {
-        let refresh_entry =
-            || -> Result<()> {
-                let entry = entry?;
-                if !entry.file_type()?.is_file() {
-                    return Ok(());
-                }
-                let leaf = PathBuf::from(entry.file_name());
-                let Some(key) = leaf.file_stem().and_then(|key| key.to_str()).filter(|key| {
-                    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
-                }) else {
-                    return Ok(());
-                };
-                if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                    return Ok(());
-                }
-                let state_path = Path::new("checkouts").join(&leaf);
-                let read_context = || format!("read checkout receipt {}", state_path.display());
-                let state = root.read(&state_path, false).with_context(read_context)?;
-                let Snapshot::File { bytes, .. } = &state else {
-                    return Ok(());
-                };
-                let checkout = read_checkout(bytes).with_context(read_context)?;
-                let directory = PathBuf::from(format!("checkouts/{key}/rules"));
-                let job = Job {
-                    setup,
-                    session,
-                    settings: settings.to_path_buf(),
-                    root: &root,
-                    directory: &directory,
-                };
-                let checkout_dir = setup.data.join(&directory);
-                let problems = match job.run(&state_path, state, checkout, master, generated) {
-                    Ok(report) => {
-                        written.extend(
-                            report
-                                .written
-                                .into_iter()
-                                .map(|path| checkout_dir.join(path).display().to_string()),
-                        );
-                        report.blocked
-                    }
-                    Err(error) => vec![format!("{error:#}")],
-                };
-                for problem in problems {
-                    let problem = format!("Checkout {} — {problem}", checkout_dir.display());
-                    tracing::warn!(%problem, "[rules setup] checkout delivery needs attention");
-                    blocked.push(problem);
-                }
-                Ok(())
+        let refresh_entry = || -> Result<()> {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                return Ok(());
+            }
+            let leaf = PathBuf::from(entry.file_name());
+            let Some(key) = leaf
+                .file_stem()
+                .and_then(|key| key.to_str())
+                .filter(|key| key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            else {
+                return Ok(());
             };
+            if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                return Ok(());
+            }
+            let state_path = Path::new("checkouts").join(&leaf);
+            let read_context = || format!("read checkout receipt {}", state_path.display());
+            let state = root.read(&state_path, false).with_context(read_context)?;
+            let Snapshot::File { bytes, .. } = &state else {
+                return Ok(());
+            };
+            let checkout = read_checkout(bytes).with_context(read_context)?;
+            let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+            let job = Job {
+                setup,
+                session,
+                settings: settings.to_path_buf(),
+                root: &root,
+                directory: &directory,
+                can_restore_rejection,
+            };
+            let checkout_dir = setup.data.join(&directory);
+            match job.run(&state_path, state, checkout, master, generated) {
+                Ok(report) => {
+                    result.written.extend(
+                        report
+                            .written
+                            .into_iter()
+                            .map(|path| checkout_dir.join(path).display().to_string()),
+                    );
+                    for (problem, code) in report.blocked.into_iter().zip(report.blocked_codes) {
+                        let problem = format!("Checkout {} — {problem}", checkout_dir.display());
+                        tracing::warn!(%problem, "[rules setup] checkout delivery needs attention");
+                        result.block(code, problem);
+                    }
+                    if !report.notice_codes.is_empty() {
+                        rulesync_layers::report_rejection(&mut result);
+                    }
+                }
+                Err(error) => result.block(
+                    Code::CheckoutNeedsReview,
+                    format!("Checkout {} — {error:#}", checkout_dir.display()),
+                ),
+            }
+            Ok(())
+        };
         if let Err(error) = refresh_entry() {
             tracing::warn!(error = %format_args!("{error:#}"), "[rules setup] checkout rules refresh failed");
         }
     }
-    Ok((written, blocked))
+    Ok(result)
 }
 
 struct Job<'a> {
@@ -385,6 +408,7 @@ struct Job<'a> {
     settings: PathBuf,
     root: &'a FileRoot,
     directory: &'a Path,
+    can_restore_rejection: bool,
 }
 
 fn report_blocks(result: &mut RulesSyncReport, blocked: BTreeMap<PathBuf, String>) {
@@ -401,9 +425,31 @@ impl Job<'_> {
         &self,
         state_path: &Path,
         state: Snapshot,
-        mut checkout: Checkout,
+        checkout: Checkout,
         master: Option<&PersonalMaster>,
         generated: &[String],
+    ) -> Result<RulesSyncReport> {
+        self.run_using(
+            state_path,
+            state,
+            checkout,
+            master,
+            |project, teams, skills, master| self.render(project, teams, skills, master, generated),
+        )
+    }
+
+    fn run_using(
+        &self,
+        state_path: &Path,
+        state: Snapshot,
+        mut checkout: Checkout,
+        master: Option<&PersonalMaster>,
+        render: impl FnOnce(
+            &[TeamRuleLayer],
+            &[TeamRuleLayer],
+            &ProjectSkills,
+            &PersonalMaster,
+        ) -> Result<RenderedCheckout>,
     ) -> Result<RulesSyncReport> {
         let repo_id = master
             .and_then(|_| repo_wiki::origin_url(&checkout.repo))
@@ -526,11 +572,21 @@ impl Job<'_> {
             return Ok(result);
         };
         let mut observed = BTreeMap::new();
+        let mut rejected = BTreeSet::new();
+        let mut pending_review = BTreeSet::new();
         for (path, delivered) in &checkout.files {
             if blocked.contains_key(path) {
                 continue;
             }
             let current = self.root.read(&self.directory.join(path), false)?;
+            if snapshot_has_credentials(&current) {
+                blocked.insert(
+                    path.clone(),
+                    "The checkout rules may contain a credential. The file was left in place."
+                        .into(),
+                );
+                continue;
+            }
             if current != *delivered {
                 let before = text(delivered)?;
                 let after = text(&current)?;
@@ -540,27 +596,49 @@ impl Job<'_> {
                             && rulesync_layers::only_personal(before)?
                                 == rulesync_layers::only_personal(after)? =>
                     {
-                        for (key, edit) in edits {
-                            let layer = authorized
-                                .get(key)
-                                .context("shared layer no longer accessible")?;
-                            rulesync_team::queue_proposal(
-                                &self.settings,
-                                &layer.id,
-                                edit.revision,
-                                &rulesync_layers::proposed_markdown(layer, &edit)?,
-                            )?;
+                        let receipts = checkout
+                            .shared_rule_proposals
+                            .entry(path.clone())
+                            .or_default();
+                        match rulesync_layers::review_edits(
+                            &self.settings,
+                            &authorized,
+                            edits,
+                            receipts,
+                        ) {
+                            Ok(rulesync_layers::SharedReview::Pending) => {
+                                pending_review.insert(path.clone());
+                                result.block(Code::SharedRulePending, format!("{}: A shared rule edit is still in this file while its proposal is reviewed.", path.display()));
+                            }
+                            Ok(rulesync_layers::SharedReview::Decided { rejected: true }) => {
+                                if self.can_restore_rejection {
+                                    rejected.insert(path.clone());
+                                } else {
+                                    pending_review.insert(path.clone());
+                                    result.block(Code::SharedRulePending, format!("{}: A shared rule edit was rejected. Run Sync now to restore the approved rules.", path.display()));
+                                }
+                            }
+                            Ok(rulesync_layers::SharedReview::Decided { rejected: false }) => (),
+                            Err(error) => {
+                                blocked.insert(path.clone(), error.to_string());
+                            }
                         }
                     }
                     _ => {
                         blocked.insert(path.clone(), "The checkout rules or their section markers changed. Reconcile the edits with the Rules page and sync again.".into());
                     }
                 }
+            } else {
+                checkout.shared_rule_proposals.remove(path);
             }
             observed.insert(path.clone(), current);
         }
+        checkout
+            .shared_rule_proposals
+            .retain(|_, receipts| !receipts.is_empty());
+        record = self.save(state_path, &record, &checkout)?;
         // Capture exact bytes before invoking the renderer, which may be slow.
-        let rendered = match self.render(&project, &teams, &skills, master, generated) {
+        let rendered = match render(&project, &teams, &skills, master) {
             Ok(files) => files,
             Err(error) => {
                 result.block(
@@ -573,7 +651,7 @@ impl Job<'_> {
         };
         for (path, bytes) in rendered.rules {
             let current = observed.get(&path).unwrap_or(&Snapshot::Absent);
-            if blocked.contains_key(&path) {
+            if blocked.contains_key(&path) || pending_review.contains(&path) {
                 continue;
             }
             let found = rulesync_layers::blocks(std::str::from_utf8(&bytes)?)?;
@@ -607,6 +685,9 @@ impl Job<'_> {
             {
                 blocked.insert(path, reason);
             } else if changed {
+                if rejected.contains(&path) {
+                    rulesync_layers::report_rejection(&mut result);
+                }
                 result.written.push(path.display().to_string());
             }
         }
@@ -929,6 +1010,7 @@ mod tests {
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
+            can_restore_rejection: true,
         };
         let path = PathBuf::from("AGENTS.md");
         let destination = job.directory.join(&path);
@@ -1025,6 +1107,7 @@ mod tests {
             settings: settings.clone(),
             root: &root,
             directory: &directory,
+            can_restore_rejection: true,
         };
         let rule = PathBuf::from("AGENTS.md");
         let original = "Personal advice.\n";
@@ -1064,11 +1147,15 @@ mod tests {
             &settings,
             None,
             &[],
+            true,
             entries.into_iter().map(Ok),
         )
         .unwrap();
         assert!(
-            receipt.0.iter().any(|path| path.ends_with("AGENTS.md")),
+            receipt
+                .written
+                .iter()
+                .any(|path| path.ends_with("AGENTS.md")),
             "checkout write missing: {receipt:?}"
         );
 
@@ -1076,6 +1163,133 @@ mod tests {
         let actual = fs::read_to_string(setup.data.join(directory).join(rule)).unwrap();
         assert!(!actual.contains("Revoked advice"), "{actual}");
         assert!(actual.contains(original), "{actual}");
+    }
+
+    #[test]
+    fn rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it() {
+        use crate::rulesync_layers::tests::{
+            hosted_fixture, render_fixture_section, APPROVED, PROJECT, REMOTE,
+        };
+        use std::{fs, process::Command};
+        use wenlan_core::team::{self, CredentialKind};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: scratch.path().join("unused-renderer"),
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, _, writer) = hosted_fixture(&setup.data);
+        let repo = scratch.path().join("checkout");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &["remote", "add", "origin", REMOTE],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let directory = Path::new("checkouts/example/rules");
+        let job = |can_restore_rejection| Job {
+            setup: &setup,
+            session: &session,
+            settings: settings.clone(),
+            root: &root,
+            directory,
+            can_restore_rejection,
+        };
+        let state_path = Path::new("checkouts/example.json");
+        let rule = Path::new("AGENTS.md");
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let sync = |can_restore_rejection| {
+            let state = root.read(state_path, false).unwrap();
+            let checkout = if state == Snapshot::Absent {
+                Checkout {
+                    repo: repo.clone(),
+                    ..Checkout::default()
+                }
+            } else {
+                read_checkout(text(&state).unwrap().as_bytes()).unwrap()
+            };
+            job(can_restore_rejection)
+                .run_using(
+                    state_path,
+                    state,
+                    checkout,
+                    Some(&master),
+                    |projects, teams, _, _| {
+                        assert_eq!(projects.len(), 1);
+                        let body = format!(
+                            "{}{}Personal advice.\n",
+                            render_fixture_section(&projects[0]),
+                            render_fixture_section(&teams[0])
+                        );
+                        Ok(RenderedCheckout {
+                            rules: BTreeMap::from([(rule.into(), body.into_bytes())]),
+                            ..RenderedCheckout::default()
+                        })
+                    },
+                )
+                .unwrap()
+        };
+        assert!(sync(true).blocked.is_empty());
+        let file = setup.data.join(directory).join(rule);
+        let approved = fs::read_to_string(&file).unwrap();
+        let edited = approved.replacen(APPROVED, "Use the checkout checklist.\n", 1);
+        assert_ne!(approved, edited);
+        fs::write(&file, &edited).unwrap();
+        let members = settings.with_file_name(team::TEAM_FILE);
+        let pending = || {
+            rulesync_team::pending_proposals(
+                &members,
+                &settings,
+                PROJECT,
+                &writer.id,
+                CredentialKind::BrowserSession,
+            )
+            .unwrap()
+        };
+        for _ in 0..2 {
+            let report = sync(true);
+            assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+            assert!(report.proposals.is_empty());
+            assert_eq!(report.blocked_codes, [Code::SharedRulePending.into()]);
+            assert_eq!(pending().len(), 1);
+        }
+        let [proposal]: [_; 1] = pending().try_into().unwrap();
+        assert_eq!(proposal.markdown, "Use the checkout checklist.\n");
+        assert!(rulesync_team::local_proposals(&settings)
+            .unwrap()
+            .is_empty());
+        rulesync_team::decide_proposal(
+            &members,
+            &settings,
+            PROJECT,
+            &writer.id,
+            CredentialKind::BrowserSession,
+            &proposal.id,
+            false,
+        )
+        .unwrap();
+        assert!(sync(false).notice_codes.is_empty());
+        assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+        let report = sync(true);
+        assert_eq!(fs::read_to_string(&file).unwrap(), approved);
+        assert!(
+            report.blocked.is_empty() && pending().is_empty(),
+            "{report:?}"
+        );
+        assert_eq!(report.notice_codes, [Code::SharedRuleRejected.into()]);
+        assert!(sync(true).notice_codes.is_empty());
     }
 
     #[test]
@@ -1094,6 +1308,7 @@ mod tests {
                     text: "Expected skill".into(),
                 }],
             }],
+            proposal_decisions: BTreeMap::new(),
         };
         let skills = ProjectSkills::from_layers(&[layer("one")]).unwrap();
         let rule = PathBuf::from("AGENTS.md");
@@ -1130,6 +1345,7 @@ mod tests {
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
+            can_restore_rejection: true,
         };
         let rule_path = PathBuf::from("AGENTS.md");
         let approved_rule = format!(
@@ -1219,6 +1435,7 @@ mod tests {
             settings: data.join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
+            can_restore_rejection: true,
         };
         let path = PathBuf::from("AGENTS.md");
         let state_path = Path::new("checkouts/example.json");
@@ -1334,6 +1551,7 @@ mod tests {
             settings: scratch.path().join("settings.toml"),
             root: &root,
             directory: Path::new("checkouts/example/rules"),
+            can_restore_rejection: true,
         };
         let path = PathBuf::from(".agents/skills/project-only/SKILL.md");
         let approved = Snapshot::file(b"approved project-only skill".to_vec());
