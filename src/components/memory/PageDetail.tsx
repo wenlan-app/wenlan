@@ -95,7 +95,7 @@ import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice
 import { RailPanelTitle } from "./MemoryDetailPrimitives";
 import { PageLockedNotice, PageLockSwitch } from "./page/PageLockSwitch";
 import { AiUpdateLine } from "./page/AiUpdateLine";
-import { ThisSentence } from "./page/ThisSentence";
+import { ThisSentence, sentenceWriterLabel } from "./page/ThisSentence";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
@@ -1233,6 +1233,16 @@ export default function PageDetail({
     () => currentSentences?.find((sentence) => sentence.hash === cursorSentenceHash) ?? null,
     [currentSentences, cursorSentenceHash],
   );
+  // Who wrote the sentence each citation backs, for the citation's card.
+  const writerByOccurrence = useMemo(() => {
+    const writers = new Map<number, string>();
+    for (const sentence of currentSentences ?? []) {
+      if (sentence.author === "original") continue;
+      const label = sentenceWriterLabel(t, sentence, sharedWriter(sentence.shared_by, shares.data, t));
+      for (const citation of sentence.citations ?? []) writers.set(citation.occurrence, label);
+    }
+    return writers;
+  }, [currentSentences, shares.data, t]);
   const editorSentenceAuthorship = useMemo<SentenceAuthorshipSettings | null>(() => {
     if (!currentSentences) return null;
     return {
@@ -2563,6 +2573,7 @@ export default function PageDetail({
         sourceMemory={sourceMemoryByLocator.get(c.locator) ?? null}
         sourcesLoading={pageSourcesLoading}
         onOpenMemory={openSourceMemory}
+        writer={writerByOccurrence.get(c.occurrence) ?? null}
       />
     );
   };
@@ -3494,6 +3505,9 @@ export default function PageDetail({
                       sourceMemory: editorReferenceContext.sourceMemories.get(wikiLinkPreview.target.citation.locator) ?? null,
                       sourcesLoading: pageSourcesLoading },
                   } : wikiLinkPreview}
+                  citationWriter={wikiLinkPreview?.target.kind === "citation"
+                    ? writerByOccurrence.get(wikiLinkPreview.target.citation.occurrence) ?? null
+                    : null}
                   onDismiss={dismissWikiLinkPreview}
                   onOpenPage={(targetId) => onPageClick?.(targetId)}
                   onOpenMemory={openSourceMemory}

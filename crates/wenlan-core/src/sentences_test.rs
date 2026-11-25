@@ -1694,3 +1694,87 @@ async fn the_fix_follows_a_pinned_everyday_source_and_never_crosses_it() {
         "a pinned source that is not there means no fix"
     );
 }
+
+/// An agent's version-checked write naming itself, as the refresh route
+/// sends it (`x-agent-name`).
+async fn named_agent_write(db: &MemoryDB, id: &str, content: &str, agent: &str) {
+    let revision = db.get_page_source_revision(id).await.unwrap();
+    let version = db.get_page(id).await.unwrap().unwrap().version;
+    let result = crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::AgentUpdate {
+            page_id: id,
+            req: UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: vec!["mem-tokio".to_string()],
+                expected_version: Some(version),
+                caller_id: None,
+                operation_id: None,
+            },
+            agent: Some(agent),
+            expected_source_revision: revision,
+            knowledge_path: None,
+            basis: crate::db::BasisWrite {
+                actor: agent.to_string(),
+                ..crate::db::BasisWrite::default()
+            },
+            citations: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.wrote);
+}
+
+#[tokio::test]
+async fn ux_who_9_each_ai_sentence_names_the_tool_that_last_wrote_it() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-tokio", "Tokio runs async tasks").await;
+    authored_page(&db, "p", "codex").await;
+    named_agent_write(
+        &db,
+        "p",
+        "Tokio runs async tasks. Workers steal many queued tasks.",
+        "claude-code",
+    )
+    .await;
+    let view = page_sentences(&db, "p").await.unwrap();
+    let tools: Vec<Option<&str>> = view
+        .sentences
+        .iter()
+        .map(|s| s.writer_tool.as_deref())
+        .collect();
+    assert_eq!(
+        tools,
+        [Some("codex"), Some("claude-code")],
+        "the untouched sentence keeps the tool that made the page"
+    );
+    // The person's own line names no tool.
+    write(
+        &db,
+        "p",
+        "Tokio runs async tasks for me. Workers steal many queued tasks.",
+        "manual_edit",
+        None,
+    )
+    .await;
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert_eq!(view.sentences[0].author, SentenceAuthor::Person);
+    assert_eq!(view.sentences[0].writer_tool, None);
+    assert_eq!(
+        view.sentences[1].writer_tool.as_deref(),
+        Some("claude-code")
+    );
+}
+
+#[tokio::test]
+async fn ux_who_9_an_ai_sentence_whose_tool_was_not_kept_names_none() {
+    let (db, _dir) = test_db().await;
+    // Written in the background with no AI tool behind it.
+    ai_page(&db, "p", None).await;
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert!(view
+        .sentences
+        .iter()
+        .all(|s| s.author == SentenceAuthor::Ai && s.writer_tool.is_none()));
+}

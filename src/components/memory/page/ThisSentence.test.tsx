@@ -50,6 +50,17 @@ describe("ThisSentence", () => {
     expect(screen.getByText("Yours, you accepted it")).toBeTruthy();
   });
 
+  it("UX-WHO-9: names the AI tool that wrote it, and says only AI without a kept name", () => {
+    renderIt(sentence({ writer_tool: "claude-code", evidence: "verified", weak: [] }));
+    expect(screen.getByText("Written by Claude Code")).toBeTruthy();
+    expect(screen.getByText("source checked")).toBeTruthy();
+  });
+
+  it("UX-WHO-9: an AI sentence with no kept tool name says only that an AI wrote it", () => {
+    renderIt(sentence({ evidence: "verified", weak: [] }));
+    expect(screen.getByText("Written by AI")).toBeTruthy();
+  });
+
   it("UX-WHO-4: rechecks only this sentence", async () => {
     renderIt(sentence());
     expect(screen.getByText("Source check: its source changed since")).toBeTruthy();
