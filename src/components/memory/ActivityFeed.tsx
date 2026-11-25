@@ -13,6 +13,7 @@ import { resolveAgentDisplayName } from "../../lib/agents";
 import { relativeTime } from "../../lib/relativeTime";
 import ActivityNow from "./activity/ActivityNow";
 import ActivityDiscoveries from "./activity/ActivityDiscoveries";
+import ActivitySetAside from "./activity/ActivitySetAside";
 import "./activity/activityVisual.css";
 import "./activity/KnowledgeCheck.css";
 import { Select } from "./settings/primitives";
@@ -496,7 +497,7 @@ export default function ActivityFeed({
     </button>
   );
   const pageHeader = <header className="mem-activity-page-header">{pageTitle}<div className="mem-activity-page-actions">{pageReview}{knowledgeEntry}</div></header>;
-  const background = <div className="mem-activity-background"><ActivityNow onOpenIntelligence={onOpenIntelligence} /><ActivityDiscoveries /></div>;
+  const background = <div className="mem-activity-background"><ActivityNow onOpenIntelligence={onOpenIntelligence} /><ActivitySetAside /><ActivityDiscoveries /></div>;
   const recentTitle = <h2 className="mem-activity-section-title mem-activity-recent-title">{t("activityDiscoveries.recent")}</h2>;
   const eventsError = activityQuery.isError ? (
     <div role="alert" className="flex flex-col items-start gap-3">
