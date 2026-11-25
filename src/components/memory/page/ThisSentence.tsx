@@ -39,6 +39,20 @@ export function sentenceWriterLabel(t: TFunction, sentence: PageSentence, shared
   return t(key);
 }
 
+/** The sentence as the page shows it, not as it is stored: no list, quote,
+ * heading or task marker in front, no emphasis or code marks, and links read
+ * as their text. Citation markers stay, as on the page. */
+export function sentenceDisplayText(text: string): string {
+  return text
+    .replace(/^\s{0,3}(?:>\s*)*(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+(?:\[[ xX]\]\s+)?)?/, "")
+    .replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_all, target: string, alias?: string) => (alias ?? target).trim())
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
+    .replace(/(^|[^*\w])[*_]([^*_\s][^*_]*?)[*_](?![*\w])/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
 function evidenceKey(sentence: PageSentence) {
   switch (sentence.evidence) {
     case "verified": return "thisSentence.evidence.verified" as const;
@@ -96,7 +110,7 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
   return (
     <section className="this-sentence" aria-labelledby="this-sentence-title" data-testid="this-sentence">
       <h3 id="this-sentence-title" className="this-sentence-title">{t("thisSentence.title")}</h3>
-      <p className="this-sentence-text">{sentence.text}</p>
+      <p className="this-sentence-text">{sentenceDisplayText(sentence.text)}</p>
       <p className="this-sentence-line">
         <span className={`this-sentence-who this-sentence-who--${sharedName ? "shared" : sentence.protected ? "you" : sentence.author}`}>
           {sentenceWriterLabel(t, sentence, sharedName)}

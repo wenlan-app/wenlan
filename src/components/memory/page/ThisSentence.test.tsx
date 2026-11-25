@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flagPageSentence, recheckPageSentence, type PageSentence } from "../../../lib/tauri";
-import { ThisSentence } from "./ThisSentence";
+import { ThisSentence, sentenceDisplayText } from "./ThisSentence";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
@@ -59,6 +59,19 @@ describe("ThisSentence", () => {
   it("UX-WHO-9: an AI sentence with no kept tool name says only that an AI wrote it", () => {
     renderIt(sentence({ evidence: "verified", weak: [] }));
     expect(screen.getByText("Written by AI")).toBeTruthy();
+  });
+
+  it("UX-WHO-1: shows the sentence as the page reads, not its stored markdown", () => {
+    renderIt(sentence({ text: "- Run the **TypeScript** check in `ci` [1].", weak: [] }));
+    expect(screen.getByText("Run the TypeScript check in ci [1].")).toBeTruthy();
+  });
+
+  it("strips block markers, emphasis and links but keeps citation markers", () => {
+    expect(sentenceDisplayText("- Pass the Windows tests [1].")).toBe("Pass the Windows tests [1].");
+    expect(sentenceDisplayText("2. [x] Confirm the version [2].")).toBe("Confirm the version [2].");
+    expect(sentenceDisplayText("> ## Release *notes* first")).toBe("Release notes first");
+    expect(sentenceDisplayText("See [[How we release|the release page]] and [docs](https://x.y) [3].")).toBe("See the release page and docs [3].");
+    expect(sentenceDisplayText("Keep snake_case_names and 2*3*4 as they are.")).toBe("Keep snake_case_names and 2*3*4 as they are.");
   });
 
   it("UX-WHO-4: rechecks only this sentence", async () => {
