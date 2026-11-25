@@ -13535,7 +13535,13 @@ fn page_basis_refresh_guard_detects_an_unrefreshed_writer() {
 
 /// Names that only exist on one maintainer's machine. Product code must work
 /// for a stranger's home, so these may appear only in tests and fixtures.
-const PERSONAL_SETUP_TOKENS: &[&str] = &["second-brain", "lucian"];
+const PERSONAL_SETUP_TOKENS: &[&str] = &[
+    "second-brain",
+    "lucian",
+    "sync-codex-agents",
+    "adapters/claude",
+    "adapters/codex",
+];
 
 /// Product lines allowed to keep a token, each with the reason.
 const PERSONAL_SETUP_ALLOWED: &[(&str, &str)] = &[
@@ -13599,14 +13605,14 @@ fn product_code_does_not_assume_one_persons_setup() {
     let root = repo_root();
     let mut violations = Vec::new();
     for pattern in [
-        "crates/*/src/**/*.rs",
-        "app/src/**/*.rs",
-        "src/**/*.ts",
-        "src/**/*.tsx",
-        "plugin/hooks/**",
-        "plugin-codex/hooks/**",
-        "scripts/first-run/**",
-        "install.sh",
+        ":(glob)crates/*/src/**/*.rs",
+        ":(glob)app/src/**/*.rs",
+        ":(glob)src/**/*.ts",
+        ":(glob)src/**/*.tsx",
+        ":(glob)plugin/hooks/**",
+        ":(glob)plugin-codex/hooks/**",
+        ":(glob)scripts/first-run/**",
+        ":(glob)install.sh",
     ] {
         for path in git_ls_files(&root, pattern) {
             let Ok(source) = std::fs::read_to_string(root.join(&path)) else {
