@@ -2324,7 +2324,7 @@ const en = {
   },
   thisSentence: {
     title: "This sentence",
-    who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", original: "Original text", unknown: "Not sure who wrote it", shared: "Written by {{name}}" },
+    who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", tool: "Written by {{tool}}", original: "Original text", unknown: "Not sure who wrote it", shared: "Written by {{name}}" },
     evidence: { verified: "source checked", unverified: "not confirmed by text matching", unevaluated: "source not checked yet", none: "no source" },
     weak: "Source check: {{reason}}",
     recheck: "Ask AI to recheck",
@@ -5988,7 +5988,7 @@ const zhHans = {
   },
   thisSentence: {
     title: "这一句",
-    who: { you: "你写的", accepted: "你收下的", ai: "AI 写的", original: "原文", unknown: "不确定是谁写的", shared: "{{name}}写的" },
+    who: { you: "你写的", accepted: "你收下的", ai: "AI 写的", tool: "{{tool}} 写的", original: "原文", unknown: "不确定是谁写的", shared: "{{name}}写的" },
     evidence: { verified: "出处核对过", unverified: "文字比对尚未确认支持", unevaluated: "出处还没核对", none: "没有出处" },
     weak: "来源核对：{{reason}}",
     recheck: "让 AI 重查这句",
@@ -9627,7 +9627,7 @@ const zhHant = {
   },
   thisSentence: {
     title: "這一句",
-    who: { you: "你寫的", accepted: "你收下的", ai: "AI 寫的", original: "原文", unknown: "不確定是誰寫的", shared: "{{name}}寫的" },
+    who: { you: "你寫的", accepted: "你收下的", ai: "AI 寫的", tool: "{{tool}} 寫的", original: "原文", unknown: "不確定是誰寫的", shared: "{{name}}寫的" },
     evidence: { verified: "出處核對過", unverified: "文字比對尚未確認支持", unevaluated: "出處還沒核對", none: "沒有出處" },
     weak: "來源核對：{{reason}}",
     recheck: "讓 AI 重查這句",

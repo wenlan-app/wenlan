@@ -2,10 +2,12 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { flagPageSentence, recheckPageSentence, type PageSentence } from "../../../lib/tauri";
 import { leadingWeakReason } from "../editor/sentenceAuthorship";
 import { SaidLines } from "./SaidLines";
 import { sharedWriter, useShares } from "../sharing/sharing";
+import { aiToolName } from "./format";
 import "./thisSentence.css";
 
 interface ThisSentenceProps {
@@ -23,6 +25,18 @@ export function sentenceWhoKey(sentence: PageSentence) {
   if (sentence.protected) return sentence.accepted ? "thisSentence.who.accepted" as const : "thisSentence.who.you" as const;
   if (sentence.author === "ai") return "thisSentence.who.ai" as const;
   return "thisSentence.who.unknown" as const;
+}
+
+/** Who wrote it, naming the AI tool where its name was kept ("Written by
+ * Claude Code") and another member of a shared Space by name. */
+export function sentenceWriterLabel(t: TFunction, sentence: PageSentence, sharedName: string | null): string {
+  if (sharedName) return t("thisSentence.who.shared", { name: sharedName });
+  const key = sentenceWhoKey(sentence);
+  if (key === "thisSentence.who.ai") {
+    const tool = aiToolName(t, sentence.writer_tool);
+    if (tool) return t("thisSentence.who.tool", { tool });
+  }
+  return t(key);
 }
 
 function evidenceKey(sentence: PageSentence) {
@@ -85,7 +99,7 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
       <p className="this-sentence-text">{sentence.text}</p>
       <p className="this-sentence-line">
         <span className={`this-sentence-who this-sentence-who--${sharedName ? "shared" : sentence.protected ? "you" : sentence.author}`}>
-          {sharedName ? t("thisSentence.who.shared", { name: sharedName }) : t(sentenceWhoKey(sentence))}
+          {sentenceWriterLabel(t, sentence, sharedName)}
         </span>
         <span aria-hidden="true">·</span>
         <span>{t(evidenceKey(sentence))}</span>

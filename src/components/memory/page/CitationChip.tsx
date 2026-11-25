@@ -19,6 +19,9 @@ interface CitationChipProps {
   sourceMemory: MemoryItem | null;
   sourcesLoading: boolean;
   onOpenMemory: (sourceId: string, citation?: PageCitation) => void;
+  /** Who wrote the sentence this citation backs ("Written by Claude Code"),
+   *  shown on the card beside whether the source was checked. */
+  writer?: string | null;
 }
 
 const HOVER_OPEN_DELAY_MS = 150;
@@ -30,6 +33,7 @@ export default function CitationChip({
   sourceMemory,
   sourcesLoading,
   onOpenMemory,
+  writer = null,
 }: CitationChipProps) {
   const [open, setOpen] = useState(false);
   const [openFailure, setOpenFailure] = useState<string | null>(null);
@@ -199,6 +203,7 @@ export default function CitationChip({
           anchorRef={chipRef}
           onOpenMemory={onOpenMemory}
           openFailure={openFailure}
+          writer={writer}
           onOpenTarget={() => void openTarget()}
           onMouseEnter={handlePopoverMouseEnter}
           onMouseLeave={scheduleClose}
