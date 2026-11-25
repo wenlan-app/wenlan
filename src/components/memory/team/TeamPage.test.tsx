@@ -258,7 +258,7 @@ describe("how each person signs in, in the people box of the owner", () => {
     const box = await peopleBox();
     const tags = Object.fromEntries(["Ben", "Chen Wei", "Dana", "Eli", "Farah"].map((name) => [name, within(row(box, name)).getByTestId("team-member-tag").textContent]));
     expect(tags).toEqual({
-      Ben: "Invite link",
+      Ben: "Invite link · read only",
       "Chen Wei": "Google",
       Dana: "GitHub",
       Eli: "Waiting for you · e•••@studio.io",
@@ -375,7 +375,7 @@ describe("the invite form of the owner", () => {
     expect(account).toBeChecked();
     expect(link).not.toBeChecked();
     expect(within(box).getByText("They sign in with their own account. No key to keep.")).toBeInTheDocument();
-    expect(within(box).getByText("For someone without Google or GitHub. The link is their key.")).toBeInTheDocument();
+    expect(within(box).getByText("For someone without Google or GitHub. The link is their key. They can read, and write once they add Google or GitHub.")).toBeInTheDocument();
     // The form is the box's whole view.
     expect(within(box).queryByText("Amy")).toBeNull();
   });

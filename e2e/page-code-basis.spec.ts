@@ -186,7 +186,7 @@ for (const locale of LOCALES) {
       // Nothing to confirm or show for code that is gone: only a way out.
       await expect(dialog.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true })).toHaveCount(0);
       await expect(dialog.getByTestId("code-basis-after")).toHaveCount(0);
-      expect(callsOf(controller, "read_code_lines")).toEqual([]);
+      expect(callsOf(controller, "get_page_code_basis_lines")).toEqual([]);
       await page.screenshot({ path: testInfo.outputPath(`code-missing-${locale}.png`) });
 
       await dialog.getByRole("button", { name: t("codeBasis.stopRelying"), exact: true }).click();
@@ -226,14 +226,8 @@ for (const locale of LOCALES) {
       await expect(dialog.locator(".code-basis__line")).toHaveCount(8);
       // The title is set in the UI face, not the serif heading face.
       expect(await dialog.getByRole("heading", { level: 2 }).evaluate((el) => getComputedStyle(el).fontFamily)).toContain("Instrument Sans");
-      expect(callsOf(controller, "get_page_code_basis_cited")).toEqual([
-        { pageId: "page-architecture", locator: locatorOf() },
-      ]);
-      expect(callsOf(controller, "read_git_blob_lines")).toEqual([
-        { repoRoot: REPO, blob: CITED_BLOB, lineStart: 10, lineEnd: 13 },
-      ]);
-      expect(callsOf(controller, "read_code_lines")).toEqual([
-        { path: `${REPO}/${FILE}`, lineStart: 10, lineEnd: 63 },
+      expect(callsOf(controller, "get_page_code_basis_lines")).toEqual([
+        { pageId: "page-architecture", locator: locatorOf(), extra: 50 },
       ]);
       await page.screenshot({ path: testInfo.outputPath(`code-dialog-${locale}.png`) });
 
@@ -340,7 +334,7 @@ for (const locale of LOCALES) {
 
     test("says there is nothing to compare when the lines were never committed, and the file cannot be read when that is so", async ({ page }) => {
       const errors = collectBrowserErrors(page);
-      const controller = await install(page, locale, {
+      await install(page, locale, {
         // No file in the fixture: reading it fails, as it does for a file that is gone.
         codeBasis: { rows: [row("page-architecture", { citedBlob: null })] },
       });
@@ -350,8 +344,6 @@ for (const locale of LOCALES) {
       const dialog = page.getByRole("dialog", { name: t("codeBasis.dialog.title", span) });
       await expect(dialog.getByText(t("codeBasis.dialog.noBefore"), { exact: true })).toBeVisible();
       await expect(dialog.getByText(t("codeBasis.dialog.unavailable"), { exact: true })).toBeVisible();
-      // No blob id, so git is never asked.
-      expect(callsOf(controller, "read_git_blob_lines")).toEqual([]);
       expect(errors.pageErrors).toEqual([]);
     });
 

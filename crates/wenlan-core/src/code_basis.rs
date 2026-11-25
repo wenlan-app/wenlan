@@ -585,6 +585,8 @@ fn flag_lines_added_between<'a>(
             .push(row);
     }
     let mut flagged: Vec<(usize, LineSpan, Option<FileStamp>)> = Vec::new();
+    // Rows whose pair was judged here, added lines or not.
+    let mut judged: HashSet<usize> = HashSet::new();
     for group in groups.values_mut() {
         group.sort_by_key(|row| (row.reference.line_start, row.reference.line_end));
         for pair in group.windows(2) {
@@ -604,14 +606,15 @@ fn flag_lines_added_between<'a>(
             ) else {
                 continue;
             };
-            // Still in order, with lines between them now.
-            if below_now.start <= above_now.end.saturating_add(1) {
-                continue;
-            }
             // A row left out read nothing; its file did not change.
             let Some(&at) = index.get(&(below as *const CodeBasisRow)) else {
                 continue;
             };
+            judged.insert(at);
+            // Still in order, with lines between them now.
+            if below_now.start <= above_now.end.saturating_add(1) {
+                continue;
+            }
             let stamp = match &verdicts[at].1 {
                 CodeBasisVerdict::Unchanged { stamp } | CodeBasisVerdict::Moved { stamp, .. } => {
                     *stamp
@@ -624,6 +627,34 @@ fn flag_lines_added_between<'a>(
             };
             flagged.push((at, span, stamp));
         }
+    }
+    // A row already waiting on added lines whose pair could not be judged
+    // this time (the row above changed or went missing) keeps waiting: its
+    // own lines reading the same says nothing about the added ones. It keeps
+    // the added lines in front of its own, wherever they are now.
+    for (at, (row, verdict)) in verdicts.iter().enumerate() {
+        let r = &row.reference;
+        if judged.contains(&at)
+            || r.state != CODE_BASIS_STATE_PENDING
+            || r.reason.as_deref() != Some(LINES_ADDED)
+        {
+            continue;
+        }
+        let (own, stamp) = match verdict {
+            CodeBasisVerdict::Moved { span, stamp, .. } => (*span, *stamp),
+            _ => continue,
+        };
+        let added = r.line_end.saturating_sub(r.line_start) + 1;
+        let own_len = own.end - own.start + 1;
+        let before = added.saturating_sub(own_len);
+        flagged.push((
+            at,
+            LineSpan {
+                start: own.start.saturating_sub(before).max(1),
+                end: own.end,
+            },
+            stamp,
+        ));
     }
     for (at, span, stamp) in flagged {
         verdicts[at].1 = CodeBasisVerdict::LinesAdded { span, stamp };

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { revertPageSentences, type LastAiUpdate, type SentenceRevertResponse } from "../../../lib/tauri";
+import { readableSentence } from "../../../lib/readableSentence";
 import "./AiUpdateLine.css";
 
 /** Whether the AI's newest write is still news: the person has not edited the
@@ -78,7 +79,7 @@ export function AiUpdateLine({ pageId, update, humanEditedAt, time, disabled, sh
       {shown && removed.length > 0 && (
         <ul className="ai-update-removed">
           {removed.map((text, index) => (
-            <li key={index}><span>{t("aiUpdate.removed")}</span> {text}</li>
+            <li key={index}><span>{t("aiUpdate.removed")}</span> {readableSentence(text)}</li>
           ))}
         </ul>
       )}

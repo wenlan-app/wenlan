@@ -245,6 +245,7 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/pages/{id}/sentences/recheck"),
         (Method::Post, "/api/pages/code-basis/recheck"),
         (Method::Post, "/api/pages/{id}/code-basis/cited"),
+        (Method::Post, "/api/pages/{id}/code-basis/lines"),
         (Method::Get, "/api/steep/worklist"),
         (Method::Post, "/api/steep/claim"),
         (Method::Get, "/api/steep/new"),

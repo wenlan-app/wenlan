@@ -1116,7 +1116,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     }
   },
   remove_page_code_basis: (a) => http("DELETE", `/api/pages/${enc(a.pageId)}/code-basis`, a.locator),
-  get_page_code_basis_cited: (a) => post(`/api/pages/${enc(a.pageId)}/code-basis/cited`, a.locator),
+  get_page_code_basis_lines: (a) => post(`/api/pages/${enc(a.pageId)}/code-basis/lines`, { locator: a.locator, extra: a.extra }),
   get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions${a.includeText ? "?include=text" : ""}`),
   redistill_page: (a) => post(`/api/distill/${enc(a.pageId)}`, {}),
   // Mirrors app/src/search.rs `export_pages_okf_checked`: an older daemon
@@ -1994,7 +1994,7 @@ const NATIVE_ONLY_COMMANDS = new Set([
   "get_index_status", "get_system_info", "import_chat_export", "import_theme_image",
   "list_external_models", "list_sources", "list_watch_paths", "open_file", "open_search_result",
   "open_themes_folder", "open_tool_with_prompt", "page_attachments_dir", "problem_report",
-  "read_code_lines", "read_git_blob_lines", "read_source_dir", "read_text_file", "reindex",
+  "read_source_dir", "read_text_file", "reindex",
   "remove_avatar", "remove_watch_path", "resolve_page_embed", "reveal_shared_folder", "save_temp_file",
   "set_avatar", "set_source_follow_changes", "suggest_library_folder", "sync_source", "theme_image",
   "upload_source_files", "uploads_folder", "detect_mcp_clients_cmd", "disconnect_client",

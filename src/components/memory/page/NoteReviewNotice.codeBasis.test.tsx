@@ -10,20 +10,16 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listRefinements: vi.fn(),
   confirmPageCodeBasis: vi.fn(),
   removePageCodeBasis: vi.fn(),
-  getPageCodeBasisCited: vi.fn(),
+  getPageCodeBasisLines: vi.fn(),
   getResolvedRouting: vi.fn(),
-  readCodeLines: vi.fn(),
-  readGitBlobLines: vi.fn(),
 }));
 
 import {
   confirmPageCodeBasis,
-  getPageCodeBasisCited,
+  getPageCodeBasisLines,
   getResolvedRouting,
   listPendingRevisions,
   listRefinements,
-  readCodeLines,
-  readGitBlobLines,
   removePageCodeBasis,
 } from "../../../lib/tauri";
 import NoteReviewNotice from "./NoteReviewNotice";
@@ -77,10 +73,8 @@ afterEach(() => {
   vi.mocked(listRefinements).mockReset();
   vi.mocked(confirmPageCodeBasis).mockReset();
   vi.mocked(removePageCodeBasis).mockReset();
-  vi.mocked(getPageCodeBasisCited).mockReset();
+  vi.mocked(getPageCodeBasisLines).mockReset();
   vi.mocked(getResolvedRouting).mockReset();
-  vi.mocked(readCodeLines).mockReset();
-  vi.mocked(readGitBlobLines).mockReset();
 });
 
 describe("NoteReviewNotice with a code basis", () => {
@@ -185,8 +179,7 @@ describe("NoteReviewNotice with a code basis", () => {
     let dialog = await screen.findByRole("dialog", { name: "a.rs lines 10–24" });
     expect(within(dialog).getByText("Code not found: a.rs (the file is gone)")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "No impact" })).toBeNull();
-    expect(readCodeLines).not.toHaveBeenCalled();
-    expect(getPageCodeBasisCited).not.toHaveBeenCalled();
+    expect(getPageCodeBasisLines).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Later" }));
     dialog = await screen.findByRole("dialog", { name: "b.rs lines 10–24" });
@@ -242,9 +235,7 @@ describe("NoteReviewNotice with a code basis", () => {
   });
 
   it("confirms the lines side by side, refreshes what shows them, and goes on to the next row", async () => {
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: "0123456789abcdef0123456789abcdef01234567", confirmed_at: 1, state: "pending" });
-    vi.mocked(readGitBlobLines).mockResolvedValue(["old();"]);
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+    vi.mocked(getPageCodeBasisLines).mockResolvedValue({ cited: ["old();"], now: ["new();"] });
     vi.mocked(confirmPageCodeBasis).mockResolvedValue({ outcome: "confirmed", code_basis: row({ state: "ok" }) });
     const { client } = renderNotice({
       ...basePage,
@@ -270,8 +261,7 @@ describe("NoteReviewNotice with a code basis", () => {
   });
 
   it("stays on the row and asks for another look when the code changed again", async () => {
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
+    vi.mocked(getPageCodeBasisLines).mockResolvedValue({ cited: null, now: ["new();"] });
     vi.mocked(confirmPageCodeBasis).mockResolvedValue({ outcome: "conflict", message: "the file changed again" });
     renderNotice({ ...basePage, code_basis: [row()] });
 
@@ -282,12 +272,11 @@ describe("NoteReviewNotice with a code basis", () => {
     expect(await screen.findByText("The code changed again, please look once more.")).toHaveAttribute("role", "status");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     // The lines are read afresh for the second look.
-    await waitFor(() => expect(readCodeLines).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getPageCodeBasisLines).toHaveBeenCalledTimes(2));
   });
 
   it("reports a failed confirm and a failed stop in their own words", async () => {
-    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
-    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
+    vi.mocked(getPageCodeBasisLines).mockResolvedValue({ cited: null, now: ["new();"] });
     vi.mocked(confirmPageCodeBasis).mockRejectedValue(new Error("offline"));
     vi.mocked(removePageCodeBasis).mockRejectedValue(new Error("offline"));
     renderNotice({ ...basePage, code_basis: [row()] });

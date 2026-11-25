@@ -634,6 +634,11 @@ pub struct CitationStats {
 }
 
 impl CitationStats {
+    /// Whether the body cited anything at all.
+    pub fn cited_any(&self) -> bool {
+        self.verified + self.unverified + self.stripped > 0
+    }
+
     pub fn summary(&self) -> String {
         format!(
             "{} verified, {} unverified, {} stripped",

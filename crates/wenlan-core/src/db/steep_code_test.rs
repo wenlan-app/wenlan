@@ -354,6 +354,13 @@ async fn a_note_an_agent_wrote_from_code_alone_is_rewritten_in_place() {
     assert_eq!(done.outcome, "written");
     assert_eq!(body_of(&db, "page_m").await, FIXED);
     assert_eq!(only(&db, "page_m").await.state, CODE_BASIS_STATE_OK);
+    // It cites no memory, so its revision shows no "0 verified, 0
+    // unverified, 0 stripped".
+    assert_eq!(done.citations, None);
+    let changelog: serde_json::Value =
+        serde_json::from_str(&db.get_page_changelog("page_m").await.unwrap()).unwrap();
+    let latest = changelog.as_array().unwrap().last().unwrap();
+    assert!(latest.get("citations_summary").is_none(), "{latest}");
 }
 
 #[tokio::test]
