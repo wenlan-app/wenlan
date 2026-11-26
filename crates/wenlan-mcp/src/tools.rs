@@ -12224,7 +12224,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ux_chat_10_a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step() {
+    async fn ux_chat_10_a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step()
+    {
         // Nothing listens on this port.
         let server = WenlanMcpServer::new(
             WenlanClient::new("http://127.0.0.1:1".into()),
