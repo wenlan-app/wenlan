@@ -121,6 +121,28 @@ fn me(spaces: serde_json::Value) -> serde_json::Value {
     })
 }
 
+fn joined_library() -> String {
+    json!({
+        "teams": [{
+            "team": { "id": "t1", "name": "Acme" },
+            "library": {
+                "state": "ready",
+                "spaces": [{
+                    "space": { "id": "roadmap", "name": "Roadmap", "restricted": false },
+                    "pages": [{
+                        "id": "page-1",
+                        "title": "Launch plan",
+                        "space": "Roadmap",
+                        "published_by": null,
+                        "published_at": null
+                    }]
+                }]
+            }
+        }]
+    })
+    .to_string()
+}
+
 fn space(name: &str) -> serde_json::Value {
     json!({
         "id": name, "name": name, "description": null, "suggested": false,
@@ -288,6 +310,7 @@ fn join_keeps_the_membership_and_syncs_every_open_space() {
             COUNTS.to_string(),
         ),
         ("POST /api/spaces/Notes/shared/sync", COUNTS.to_string()),
+        ("GET /api/team/joined/library", joined_library()),
     ]);
     let (ok, stdout, stderr) = run(&host, &["team", "join", LINK]);
     assert!(ok, "{stderr}");
@@ -298,8 +321,13 @@ fn join_keeps_the_membership_and_syncs_every_open_space() {
         stdout.contains("Notes (read only): 2 pages taken"),
         "{stdout}"
     );
+    assert!(stdout.contains("Roadmap: 1 pages"), "{stdout}");
+    assert!(
+        stdout.contains("Connect your AI tool too: `wenlan login"),
+        "{stdout}"
+    );
     let sent = served(&requests);
-    assert_eq!(sent.len(), 6, "{sent:?}");
+    assert_eq!(sent.len(), 7, "{sent:?}");
     assert_eq!(sent[1].0, "POST /api/team/membership");
     let sync: serde_json::Value = serde_json::from_str(&sent[4].1).unwrap();
     assert_eq!(sync["host"]["space"], "Product");
@@ -321,11 +349,12 @@ fn joining_again_reuses_the_space_that_already_syncs_with_the_team() {
             json!({ "shares": [share("Product")] }).to_string(),
         ),
         ("POST /api/spaces/Product/shared/sync", COUNTS.to_string()),
+        ("GET /api/team/joined/library", joined_library()),
     ]);
     let (ok, stdout, stderr) = run(&host, &["team", "join", LINK]);
     assert!(ok, "{stderr}");
     assert!(!stdout.contains("here as"), "{stdout}");
-    assert_eq!(served(&requests).len(), 5);
+    assert_eq!(served(&requests).len(), 6);
 }
 
 #[test]

@@ -879,6 +879,11 @@ async fn join_all(
         me,
         spaces,
     };
+    let library = if quiet || format == ResolvedFormat::Json {
+        None
+    } else {
+        client.team_joined_library().await.ok()
+    };
     output(format, quiet, &joined, || {
         println!("Joined {team} as {}.", joined.me.name);
         if joined.spaces.is_empty() && joined.me.library_spaces.is_empty() {
@@ -903,7 +908,39 @@ async fn join_all(
             }
         }
         print_library_spaces(&joined.me.library_spaces, "");
+        print_joined_library_summary(&joined, library.as_ref());
     })
+}
+
+fn print_joined_library_summary(
+    joined: &JoinedTeam,
+    library: Option<&wenlan_types::team_library::JoinedTeamLibraries>,
+) {
+    let team_id = joined.me.team.as_ref().map(|team| team.id.as_str());
+    let entry = library.and_then(|all| {
+        all.teams
+            .iter()
+            .find(|candidate| candidate.team.as_ref().map(|team| team.id.as_str()) == team_id)
+    });
+    match entry.map(|entry| &entry.library) {
+        Some(wenlan_types::team_library::JoinedTeamLibraryState::Ready { spaces }) => {
+            println!("Published pages open in the team library:");
+            if spaces.is_empty() {
+                println!("  No published pages are open yet.");
+            } else {
+                for space in spaces {
+                    println!("  {}: {} pages", space.space.name, space.pages.len());
+                }
+            }
+        }
+        _ => println!(
+            "Published pages will show in the Wenlan app when the team server is reachable."
+        ),
+    }
+    println!(
+        "Connect your AI tool too: `wenlan login {} --tool <TOOL>`.",
+        joined.url
+    );
 }
 
 fn host_request(code: &str, server_space: &str) -> SharedSyncRequest {

@@ -10,8 +10,8 @@ import { readSourceText, repoRelativePath } from "./test/sourceText";
 const SPEC_FILE = path.resolve("docs/ux/spec.md");
 const THIS_FILE = path.resolve("src/uxSpec.test.ts");
 
-const RULE_RE = /^- \*\*(UX-[A-Z]+-\d+)\*\* `(shipped|planned)`/gm;
-const TS_ID_RE = /\bUX-[A-Z]+-\d+\b/g;
+const RULE_RE = /^- \*\*(UX-[A-Z]+(?:-[A-Z]+)*-\d+)\*\* `(shipped|planned)`/gm;
+const TS_ID_RE = /\bUX-[A-Z]+(?:-[A-Z]+)*-\d+\b/g;
 const RUST_ID_RE = /\bux_([a-z]+)_(\d+)(?![0-9])/g;
 
 // Test files live next to the code; Rust tests are inline modules too, so

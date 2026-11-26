@@ -47,6 +47,8 @@ export type SpacesOverviewProps = {
   readonly onSpaceRenamed?: (space: Pick<Space, "id" | "name">) => void;
   /** After joining a Space or page someone shared: the Space's name or the page's id. */
   readonly onSharedJoined?: (kind: "space" | "page" | "team", target: string) => void;
+  /** Opens a live, read-only page from a joined team's library. */
+  readonly onOpenTeamPage?: (teamId: string, pageId: string) => void;
 };
 
 export type SpaceEditorValue = {

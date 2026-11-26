@@ -31,6 +31,8 @@ import "../pages/pageActions.css";
 import "./spaces.css";
 import "./spacesInventory.css";
 import { isWebBuild } from "../../../web/runtime";
+import { JoinedTeamLibraryGroups } from "../team/joinedLibrary";
+import "../team/joinedLibrary.css";
 
 const DEPENDENT_QUERY_KEYS = [
   "spaces",
@@ -286,6 +288,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
           />
           </div>
           ) : null}
+          <JoinedTeamLibraryGroups onOpenPage={props.onOpenTeamPage} />
           {teamGroups.map((group) => (
             <div key={group.key} className="spaces-team-group">
               <h2 className="spaces-group-title">{teamLabel(t, group.team)}</h2>

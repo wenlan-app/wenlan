@@ -357,6 +357,27 @@ impl WenlanClient {
             .with_context(|| format!("parsing {} response", path))
     }
 
+    /// GET a person-only read with the same caller marker the app uses. The
+    /// daemon treats a missing key as the plain marker-only person path when
+    /// no key is available, and a failed read is safe for callers to report as
+    /// a best-effort follow-up.
+    async fn get_json_as_person<R: DeserializeOwned>(&self, path: &str) -> Result<R> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .send(
+                self.http.get(&url).header(
+                    wenlan_types::requests::CALLER_HEADER,
+                    wenlan_types::requests::PERSON_CALLER_VALUE,
+                ),
+                &format!("GET {} failed", url),
+            )
+            .await?;
+        let resp = ensure_ok(resp, &url).await?;
+        resp.json()
+            .await
+            .with_context(|| format!("parsing {} response", path))
+    }
+
     /// POST `path` with a JSON `body` and deserialize the JSON response.
     async fn post_json<B: Serialize, R: DeserializeOwned>(
         &self,
@@ -1744,6 +1765,15 @@ impl WenlanClient {
         let url = self.space_wiki_url(space, &["rules", "proposals"])?;
         self.post_url_as_person(&url, &serde_json::json!({}), None, true)
             .await
+    }
+
+    /// `GET /api/team/joined/library`: best-effort live page counts after a
+    /// join. The app remains the authoritative read-through surface if this
+    /// optional follow-up cannot reach the team server.
+    pub async fn team_joined_library(
+        &self,
+    ) -> Result<wenlan_types::team_library::JoinedTeamLibraries> {
+        self.get_json_as_person("/api/team/joined/library").await
     }
 
     pub(crate) async fn decide_project_rule_proposal(

@@ -15,6 +15,7 @@ export type View =
   | { readonly kind: "import"; readonly fromFirstUse?: boolean; readonly fromHome?: boolean }
   | { readonly kind: "memory"; readonly sourceId: string }
   | { readonly kind: "page"; readonly pageId: string; readonly mode?: "read" | "edit"; readonly inventoryScope?: WikiInventoryScope; readonly projectionIssue?: PageProjectionIssue }
+  | { readonly kind: "team-page"; readonly teamId: string; readonly pageId: string }
   | {
     readonly kind: "page-draft";
     readonly draftId?: string;
@@ -65,6 +66,7 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     // (see Main); until then it counts as Docs.
     case "distill-review":
     case "page":
+    case "team-page":
     case "page-draft":
       return "pages";
     case "pages":

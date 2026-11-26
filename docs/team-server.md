@@ -10,9 +10,12 @@ Bo's Wenlan app  ──┼── team listener ──┤   (its own routes stay 
 Cy's AI tool     ──┘   /team/v1, /mcp  └── team-spaces/<Space>/
 ```
 
-- **Desktop app members** keep their own copy of the Space. Every ~30 seconds
+- **Desktop app members** keep their own copy of a legacy shared Space. Every ~30 seconds
   their Wenlan takes the team's new page versions from the server and sends
   their own. It works offline and catches up later.
+- **Team-library members** read published pages live from the team server. They
+  see those pages in their app right after joining; they do not wait for a sync
+  loop or keep a writable copy locally.
 - **AI-tool-only members** (no Wenlan installed) open their invite link in a
   browser. It shows the server address and setup for Claude Code, Codex and
   Cursor. What their AI tool changes is recorded as theirs ("Cy's AI tool").
@@ -36,16 +39,17 @@ It serves only:
 | `GET /team/v1/me` | who the key belongs to and their Spaces |
 | `/team/v1/admin…` | the owner only (403 for anyone else): the team's people, name, invites and new Spaces, for an owner who manages a server nobody sits at from their own computer |
 | `GET /team/v1/spaces/{space}/files`, `…/file?path=` | the Space's page versions |
-| `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | the member's own new version |
+| `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | refused for members once the team library is on; Rules proposals still go through |
 | `/mcp`, `/mcp/{space}` | MCP for AI tools, pinned to that Space |
 | `/app`, `/auth/…`, `/team/v1/account/…` | with sign-in on (see *Sign in with Google or GitHub*): the team's pages in a browser, signing in, a member's own AI tools |
 
 Every request except `/health`, `/join` and signing in needs a member key
 (`Authorization: Bearer <key>`) or, in a browser, a signed-in session.
-A member can only see the Spaces given to them, can only send versions
-written as themselves, and cannot send anything to a Space they may only
-read. The daemon's own routes (settings, other Spaces, memories, shutdown)
-are never served on the team listener.
+A member can only see the Spaces given to them and can read the published pages
+the team library opens to them. Page uploads through the legacy versions route
+are refused once the team library is on; Rules proposals still go through.
+The daemon's own routes (settings, other Spaces, memories, shutdown) are never
+served on the team listener.
 
 **Removing a member** stops their key at once. Copies of pages already on
 their computer stay there; no sync system can take those back.

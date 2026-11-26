@@ -1,0 +1,46 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.team-library-group { min-width: 0; }
+.team-library-group-title,
+.team-library-space-name,
+.team-library-page { white-space: nowrap; }
+.team-library-group-title { overflow: hidden; text-overflow: ellipsis; }
+.team-library-spaces { display: grid; gap: 8px; }
+.team-library-space { min-width: 0; }
+.team-library-space-name {
+  overflow: hidden;
+  margin: 0 0 2px;
+  padding: 0 12px;
+  color: var(--mem-text-secondary);
+  font: 500 13px/20px var(--mem-font-body);
+  text-overflow: ellipsis;
+}
+.team-library-pages { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.team-library-page {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 28px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--mem-r-6);
+  background: transparent;
+  color: var(--mem-text);
+  font: 13px/20px var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+.team-library-page span { overflow: hidden; text-overflow: ellipsis; }
+.team-library-page:hover:not(:disabled),
+.team-library-page:focus-visible:not(:disabled) { background: var(--mem-hover); }
+.team-library-page:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
+.team-library-page:disabled { cursor: default; }
+.team-library-unreachable { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; color: var(--mem-text-tertiary); font-size: 13px; }
+.team-library-unreachable .spaces-quiet-action { flex: 0 0 auto; min-height: 30px; padding: 0 6px; }
+.team-joined-page-title-row { margin-bottom: 4px; }
+.team-joined-page-title-row .page-detail-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-joined-published-line { margin: 0 0 28px; color: var(--mem-text-tertiary); font-size: var(--mem-text-description); }
+.team-joined-page-prose { margin-top: 0; }
+.team-joined-citations { margin-top: 32px; color: var(--mem-text-secondary); }
+.team-joined-citations ul { margin: 8px 0 0; padding-left: 20px; }

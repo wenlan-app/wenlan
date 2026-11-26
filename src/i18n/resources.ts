@@ -11038,10 +11038,79 @@ const zhHant = {
   repoWiki: hantRepoWiki,
 };
 
+const joinedTeamCopy = {
+  en: {
+    joinedGroup: "Team · {{team}}",
+    joinedUnreachable: "Can't reach the team server right now.",
+    joinedRetry: "Retry",
+    joinedLoading: "Loading…",
+    joinedPublisherFallback: "Someone",
+    joinedPublished: "published",
+    joinedReadOnly: "read only",
+    joinedCitations: "Citations",
+    joinedPrivateSource: "private source",
+    join: {
+      libraryNote: "Your AI tools read these from the team server. Pages show in this app right after you join.",
+      pagesInSpace_one: "{{space}} · 1 page",
+      pagesInSpace_other: "{{space}} · {{count}} pages",
+      noPublishedPages: "no published pages yet",
+      success: "Joined {{team}}. Pages open now: {{spaces}}. Connect your AI tool too: wenlan login {{address}} --tool <TOOL>.",
+      successUnavailable: "Joined {{team}}. Pages will show in the app when the team server is reachable. Connect your AI tool too: wenlan login {{address}} --tool <TOOL>.",
+    },
+  },
+  "zh-Hans": {
+    joinedGroup: "团队 · {{team}}",
+    joinedUnreachable: "现在暂时连不到团队服务器。",
+    joinedRetry: "重试",
+    joinedLoading: "正在加载…",
+    joinedPublisherFallback: "某人",
+    joinedPublished: "发布",
+    joinedReadOnly: "只读",
+    joinedCitations: "引用",
+    joinedPrivateSource: "私人来源",
+    join: {
+      libraryNote: "这些由你的 AI 工具从团队服务器读取。加入后，页面会立即显示在这个 App 里。",
+      pagesInSpace_one: "{{space}} · 1 个页面",
+      pagesInSpace_other: "{{space}} · {{count}} 个页面",
+      noPublishedPages: "还没有已发布的页面",
+      success: "已加入 {{team}}。现在可以看的页面：{{spaces}}。也请连接你的 AI 工具：wenlan login {{address}} --tool <TOOL>。",
+      successUnavailable: "已加入 {{team}}。团队服务器连通后，页面会显示在应用里。也请连接你的 AI 工具：wenlan login {{address}} --tool <TOOL>。",
+    },
+  },
+  "zh-Hant": {
+    joinedGroup: "團隊 · {{team}}",
+    joinedUnreachable: "現在暫時連不到團隊伺服器。",
+    joinedRetry: "重試",
+    joinedLoading: "載入中…",
+    joinedPublisherFallback: "某人",
+    joinedPublished: "發布",
+    joinedReadOnly: "唯讀",
+    joinedCitations: "引用",
+    joinedPrivateSource: "私人來源",
+    join: {
+      libraryNote: "這些由你的 AI 工具從團隊伺服器讀取。加入後，頁面會立刻顯示在這個 App 裡。",
+      pagesInSpace_one: "{{space}} · 1 個頁面",
+      pagesInSpace_other: "{{space}} · {{count}} 個頁面",
+      noPublishedPages: "還沒有已發布的頁面",
+      success: "已加入 {{team}}。現在可以看的頁面：{{spaces}}。也請連接你的 AI 工具：wenlan login {{address}} --tool <TOOL>。",
+      successUnavailable: "已加入 {{team}}。團隊伺服器連得上後，頁面會顯示在 App 裡。也請連接你的 AI 工具：wenlan login {{address}} --tool <TOOL>。",
+    },
+  },
+} as const;
+
+const addJoinedTeamCopy = (target: { join: object }, copy: { readonly join: object } & Record<string, unknown>) => {
+  Object.assign(target, { ...copy, join: { ...target.join, ...copy.join } });
+};
+addJoinedTeamCopy(en.team, joinedTeamCopy.en);
+addJoinedTeamCopy(zhHans.team, joinedTeamCopy["zh-Hans"]);
+addJoinedTeamCopy(zhHant.team, joinedTeamCopy["zh-Hant"]);
+
+export type TranslationResources = Omit<typeof en, "team"> & {
+  team: typeof en.team & typeof joinedTeamCopy.en;
+};
+
 export const resources = {
   en: { translation: en },
   "zh-Hans": { translation: zhHans },
   "zh-Hant": { translation: zhHant },
 } as const;
-
-export type TranslationResources = typeof en;
