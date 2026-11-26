@@ -1219,7 +1219,15 @@ and wait for evidence that people need them.
   sync, review and restore keep those values out of previews and backups.
   Wenlan also leaves a skill package in place if one of its files holds
   text that looks like a key, and records the tool and affected file paths.
-  Tests `rulesync_leaves_rule_credentials_at_their_original_locations`,
+  If a setup saved by an older version holds such text in a skill's saved
+  copy, backup or delivery record, Wenlan stops keeping that skill instead of
+  refusing the whole setup. It removes every stored copy of that skill, leaves
+  the tool folders untouched and stops syncing them, and tells the person once
+  which skills it stopped keeping. Such text in rule text or in any other saved
+  path still refuses the setup as before.
+  Tests `rulesync_saved_skill_with_a_key_is_dropped_and_the_setup_loads`,
+  `rulesync_legacy_rule_and_skill_credentials_leave_the_saved_setup_in_place`,
+  `rulesync_leaves_rule_credentials_at_their_original_locations`,
   `rulesync_pullback_refuses_a_rule_edit_with_credentials_before_review`,
   `rulesync_keeps_key_shaped_skill_assets_and_accepts_code_references`,
   and `rulesync_skill_sync_keeps_an_asset_that_newly_contains_a_key`.
