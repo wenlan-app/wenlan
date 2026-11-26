@@ -1258,6 +1258,16 @@ fn safe_origin_value(value: Option<&str>) -> bool {
     })
 }
 
+/// A page line is proposed by the pages themselves. A confirmed preference
+/// has no page and keeps the tool it came from (`wenlan-cli`, `claude-code`).
+fn proposer_fits(page: &wenlan_types::personal_rules::PersonalRulePageOrigin) -> bool {
+    let preference = page.location.page_id.is_none() && page.rule_id.starts_with("preference:");
+    page.proposer == PAGES_PROPOSER
+        || (preference
+            && !page.proposer.trim().is_empty()
+            && safe_origin_value(Some(&page.proposer)))
+}
+
 fn safe_page_origins(origin: &PersonalRuleOrigin) -> bool {
     origin.pages.iter().all(|page| {
         origin.layer == PersonalRuleLayer::Shared
@@ -1265,7 +1275,7 @@ fn safe_page_origins(origin: &PersonalRuleOrigin) -> bool {
             && safe_origin_value(page.location.page_id.as_deref())
             && safe_origin_value(Some(&page.rule_id))
             && safe_origin_value(page.author.as_deref())
-            && page.proposer == PAGES_PROPOSER
+            && proposer_fits(page)
             && page.confirmer == "person"
     })
 }
