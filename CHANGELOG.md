@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.22.8](https://github.com/wenlan-app/wenlan/compare/v0.22.7...v0.22.8) (2026-11-26)
+
+
+### Features
+
+* **app:** show "source checked" and which AI tool wrote a cited sentence ([#1392](https://github.com/wenlan-app/wenlan/issues/1392)) ([6ab0cdb](https://github.com/wenlan-app/wenlan/commit/6ab0cdb5968f65bca5e4e79197b65320599fde84))
+* **rules:** handle hand edits in a tool's rule file by layer ([#1399](https://github.com/wenlan-app/wenlan/issues/1399)) ([5747b83](https://github.com/wenlan-app/wenlan/commit/5747b83d321e22b67d20fc44e366eed1b584c7c5))
+* **rules:** one personal rule store, imported once from what each tool points to ([#1394](https://github.com/wenlan-app/wenlan/issues/1394)) ([8751d28](https://github.com/wenlan-app/wenlan/commit/8751d282e944e1424af1703e9303260b66c5c926))
+* **rules:** share rule lines across tools, follow AGENTS.md edits, never store keys ([#1388](https://github.com/wenlan-app/wenlan/issues/1388)) ([6aa5aa9](https://github.com/wenlan-app/wenlan/commit/6aa5aa97729adf7c62006400c6c5cb335c372715))
+
+
+### Bug Fixes
+
+* **app:** move "Not written yet" from home to Activity ([#1389](https://github.com/wenlan-app/wenlan/issues/1389)) ([deaaf0e](https://github.com/wenlan-app/wenlan/commit/deaaf0e54da2dd1833f611640a6f06026cb458c0))
+* **app:** show the cited sentence as the page reads it in Info ([#1398](https://github.com/wenlan-app/wenlan/issues/1398)) ([cc97bff](https://github.com/wenlan-app/wenlan/commit/cc97bffbeb3cc6143f27bc236b5d12e58ecc01eb))
+* code review works in a browser, added steps keep waiting, clearer prompts and "Before:" text ([#1396](https://github.com/wenlan-app/wenlan/issues/1396)) ([edbab56](https://github.com/wenlan-app/wenlan/commit/edbab561e3c47e27e603d6798d9d89d6e983b81b))
+* **core:** stop assuming one person's folders in path filters, and guard against it ([#1395](https://github.com/wenlan-app/wenlan/issues/1395)) ([317a84f](https://github.com/wenlan-app/wenlan/commit/317a84f0a092d7d6ef8e11312c79286711aa7200))
+* flag a step added inside cited lines, keep each theme's home, unbreak numbered lists ([#1393](https://github.com/wenlan-app/wenlan/issues/1393)) ([71316c5](https://github.com/wenlan-app/wenlan/commit/71316c572b82586872b42c4bb289aaf9c1728df6))
+* **team:** list team-library Spaces to invited members instead of saying none are open ([#1397](https://github.com/wenlan-app/wenlan/issues/1397)) ([503eec2](https://github.com/wenlan-app/wenlan/commit/503eec2e2b4f3b7ecb22a8d7146e8637806206d8))
+* **team:** record whoever starts a team here as its owner ([#1391](https://github.com/wenlan-app/wenlan/issues/1391)) ([1800698](https://github.com/wenlan-app/wenlan/commit/18006989ba12d6823890db988bc6281f69b7b1e1))
+
 ## [0.22.7](https://github.com/wenlan-app/wenlan/compare/v0.22.6...v0.22.7) (2026-11-24)
 
 
