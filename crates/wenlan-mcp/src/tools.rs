@@ -197,6 +197,12 @@ impl ToolProfile {
     }
 }
 
+/// What `lint_repair_prepare` says when its request went out and no answer came back.
+const REPAIR_PLAN_NO_ANSWER: &str = "The repair plan request was sent but Wenlan did not \
+     answer in time. Wenlan may already have written the plan, so its completion is unknown. \
+     Do not retry this call: the cached lint reports were consumed. Run `lint` again and open \
+     a new plan once Wenlan answers.";
+
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources", "read_space_rules"];
 /// What the `daily` profile lists: reading, saving, writing and reshaping
 /// pages, the approved working rules and saving one the person asks for,
@@ -4553,15 +4559,12 @@ impl WenlanMcpServer {
         let summary: wenlan_types::repair_plan::RepairPlanSummary =
             match self.client.post("/api/repairs/plan", &request).await {
                 Ok(summary) => summary,
-                Err(WenlanError::Unreachable(address)) => {
-                    return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                        "The repair plan request was sent but no response came back from \
-                         {address} (retried 3x over ~6s). Wenlan may already have written \
-                         the plan, so its completion is unknown. Do not retry this call: the \
-                         cached lint reports were consumed. Run `lint` again and open a new \
-                         plan once Wenlan answers.\n\n{}",
-                        daemon_setup_hint(&address)
-                    ))]));
+                // Only a lost answer is unknown; a connection that never opened
+                // sent nothing and gets the ordinary not-running text.
+                Err(WenlanError::NoAnswer) => {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        REPAIR_PLAN_NO_ANSWER.to_string(),
+                    )]));
                 }
                 Err(error) => return Ok(tool_error(error, "repair plan prepare")),
             };

@@ -385,8 +385,8 @@ and wait for evidence that people need them.
   is refused and what to do: "You can read this team's pages. To edit, sign in
   with Google or GitHub on the team's web page (needs the team's https
   address), or ask the team owner." The AI tool's instructions for such a
-  connection, its refusal, and the team server's refusal carry it. A member who
-  can edit and meets another refusal is not told this. Tests
+  connection, its refusal, and the team server's refusal carry it. In the AI
+  tool, a member who can edit and meets another refusal is not told this. Tests
   `a_read_only_team_member_is_told_how_to_get_edit_rights`,
   `only_a_read_only_member_is_told_how_to_get_edit_rights_on_a_403` and
   `round6_hosted_mcp_routes_return_the_typed_member_response`.
