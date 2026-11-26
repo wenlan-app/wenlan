@@ -189,7 +189,7 @@ pub(super) fn read(
     location: &Location,
 ) -> Result<LiveFile, &'static str> {
     check_delivery_paths(home, [location.path.as_path()])
-        .map_err(|_| "the file aliases the shared harness or its path is unsafe")?;
+        .map_err(|_| "the file's path is unsafe")?;
     let snapshot = root
         .read_personal_file(&location.path, false)
         .map_err(|_| "the file is linked (including hard links), unreadable, too large, or its permissions cannot be preserved")?;

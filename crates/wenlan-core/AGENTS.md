@@ -18,6 +18,8 @@ detailed module map, database layout, feature-flag wiring, or historical measure
   behavior to the slice lane it belongs to, not there.
 - A new channel must have an executable substrate/liveness check. Do not report a null
   experiment over an empty or stale substrate as product evidence.
+- Rule and skill sync must not assume any one person's folder layout or scripts; before
+  merging, cover a typical new user's fake home (only one tool's rule file, or none).
 - Retrieval feature defaults and experiment receipts live in `REFERENCE.md` and
   `src/retrieval/REFERENCE.md`, not in this instruction file.
 

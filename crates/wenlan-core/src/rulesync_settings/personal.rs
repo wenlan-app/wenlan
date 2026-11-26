@@ -1191,9 +1191,9 @@ impl Adoption {
             let path = location.display();
             if check_delivery_paths(home, [location.path.as_path()]).is_err() {
                 if present(&root, &location.path) {
-                    adoption.notes.push(format!(
-                        "{path}: unmanaged because it aliases the shared harness or has an unsafe path."
-                    ));
+                    adoption
+                        .notes
+                        .push(format!("{path}: unmanaged because its path is unsafe."));
                 }
                 continue;
             }

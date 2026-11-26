@@ -13535,7 +13535,13 @@ fn page_basis_refresh_guard_detects_an_unrefreshed_writer() {
 
 /// Names that only exist on one maintainer's machine. Product code must work
 /// for a stranger's home, so these may appear only in tests and fixtures.
-const PERSONAL_SETUP_TOKENS: &[&str] = &["second-brain", "lucian"];
+const PERSONAL_SETUP_TOKENS: &[&str] = &[
+    "second-brain",
+    "lucian",
+    "sync-codex-agents",
+    "adapters/claude",
+    "adapters/codex",
+];
 
 /// Product lines allowed to keep a token, each with the reason.
 const PERSONAL_SETUP_ALLOWED: &[(&str, &str)] = &[
@@ -13598,22 +13604,35 @@ fn personal_setup_violations(path: &str, source: &str) -> Vec<String> {
 fn product_code_does_not_assume_one_persons_setup() {
     let root = repo_root();
     let mut violations = Vec::new();
+    let mut scanned = Vec::new();
     for pattern in [
-        "crates/*/src/**/*.rs",
-        "app/src/**/*.rs",
-        "src/**/*.ts",
-        "src/**/*.tsx",
-        "plugin/hooks/**",
-        "plugin-codex/hooks/**",
-        "scripts/first-run/**",
-        "install.sh",
+        ":(glob)crates/*/src/**/*.rs",
+        ":(glob)app/src/**/*.rs",
+        ":(glob)src/**/*.ts",
+        ":(glob)src/**/*.tsx",
+        ":(glob)plugin/hooks/**",
+        ":(glob)plugin-codex/hooks/**",
+        ":(glob)scripts/first-run/**",
+        ":(glob)install.sh",
     ] {
         for path in git_ls_files(&root, pattern) {
             let Ok(source) = std::fs::read_to_string(root.join(&path)) else {
                 continue;
             };
             violations.extend(personal_setup_violations(&path, &source));
+            scanned.push(path);
         }
+    }
+    // Files directly under src/ must be scanned too, so a pattern that
+    // silently skips files fails here instead of passing.
+    for expected in [
+        "crates/wenlan-server/src/cmd_backfill.rs",
+        "crates/wenlan-core/src/rulesync_adopt.rs",
+    ] {
+        assert!(
+            scanned.iter().any(|path| path == expected),
+            "the personal-setup guard did not scan {expected}"
+        );
     }
     assert!(
         violations.is_empty(),

@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::skill_locations::AGENT_SKILLS_DIR;
 use wenlan_types::skill_registry::{
     InstalledSkillRow, SkillImportResult, SkillInstallRequest, SkillInstallResult, SkillPreview,
     SkillPreviewFile, SkillSearchResponse, SkillSearchRow,
@@ -32,8 +33,9 @@ pub fn tool_skill_dirs(home: Option<&Path>, config_dir: Option<&Path>) -> Vec<Pa
         if home.join(".claude").is_dir() {
             push(home.join(".claude").join("skills"));
         }
-        if home.join(".codex").is_dir() || home.join(".agents").join("skills").is_dir() {
-            push(home.join(".agents").join("skills"));
+        let codex_skills = home.join(AGENT_SKILLS_DIR);
+        if home.join(".codex").is_dir() || codex_skills.is_dir() {
+            push(codex_skills);
         }
     }
     for client in [

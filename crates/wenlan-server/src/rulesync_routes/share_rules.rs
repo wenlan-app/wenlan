@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Plan and apply rule moves from the reviewed, live tool documents.
 
-use super::shared_source::SharedSource;
 use super::*;
-use wenlan_core::rulesync_adopt::{legacy_claude_imported_rules, without_shared};
+use wenlan_core::rulesync_adopt::without_shared;
 use wenlan_core::rulesync_personal::join_text;
 use wenlan_core::rulesync_personal::sharing::{overlay_lines_with, LocalReason};
 use wenlan_types::rulesync::{SharingRule, SharingRuleStay};
@@ -101,10 +100,8 @@ type RuleAdditions = Vec<(&'static str, usize)>;
 /// A line cannot travel if any copy has to stay local, including within a
 /// private key or a Markdown block.
 pub(super) fn plan(
-    home: &Path,
     root: &FileRoot,
     manifest: &Manifest,
-    source: &SharedSource,
     enrolled: &[&'static PersonalTarget],
     keep: &[usize],
 ) -> Result<(RuleShares, RuleAdditions)> {
@@ -114,6 +111,12 @@ pub(super) fn plan(
         let path = Path::new(target.rules.destination);
         let receipt = manifest.delivered.get(path);
         let marker = manifest.credentials.rules.get(path);
+        if manifest.imported_rule_paths.contains(path) {
+            if let Some(marker) = marker {
+                plan.keep_credential_lines(target.tool.display_name(), &marker.lines);
+            }
+            continue;
+        }
         if receipt.is_none() && marker.is_none() {
             continue;
         }
@@ -177,8 +180,6 @@ pub(super) fn plan(
                 .get(path)
                 .and_then(|backup| text(backup).ok())
                 .unwrap_or("");
-            let imported =
-                legacy_claude_imported_rules(home, path, original, &manifest.master.shared);
             let mut native: BTreeSet<_> = original.lines().map(str::to_owned).collect();
             // The current tool file can contain bytes Wenlan previously
             // flattened into it. Only later authored additions are new
@@ -190,7 +191,7 @@ pub(super) fn plan(
                     .filter(|line| !saved.contains(line))
                     .map(str::to_owned),
             );
-            (imported, Some(native))
+            (BTreeSet::new(), Some(native))
         };
         documents.push(RuleDocument {
             target,
@@ -204,10 +205,9 @@ pub(super) fn plan(
         plan.versions
             .push((target.id, receipt.rule_revision.clone()));
     }
-    plan.keep_credential_lines(SHARED_RULES, &source.credential_lines);
     let previously_kept = |line: &str| manifest.kept_share_rules.contains(line);
     let local = classified_local(&documents, previously_kept, BTreeMap::new());
-    let shared: BTreeSet<_> = source.merged.lines().chain(source.read.lines()).collect();
+    let shared: BTreeSet<_> = manifest.master.shared.lines().collect();
     let mut numbers = BTreeMap::new();
     let donors = documents.iter().filter(|doc| doc.writable);
     for doc in donors.clone() {
@@ -320,26 +320,19 @@ pub(super) struct RuleShareUpdate {
     overrides: BTreeMap<String, LocalText>,
     kept: BTreeSet<String>,
     authored: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
-    source_append: Option<SourceAppend>,
-}
-
-struct SourceAppend {
-    text: String,
-    changed_since_share: bool,
+    history: Option<personal_rules::RulePlanUpdate>,
 }
 
 impl RuleShareUpdate {
     pub(super) fn commit(self, manifest: &mut Manifest) {
+        if let Some(history) = self.history {
+            history.commit(manifest);
+        }
         manifest.master.shared = self.shared;
         manifest.master.overlays = self.overlays;
         manifest.master.overrides = self.overrides;
         manifest.kept_share_rules.extend(self.kept);
         manifest.authored_rules.extend(self.authored);
-        if let Some(append) = self.source_append {
-            manifest.shared_source_base = Some(append.text);
-            manifest.shared_source_restore_blocked |= append.changed_since_share;
-            manifest.rule_origins_tracked = true;
-        }
     }
 }
 
@@ -366,6 +359,7 @@ impl Setup {
         let mut master = PersonalMaster {
             shared: manifest.master.shared.clone(),
             overlays: manifest.master.overlays.clone(),
+            unenrolled_overlays: manifest.master.unenrolled_overlays.clone(),
             claude_imported_rules: manifest.master.claude_imported_rules.clone(),
             codex_sync_replaced: manifest.master.codex_sync_replaced,
             skills: Vec::new(),
@@ -373,12 +367,7 @@ impl Setup {
         };
         let mut operations = Vec::new();
         let mut authored = BTreeMap::new();
-        let mut source_append = None;
         if !moving.is_empty() {
-            ensure!(
-                manifest.rule_origins_tracked || !is_shared_source_receipt(manifest, Path::new(SHARED_RULES)),
-                "The backup does not say which tool added the previously shared rules. Review the tool and shared files before sharing more rules."
-            );
             master.shared = append_rule_lines(&master.shared, &approved);
             let mut worktrees = DeliveryWorktrees::new(&self.home)?;
             for &(target, writable) in &plan.targets {
@@ -451,20 +440,6 @@ impl Setup {
                     allow_link: false,
                 });
             }
-            // A protected source cannot enter the share journal. The same
-            // approved rules still go into the master and the tool copies.
-            if !manifest
-                .credentials
-                .rules
-                .contains_key(Path::new(SHARED_RULES))
-            {
-                source_append = Some(stage_source_append(
-                    root,
-                    manifest,
-                    &approved,
-                    &mut operations,
-                )?);
-            }
         }
         Ok(Some(RuleShareChange {
             update: RuleShareUpdate {
@@ -473,7 +448,7 @@ impl Setup {
                 overrides: master.overrides,
                 kept,
                 authored,
-                source_append,
+                history: None,
             },
             operations,
         }))
@@ -483,9 +458,16 @@ impl Setup {
         &self,
         root: &FileRoot,
         manifest: &mut Manifest,
-        change: RuleShareChange,
+        mut change: RuleShareChange,
         result: &mut RulesSyncReport,
+        person_confirmed: bool,
     ) -> Result<()> {
+        let mut next = manifest.master.clone();
+        next.shared.clone_from(&change.update.shared);
+        next.overlays.clone_from(&change.update.overlays);
+        next.overrides.clone_from(&change.update.overrides);
+        change.update.history =
+            personal_rules::stage_master_history(self, manifest, next, person_confirmed, false)?;
         let changed: BTreeSet<_> = change
             .operations
             .iter()
@@ -496,12 +478,28 @@ impl Setup {
             change.update.commit(manifest);
             return self.save(manifest);
         }
-        for (path, outcome) in self.apply_batch(
+        let expected = change.operations.len();
+        let applied = self.apply_batch(
             root,
             manifest,
             change.operations,
             BatchMode::ShareRules(change.update),
-        )? {
+        );
+        if !applied.as_ref().is_ok_and(|outcomes| {
+            outcomes.len() == expected
+                && outcomes
+                    .iter()
+                    .all(|(_, outcome)| *outcome == ApplyOutcome::Applied)
+        }) {
+            self.recover_pending(root, manifest)?;
+            return match applied {
+                Ok(_) => Err(anyhow::anyhow!(
+                    "A tool file changed while sharing rules. Run `wenlan rules sync`."
+                )),
+                Err(error) => Err(error),
+            };
+        }
+        for (path, outcome) in applied? {
             ensure!(
                 outcome == ApplyOutcome::Applied,
                 "{} changed while sharing rules. Run `wenlan rules sync`.",
@@ -516,53 +514,6 @@ impl Setup {
         }
         Ok(())
     }
-}
-
-fn stage_source_append(
-    root: &FileRoot,
-    manifest: &Manifest,
-    approved: &[&str],
-    operations: &mut Vec<Pending>,
-) -> Result<SourceAppend> {
-    let source_root = root.with_shared_rule_source()?;
-    let path = PathBuf::from(SHARED_RULES);
-    let directory = path.parent().expect("shared rules directory");
-    let seen = source_root
-        .read(&path, false)
-        .context("Read ~/.agents/AGENTS.md before sharing rules")?;
-    ensure!(
-        !snapshot_has_credentials(&seen),
-        "{}",
-        credential_note(&path)
-    );
-    let raw = text(&seen)?;
-    ensure!(
-        manifest.shared_source_base.as_deref() == Some(raw),
-        "~/.agents/AGENTS.md changed since the preview. Run `wenlan rules share --dry-run` again."
-    );
-    let appended = append_rule_lines(raw, approved);
-    let changed_since_share =
-        is_shared_source_receipt(manifest, &path) && manifest.delivered[&path].delivered != seen;
-    if source_root.read(directory, false)? == Snapshot::Absent {
-        operations.push(Pending {
-            path: directory.to_owned(),
-            seen: Snapshot::Absent,
-            desired: Snapshot::private_directory(),
-            kind: Some(Kind::SharedRuleSource),
-            allow_link: false,
-        });
-    }
-    operations.push(Pending {
-        path,
-        desired: with_bytes(&seen, appended.as_bytes().to_vec()),
-        seen,
-        kind: Some(Kind::SharedRuleSource),
-        allow_link: false,
-    });
-    Ok(SourceAppend {
-        text: appended,
-        changed_since_share,
-    })
 }
 
 fn append_rule_lines(original: &str, approved: &[&str]) -> String {
@@ -641,6 +592,8 @@ type BeforeWrite = (PathBuf, Box<dyn FnOnce()>);
 #[cfg(test)]
 thread_local! {
     static BEFORE_WRITE: std::cell::RefCell<Option<BeforeWrite>> = const { std::cell::RefCell::new(None) };
+    static FAIL_FINAL_CHECKPOINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_FINAL_CHECKPOINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -654,4 +607,32 @@ pub(super) fn before_rule_share_write(path: &Path) {
 #[cfg(test)]
 pub(super) fn at_rule_share_write(path: &str, hook: impl FnOnce() + 'static) {
     BEFORE_WRITE.with(|slot| assert!(slot.replace(Some((path.into(), Box::new(hook)))).is_none()));
+}
+
+#[cfg(test)]
+pub(super) fn fail_next_rule_final_checkpoint() {
+    FAIL_FINAL_CHECKPOINT.with(|flag| assert!(!flag.replace(true)));
+}
+
+#[cfg(test)]
+pub(super) fn before_rule_final_checkpoint() -> Result<()> {
+    ensure!(
+        !FAIL_FINAL_CHECKPOINT.with(|flag| flag.replace(false)),
+        "Synthetic final checkpoint failure."
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn fail_after_next_rule_final_checkpoint() {
+    FAIL_AFTER_FINAL_CHECKPOINT.with(|flag| assert!(!flag.replace(true)));
+}
+
+#[cfg(test)]
+pub(super) fn after_rule_final_checkpoint() -> Result<()> {
+    ensure!(
+        !FAIL_AFTER_FINAL_CHECKPOINT.with(|flag| flag.replace(false)),
+        "Synthetic post-checkpoint failure."
+    );
+    Ok(())
 }

@@ -26,9 +26,9 @@ use wenlan_types::{
 use super::{
     require_local_rules_access, require_personal_rules_writer, tool_label, Setup, PERSONAL_TARGETS,
 };
-use crate::{
-    error::ServerError, rulesync_apply::FileRoot, rulesync_registry, rulesync_settings_routes,
-};
+#[cfg(test)]
+use crate::rulesync_apply::FileRoot;
+use crate::{error::ServerError, rulesync_registry, rulesync_settings_routes};
 
 struct CachedUpdates {
     source: String,
@@ -106,7 +106,7 @@ pub(super) async fn list(headers: HeaderMap) -> Result<Json<RulesReviewList>, Se
 }
 
 fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
-    let status = setup.status()?;
+    let status = setup.status_for_caller(false)?;
     let mut items = status
         .proposals
         .into_iter()
@@ -132,7 +132,7 @@ fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
         items.push(skill_review_item(proposal));
     }
     if status.adopted || status.can_restore {
-        let root = FileRoot::open_home(&setup.home)?;
+        let root = setup.home_files()?;
         match rulesync_settings_routes::plan_local(setup, &root) {
             Ok(Some(settings)) => {
                 let plan = settings.response;

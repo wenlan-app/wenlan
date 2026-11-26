@@ -67,7 +67,7 @@ async fn execute<T: Send + 'static>(
     let result = tokio::task::spawn_blocking(move || {
         let setup = Setup::system()?;
         let _lock = setup.lock()?;
-        let root = FileRoot::open_home(&setup.home).context("open local AI-tool home")?;
+        let root = setup.home_files().context("open local AI-tool home")?;
         let plan = if let Some(source) = source {
             let rendered = rulesync_settings::render_source(&setup.binary, &setup.data, &source)?;
             plan_rendered(&setup, &root, &source, rendered)?
@@ -345,35 +345,6 @@ mod tests {
             .written
             .is_empty());
         assert_eq!(fs::read(home.join(".claude.json")).unwrap(), bytes);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rulesync_settings_refuse_a_physical_harness_alias() {
-        use std::os::unix::fs::symlink;
-        let temp = tempfile::tempdir().unwrap();
-        let setup = test_setup(temp.path());
-        let _lock = setup.lock().unwrap();
-        let home = &setup.home;
-        // Exercise the mixed-case lookup on case-insensitive volumes too.
-        fs::create_dir(home.join(".Codex")).unwrap();
-        if !home.join(".codex").exists() {
-            fs::rename(home.join(".Codex"), home.join(".codex")).unwrap();
-        }
-        let physical = fs::canonicalize(home.join(".codex")).unwrap();
-        fs::write(physical.join("config.toml"), b"# harness settings\n").unwrap();
-        symlink(&physical, home.join(".agents")).unwrap();
-        let root = FileRoot::open_home(home).unwrap();
-        let result = plan_rendered(&setup, &root, home, rendered("source")).and_then(|plan| {
-            let token = plan.response.token.clone();
-            apply_plan(&setup, &root, plan, &token)
-        });
-        assert!(result.is_err() || !result.unwrap().blocked.is_empty());
-        assert_eq!(
-            fs::read(physical.join("config.toml")).unwrap(),
-            b"# harness settings\n"
-        );
-        assert!(!home.join(".claude.json").exists());
     }
 
     #[cfg(unix)]

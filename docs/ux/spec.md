@@ -813,6 +813,9 @@ and wait for evidence that people need them.
   their own words, or one on a page that follows only their pages. A line
   quoting only what an AI wrote from its own reading is left out; one the
   person saw on the ask counts by their yes.
+  With the one-store migration (planned for a later PR), rules already
+  eligible keep their status. New AI-proposed rule text needs the person's
+  confirmation of that exact change, even when the library was accepted.
   Tests `after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unseen`
   and `a_rule_from_a_following_page_changes_the_night_after_that_page_catches_up`.
   原文（後一段）：「上述提到的問題都要修好」（2026-11-21，設計 v5 F4「推斷的點升規則前對到你的原句」）。
@@ -837,6 +840,8 @@ and wait for evidence that people need them.
   reported changing its approach or Wenlan recorded the read, with no counts.
   Stop makes the page unreadable to AI tools at once but leaves it in Wenlan so
   it can be started again.
+  With the one-store migration (planned for a later PR), rule lines on this
+  page are a view of the personal rule store, not a second editable store.
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
 - **UX-SKILL-3** `shipped` Under those lines, a suggestion for a skill the
   person owns shows the old line struck through, the proposed grounded line,
@@ -860,6 +865,8 @@ and wait for evidence that people need them.
   "What you told your tools" with a cap apart from the page rules. They have no page, so nothing is counted as borrowed from one;
   the Rules list in the app does not mix them in, and a Space's own rules, a
   repository copy of them and a team member's read never include them.
+  With the one-store migration (planned for a later PR), eligible personal
+  rules and their scope come from the same personal rule store.
   原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
 - **UX-SKILL-6** `shipped` The rules AI tools may read are also kept as files
   in Wenlan's own folder, in the `AGENTS.md` shape other tools already read:
@@ -873,6 +880,9 @@ and wait for evidence that people need them.
   With `WENLAN_RULESYNC=1` (pending acceptance), an adopted personal setup
   has one local master for shared and tool-specific rules and each skill's
   target list. Wenlan keeps the rule pages and their provenance available.
+  The planned one-store migration keeps shared, scoped, tool-specific and
+  referenced personal rules in that store; rule pages and delivered files
+  become projections. Following referenced files is planned for a later PR.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -896,8 +906,8 @@ and wait for evidence that people need them.
 - **UX-SKILL-8** `shipped` The rules used in every Space (rules only, not
   decisions or pitfalls) are also kept in
   each connected AI tool's own always-read file, in one part marked as
-  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, the `GEMINI.md`
-  Gemini CLI and Antigravity both read, the `copilot-instructions.md` Copilot
+  Wenlan's: Claude Code's `CLAUDE.md`, Codex's `AGENTS.md`, Gemini CLI's
+  `~/.gemini/GEMINI.md`, Antigravity's `~/.gemini/config/GEMINI.md`, the `copilot-instructions.md` Copilot
   CLI and Copilot in VS Code both read, Windsurf's `global_rules.md`,
   OpenCode's and Zed's `AGENTS.md`. Kiro reads every file of a folder, so
   there the rules are a file of Wenlan's own, `wenlan-rules.md`, and no file
@@ -966,6 +976,9 @@ and wait for evidence that people need them.
   rule text that looks like a credential is refused. A wiki pull request
   carries the bound project's rules and its opted-in team section. Anyone
   with repository read access can read that copy (UX-SKILL-7).
+  Planned for a later PR: a hand edit of a team or project line becomes a
+  proposal to that Space's Write holders. A Write holder decides it; if the
+  editor holds Write, their one confirmation covers the change.
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
   原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
   Tests `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`
@@ -1000,6 +1013,14 @@ and wait for evidence that people need them.
   share it across tools. Sharing an edit to a uniquely matched overlay rule
   moves the revised lines into the shared rules and keeps the rest of that
   overlay local.
+  With personal-rule plans, an AI-proposed personal rule or change
+  confirmed for its exact text counts as the person's for that version
+  (UX-SKILL-14). Existing eligible rules retain their status in the planned
+  one-store migration. Page rule editing and migration come in a later PR.
+  Also planned for a later PR: a hand edit to a tool-only line silently
+  updates that tool's overlay; a hand edit to a shared personal line asks
+  once whether to use it in all tools or only that tool. Team and project
+  edits follow UX-SKILL-9.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-11** `shipped` A rules page shows two things. Under each rule,
   where it came from: a link "from" the page it was taken from, or "written
@@ -1036,6 +1057,9 @@ and wait for evidence that people need them.
   The opt-in writer uses its delivery record for the status. When rulesync
   has no output for a connected tool, the status is "not written, reads via
   MCP."
+  With the one-store migration (planned for a later PR), the page renders
+  the stored origin, scope and eligibility rather than deciding authorship
+  from its own copy. Unknown origins remain unknown.
   原文：決定 3：「A rules page shows two things. Under each rule, the page it came from. At the top of the page, which AI tools the rules are used in. Wording limit: say the tool is connected and the rules were delivered; never say the AI always follows them.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:28Z–22:30Z；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 3）；草圖 `Main.dc.html` 右側規則頁（「用在 … 已連接，規則已送達」「來自〈…〉」「你寫的」「AI 從你的頁面整理出一條，還沒算數」「接受／不要」）。
 - **UX-SKILL-12** `shipped` Skills are reached the same way from every door.
   The skills Wenlan holds (each with where it is used, where it came from and
@@ -1131,6 +1155,14 @@ and wait for evidence that people need them.
   dismissing it drops the save. A teammate's connection cannot save or
   remove a rule, the page is not sent to the others in a team Space, and
   Wenlan refuses a save or a removal while it listens beyond this computer.
+  With personal-rule plans, the immediate saved-rule path carries
+  the person's own dictated words only. An AI-proposed personal rule or change
+  counts as authored by the person once the person confirms that exact change.
+  Record the proposing tool and the person who confirmed it separately.
+  Unconfirmed AI text does not become a rule. `add_rule` must not bypass this
+  confirmation. The one-line, 300-character, plain-sentence limits still apply
+  to a saved rule. With the one-store migration (planned for a later PR), the
+  saved-rules page is a view of the store and keeps its source and history.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 - **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the
@@ -1171,15 +1203,25 @@ and wait for evidence that people need them.
   it out when every target already has its files. Tests
   `rulesync_preview_names_tools_that_get_new_files` and
   `personal_preview_lists_tools_that_get_new_files`.
-  The preview says `~/.agents` is left untouched. Wenlan reads its shared
-  sources and replaces adopted links at the tool paths. Personal Codex
-  copies use `~/.codex/skills`.
+  At first setup, Wenlan imports a rule source referenced by a tool's rule
+  file through a Claude import, a symlink, or a generated header that names
+  the source. Each tool keeps its own remaining lines in its Wenlan layer.
+  With no reference, each tool's file becomes its own layer. When tools point
+  to different sources, each source becomes part of its tool's layer and
+  Share can offer their common lines. After import, edits to shared rules
+  happen in Wenlan. Setup is the only time Wenlan reads referenced rule
+  sources. Those files stay in place. Codex's personal skills use
+  `~/.agents/skills`. Wenlan continues to recognize older Codex copies
+  in `~/.codex/skills`. Cursor's own skills use `~/.cursor/skills`.
+  Tests `rulesync_adoption_without_a_shared_source_keeps_only_the_tool_files`,
+  `rulesync_adoption_imports_claude_source_at_arbitrary_path`,
+  `rulesync_adoption_imports_codex_symlink_at_arbitrary_path`, and
+  `ux_skill_26_share_offers_common_lines_from_different_imported_sources`.
   The preview shows which skills track a verified upstream and which
   become plain copies. `wenlan rules review` offers available
   upstream versions for review without changing the master or tool files.
-  Codex adoption replaces the legacy harness-generated header with a
-  Wenlan-managed header. The preview says the old sync script becomes
-  unused for this file and stays in place.
+  Codex adoption replaces a generated header with a Wenlan-managed header
+  when it recognizes the source. The preview shows the header change.
   With `WENLAN_RULESYNC=1`, adoption also covers the personal folders for
   Gemini CLI, Antigravity, GitHub Copilot CLI, Cursor, OpenCode, and Muse Code.
   The initial plan names the tools it skips because their folders are
@@ -1219,7 +1261,7 @@ and wait for evidence that people need them.
   or preserve the permissions of the destination it would have to replace.
   原文（2026-11-22）：「有 CLI，那你就能幫我執行，只在 AI 也要能支援」
   原文：「我希望能把現有電腦上的一套改成用 wenlan 這套，目標就是減少摩擦和增加開發體驗，包含技能等等這些」（2026-11-20 08:11Z）。英譯待 Qi-Xuan 確認："I want to switch the setup on my current computer to Wenlan's system to reduce friction and improve the development experience, including skills."
-  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_announces_retired_codex_script`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_personal_lifecycle_keeps_the_harness_read_only`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
+  Tests `ux_skill_15_rulesync_adopt_and_restore_exact_bytes_and_links`, `codex_delivery_reports_its_link_and_managed_state`, `personal_rules_dry_run_labels_skill_sources`, `adopted_skill_updates_share_the_registry_check_without_applying`, `personal_rules_dry_run_previews_the_generated_codex_header_change`, `adoption_replaces_the_codex_header_and_restore_keeps_the_script`, `personal_rules_dry_run_leaves_an_oversized_skill_unmanaged`, `personal_rules_dry_run_names_git_destinations_and_plans_codex_link_replacement`, `rulesync_share_writes_codex_and_cursor_skills_at_their_native_paths`, `rulesync_more_personal_targets_round_trip_with_pinned_binary` and `rulesync_adds_cursor_to_the_existing_adoption_and_restores_every_tool`.
   Tests `rulesync_restore_keeps_accepted_tool_only_lines_in_byte_order`,
   `rulesync_restore_blocks_a_settled_rewrite_of_an_original_rule`,
   `rulesync_restore_then_adopt_keeps_the_rule_tool_only`,
@@ -1462,6 +1504,8 @@ and wait for evidence that people need them.
   tool when edits compete. The terminal calls that answer `revert` and points
   people who try `revert` on a scope card to `tool-only`. The app previews
   the selected choice and asks for confirmation.
+  The planned hand-edit behavior in UX-SKILL-10 replaces this card for a
+  tool-only line; it still asks once for a shared personal line.
   Tests `rulesync_conflict_review_refuses_dismiss_and_suggests_revert`,
   `rulesync_scope_review_refuses_revert_and_suggests_tool_only`,
   `rulesync_review_lists_only_applicable_rule_answers`, and
@@ -1471,8 +1515,9 @@ and wait for evidence that people need them.
   keeps the adopted version in place. Dismiss applies to that release.
 - **UX-SKILL-22** `shipped` Bring in appears before adoption and opens the
   daemon’s plan with affected tools, counts, reasons for skipped items,
-  and settings changes. The shared setup stays in place. Approval binds the
-  entire plan. Restore asks again and says later edits stay for review.
+  and settings changes. For each referenced rule file Wenlan finds, the preview
+  names the file and says it will stay in place after import. Approval binds
+  the entire plan. Restore asks again and says later edits stay for review.
 - **UX-SKILL-23** `shipped` Rules setup renders daemon messages from
   localized codes. A missing or unknown code shows a generic message.
   Cards, previews, adoption details and feedback hide paths and file names
@@ -1488,28 +1533,15 @@ and wait for evidence that people need them.
   interrupted stage, or blocking skill proposal stops all tool writes in that
   round. Changed receipts surface for review. A clear round delivers approved
   content through the same writer as Sync now.
-  Sync now and the background check follow the person's edits and deletions in
-  `~/.agents/AGENTS.md` without a review card. Wenlan merges these edits with
-  the saved shared rules using the last text it read or wrote as the common
-  version. Older setups without a common version keep approved edits in Wenlan
-  and start tracking the source from its current text. When both sides insert
-  the same new rule, the source's position is used once. Each tool keeps its
-  own rule lines. A possible credential stays in the source. Wenlan records
-  its line number and protects any saved rules that the line might have
-  replaced. If both sides change the same lines differently, or a previously
-  populated source is missing or empty, delivery pauses. Status shows one
-  message with the reason and how to retry. The background check leaves the
-  last successful check time, saved rules and tool copies in place.
+  Sync and the background check deliver the rules saved in Wenlan. For a
+  setup that previously followed an external source, the next sync keeps the
+  saved rules and tool files as they are. Status says once that shared rules
+  are now edited in Wenlan.
   Tests `rulesync_watch_delivery_open_card`, `rulesync_watch_delivery_busy_lock`,
-  `rulesync_watch_delivery_receipt_mismatch`, and `rulesync_watch_delivery_positive`.
-  Tests `rulesync_watch_delivers_shared_source_edits_without_review`,
-  `rulesync_watch_stops_on_a_shared_source_conflict`,
-  `rulesync_sync_removes_deleted_shared_lines_and_keeps_overlays`,
-  `rulesync_sync_keeps_approved_shared_edits_without_source_history`,
-  `rulesync_sync_retains_shared_rules_under_credentials_and_accepts_version_tags`,
-  `rulesync_sync_pauses_for_missing_or_empty_shared_rules_source`,
-  `rulesync_sync_merges_a_shared_line_inserted_on_both_sides_only_once`, and
-  `rulesync_shared_source_conflict_reports_once_and_leaves_files_intact`.
+  `rulesync_watch_delivery_receipt_mismatch`, `rulesync_watch_delivery_positive`,
+  `ux_skill_24_sync_and_watch_ignore_changes_to_the_imported_rules_file`, and
+  `ux_skill_24_legacy_source_followers_keep_their_rules_and_get_one_status_notice`.
+
 - **UX-SKILL-25** `shipped` Local rules setup uses the same four action names
   in the app, CLI help and command hints. In order they are Bring in, Status,
   To review, and Restore (搬進來、狀態、待確認、還原 in Traditional Chinese and
@@ -1528,8 +1560,9 @@ and wait for evidence that people need them.
   with the same name. Portable overlay lines move to the end of the shared
   rules and leave each overlay that held them. Each distinct line is offered
   once, and lines already shared are left in place. The preview reads the
-  current reviewed rule files. Each tool keeps imported Claude Code content,
-  its tool-specific lines and the sections under a local heading or lead-in.
+  current reviewed rule files. Each tool keeps its tool-specific lines,
+  legacy Claude imports with recorded origins, and sections under a local
+  heading or lead-in.
   The short preview shows each moving line, shortened when needed to fit
   100 columns, and summarizes lines that stay. `--details` explains each
   line that stays. A line that may hold a credential stays local. Details show
@@ -1538,19 +1571,10 @@ and wait for evidence that people need them.
   out and review the file.
   `--details` numbers portable lines. The person can keep any of those lines
   locally with `--keep-rule N[,N]` in the same preview and confirmation.
-  The preview accounts for edits to `~/.agents/AGENTS.md` before choosing
-  which lines to move. When the shared file is safe to write, the short,
-  detailed, and JSON previews say “Also adds N lines to ~/.agents/AGENTS.md.”
-  The plan ID binds the safe shared text, credential locations, numbered
-  lines, keep choices, and reviewed versions of the tool files. On
-  confirmation, Wenlan appends only the selected lines to that file and
-  delivers them to the tool copies. If the shared file may hold a credential,
-  the preview explains that confirmation updates the tool copies and tells
-  the person how to include the shared file before confirming. A conflict
-  leaves the previous shared master and receipts in force. The person's
-  confirmed Restore uses the adoption backups and preserves added rules in
-  their originating tools. It restores `~/.agents/AGENTS.md` from its backup
-  only when the file remains as Wenlan last wrote it and it had no intervening edits.
+  The plan ID binds the saved shared rules, numbered lines, keep choices,
+  and reviewed versions of the tool files. Confirmation saves the selected
+  lines in Wenlan and delivers them to the managed tools. Restore uses the
+  adoption backups and preserves added rules in their originating tools.
   Safe personal MCP
   servers in managed tools are offered even if Wenlan does not yet manage the
   entry; on confirmation they are first adopted with the usual receipts and
@@ -1583,7 +1607,6 @@ and wait for evidence that people need them.
   Tests `ux_skill_26_rulesync_share_offers_each_item_to_every_supporting_tool_and_restores`,
   `ux_skill_26_rulesync_share_moves_common_rules_and_preserves_tool_only_files`,
   `rulesync_share_offers_other_tools_rules_when_a_live_tool_file_holds_a_key`,
-  `rulesync_share_offers_rules_when_the_shared_source_holds_a_key`,
   `rulesync_adoption_does_not_duplicate_shared_rules_via_a_protected_claude_import`,
   `rulesync_share_classifies_imports_tool_references_and_empty_headings`,
   `rulesync_share_redacts_a_credential_even_in_a_tool_line_or_key_block`,
@@ -1597,8 +1620,8 @@ and wait for evidence that people need them.
   `rulesync_share_mid_batch_conflict_restores_peers_and_keeps_the_old_receipts`,
   `rulesync_share_keeps_scoped_sections_and_preserves_repeated_lines_in_order`,
   `rulesync_share_keeps_flattened_imports_local_with_or_without_saved_provenance`,
-  `rulesync_share_updates_and_restores_the_shared_source`,
-  `rulesync_share_plans_against_an_edited_source_and_appends_only_approved_lines`,
+  `rulesync_share_never_writes_back_to_an_imported_source`,
+  `ux_skill_26_share_offers_common_lines_from_different_imported_sources`,
   `rules_share_short_preview_shows_each_moving_line_at_terminal_width`,
   `ux_skill_26_rules_share_keep_rule_reaches_preview_and_confirm`,
   `ux_skill_26_rulesync_share_adopts_unmanaged_mcp_before_projecting`,
@@ -1671,6 +1694,22 @@ and wait for evidence that people need them.
   `rulesync_safe_server_shares_syncs_and_restores_in_a_file_with_a_key` and
   `rules_share_in_session_without_confirm_only_previews`.
 
+- **UX-SKILL-28** `shipped` Personal shared and tool-specific rules have one
+  editable store in Wenlan. A proposal changes no rule or delivered file. If
+  the request names no layer, the AI asks which layer before proposing. All
+  shared and tool-layer edits proposed in one request form one plan, with one
+  diff and one person confirmation; they apply together or not at all and make
+  one undoable history entry. The plan shows each layer, affected tools and
+  safe before and after text. A changed or expired plan needs a fresh preview
+  and answer.
+  Applying and restoring a plan is a person-only interactive terminal action;
+  an AI tool may read and propose. History keeps the author, proposing tool,
+  confirmer, layer and time when known, and leaves unknown values unknown.
+  Restoring a history entry previews its change and creates a new entry.
+  Following referenced files, and changes to page rules, come in later PRs.
+  Tests `ux_skill_28_plan_applies_shared_and_overlay_with_origins`,
+  `personal_rule_plan_expiry_requires_a_fresh_preview`, and
+  `personal_rule_history_restore_applies_as_one_new_history_entry`.
 ## From the terminal
 
 - **UX-CLI-1** `shipped` Same things, two doors. Whatever an AI tool can do in

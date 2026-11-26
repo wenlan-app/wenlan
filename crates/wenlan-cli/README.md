@@ -500,6 +500,130 @@ Read and save working rules for a Space, or manage your personal AI-tool setup.
 wenlan rules [OPTIONS] [COMMAND]
 ```
 
+#### `wenlan rules shared`
+
+The shared personal rules that apply across tools.
+
+```text
+wenlan rules shared [OPTIONS] <COMMAND>
+```
+
+##### `wenlan rules shared show`
+
+Show the complete current text for this layer.
+
+```text
+wenlan rules shared show [OPTIONS]
+```
+
+##### `wenlan rules shared propose`
+
+Propose one atomic plan. Repeat `--edit LAYER=FILE` for every layer; LAYER is `shared` or `tool:NAME`. Every layer must be named explicitly.
+
+```text
+wenlan rules shared propose [OPTIONS] --edit <LAYER=FILE>
+```
+
+Options:
+
+- `--edit <LAYER=FILE>`: Explicit layer and UTF-8 text file, e.g. `shared=rules.md` or `tool:claude=claude.md`. Repeat to make one multi-layer plan.
+
+##### `wenlan rules shared apply`
+
+Review a fresh copy of the full plan and apply it after typing `yes`.
+
+```text
+wenlan rules shared apply [OPTIONS] <PLAN_ID>
+```
+
+Arguments:
+
+- `<PLAN_ID>`: Plan ID printed by a propose command.
+
+#### `wenlan rules tool`
+
+Rules that belong to one named tool.
+
+```text
+wenlan rules tool [OPTIONS] <NAME> <COMMAND>
+```
+
+Arguments:
+
+- `<NAME>`: Tool name, for example `claude` or `codex`.
+
+##### `wenlan rules tool show`
+
+Show the complete current text for this layer.
+
+```text
+wenlan rules tool <NAME> show [OPTIONS]
+```
+
+##### `wenlan rules tool propose`
+
+Propose one atomic plan. Repeat `--edit LAYER=FILE` for every layer; LAYER is `shared` or `tool:NAME`. Every layer must be named explicitly.
+
+```text
+wenlan rules tool <NAME> propose [OPTIONS] --edit <LAYER=FILE>
+```
+
+Options:
+
+- `--edit <LAYER=FILE>`: Explicit layer and UTF-8 text file, e.g. `shared=rules.md` or `tool:claude=claude.md`. Repeat to make one multi-layer plan.
+
+##### `wenlan rules tool apply`
+
+Review a fresh copy of the full plan and apply it after typing `yes`.
+
+```text
+wenlan rules tool <NAME> apply [OPTIONS] <PLAN_ID>
+```
+
+Arguments:
+
+- `<PLAN_ID>`: Plan ID printed by a propose command.
+
+#### `wenlan rules history`
+
+Browse and restore confirmed personal rule versions.
+
+```text
+wenlan rules history [OPTIONS] <COMMAND>
+```
+
+##### `wenlan rules history list`
+
+List confirmed personal rule versions.
+
+```text
+wenlan rules history list [OPTIONS]
+```
+
+##### `wenlan rules history show`
+
+Show all rule text in a confirmed version.
+
+```text
+wenlan rules history show [OPTIONS] <VERSION_ID>
+```
+
+Arguments:
+
+- `<VERSION_ID>`: Version ID from `wenlan rules history list`.
+
+##### `wenlan rules history restore`
+
+Propose restoring a version, then review and confirm the new plan.
+
+```text
+wenlan rules history restore [OPTIONS] <VERSION_ID>
+```
+
+Arguments:
+
+- `<VERSION_ID>`: Version ID from `wenlan rules history list`.
+
 #### `wenlan rules add`
 
 Save a rule your AI tools follow from now on (what an AI tool does with add_rule).

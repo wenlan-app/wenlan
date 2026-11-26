@@ -54,6 +54,7 @@ const settings = {
 const adoption: RulesAdoptionPlan = {
   settings,
   token: "preview-adoption",
+  rule_sources: ["~/notes/team-rules.md"],
   tools: [
     { name: "Claude Code", rule_files: 1, skills: 5, other_files: 0 },
     { name: "Codex", rule_files: 1, skills: 5, other_files: 2 },
@@ -76,8 +77,8 @@ const adoption: RulesAdoptionPlan = {
     { path: ".gemini/skills", tool: gemini, outcome: "skipped",
       reason: "The skills directory is reached through a symlink.", reason_code: "linked_skills_root" },
   ],
-  notes: ["~/.agents is left untouched.", "Skipped OpenCode because its tool folder is absent."],
-  note_codes: [{ code: "shared_untouched" }, { code: "tool_missing", tools: ["OpenCode"] }],
+  notes: ["Skipped OpenCode because its tool folder is absent."],
+  note_codes: [{ code: "tool_missing", tools: ["OpenCode"] }],
 };
 const updates: AdoptedSkillUpdate[] = [
   { name: "release-notes", upstream: { kind: "npm", package: "example-release-notes", version: "1.0.0", directory: "" }, status: { state: "available", revision: "1.1.0" } },

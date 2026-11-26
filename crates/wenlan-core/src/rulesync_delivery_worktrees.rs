@@ -17,7 +17,8 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 
-use crate::rulesync_adopt::{git_repository_name, Adoption, AdoptionTarget, SHARED_SKILLS};
+use crate::rulesync_adopt::{git_repository_name, Adoption, AdoptionTarget};
+use crate::skill_locations::AGENT_SKILLS_DIR;
 
 #[derive(Clone, Default)]
 struct Location {
@@ -197,15 +198,19 @@ pub(super) fn review_destinations(
             ));
         }
     }
-    let shared = Path::new(SHARED_SKILLS);
-    if adoption.skipped.keys().any(|path| path.starts_with(shared)) {
+    let shared = Path::new(AGENT_SKILLS_DIR);
+    if adoption
+        .skipped
+        .iter()
+        .any(|(path, skip)| path.starts_with(shared) && skip.code == Code::SharedSkill)
+    {
         if let Some(root) = worktrees.at(shared)? {
             let name = git_repository_name(&root).unwrap_or_else(|| worktrees.display(&root));
             adoption
                 .worktree_note_codes
                 .push(Code::GitSharedSkills.into());
             adoption.worktree_notes.push(format!(
-                "~/{SHARED_SKILLS} is inside the Git repository {name}. Wenlan reads the shared skills there and leaves that directory in place."
+                "~/{AGENT_SKILLS_DIR} is inside the Git repository {name}. Wenlan reads the shared skills there and leaves that directory in place."
             ));
         }
     }

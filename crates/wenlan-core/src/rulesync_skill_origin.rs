@@ -8,6 +8,7 @@ use serde_json::Value;
 use wenlan_types::rulesync::SkillUpstream;
 
 use super::Home;
+use crate::skill_locations::AGENT_SKILLS_DIR;
 use crate::{repo_wiki, skill_registry};
 
 pub(super) fn discover(home: &Home, skill: &Path) -> Option<SkillUpstream> {
@@ -50,10 +51,11 @@ fn github(remote: &str) -> Option<String> {
 fn skills_lock(home: &Home, skill: &Path) -> Option<SkillUpstream> {
     // The lock belongs to the resolved shared folder. An alias with the
     // same name in another directory does not inherit this metadata.
-    if skill.parent()? != Path::new(super::SHARED_SKILLS) {
+    let root = skill.parent()?;
+    if root != Path::new(AGENT_SKILLS_DIR) {
         return None;
     }
-    let lock = read_metadata(home, Path::new(".agents/.skill-lock.json"))?;
+    let lock = read_metadata(home, &root.parent()?.join(".skill-lock.json"))?;
     let entry = lock.get("skills")?.get(skill.file_name()?.to_str()?)?;
     if entry.get("sourceType")?.as_str()? != "github" {
         return None;

@@ -180,7 +180,7 @@ function AdoptionDetails({ plan }: { readonly plan: RulesAdoptionPlan }) {
             ))}</ul>
         </section>}
       {planned.length === 0 && !plan.settings?.files.length && <p>{t("rulesSetup.nothingToAdopt")}</p>}
-      <p>{t("rulesSetup.sharedUntouched")}</p>
+      {plan.rule_sources?.map((path) => <p className="break-all" key={path}>{t("rulesSetup.sharedUntouched", { path })}</p>)}
       {planned.length > 0 && <details>
         <summary>{t("rulesSetup.fileChanges")}</summary>
         {planned.map((file) => (

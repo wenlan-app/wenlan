@@ -667,6 +667,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "attachment_empty"
             | "page_is_the_persons"
             | "permanent_delete_needs_person"
+            | "personal_rule_credential"
             | "attachment_not_a_file"
             | "attachment_path_not_absolute"
             | "attachment_name_taken"
@@ -695,6 +696,30 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     );
     if !safe {
         return None;
+    }
+    if code == "personal_rule_credential" {
+        let detail = reason.split_once(':')?.1.trim();
+        let (layer, line) = detail.strip_prefix("layer=")?.split_once(" line=")?;
+        if !matches!(
+            layer,
+            "shared"
+                | "shared-source"
+                | "claudecode"
+                | "codexcli"
+                | "geminicli"
+                | "antigravity-ide"
+                | "copilotcli"
+                | "cursor"
+                | "opencode"
+                | "musecode"
+        ) {
+            return None;
+        }
+        let line: usize = line.parse().ok()?;
+        if line == 0 {
+            return None;
+        }
+        return Some(format!("{code}: layer={layer} line={line}"));
     }
     // A refused `code_basis` entry is explained in words built only from the
     // caller's own entry (its path) and a fixed problem phrase, so the agent

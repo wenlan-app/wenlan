@@ -35,6 +35,7 @@ pub mod page_map;
 pub mod pages;
 pub mod palace;
 pub mod person_key;
+pub mod personal_rules;
 pub mod repair;
 pub mod repair_current;
 pub mod repair_operation;

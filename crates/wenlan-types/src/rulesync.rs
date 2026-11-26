@@ -65,7 +65,6 @@ pub enum RulesSetupCode {
     OfflineInventory,
     AddTools,
     CodexScript,
-    SharedUntouched,
     PersonalImportNotes,
     IgnoreUnsupported,
     GitRule,
@@ -95,7 +94,6 @@ pub enum RulesSetupCode {
     RuleCompareFailed,
     MetadataChanged,
     SkillUnmanaged,
-    SkillDuplicate,
     SkillDestinationExists,
     DestinationPermissions,
     SkillMasterMissing,
@@ -146,6 +144,9 @@ pub struct AdoptionPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_lines: Option<usize>,
     pub files: Vec<AdoptionChange>,
+    /// Display paths of the referenced rule files found during this preview.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_sources: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<SettingsPlan>,
     #[serde(default)]
@@ -320,9 +321,6 @@ pub struct SharingPlan {
     pub rule_stays: Vec<SharingRuleStay>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_notes: Vec<String>,
-    /// Where the approved rules will be written.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shared_source_notice: Option<String>,
     /// Copies another tool already has with the same content.
     #[serde(default)]
     pub already_there: usize,
@@ -453,6 +451,9 @@ pub struct RulesSetupStatus {
     /// Plain notices about local rules and settings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// Show the one-time notice for setups upgraded from source following.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rule_import_finished: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

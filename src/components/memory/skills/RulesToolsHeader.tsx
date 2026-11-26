@@ -266,6 +266,7 @@ export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, ski
           </ul>
         </div>
       ))}
+      {setup?.rule_import_finished && <p className="rules-setup-status" role="status">{t("rulesSetup.ruleImportFinished")}</p>}
       {line && <p className="rules-setup-status" role="status">{line}</p>}
     </section>
   );

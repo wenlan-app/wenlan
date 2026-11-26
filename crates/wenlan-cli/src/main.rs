@@ -432,6 +432,21 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
     }
     let environment_agent = std::env::var("WENLAN_AGENT_NAME").ok();
     let agent_name = resolve_agent_name(cli.agent_name.as_deref(), environment_agent.as_deref());
+    if let Commands::Rules {
+        command: Some(commands::skills::RulesCmd::Personal(command)),
+    } = &cli.command
+    {
+        if cli.space.is_some() || cli.all_spaces {
+            anyhow::bail!("Personal rules do not take --space or --all-spaces");
+        }
+        commands::rulesync::run_personal_rules(
+            command,
+            agent_name.as_deref(),
+            cli.session.as_deref(),
+        )
+        .await?;
+        return Ok(ExitCode::SUCCESS);
+    }
     // A personal adoption preview reads only the tool files. It does not look
     // up a Space, build a daemon client or recover a stopped daemon.
     if let Commands::Rules {
@@ -1043,6 +1058,41 @@ mod catalog_tests {
         for alias in ["pending", "review"] {
             assert!(skills.find_subcommand(alias).unwrap().is_hide_set());
         }
+    }
+
+    #[test]
+    fn personal_rules_cli_exposes_shared_tool_and_history_and_requires_named_edits() {
+        use super::commands;
+        use super::commands::skills::RulesCmd;
+        use clap::Parser;
+
+        let shared = Cli::try_parse_from([
+            "wenlan",
+            "rules",
+            "shared",
+            "propose",
+            "--edit",
+            "shared=shared.md",
+            "--edit",
+            "tool:claude=claude.md",
+        ])
+        .unwrap();
+        assert!(matches!(
+            shared.command,
+            super::Commands::Rules {
+                command: Some(RulesCmd::Personal(
+                    commands::rulesync::PersonalRulesCmd::Shared {
+                        command: commands::rulesync::PersonalRulesAction::Propose { edits }
+                    }
+                ))
+            } if edits.len() == 2
+        ));
+
+        assert!(Cli::try_parse_from(["wenlan", "rules", "shared", "propose"]).is_err());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "shared", "source", "off"]).is_err());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "tool", "claude", "show"]).is_ok());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "tool", "codex", "show"]).is_ok());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "history", "list"]).is_ok());
     }
 
     #[test]

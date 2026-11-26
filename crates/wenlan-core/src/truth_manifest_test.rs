@@ -367,15 +367,16 @@ fn manifest_counts_match_the_spec() {
     // Sharing items with every tool and its preview bring it to 423.
     // POST `/api/pages/{id}/code-basis/lines` (the cited code lines then and
     // now, no note prose) brings it to 424.
+    // Personal-rule plans and history add seven local routes.
     assert_eq!(
         HTTP_READERS.len(),
-        424,
+        431,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
     // with `add_rule` and `remove_rule`, 64 with `save_skill`, and 65 with
-    // the canonical `handoff` Brief writer.
-    assert_eq!(MCP_READERS.len(), 65, "#[tool( declarations");
+    // the canonical `handoff` Brief writer, and 67 with personal rule read and propose.
+    assert_eq!(MCP_READERS.len(), 67, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -383,7 +384,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        436,
+        443,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -391,7 +392,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        419,
+        426,
         "main builder entries"
     );
     assert_eq!(
@@ -599,7 +600,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        414 // code-basis lines, 23 personal setup (sharing and its preview included), checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes, POST /api/handoff and the team publication review, all with no page markers.
+        421 // code-basis lines, 23 personal setup (sharing and its preview included), checkout, skill, review-preview and rule-proposal routes plus the existing 378, the four team sign-in routes, the four AI-tool routes, POST /api/handoff and the team publication review, all with no page markers. The seven personal-rule routes also have no page markers.
     );
 }
 

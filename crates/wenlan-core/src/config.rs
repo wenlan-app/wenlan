@@ -255,8 +255,8 @@ fn default_config_root() -> PathBuf {
 /// process, which is the same save-then-load semantics they had before.
 #[cfg(any(test, feature = "scratch-config"))]
 fn default_config_root() -> PathBuf {
-    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    ROOT.get_or_init(|| {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
         // Under `cfg(test)` this is the point. Reached from a *binary*, it means
         // the binary was built with the dev-dependency feature on (`cargo test`
         // leaves such a `target/debug/wenlan-server` behind), so say so loudly:
@@ -267,6 +267,15 @@ fn default_config_root() -> PathBuf {
              reads and writes go to a temporary directory, not the real data \
              dir. This is a test-only feature; rebuild without it."
         );
+    });
+    scratch_root()
+}
+
+/// The per-process scratch root behind `default_config_root` in test builds.
+#[cfg(any(test, feature = "scratch-config"))]
+pub(crate) fn scratch_root() -> PathBuf {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
         let root =
             std::env::temp_dir().join(format!("wenlan-scratch-config-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&root);

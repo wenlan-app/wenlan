@@ -323,6 +323,7 @@ pub async fn global_routes_enforce_scope_contracts() {
         (Method::Post, "/api/rules/setup/adopt/preview"),
         (Method::Post, "/api/rules/setup/share"),
         (Method::Post, "/api/rules/setup/share/preview"),
+        (Method::Post, "/api/rules/personal/apply"),
         (Method::Post, "/api/rules/setup/restore"),
         (Method::Post, "/api/rules/setup/skill-updates"),
         (Method::Post, "/api/rules/setup/sync"),
@@ -343,8 +344,13 @@ pub async fn global_routes_enforce_scope_contracts() {
         } else {
             HttpMethod::POST
         };
-        let body = (uri == "/api/team/library/terminal")
-            .then(|| serde_json::json!({"action":"withdraw","item_id":"fixture"}));
+        let body = match uri {
+            "/api/team/library/terminal" => {
+                Some(serde_json::json!({"action":"withdraw","item_id":"fixture"}))
+            }
+            "/api/rules/personal/apply" => Some(serde_json::json!({"plan_id":"fixture"})),
+            _ => None,
+        };
         let baseline = response_parts(
             fixture
                 .send(http_method.clone(), uri, body.clone(), None)
@@ -364,6 +370,66 @@ pub async fn global_routes_enforce_scope_contracts() {
         .await;
         assert_eq!(selected, baseline, "Global route honored Space: {uri}");
         executed.push((method, uri));
+    }
+    // Local personal-rule reads and proposals do not pick a Space. Use an
+    // empty proposal and missing ids so these probes never change any rules.
+    for (method, uri, catalog_path, body) in [
+        (
+            Method::Post,
+            "/api/rules/personal/show",
+            "/api/rules/personal/show",
+            Some(serde_json::json!({"layer":{"kind":"shared"}})),
+        ),
+        (
+            Method::Post,
+            "/api/rules/personal/propose",
+            "/api/rules/personal/propose",
+            Some(serde_json::json!({"edits":[]})),
+        ),
+        (
+            Method::Get,
+            "/api/rules/personal/plan/missing",
+            "/api/rules/personal/plan/{id}",
+            None,
+        ),
+        (
+            Method::Get,
+            "/api/rules/personal/history",
+            "/api/rules/personal/history",
+            None,
+        ),
+        (
+            Method::Get,
+            "/api/rules/personal/history/missing",
+            "/api/rules/personal/history/{id}",
+            None,
+        ),
+        (
+            Method::Post,
+            "/api/rules/personal/history/missing/propose",
+            "/api/rules/personal/history/{id}/propose",
+            Some(serde_json::json!({})),
+        ),
+    ] {
+        let http_method = if method == Method::Get {
+            HttpMethod::GET
+        } else {
+            HttpMethod::POST
+        };
+        let baseline = response_parts(
+            fixture
+                .send(http_method.clone(), uri, body.clone(), None)
+                .await,
+        )
+        .await;
+        let selected = response_parts(
+            fixture
+                .send(http_method, uri, body, Some("missing-space"))
+                .await,
+        )
+        .await;
+        assert_eq!(selected, baseline, "Global route honored Space: {uri}");
+        executed.push((method, catalog_path));
     }
     zotero_collections_ignore_space(&fixture).await;
     executed.push((Method::Get, "/api/zotero/collections"));

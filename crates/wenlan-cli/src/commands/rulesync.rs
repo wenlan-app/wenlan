@@ -24,6 +24,352 @@ use super::skills::{
 use crate::{client::WenlanClient, output::ResolvedFormat};
 use wenlan_types::rulesync_skill::{SavedSkillScope, SkillProposalOrigin};
 
+/// Read and propose edits to the one personal rules store. Each `--edit`
+/// explicitly names its layer, so a proposal can span several layers without
+/// the CLI guessing where any text belongs.
+#[derive(Debug, Subcommand)]
+pub enum PersonalRulesCmd {
+    /// The shared personal rules that apply across tools.
+    Shared {
+        #[command(subcommand)]
+        command: PersonalRulesAction,
+    },
+    /// Rules that belong to one named tool.
+    Tool {
+        /// Tool name, for example `claude` or `codex`.
+        name: String,
+        #[command(subcommand)]
+        command: PersonalRulesAction,
+    },
+    /// Browse and restore confirmed personal rule versions.
+    History {
+        #[command(subcommand)]
+        command: PersonalRulesHistoryAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PersonalRulesAction {
+    /// Show the complete current text for this layer.
+    Show,
+    /// Propose one atomic plan. Repeat `--edit LAYER=FILE` for every layer;
+    /// LAYER is `shared` or `tool:NAME`. Every layer must be named explicitly.
+    Propose {
+        /// Explicit layer and UTF-8 text file, e.g. `shared=rules.md` or
+        /// `tool:claude=claude.md`. Repeat to make one multi-layer plan.
+        #[arg(long = "edit", required = true, value_name = "LAYER=FILE")]
+        edits: Vec<String>,
+    },
+    /// Review a fresh copy of the full plan and apply it after typing `yes`.
+    Apply {
+        /// Plan ID printed by a propose command.
+        plan_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PersonalRulesHistoryAction {
+    /// List confirmed personal rule versions.
+    List,
+    /// Show all rule text in a confirmed version.
+    Show {
+        /// Version ID from `wenlan rules history list`.
+        version_id: String,
+    },
+    /// Propose restoring a version, then review and confirm the new plan.
+    Restore {
+        /// Version ID from `wenlan rules history list`.
+        version_id: String,
+    },
+}
+
+pub async fn run_personal_rules(
+    command: &PersonalRulesCmd,
+    agent_name: Option<&str>,
+    explicit_session: Option<&str>,
+) -> Result<()> {
+    let session = wenlan_types::session_context::resolve_session_from_env(explicit_session);
+    let has_ai_identity = agent_name.is_some() || session.session.is_some();
+    let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
+    match command {
+        PersonalRulesCmd::Shared { command } => {
+            run_personal_layer(
+                &client,
+                command,
+                wenlan_types::personal_rules::PersonalRuleLayer::Shared,
+                has_ai_identity,
+            )
+            .await
+        }
+        PersonalRulesCmd::Tool { name, command } => {
+            run_personal_layer(
+                &client,
+                command,
+                wenlan_types::personal_rules::PersonalRuleLayer::Tool { tool: name.clone() },
+                has_ai_identity,
+            )
+            .await
+        }
+        PersonalRulesCmd::History { command } => {
+            run_personal_history(&client, command, has_ai_identity).await
+        }
+    }
+}
+
+async fn run_personal_layer(
+    client: &WenlanClient,
+    command: &PersonalRulesAction,
+    layer: wenlan_types::personal_rules::PersonalRuleLayer,
+    has_ai_identity: bool,
+) -> Result<()> {
+    use wenlan_types::personal_rules::PersonalRuleShowRequest;
+    match command {
+        PersonalRulesAction::Show => {
+            let shown = client
+                .show_personal_rule(&PersonalRuleShowRequest { layer })
+                .await?;
+            println!("{}", personal_rule_show(&shown));
+            Ok(())
+        }
+        PersonalRulesAction::Propose { edits } => {
+            let edits = read_personal_rule_edits(edits)?;
+            let plan = client
+                .propose_personal_rules(&wenlan_types::personal_rules::PersonalRuleProposeRequest {
+                    edits,
+                })
+                .await?;
+            println!("{}", personal_rule_plan(&plan));
+            Ok(())
+        }
+        PersonalRulesAction::Apply { plan_id } => {
+            require_personal_rule_confirmation(
+                has_ai_identity,
+                io::stdin().is_terminal(),
+                io::stdout().is_terminal(),
+            )?;
+            let plan = client.personal_rule_plan(plan_id).await?;
+            print!("{}", personal_rule_plan(&plan));
+            confirm_and_apply_personal_plan(client, &plan).await
+        }
+    }
+}
+
+async fn run_personal_history(
+    client: &WenlanClient,
+    command: &PersonalRulesHistoryAction,
+    has_ai_identity: bool,
+) -> Result<()> {
+    match command {
+        PersonalRulesHistoryAction::List => {
+            let history = client.personal_rule_history().await?;
+            if history.is_empty() {
+                println!("No confirmed personal rule versions yet.");
+            } else {
+                for item in history {
+                    println!(
+                        "{}  {}  {}  layers: {}",
+                        item.id,
+                        item.time
+                            .map_or_else(|| "time unknown".into(), |t| format!("{t}")),
+                        item.cause,
+                        item.layers
+                            .iter()
+                            .map(personal_layer_label)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+            }
+            Ok(())
+        }
+        PersonalRulesHistoryAction::Show { version_id } => {
+            let version = client.personal_rule_version(version_id).await?;
+            println!("{}", personal_rule_version(&version));
+            Ok(())
+        }
+        PersonalRulesHistoryAction::Restore { version_id } => {
+            require_personal_rule_confirmation(
+                has_ai_identity,
+                io::stdin().is_terminal(),
+                io::stdout().is_terminal(),
+            )?;
+            let proposed = client.propose_personal_rule_restore(version_id).await?;
+            let plan = client.personal_rule_plan(&proposed.id).await?;
+            print!("{}", personal_rule_plan(&plan));
+            confirm_and_apply_personal_plan(client, &plan).await
+        }
+    }
+}
+
+async fn confirm_and_apply_personal_plan(
+    client: &WenlanClient,
+    plan: &wenlan_types::personal_rules::PersonalRulePlan,
+) -> Result<()> {
+    if !person_types_yes(&mut io::stdin().lock(), &mut io::stdout(), &plan.id)? {
+        println!("Nothing was changed.");
+        return Ok(());
+    }
+    let version = client
+        .apply_personal_rule_plan(&wenlan_types::personal_rules::PersonalRuleApplyRequest {
+            plan_id: plan.id.clone(),
+        })
+        .await?;
+    println!("Applied as personal rule version {}.", version.summary.id);
+    if !plan.unmanaged_tools.is_empty() {
+        println!(
+            "Not delivered to unmanaged tools: {}.",
+            plan.unmanaged_tools.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn require_personal_rule_confirmation(
+    has_ai_identity: bool,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> Result<()> {
+    ensure!(
+        !has_ai_identity,
+        "Only you can confirm personal rule changes. Run this from your own terminal outside an AI session."
+    );
+    ensure!(
+        stdin_is_terminal && stdout_is_terminal,
+        "Only you can confirm personal rule changes: run this in a terminal and type yes yourself. There is no flag or piped approval."
+    );
+    Ok(())
+}
+
+fn person_types_yes(
+    input: &mut dyn io::BufRead,
+    output: &mut dyn io::Write,
+    plan_id: &str,
+) -> Result<bool> {
+    write!(output, "Apply plan {plan_id}? Type yes to go on: ")?;
+    output.flush()?;
+    let mut answer = String::new();
+    if input.read_line(&mut answer)? == 0 {
+        return Ok(false);
+    }
+    Ok(answer.trim().eq_ignore_ascii_case("yes"))
+}
+
+fn read_personal_rule_edits(
+    specs: &[String],
+) -> Result<Vec<wenlan_types::personal_rules::PersonalRuleEdit>> {
+    use wenlan_types::personal_rules::{PersonalRuleEdit, PersonalRuleLayer};
+    ensure!(
+        !specs.is_empty(),
+        "name each edited layer with --edit LAYER=FILE"
+    );
+    specs
+        .iter()
+        .map(|spec| {
+            let (layer_name, path) = spec.split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("each --edit must name a layer and file, such as `shared=rules.md` or `tool:claude=claude.md`"))?;
+            ensure!(!path.is_empty(), "each --edit needs a text file path after `=`");
+            let layer = if layer_name == "shared" {
+                PersonalRuleLayer::Shared
+            } else if let Some(tool) = layer_name.strip_prefix("tool:") {
+                ensure!(!tool.trim().is_empty(), "name a tool after `tool:` in --edit");
+                PersonalRuleLayer::Tool { tool: tool.to_owned() }
+            } else {
+                bail!("unknown rule layer `{layer_name}`; use `shared` or `tool:NAME`");
+            };
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("reading personal rule text from {path}"))?;
+            Ok(PersonalRuleEdit { layer, text })
+        })
+        .collect()
+}
+
+fn personal_layer_label(layer: &wenlan_types::personal_rules::PersonalRuleLayer) -> String {
+    match layer {
+        wenlan_types::personal_rules::PersonalRuleLayer::Shared => "shared".into(),
+        wenlan_types::personal_rules::PersonalRuleLayer::Tool { tool } => format!("tool:{tool}"),
+    }
+}
+
+fn personal_rule_show(shown: &wenlan_types::personal_rules::PersonalRuleShow) -> String {
+    let mut output = format!("Layer: {}\n", personal_layer_label(&shown.layer));
+    if shown.text.is_empty() {
+        output.push_str("(no rules in this layer)\n");
+    } else {
+        output.push_str(&printable(&shown.text));
+        if !shown.text.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    output.push_str(&format!(
+        "Affected tools: {}\n",
+        if shown.affected_tools.is_empty() {
+            "none".into()
+        } else {
+            shown.affected_tools.join(", ")
+        }
+    ));
+    for (index, origin) in shown.origins.iter().enumerate() {
+        if let Some(origin) = origin {
+            output.push_str(&format!(
+                "Line {} origin: author {}; proposer {}; confirmer {}; time {}\n",
+                index + 1,
+                printable(origin.author.as_deref().unwrap_or("unknown")),
+                printable(origin.proposer.as_deref().unwrap_or("none")),
+                printable(origin.confirmer.as_deref().unwrap_or("unknown")),
+                origin
+                    .time
+                    .map_or_else(|| "unknown".into(), |time| time.to_string())
+            ));
+        }
+    }
+    output
+}
+
+fn personal_rule_plan(plan: &wenlan_types::personal_rules::PersonalRulePlan) -> String {
+    let mut output = format!("Plan {} (expires {})\n", plan.id, plan.expires_at);
+    output.push_str(&format!(
+        "Proposed by: {}\nAuthor on confirmation: person\n",
+        printable(plan.proposer.as_deref().unwrap_or("person or unknown")),
+    ));
+    for change in &plan.changes {
+        output.push_str(&format!(
+            "\n{}\nAffected tools: {}\n",
+            personal_layer_label(&change.layer),
+            if change.affected_tools.is_empty() {
+                "none".into()
+            } else {
+                change.affected_tools.join(", ")
+            }
+        ));
+        output.push_str(&printable(&change.diff));
+        if !change.diff.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    if !plan.blocked_tools.is_empty() {
+        output.push_str(&format!(
+            "\nBlocked tools: {}\n",
+            plan.blocked_tools.join(", ")
+        ));
+    }
+    if !plan.unmanaged_tools.is_empty() {
+        output.push_str(&format!(
+            "\nNot delivered to unmanaged tools: {}\n",
+            plan.unmanaged_tools.join(", ")
+        ));
+    }
+    output
+}
+
+fn personal_rule_version(version: &wenlan_types::personal_rules::PersonalRuleVersion) -> String {
+    let mut output = format!("Version {}\n", version.summary.id);
+    for rule in &version.rules {
+        output.push('\n');
+        output.push_str(&personal_rule_show(rule));
+    }
+    output
+}
+
 #[derive(Debug, Subcommand)]
 pub enum RulesSetupCmd {
     /// Turn on personal tool sync for this data root.
@@ -874,9 +1220,6 @@ fn append_rule_preview(out: &mut String, plan: &SharingPlan, details: bool, widt
             .unwrap();
         }
     }
-    if let Some(notice) = &plan.shared_source_notice {
-        writeln!(out, "\n{}", one_line(notice)).unwrap();
-    }
     for note in &plan.rule_notes {
         writeln!(out, "\n{}", one_line(note)).unwrap();
     }
@@ -1210,6 +1553,14 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
     let mut out = String::from("Bring in\n");
+    for path in &plan.rule_sources {
+        writeln!(
+            &mut out,
+            "\nWenlan imports {} once and leaves the file in place.",
+            one_line(path)
+        )
+        .unwrap();
+    }
     for note in &plan.notes {
         writeln!(&mut out, "\n{}", one_line(note)).unwrap();
     }
@@ -1501,9 +1852,66 @@ pub(super) fn file_label(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wenlan_types::personal_rules::PersonalRuleLayer;
     use wenlan_types::rulesync::{
         AdoptionChange, SharingRule, SharingRuleStay, SharingStay, SharingTool,
     };
+
+    #[test]
+    fn personal_rule_proposal_reads_multiple_explicit_layers_as_one_edit_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared.md");
+        let tool = dir.path().join("claude.md");
+        std::fs::write(&shared, "Shared line.\n").unwrap();
+        std::fs::write(&tool, "Claude only.\n").unwrap();
+        let specs = vec![
+            format!("shared={}", shared.display()),
+            format!("tool:claude={}", tool.display()),
+        ];
+        let edits = read_personal_rule_edits(&specs).unwrap();
+        assert_eq!(edits.len(), 2);
+        assert!(matches!(&edits[0].layer, PersonalRuleLayer::Shared));
+        assert_eq!(edits[0].text, "Shared line.\n");
+        assert!(matches!(
+            &edits[1].layer,
+            PersonalRuleLayer::Tool { tool } if tool == "claude"
+        ));
+        assert_eq!(edits[1].text, "Claude only.\n");
+    }
+
+    #[test]
+    fn personal_rule_proposal_refuses_an_unspecified_or_unknown_layer() {
+        assert!(read_personal_rule_edits(&["rules.md".into()]).is_err());
+        assert!(read_personal_rule_edits(&["tool:=rules.md".into()]).is_err());
+        assert!(read_personal_rule_edits(&["project=rules.md".into()]).is_err());
+    }
+
+    #[test]
+    fn personal_rule_plan_shows_an_unmanaged_tool_is_not_delivered() {
+        let plan: wenlan_types::personal_rules::PersonalRulePlan =
+            serde_json::from_value(serde_json::json!({
+                "id": "plan", "expires_at": 1, "proposer": null,
+                "changes": [], "blocked_tools": [],
+                "unmanaged_tools": ["geminicli"]
+            }))
+            .unwrap();
+        assert!(personal_rule_plan(&plan).contains("Not delivered to unmanaged tools: geminicli"));
+    }
+
+    #[test]
+    fn personal_rule_apply_refuses_ai_identity_and_piped_input_or_output() {
+        assert!(require_personal_rule_confirmation(true, true, true).is_err());
+        assert!(require_personal_rule_confirmation(false, false, true).is_err());
+        assert!(require_personal_rule_confirmation(false, true, false).is_err());
+        assert!(require_personal_rule_confirmation(false, true, true).is_ok());
+
+        let mut output = Vec::new();
+        assert!(!person_types_yes(&mut &b"y\n"[..], &mut output, "plan123").unwrap());
+        assert!(person_types_yes(&mut &b"yes\n"[..], &mut output, "plan123").unwrap());
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("Type yes to go on"));
+    }
 
     #[test]
     fn ux_cli_8_setup_share_asks_separately_for_keys_and_accepts_no() {
@@ -1552,7 +1960,6 @@ mod tests {
     fn ux_cli_8_setup_share_previews_numbered_rules_and_uses_one_yes() {
         let plan = SharingPlan {
             plan_id: "rule-plan".into(),
-            shared_source_notice: Some("Also adds 1 line to ~/.agents/AGENTS.md.".into()),
             tools: vec![SharingTool {
                 tool: "Codex".into(),
                 rules: 1,
@@ -1598,13 +2005,6 @@ mod tests {
         let short = sharing_for_a_person(&plan, false, false);
         for details in [false, true] {
             let preview = sharing_for_a_person(&plan, details, false);
-            assert_eq!(
-                preview
-                    .matches("Also adds 1 line to ~/.agents/AGENTS.md.")
-                    .count(),
-                1,
-                "{preview}"
-            );
             assert!(preview.contains(&plan.rule_notes[0]), "{preview}");
         }
         assert!(short.contains("Codex: 1 rule"), "{short}");
@@ -1865,6 +2265,7 @@ mod tests {
             rule_lines: None,
             settings: None,
             files: Vec::new(),
+            rule_sources: Vec::new(),
             skills: Vec::new(),
             notes: Vec::new(),
             tools: Vec::new(),
@@ -1919,6 +2320,7 @@ mod tests {
                 notice_codes: Vec::new(),
                 text_diff: None,
             }],
+            rule_sources: Vec::new(),
             skills: Vec::new(),
             notes: Vec::new(),
             tools: Vec::new(),

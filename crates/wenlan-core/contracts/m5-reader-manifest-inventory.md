@@ -920,6 +920,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/settings/apply` | main | no | not_applicable | `none` | — | local settings write receipt |
 | `POST` | `/api/rules/setup/settings/preview` | main | no | not_applicable | `none` | — | settings plan contains safe local settings additions |
 | `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |
+| `POST` | `/api/rules/personal/show` | main | no | not_applicable | `none` | — | local personal master text and line origins; no Page records |
+| `POST` | `/api/rules/personal/propose` | main | no | not_applicable | `none` | — | local personal master and submitted rule edit preview; no Page records |
+| `GET` | `/api/rules/personal/plan/{id}` | main | no | not_applicable | `none` | — | in-memory personal rule edit preview; no Page records |
+| `POST` | `/api/rules/personal/apply` | main | no | not_applicable | `none` | — | person-confirmed local personal rule version; no Page records |
+| `GET` | `/api/rules/personal/history` | main | no | not_applicable | `none` | — | local personal rule version summaries; no Page records |
+| `GET` | `/api/rules/personal/history/{id}` | main | no | not_applicable | `none` | — | local personal rule history snapshot; no Page records |
+| `POST` | `/api/rules/personal/history/{id}/propose` | main | no | not_applicable | `none` | — | local personal rule restore preview; no Page records |
 | `POST` | `/api/skills/registry/review` | main | no | not_applicable | `none` | — | receipt for a personal skill proposal decision |
 | `POST` | `/api/skills/registry/save` | main | no | not_applicable | `none` | — | saved skill or pending proposal from uploaded tool files |
 | `POST` | `/api/spaces/{name}/wiki/rules/proposals/{id}/accept` | main | no | not_applicable | `none` | — | receipt of a reviewed repository file change |
@@ -1040,6 +1047,8 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `write_page` | yes | automatic | `none` | tool handler |
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
 | `read_space_rules` | yes | automatic | `none` | tool handler |
+| `read_personal_rules` | no | not_applicable | `none` | local personal master; no Page records |
+| `propose_personal_rules` | no | not_applicable | `none` | local personal master and submitted rule edit; no Page records |
 | `save_skill` | no | not_applicable | `none` | proposal receipt and preview of the submitted skill files; no Page prose |
 | `report_space_rule_use` | no | not_applicable | `none` | structured rule id and fixed changed_plan outcome only; no Page prose |
 | `list_skills` | no | not_applicable | `none` | held SKILL.md folders: names, scope, source and safety verdict; no Page prose |
