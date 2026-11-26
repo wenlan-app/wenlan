@@ -465,6 +465,42 @@ impl WenlanClient {
         self.post_json("/api/memory/search", &request).await
     }
 
+    /// Whether this client reads one Space (it sends `x-wenlan-space`).
+    pub fn is_space_scoped(&self) -> bool {
+        self.headers.contains_key("x-wenlan-space")
+    }
+
+    /// The same recall with no Space (an empty `x-wenlan-space` reads as none),
+    /// to say whether other Spaces hold matches when this one holds none.
+    pub async fn recall_outside_space(
+        &self,
+        query: String,
+        limit: usize,
+    ) -> Result<SearchMemoryResponse> {
+        let request = SearchMemoryRequest {
+            query,
+            limit,
+            memory_type: None,
+            space: None,
+            source_agent: None,
+            rerank: false,
+        };
+        let url = format!("{}/api/memory/search", self.base_url);
+        let resp = self
+            .send(
+                self.http
+                    .post(&url)
+                    .header("x-wenlan-space", "")
+                    .json(&request),
+                &format!("POST {url} failed"),
+            )
+            .await?;
+        let resp = ensure_ok(resp, &url).await?;
+        resp.json()
+            .await
+            .context("parsing /api/memory/search response")
+    }
+
     /// POST /api/brief — complete Brief plus optional same-Space recall.
     pub async fn brief(&self, request: &BriefReadRequest) -> Result<BriefReadResponse> {
         self.announce_session().await;

@@ -18,9 +18,9 @@ pub fn browser_url_with_pass(base_url: &str, pass: &str) -> String {
     format!("{}?pass={pass}", browser_url(base_url))
 }
 
-/// How long the daemon keeps a pass; the launcher file goes once the
-/// browser read it, or after this at the latest.
-const PASS_LIFETIME: Duration = Duration::from_secs(60);
+/// How long `wenlan open` waits for a browser to read the launcher file before
+/// it gives up and returns (the daemon keeps the pass for a minute).
+const BROWSER_WAIT: Duration = Duration::from_secs(10);
 
 pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
     let plain = browser_url(client.base_url());
@@ -33,6 +33,10 @@ pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
         client.browser_pass_as_person().await.ok()
     };
     println!("Wenlan in your browser: {plain}");
+    if !can_open_a_browser(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty())) {
+        println!("No desktop session was found here, so no browser was opened. Open the address above in a browser.");
+        return Ok(());
+    }
     match pass {
         Some(answer) => open_with_pass(&browser_url_with_pass(client.base_url(), &answer.pass))
             .with_context(|| format!("open {plain} in the default browser")),
@@ -47,6 +51,15 @@ pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
     }
 }
 
+/// Whether a browser can be started from here. On Linux that needs a display
+/// (or a `BROWSER` command); elsewhere the system always has one to try.
+fn can_open_a_browser(has_var: impl Fn(&str) -> bool) -> bool {
+    !cfg!(target_os = "linux")
+        || ["DISPLAY", "WAYLAND_DISPLAY", "BROWSER"]
+            .iter()
+            .any(|name| has_var(name))
+}
+
 /// Unix: the address with the pass never goes on a command line, which
 /// other accounts on this computer can read (`/proc/*/cmdline`). It goes in
 /// a launcher file only this account can read, the browser opens the file,
@@ -56,7 +69,9 @@ pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
 fn open_with_pass(url: &str) -> anyhow::Result<()> {
     let launcher = Launcher::write(url)?;
     open::that_detached(launcher.path())?;
-    launcher.remove_once_read(PASS_LIFETIME);
+    if !launcher.remove_once_read(BROWSER_WAIT) {
+        println!("No browser opened the page. Open the address above in a browser yourself.");
+    }
     Ok(())
 }
 
@@ -112,8 +127,9 @@ impl Launcher {
 
     /// Wait until the browser read the file (its access time moves past the
     /// time it was written), or `limit` passes, then remove it.
-    fn remove_once_read(self, limit: Duration) {
+    fn remove_once_read(self, limit: Duration) -> bool {
         let started = Instant::now();
+        let mut was_read = false;
         while started.elapsed() < limit {
             let read = std::fs::metadata(&self.file)
                 .and_then(|meta| Ok(meta.accessed()? > meta.modified()?))
@@ -121,11 +137,13 @@ impl Launcher {
             if read {
                 // A moment for the browser to finish with it.
                 std::thread::sleep(Duration::from_millis(500));
+                was_read = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         drop(self.folder);
+        was_read
     }
 }
 
@@ -148,7 +166,8 @@ mod tests {
         let page = std::fs::read_to_string(&file).unwrap();
         assert!(page.contains(&format!("url={url}")), "{page}");
         let started = std::time::Instant::now();
-        launcher.remove_once_read(std::time::Duration::from_secs(5));
+        // This test read the file above, as a browser would.
+        assert!(launcher.remove_once_read(std::time::Duration::from_secs(5)));
         assert!(started.elapsed() < std::time::Duration::from_secs(6));
         assert!(!file.exists());
         assert!(!folder.exists());
@@ -160,6 +179,32 @@ mod tests {
             super::browser_url_with_pass("http://127.0.0.1:7878/", "ab"),
             "http://127.0.0.1:7878/?pass=ab"
         );
+    }
+
+    /// No browser reads the launcher: `wenlan open` gives up at the limit,
+    /// says so, and leaves no folder behind.
+    #[cfg(unix)]
+    #[test]
+    fn a_launcher_nobody_reads_is_removed_when_the_wait_ends() {
+        let url = super::browser_url_with_pass("http://127.0.0.1:7878", "ab");
+        let launcher = super::Launcher::write(&url).unwrap();
+        let folder = launcher.path().parent().unwrap().to_path_buf();
+        let started = std::time::Instant::now();
+        assert!(!launcher.remove_once_read(std::time::Duration::from_secs(1)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        assert!(!folder.exists());
+    }
+
+    #[test]
+    fn a_headless_linux_session_opens_no_browser() {
+        let none = |_: &str| false;
+        let display = |name: &str| name == "DISPLAY";
+        if cfg!(target_os = "linux") {
+            assert!(!super::can_open_a_browser(none));
+            assert!(super::can_open_a_browser(display));
+        } else {
+            assert!(super::can_open_a_browser(none));
+        }
     }
 
     #[test]

@@ -125,7 +125,10 @@ pub(super) async fn dispatch(
     arguments: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<CallToolResult, McpError> {
     if server.tool_profile == ToolProfile::QueryOnly && !allowed(name, server.tool_profile) {
-        return Ok(member_error(QUERY_ONLY_REFUSAL_MESSAGE));
+        return Ok(member_error_owned(format!(
+            "{QUERY_ONLY_REFUSAL_MESSAGE} {}",
+            read_only_team_note!()
+        )));
     }
     if matches!(name, "capture" | "forget") {
         return Ok(member_error(
@@ -560,7 +563,10 @@ fn closed_error(error: &WenlanError) -> &'static str {
         WenlanError::Api { status: 404, .. } => "This item was not found in the shared Space.",
         WenlanError::Api { status: 409, .. } => "The page changed. Read it again and retry.",
         WenlanError::Api { status: 422, .. } => "The request was refused; nothing was changed.",
-        WenlanError::Api { status: 403, .. } => "This tool is unavailable in this shared Space.",
+        WenlanError::Api { status: 403, .. } => concat!(
+            "This tool is unavailable in this shared Space. ",
+            read_only_team_note!()
+        ),
         WenlanError::Api { .. } => "The shared Space request could not be completed.",
         WenlanError::Unreachable(_) | WenlanError::Busy => {
             "The shared Space service could not complete this request."

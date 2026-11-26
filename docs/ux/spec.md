@@ -1195,6 +1195,12 @@ and wait for evidence that people need them.
   confirmed preference (UX-CHAT-5) is part of shared rules after the move in
   the same way: the person's confirm adds it, and an AI tool's confirm
   leaves the memory unconfirmed and proposes the rule as a plan instead.
+  The capture receipt for such a preference, and the refused confirm, say the
+  person's yes is still needed and name the terminal step
+  (`wenlan memories confirm <id>`, then `wenlan rules review` and
+  `wenlan rules shared apply <plan id>`) as well as the Wenlan app, which is
+  never required. `wenlan rules review` shows a plan's expiry as a local time,
+  and `wenlan rules status` lists a waiting plan.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 - **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the

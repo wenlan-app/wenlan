@@ -494,7 +494,10 @@ fn checked(
         None => Err(not_found()),
         Some(access) if !allows(*access, need) => Err(refused(
             StatusCode::FORBIDDEN,
-            "this member may only read this Space",
+            concat!(
+                "this member may only read this Space. ",
+                crate::team_policy::read_only_member_note!()
+            ),
         )),
         Some(_) => Ok(space.to_string()),
     }
@@ -710,7 +713,13 @@ pub(super) async fn handle(
     let targets: Vec<Option<String>> = match call.space {
         SpaceFrom::NoSpace => {
             if call.need == Need::Write && every(&spaces, Need::Write).is_empty() {
-                return refused(StatusCode::FORBIDDEN, "this member may only read");
+                return refused(
+                    StatusCode::FORBIDDEN,
+                    concat!(
+                        "this member may only read. ",
+                        crate::team_policy::read_only_member_note!()
+                    ),
+                );
             }
             vec![None]
         }
@@ -751,7 +760,15 @@ pub(super) async fn handle(
                     let mine = every(&spaces, call.need);
                     match mine.as_slice() {
                         [one] => vec![Some(one.clone())],
-                        [] => return refused(StatusCode::FORBIDDEN, "this member may only read"),
+                        [] => {
+                            return refused(
+                                StatusCode::FORBIDDEN,
+                                concat!(
+                                    "this member may only read. ",
+                                    crate::team_policy::read_only_member_note!()
+                                ),
+                            )
+                        }
                         _ => return refused(StatusCode::BAD_REQUEST, "say which Space"),
                     }
                 }

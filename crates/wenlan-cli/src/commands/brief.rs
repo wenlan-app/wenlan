@@ -180,8 +180,8 @@ fn format_brief(response: &BriefReadResponse) -> String {
                 .into()
         }
         BriefReadState::BriefNotCreated => format!(
-            "No Brief exists for Space '{}'. Run `wenlan handoff --file <json>` \
-             (or the /handoff plugin command) to create it.\n",
+            "No Brief exists for Space '{}' yet. When you finish a piece of work, ask your AI \
+             tool to hand off (/handoff in Claude Code, $wenlan handoff in Codex); that creates it.\n",
             response.space.as_deref().unwrap_or("unknown")
         ),
         BriefReadState::Ready => response
@@ -499,6 +499,7 @@ mod tests {
 
         // The hint names the canonical write verb a CLI user can actually run.
         assert!(!output.contains("The first handoff"));
-        assert!(output.contains("wenlan handoff --file"));
+        assert!(output.contains("ask your AI tool to hand off"), "{output}");
+        assert!(!output.contains("--file"), "{output}");
     }
 }

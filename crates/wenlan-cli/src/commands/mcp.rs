@@ -200,7 +200,7 @@ fn add_native(
 
     // Add first: the legacy entry is only retired once its replacement is in
     // place, so a failed add never leaves the client with neither.
-    let added = run_external(binary, &add_args)?;
+    let added = run_external(client, binary, &add_args)?;
     retire_legacy_native(binary, &legacy_remove);
 
     if !quiet {
@@ -230,16 +230,44 @@ fn retire_legacy_native(binary: &str, args: &[String]) {
         .output();
 }
 
+/// The AI tool's own command is not on PATH. Said in one plain line, without a
+/// chain of causes.
+#[derive(Debug)]
+pub struct ToolNotFound(String);
+
+impl std::fmt::Display for ToolNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = self
+            .0
+            .split('-')
+            .map(|word| {
+                let mut chars = word.chars();
+                chars.next().map_or_else(String::new, |first| {
+                    first.to_uppercase().chain(chars).collect::<String>()
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        write!(
+            f,
+            "{name} is not installed or not on PATH; install it, or use --dry-run to see the config."
+        )
+    }
+}
+
+impl std::error::Error for ToolNotFound {}
+
 /// Run the tool's own "add an MCP server" command. Its output is held back
 /// and shown only when it fails. `Ok(false)` means the tool said the entry is
 /// already there (`claude mcp add` exits 1 with "already exists"), which is
 /// what running `wenlan connect` or `wenlan setup` a second time meets.
-fn run_external(binary: &str, args: &[String]) -> Result<bool> {
+fn run_external(client_label: &str, binary: &str, args: &[String]) -> Result<bool> {
     // Resolve via PATHEXT so .cmd / .bat shims on Windows match. CreateProcess
     // only auto-appends `.exe`, which would miss a fake `claude.cmd` in tests
     // and also any real Windows shell-script wrappers the user installed.
-    let resolved = which::which(binary)
-        .with_context(|| format!("could not find `{binary}`. Is it installed and on PATH?"))?;
+    let Ok(resolved) = which::which(binary) else {
+        return Err(ToolNotFound(client_label.to_string()).into());
+    };
     let output = Command::new(&resolved)
         .args(args)
         .stdin(std::process::Stdio::null())
@@ -733,6 +761,22 @@ fn native_args(prefix: &str, args: &[&str], server: &ServerCommand) -> Vec<Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_missing_tool_is_one_plain_line() {
+        let error = run_external("codex", "wenlan-no-such-tool-for-test", &[]).unwrap_err();
+        let missing = error.downcast_ref::<ToolNotFound>().expect("typed error");
+        assert_eq!(
+            missing.to_string(),
+            "Codex is not installed or not on PATH; install it, or use --dry-run to see the config."
+        );
+        assert_eq!(
+            ToolNotFound("claude-code".into()).to_string(),
+            "Claude Code is not installed or not on PATH; install it, or use --dry-run to see the config."
+        );
+        // No chain of causes follows it.
+        assert!(error.source().is_none());
+    }
+
     use super::*;
 
     fn p(path: &str) -> PathBuf {

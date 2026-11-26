@@ -17,6 +17,13 @@ use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
 };
 
+/// What a read-only team member's AI tells the person when it cannot edit.
+/// The team server's refusal says the same (`wenlan-server` team policy).
+macro_rules! read_only_team_note {
+    () => {
+        "You can read this team's pages. To edit, sign in with Google or GitHub on the team's web page (needs the team's https address), or ask the team owner."
+    };
+}
 mod hosted_team;
 pub mod team_library;
 
@@ -79,6 +86,52 @@ pub fn effective_space(inbound: &Option<String>) -> Option<String> {
 /// what Claude Code captured, and nobody saw folder-ingested or refinery rows.
 /// Attribution for activity logging already travels in the `x-agent-name`
 /// header (`WenlanClient::with_agent_name`), so the body field stays `None`.
+const READ_ONLY_TEAM_NOTE: &str = read_only_team_note!();
+const READ_ONLY_TEAM_INSTRUCTIONS: &str = concat!(
+    "You can read this shared Space. Use brief for its overview, recall to search its pages, and read_space_rules for approved rules. ",
+    read_only_team_note!()
+);
+
+/// How many matches the "other Spaces" probe asks for; more than this reads "5 or more".
+const OTHER_SPACES_PROBE_LIMIT: usize = 5;
+
+/// The line a zero-result recall in `space` gets when other Spaces match.
+fn other_spaces_message(
+    space: &str,
+    query: &str,
+    found: &[wenlan_types::SearchResult],
+) -> Option<String> {
+    if found.is_empty() {
+        return None;
+    }
+    let mut holding: Vec<String> = Vec::new();
+    for hit in found {
+        let name = hit
+            .space
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("uncategorized")
+            .to_string();
+        if !holding.contains(&name) {
+            holding.push(name);
+        }
+    }
+    let count = if found.len() >= OTHER_SPACES_PROBE_LIMIT {
+        format!("{} or more matches", found.len())
+    } else if found.len() == 1 {
+        "1 match".to_string()
+    } else {
+        format!("{} matches", found.len())
+    };
+    Some(format!(
+        "Nothing matched in Space `{space}`, but {count} in other Spaces: {}. Call recall again \
+         with `space` set to one of those to read them (the person can run \
+         `wenlan --all-spaces recall {query:?}` in a terminal). It was saved; it is in another \
+         Space.",
+        holding.join(", ")
+    ))
+}
+
 fn recall_search_request(params: RecallParams) -> SearchMemoryRequest {
     SearchMemoryRequest {
         query: params.query,
@@ -2582,6 +2635,16 @@ fn format_capture_success(resp: &StoreMemoryResponse) -> String {
         resp.space_source,
         resp.write_outcome,
     );
+    if !resp.gated && resp.memory_type == "preference" && resp.space.is_none() {
+        msg.push_str(&format!(
+            "\nwaiting_for_person: other AI tools get this preference only after the person \
+             says yes, so tell them it is waiting. In a terminal they run \
+             `wenlan memories confirm {}`; if that shows a plan, `wenlan rules review`, then \
+             `wenlan rules shared apply <plan id>`, typing yes themselves. With the Wenlan app \
+             installed they can confirm it there.",
+            resp.source_id
+        ));
+    }
     if let Some(near_duplicate) = &resp.near_duplicate {
         msg.push_str(&format!(
             "\nnear_duplicate: {} ({:.2})",
@@ -2621,22 +2684,24 @@ fn distill_pending_guide(pending: usize) -> String {
     )
 }
 
-fn daemon_setup_hint() -> &'static str {
-    "If Wenlan is already installed, the daemon may just be stopped. If you use the Wenlan app, open or restart it; if the `wenlan` CLI is on PATH, run `wenlan status`, then `wenlan background on`. A connector-only install (`wenlan-mcp` from npm, Homebrew, or Cargo) has no daemon of its own and needs the local runtime below.
+/// What to do when the daemon cannot be reached at `address`: the first step
+/// and where to read about installing, without a setup menu.
+fn daemon_setup_hint(address: &str) -> String {
+    format!(
+        "First step: run `wenlan status`. If it says Wenlan is stopped, run `wenlan start`. \
+         If it shows a different address than {address}, this connection points at the wrong \
+         one (WENLAN_HOST, or `wenlan connect <client>` again). Not installed? See Get started: \
+         https://github.com/wenlan-app/wenlan#get-started"
+    )
+}
 
-Otherwise install the local Wenlan runtime and run `wenlan setup`.
-
-Setup choices:
-- Local Memory: store, search, and recall now. No model download or API key.
-- On-device Model: write notes on this computer after downloading a model.
-- Anthropic Key: write notes using your Anthropic API key.
-
-Install:
-  curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
-  export PATH=\"$HOME/.wenlan/bin:$PATH\"
-  wenlan setup
-  wenlan background on
-  wenlan status"
+/// The reply for a daemon that did not answer, for the AI tool to pass on.
+fn daemon_not_running_message(address: &str, verb: &str) -> String {
+    format!(
+        "Wenlan is not running at {address} (retried 3x over ~6s). The {verb} was NOT done, so \
+         nothing was saved. Tell the person, and try again once it is running.\n\n{}",
+        daemon_setup_hint(address)
+    )
 }
 
 /// Convert a backend error into a tool-level error result (isError: true)
@@ -3033,11 +3098,7 @@ fn page_write_citations_refused_result(
 
 fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
     let msg = match &e {
-        WenlanError::Unreachable(_) => format!(
-            "Wenlan daemon is not reachable (retried 3x over ~6s). \
-             The {verb} was NOT completed.\n\n{}",
-            daemon_setup_hint()
-        ),
+        WenlanError::Unreachable(address) => daemon_not_running_message(address, verb),
         WenlanError::Api { status, reason } => {
             // A 4xx is a refusal: the daemon looked at the request and did
             // not do it. Only a server-side failure leaves the outcome open.
@@ -4028,11 +4089,43 @@ impl WenlanMcpServer {
                 linked_json
             ));
         }
+        let mut output = output;
+        if resp.results.is_empty() {
+            if let Some(line) = self.other_spaces_line(&client, &req).await {
+                output.push_str("\n\n");
+                output.push_str(&line);
+            }
+        }
         let output = self
             .with_steep_line(&client, req.space.as_deref(), output)
             .await;
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
+    }
+
+    /// When a recall in one Space finds nothing, one more search with no Space
+    /// says whether other Spaces hold matches, so "0 results" is not read as
+    /// "never saved". Best effort: a failure adds nothing. A connection locked
+    /// to one Space, or a remote one, never looks outside it.
+    async fn other_spaces_line(
+        &self,
+        client: &WenlanClient,
+        req: &SearchMemoryRequest,
+    ) -> Option<String> {
+        let space = req.space.as_deref()?;
+        if self.transport != TransportMode::Stdio || crate::lock_state::is_locked() {
+            return None;
+        }
+        let wider = SearchMemoryRequest {
+            query: req.query.clone(),
+            limit: OTHER_SPACES_PROBE_LIMIT,
+            memory_type: req.memory_type.clone(),
+            space: None,
+            source_agent: None,
+            rerank: false,
+        };
+        let found: SearchMemoryResponse = client.post("/api/memory/search", &wider).await.ok()?;
+        other_spaces_message(space, &req.query, &found.results)
     }
 
     pub async fn brief_impl(&self, params: BriefParams) -> Result<CallToolResult, McpError> {
@@ -4460,14 +4553,14 @@ impl WenlanMcpServer {
         let summary: wenlan_types::repair_plan::RepairPlanSummary =
             match self.client.post("/api/repairs/plan", &request).await {
                 Ok(summary) => summary,
-                Err(WenlanError::Unreachable(_)) => {
+                Err(WenlanError::Unreachable(address)) => {
                     return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                        "The repair plan request was sent but no response came back \
-                         (retried 3x over ~6s). Wenlan may already have written the plan, \
-                         so its completion is unknown. Do not retry this call: the cached \
-                         lint reports were consumed. Run `lint` again and open a new plan \
-                         once Wenlan answers.\n\n{}",
-                        daemon_setup_hint()
+                        "The repair plan request was sent but no response came back from \
+                         {address} (retried 3x over ~6s). Wenlan may already have written \
+                         the plan, so its completion is unknown. Do not retry this call: the \
+                         cached lint reports were consumed. Run `lint` again and open a new \
+                         plan once Wenlan answers.\n\n{}",
+                        daemon_setup_hint(&address)
                     ))]));
                 }
                 Err(error) => return Ok(tool_error(error, "repair plan prepare")),
@@ -4752,8 +4845,11 @@ impl WenlanMcpServer {
                 if let Some(plan) = resp.rule_plan {
                     format!(
                         "Memory {memory_id} is not confirmed: a preference is the person's to \
-                         confirm. It was proposed as a rule instead (plan {plan}); the person \
-                         confirms it in the Wenlan app."
+                         confirm. It was proposed as a rule instead (plan {plan}), which waits \
+                         for the person. In a terminal they run `wenlan rules review`, then \
+                         `wenlan rules shared apply {plan}` and type yes themselves; with the \
+                         Wenlan app installed they can confirm it there. The plan expires in \
+                         about five minutes; confirming the memory again makes a new one."
                     )
                 } else if resp.updated {
                     format!("Memory {} confirmed.", memory_id)
@@ -8699,13 +8795,13 @@ impl ServerHandler for WenlanMcpServer {
         if self.team_library.is_some() {
             return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
                 .with_server_info(Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION")))
-                .with_instructions("This connection reads an authenticated team library. Use brief for its overview, recall to find approved team items, and list_pages, read_page and get_page_sources to browse.");
+                .with_instructions(format!("This connection reads an authenticated team library. Use brief for its overview, recall to find approved team items, and list_pages, read_page and get_page_sources to browse. {READ_ONLY_TEAM_NOTE}"));
         }
         if self.agent_identity.team_member().is_some() {
             let instructions = if self.tool_profile == ToolProfile::WebWrite {
                 "You can read this shared Space and edit its pages. Use brief for its overview, recall to search its pages, read_space_rules for approved rules, and list_pages and read_page to browse it. Use write_page, rename_page, or delete_page only when the person asks. Read a page before changing it and pass its current version."
             } else {
-                "You can read this shared Space. Use brief for its overview, recall to search its pages, and read_space_rules for approved rules."
+                READ_ONLY_TEAM_INSTRUCTIONS
             };
             return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
                 .with_server_info(Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION")))
@@ -10759,6 +10855,39 @@ mod tests {
         assert!(received(&mock).await.is_empty());
     }
 
+    #[tokio::test]
+    async fn a_read_only_team_member_is_told_how_to_get_edit_rights() {
+        let sentence = "You can read this team's pages. To edit, sign in with Google or GitHub on the team's web page (needs the team's https address), or ask the team owner.";
+        let member = |profile| {
+            WenlanMcpServer::new_with_identity(
+                WenlanClient::new("http://127.0.0.1:19999".into()),
+                TransportMode::Http,
+                AgentIdentity::new("remote-mcp".into(), false).for_team_member("member".into()),
+                None,
+            )
+            .with_tool_profile(profile)
+        };
+        let read_only = member(ToolProfile::QueryOnly);
+        let info = read_only.get_info().instructions.expect("instructions");
+        assert!(info.contains(sentence), "{info}");
+        // A member who may edit is not told to sign in somewhere else.
+        let writer = member(ToolProfile::WebWrite)
+            .get_info()
+            .instructions
+            .expect("instructions");
+        assert!(!writer.contains("sign in with Google"), "{writer}");
+        // The refusal for a tool a read-only connection does not have.
+        let refusal = hosted_team::dispatch(&read_only, "write_page", None)
+            .await
+            .unwrap();
+        assert_eq!(refusal.is_error, Some(true));
+        assert!(
+            text_of(&refusal).contains(sentence),
+            "{}",
+            text_of(&refusal)
+        );
+    }
+
     #[test]
     fn a_team_member_neither_sees_nor_calls_update_brief() {
         let member = WenlanMcpServer::new_with_identity(
@@ -11930,6 +12059,189 @@ mod tests {
         );
         assert!(!msg.contains("chunks"));
         assert!(!msg.contains("quality"));
+    }
+
+    #[tokio::test]
+    async fn a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step() {
+        // Nothing listens on this port.
+        let server = WenlanMcpServer::new(
+            WenlanClient::new("http://127.0.0.1:1".into()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let result = server
+            .recall_impl(RecallParams {
+                query: "pnpm".into(),
+                limit: None,
+                memory_type: None,
+                space: None,
+                rerank: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(
+            text.contains("Wenlan is not running at http://127.0.0.1:1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("search was NOT done, so nothing was saved"),
+            "{text}"
+        );
+        assert!(
+            text.contains("`wenlan status`") && text.contains("`wenlan start`"),
+            "{text}"
+        );
+        assert!(text.contains("#get-started"), "{text}");
+        for gone in [
+            "Setup choices",
+            "Local Memory",
+            "On-device Model",
+            "Anthropic Key",
+            "curl -fsSL",
+        ] {
+            assert!(!text.contains(gone), "{gone} should be gone: {text}");
+        }
+    }
+
+    #[test]
+    fn other_spaces_message_names_the_spaces_and_the_next_step() {
+        let hit = |space: Option<&str>| wenlan_types::SearchResult {
+            space: space.map(str::to_string),
+            ..Default::default()
+        };
+        assert!(other_spaces_message("demo", "pnpm", &[]).is_none());
+        let one = other_spaces_message("demo", "pnpm", &[hit(None)]).unwrap();
+        assert!(
+            one.contains("1 match in other Spaces: uncategorized"),
+            "{one}"
+        );
+        assert!(
+            one.contains("`wenlan --all-spaces recall \"pnpm\"`"),
+            "{one}"
+        );
+        let two =
+            other_spaces_message("demo", "pnpm", &[hit(Some("work")), hit(Some("work"))]).unwrap();
+        assert!(two.contains("2 matches in other Spaces: work."), "{two}");
+        let many: Vec<_> = (0..OTHER_SPACES_PROBE_LIMIT)
+            .map(|_| hit(Some("a")))
+            .collect();
+        assert!(other_spaces_message("demo", "q", &many)
+            .unwrap()
+            .contains("5 or more matches"));
+    }
+
+    #[tokio::test]
+    async fn a_zero_result_recall_says_when_other_spaces_match() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        let empty = serde_json::json!({ "results": [], "took_ms": 1.0 });
+        Mock::given(method("POST"))
+            .and(path("/api/memory/search"))
+            .and(body_partial_json(serde_json::json!({ "space": "demo" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&empty))
+            .mount(&mock)
+            .await;
+        let hit = serde_json::to_value(wenlan_types::SearchResult {
+            source_id: "mem_1".into(),
+            space: Some("work".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        Mock::given(method("POST"))
+            .and(path("/api/memory/search"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "results": [hit], "took_ms": 1.0 })),
+            )
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |space: Option<&str>| RecallParams {
+            query: "pnpm".into(),
+            limit: None,
+            memory_type: None,
+            space: space.map(str::to_string),
+            rerank: None,
+            session: None,
+        };
+        let text = text_of(&server.recall_impl(params(Some("demo"))).await.unwrap());
+        assert!(text.starts_with("0 results"), "{text}");
+        assert!(text.contains("1 match in other Spaces: work"), "{text}");
+        // No Space chosen: nothing is hidden, so there is nothing to say.
+        let text = text_of(&server.recall_impl(params(None)).await.unwrap());
+        assert!(!text.contains("other Spaces"), "{text}");
+    }
+
+    #[test]
+    fn capture_of_a_preference_says_it_waits_for_the_person_and_how() {
+        let mut resp = StoreMemoryResponse {
+            source_id: "mem_pref".into(),
+            chunks_created: 1,
+            memory_type: "preference".into(),
+            entity_id: None,
+            quality: None,
+            warnings: vec![],
+            near_duplicate: None,
+            gated: false,
+            extraction_method: "agent".into(),
+            enrichment: String::new(),
+            hint: String::new(),
+            space: None,
+            space_source: Some(wenlan_types::WriteSpaceSource::Uncategorized),
+            write_outcome: Some(wenlan_types::WriteOutcome::Created),
+        };
+        let msg = format_capture_success(&resp);
+        assert!(msg.contains("waiting_for_person"), "{msg}");
+        assert!(msg.contains("`wenlan memories confirm mem_pref`"), "{msg}");
+        assert!(msg.contains("`wenlan rules review`"), "{msg}");
+        assert!(
+            msg.contains("`wenlan rules shared apply <plan id>`"),
+            "{msg}"
+        );
+        assert!(msg.contains("With the Wenlan app installed"), "{msg}");
+        resp.memory_type = "fact".into();
+        assert!(!format_capture_success(&resp).contains("waiting_for_person"));
+        resp.memory_type = "preference".into();
+        resp.space = Some("work".into());
+        assert!(!format_capture_success(&resp).contains("waiting_for_person"));
+    }
+
+    #[tokio::test]
+    async fn confirm_memory_of_a_preference_names_the_terminal_step() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/memory/confirm/mem_pref"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "confirmed": false, "updated": true, "rule_plan": "plan_1"
+            })))
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let text = text_of(&server.confirm_memory_impl("mem_pref").await.unwrap());
+        assert!(text.contains("`wenlan rules review`"), "{text}");
+        assert!(
+            text.contains("`wenlan rules shared apply plan_1`"),
+            "{text}"
+        );
+        assert!(text.contains("Wenlan app installed"), "{text}");
+        assert!(!text.contains("confirms it in the Wenlan app."), "{text}");
     }
 
     #[test]

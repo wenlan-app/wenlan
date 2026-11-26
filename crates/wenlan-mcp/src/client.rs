@@ -286,13 +286,18 @@ impl WenlanClient {
                     tracing::debug!(attempt, "daemon unreachable, retrying");
                     last_err = Some(e);
                 }
-                Err(e) => return Err(WenlanError::Unreachable(e.to_string())),
+                Err(e) => {
+                    tracing::debug!(error = %e, "daemon request failed");
+                    return Err(WenlanError::Unreachable(self.base_url.clone()));
+                }
             }
         }
-        Err(WenlanError::Unreachable(last_err.map_or_else(
-            || "connection failed".into(),
-            |e| e.to_string(),
-        )))
+        if let Some(error) = last_err {
+            tracing::debug!(error = %error, "daemon unreachable");
+        }
+        // The address tried, not the transport's wording: it is what a person
+        // compares with `wenlan status`.
+        Err(WenlanError::Unreachable(self.base_url.clone()))
     }
 
     /// Parse a successful response body as JSON.

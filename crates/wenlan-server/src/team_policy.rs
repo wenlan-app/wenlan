@@ -186,6 +186,16 @@ fn ask(member: &Member, action: Action, space: Option<&str>, hosted: bool) -> Op
     Some(answer.decision() == Decision::Allow)
 }
 
+/// What a member who can only read is told when they try to change something:
+/// what they can do and the two ways to get edit rights. The MCP server's
+/// instructions say the same sentence. A macro so it can join a `&'static str`.
+macro_rules! read_only_member_note {
+    () => {
+        "You can read this team's pages. To edit, sign in with Google or GitHub on the team's web page (needs the team's https address), or ask the team owner."
+    };
+}
+pub(crate) use read_only_member_note;
+
 /// What `member` may do in `space` on this server, by the rules: `None`
 /// when they may not even read it.
 pub(crate) fn access(member: &Member, space: &str, hosted: bool) -> Option<TeamAccess> {

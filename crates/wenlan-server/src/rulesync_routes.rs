@@ -817,6 +817,15 @@ impl Setup {
             manifest.rule_import_notice_pending = false;
             self.save(&manifest)?;
         }
+        status.waiting_plans = personal_rules::pending_page_plans(self)
+            .into_iter()
+            .map(|plan| wenlan_types::rulesync::WaitingRulePlan {
+                id: plan.id,
+                expires_at: plan.expires_at,
+                proposer: plan.proposer,
+                page_merge: plan.page_merge.is_some(),
+            })
+            .collect();
         Ok(status)
     }
 
