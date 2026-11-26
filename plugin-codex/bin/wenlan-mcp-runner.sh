@@ -33,13 +33,32 @@ here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)"
 local_bin="${here}/wenlan-mcp.local"
 agent_name="${WENLAN_MCP_AGENT_NAME:-codex}"
 
+# The `plugin` tool profile lists the everyday tools plus exactly the ones the
+# plugin skills name. Only a wenlan-mcp that knows the profile gets the flag
+# (an older binary rejects an unknown value and would not start), so ask its
+# --help. The npx fallback below is a pinned release that predates the profile
+# and runs without it (every tool listed) until the pin reaches a release that
+# has it. A caller-supplied --tool-profile wins.
+launch() {
+  local bin="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in --tool-profile|--tool-profile=*) exec "${bin}" --agent-name "${agent_name}" "$@" ;; esac
+  done
+  if "${bin}" --help 2>/dev/null | grep -Eq 'possible values:.*[ ,]plugin([],]|$)|^[[:space:]]*-[[:space:]]+plugin:|^[[:space:]]+plugin[[:space:]]'; then
+    exec "${bin}" --agent-name "${agent_name}" --tool-profile plugin "$@"
+  fi
+  exec "${bin}" --agent-name "${agent_name}" "$@"
+}
+
 dev_bin="${WENLAN_MCP_DEV_BIN:-${ORIGIN_MCP_DEV_BIN:-}}"
 if [ -n "${dev_bin}" ] && [ -f "${dev_bin}" ] && [ -x "${dev_bin}" ]; then
-  exec "${dev_bin}" --agent-name "${agent_name}" "$@"
+  launch "${dev_bin}" "$@"
 fi
 
 if [ -f "${local_bin}" ] && [ -x "${local_bin}" ]; then
-  exec "${local_bin}" --agent-name "${agent_name}" "$@"
+  launch "${local_bin}" "$@"
 fi
 
 # Installed binaries. `-f` as well as `-x`: a directory is "executable" too.
@@ -82,7 +101,7 @@ candidates+=("${HOME}/.wenlan/bin/wenlan-mcp" "${HOME}/.wenlan/bin/wenlan-mcp.ex
 candidates+=("${HOME}/.cargo/bin/wenlan-mcp" "${HOME}/.cargo/bin/wenlan-mcp.exe")
 for candidate in "${candidates[@]}"; do
   if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-    exec "${candidate}" --agent-name "${agent_name}" "$@"
+    launch "${candidate}" "$@"
   fi
 done
 
@@ -92,7 +111,7 @@ path_bin="$(command -v wenlan-mcp 2>/dev/null || true)"
 case "${path_bin}" in
   /*)
     if [ -f "${path_bin}" ] && [ -x "${path_bin}" ]; then
-      exec "${path_bin}" --agent-name "${agent_name}" "$@"
+      launch "${path_bin}" "$@"
     fi
     ;;
 esac

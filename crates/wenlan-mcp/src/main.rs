@@ -27,7 +27,8 @@ struct Cli {
     agent_name: Option<String>,
 
     /// Which tools the stdio server lists: `standard` is all of them,
-    /// `daily` the everyday ones. `serve` takes its own `--tool-profile`.
+    /// `daily` the everyday ones, `plugin` those plus what the Wenlan plugin skills
+    /// name. `serve` takes its own `--tool-profile`.
     #[arg(long = "tool-profile", value_enum, default_value_t = ToolProfile::Standard)]
     stdio_tool_profile: ToolProfile,
 }
@@ -486,6 +487,15 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(daily.stdio_tool_profile, ToolProfile::Daily);
+        let plugin = Cli::try_parse_from([
+            "wenlan-mcp",
+            "--agent-name",
+            "claude-code",
+            "--tool-profile",
+            "plugin",
+        ])
+        .unwrap();
+        assert_eq!(plugin.stdio_tool_profile, ToolProfile::Plugin);
         assert!(daily.command.is_none());
     }
 

@@ -74,7 +74,7 @@ fn grant(profile: ToolProfile) -> Option<MemberGrant> {
     match profile {
         ToolProfile::QueryOnly => Some(MemberGrant::Query),
         ToolProfile::WebWrite => Some(MemberGrant::Write),
-        ToolProfile::Standard | ToolProfile::Daily => None,
+        ToolProfile::Standard | ToolProfile::Daily | ToolProfile::Plugin => None,
     }
 }
 

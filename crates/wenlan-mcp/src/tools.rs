@@ -118,6 +118,10 @@ pub enum ToolProfile {
     /// them. This is a shorter list, not a boundary: every other tool still
     /// answers when called by name, exactly as under `Standard`.
     Daily,
+    /// What the Wenlan plugins pass: the `daily` tools plus exactly the
+    /// tools the plugin skills name ([`PLUGIN_EXTRA_TOOL_NAMES`]). Like
+    /// `Daily`, a shorter list and not a boundary.
+    Plugin,
     /// Expose only tools needed to read existing knowledge.
     QueryOnly,
     /// Query-only reads plus the writes a user allowed a web AI app to make:
@@ -131,6 +135,7 @@ impl ToolProfile {
         match self {
             Self::Standard => "standard",
             Self::Daily => "daily",
+            Self::Plugin => "plugin",
             Self::QueryOnly => "query-only",
             Self::WebWrite => "web-write",
         }
@@ -178,6 +183,51 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "steep",
     "distill",
 ];
+/// Tools the plugin skills name that `daily` does not list: curation, lint and
+/// its repair steps, entities, folders, page history and moves, and the
+/// pending-review reads. `accept_refinement` and `accept_revision` are not here
+/// (they always refuse; a person accepts in the Wenlan app), nor is
+/// `update_brief` or any tool no skill names. Guarded by
+/// `the_plugin_profile_is_what_the_plugin_skills_name`.
+pub const PLUGIN_EXTRA_TOOL_NAMES: &[&str] = &[
+    "confirm_memory",
+    "create_entity",
+    "create_folder",
+    "create_relation",
+    "dismiss_revision",
+    "doc_fix",
+    "get_memory_revisions",
+    "get_page_links",
+    "get_page_revisions",
+    "lint",
+    "lint_repair_apply",
+    "lint_repair_prepare",
+    "lint_repair_verify",
+    "list_entities",
+    "list_folders",
+    "list_pending",
+    "list_pending_imports",
+    "list_pending_revisions",
+    "list_refinements",
+    "list_rejections",
+    "move_page",
+    "page_basis",
+    "page_code_basis",
+    "read_entity",
+    "reject_refinement",
+    "restore_page_version",
+    "set_page_space",
+    "theme",
+];
+/// Whether the `plugin` profile lists `name`.
+pub fn plugin_profile_lists(name: &str) -> bool {
+    DAILY_TOOL_NAMES.contains(&name) || PLUGIN_EXTRA_TOOL_NAMES.contains(&name)
+}
+/// Added to the standard instructions under the `plugin` profile.
+const PLUGIN_INSTRUCTIONS_NOTE: &str = "\n\nThis connection lists the tools the Wenlan plugin \
+     uses. A person accepts a proposed refinement or revision in the Wenlan app (these tools \
+     only list and turn them down); `wenlan curate` in a terminal lists and dismisses them. \
+     With a terminal, `wenlan tool list` shows Wenlan's other tools.";
 /// Added to the standard instructions under the `daily` profile, so the AI
 /// tool knows the list it sees is not all of Wenlan.
 const DAILY_INSTRUCTIONS_NOTE: &str = "\n\nThis connection lists Wenlan's everyday tools. \
@@ -8466,6 +8516,9 @@ impl WenlanMcpServer {
             ToolProfile::Daily => {
                 tools.retain(|tool| DAILY_TOOL_NAMES.contains(&tool.name.as_ref()));
             }
+            ToolProfile::Plugin => {
+                tools.retain(|tool| plugin_profile_lists(tool.name.as_ref()));
+            }
             ToolProfile::QueryOnly => {
                 tools.retain(|tool| QUERY_ONLY_TOOL_NAMES.contains(&tool.name.as_ref()));
                 for tool in &mut tools {
@@ -8747,10 +8800,13 @@ impl ServerHandler for WenlanMcpServer {
              demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
              conversational context, why something matters, and what the user actually cares about."
         );
-        if self.tool_profile == ToolProfile::Daily {
-            if let Some(instructions) = info.instructions.as_mut() {
-                instructions.push_str(DAILY_INSTRUCTIONS_NOTE);
-            }
+        let note = match self.tool_profile {
+            ToolProfile::Daily => Some(DAILY_INSTRUCTIONS_NOTE),
+            ToolProfile::Plugin => Some(PLUGIN_INSTRUCTIONS_NOTE),
+            _ => None,
+        };
+        if let (Some(note), Some(instructions)) = (note, info.instructions.as_mut()) {
+            instructions.push_str(note);
         }
         info
     }
@@ -8790,6 +8846,118 @@ mod tests {
         assert!(daily.query_only_refusal("lint").is_none());
         assert!(daily.web_write_refusal("lint").is_none());
         assert!(daily.local_only_refusal("lint").is_none());
+    }
+
+    /// Every tool name a plugin skill or reference file spells out, from the
+    /// same `mcp__<server>__<tool>` prefixes `plugin-contract.json` declares.
+    fn plugin_skill_tool_names() -> std::collections::BTreeSet<String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let contract: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("plugin-contract.json"))
+                .expect("plugin-contract.json"),
+        )
+        .expect("contract json");
+        let prefixes: Vec<String> = contract["surfaces"]
+            .as_object()
+            .expect("surfaces")
+            .values()
+            .filter_map(|surface| surface["skill_mcp_tool_prefix"].as_str())
+            .map(str::to_string)
+            .collect();
+        assert!(!prefixes.is_empty());
+        let mut names = std::collections::BTreeSet::new();
+        let mut stack: Vec<std::path::PathBuf> = [
+            "plugin/skills",
+            "plugin-codex/skills",
+            "plugin-agents/skills",
+        ]
+        .iter()
+        .map(|dir| root.join(dir))
+        .collect();
+        let mut files = 0;
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(&path).expect("read skill dir") {
+                    stack.push(entry.expect("entry").path());
+                }
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            files += 1;
+            for prefix in &prefixes {
+                for (at, _) in text.match_indices(prefix.as_str()) {
+                    let rest = &text[at + prefix.len()..];
+                    let end = rest
+                        .find(|c: char| !(c.is_ascii_lowercase() || c == '_'))
+                        .unwrap_or(rest.len());
+                    if end > 0 {
+                        names.insert(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+        assert!(files > 10, "plugin skill files were not found");
+        names
+    }
+
+    #[test]
+    fn the_plugin_profile_is_what_the_plugin_skills_name() {
+        let named = plugin_skill_tool_names();
+        assert!(
+            named.contains("recall") && named.contains("list_refinements"),
+            "{named:?}"
+        );
+        let all: Vec<String> =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Standard)
+                .visible_tools()
+                .into_iter()
+                .map(|tool| tool.name.to_string())
+                .collect();
+        let plugin = make_server_with_profile(
+            TransportMode::Stdio,
+            "claude-code",
+            None,
+            ToolProfile::Plugin,
+        );
+        let listed: std::collections::BTreeSet<String> = plugin
+            .visible_tools()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        for name in &named {
+            assert!(
+                all.contains(name),
+                "a skill names {name}, which is not a tool"
+            );
+            assert!(
+                listed.contains(name),
+                "a skill names {name}, but the plugin profile does not list it"
+            );
+        }
+        for name in PLUGIN_EXTRA_TOOL_NAMES {
+            assert!(
+                named.contains(*name),
+                "the plugin profile lists {name}, which no skill names"
+            );
+            assert!(
+                !DAILY_TOOL_NAMES.contains(name),
+                "{name} is already a daily tool"
+            );
+        }
+        // Tools that always refuse, or that no skill names, stay out.
+        for name in ["accept_refinement", "accept_revision", "update_brief"] {
+            assert!(!listed.contains(name), "{name} must not be listed");
+        }
+        for name in DAILY_TOOL_NAMES {
+            assert!(listed.contains(*name), "{name} (daily) missing");
+        }
+        // A shorter list, not a boundary.
+        assert!(plugin.local_only_refusal("accept_refinement").is_none());
+        let info = plugin.get_info().instructions.expect("instructions");
+        assert!(info.contains("accepts a proposed refinement or revision in the Wenlan app"));
+        assert!(info.contains("wenlan curate"));
     }
 
     #[test]

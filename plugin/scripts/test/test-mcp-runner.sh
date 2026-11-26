@@ -242,6 +242,30 @@ printf '#!/bin/sh\necho NO-EXEC-BIT\n' > "$case_dir/dev-file"
 assert_eq 'a non-executable WENLAN_MCP_DEV_BIN is skipped' \
     "BIN:installed:${agent_args}tool-arg" "$(run_runner WENLAN_MCP_DEV_BIN="$case_dir/dev-file")"
 
+# The `plugin` tool profile: passed only to a binary whose --help lists it.
+make_profile_bin() {
+    mkdir -p "$(dirname "$1")"
+    if [ "$2" = knows ]; then
+        printf '#!/bin/sh\ncase "$1" in --help) echo "      --tool-profile <P>  [possible values: standard, daily, plugin, query-only]";; *) echo "BIN:$*";; esac\n' > "$1"
+    else
+        printf '#!/bin/sh\ncase "$1" in --help) echo "      --tool-profile <P>  [possible values: standard, daily, query-only]";; *) echo "BIN:$*";; esac\n' > "$1"
+    fi
+    chmod +x "$1"
+}
+
+new_case
+make_profile_bin "$case_dir/$installed" knows
+assert_eq 'a binary that lists the plugin profile is started with it'     "BIN:${agent_args}--tool-profile plugin tool-arg" "$(run_runner)"
+
+new_case
+make_profile_bin "$case_dir/$installed" old
+assert_eq 'a binary that does not list the plugin profile is started without the flag'     "BIN:${agent_args}tool-arg" "$(run_runner)"
+
+new_case
+make_profile_bin "$case_dir/$installed" knows
+out="$(env -i HOME="$home" PATH="$path_dir:/usr/bin:/bin" WENLAN_APP_DIRS="$apps" bash "$runner" --tool-profile daily 2>&1)"
+assert_eq 'a caller-supplied --tool-profile is kept and not doubled'     "BIN:${agent_args}--tool-profile daily" "$out"
+
 rm -rf "$plugin/run/wenlan-mcp.local"
 
 printf '\n%s passed, %s failed (%s runner)\n' "$pass" "$fail" "$flavor"
