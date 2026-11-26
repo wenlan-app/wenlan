@@ -500,6 +500,14 @@ Read and save working rules for a Space, or manage your personal AI-tool setup.
 wenlan rules [OPTIONS] [COMMAND]
 ```
 
+#### `wenlan rules merge-pages`
+
+Preview moving page rules into shared rules and confirm at a terminal.
+
+```text
+wenlan rules merge-pages [OPTIONS]
+```
+
 #### `wenlan rules shared`
 
 The shared personal rules that apply across tools.
