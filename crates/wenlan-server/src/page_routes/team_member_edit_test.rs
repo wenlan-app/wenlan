@@ -87,6 +87,7 @@ async fn edit(
         SpaceHeader(space.map(str::to_string)),
         who,
         Path(id.into()),
+        axum::http::HeaderMap::new(),
         Json(wire),
     )
     .await

@@ -175,16 +175,23 @@ pub async fn handle_accept_sentence_proposal(
     )
     .await?;
     let why = body.and_then(|Json(b)| b.why);
-    Ok(Json(
-        wenlan_core::sentences::accept_sentence_proposal(
-            &db,
-            &id,
-            &proposal_id,
-            why.as_deref(),
-            page_root.as_deref(),
-        )
-        .await?,
-    ))
+    let rule_edit =
+        crate::skill_grow::page_rules::PageEdit::begin(&db, page_root.as_deref(), &id, &headers)
+            .await?;
+    let response = wenlan_core::sentences::accept_sentence_proposal(
+        &db,
+        &id,
+        &proposal_id,
+        why.as_deref(),
+        page_root.as_deref(),
+    )
+    .await?;
+    if let Some(rule_edit) = rule_edit {
+        rule_edit
+            .finish(&db, page_root.as_deref(), &id, &headers)
+            .await?;
+    }
+    Ok(Json(response))
 }
 
 /// POST /api/pages/{id}/sentences/proposals/{proposal_id}/reject

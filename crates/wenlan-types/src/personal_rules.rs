@@ -20,6 +20,35 @@ pub struct PersonalRuleOrigin {
     pub layer: PersonalRuleLayer,
     /// Unix time in seconds, or null for an unknown earlier version.
     pub time: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<PersonalRulePageOrigin>,
+    /// A page also supplied an existing shared line. Removing the page's
+    /// contribution must leave the original shared line in place.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kept_shared: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonalRulePageOrigin {
+    pub location: PageRuleLocation,
+    pub rule_id: String,
+    pub author: Option<String>,
+    pub proposer: String,
+    pub confirmer: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PageRuleLocation {
+    /// Conversation preferences have a line position but no page.
+    pub page_id: Option<String>,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageRuleMergePreview {
+    pub rule_count: usize,
+    pub excluded: Vec<PageRuleLocation>,
+    pub excludes_space_only: bool,
 }
 
 /// Origin records are bound to a whole layer's exact content. If another
@@ -60,7 +89,7 @@ pub struct PersonalRuleProposeRequest {
     pub edits: Vec<PersonalRuleEdit>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonalRulePlanChange {
     pub layer: PersonalRuleLayer,
     pub before: String,
@@ -69,7 +98,7 @@ pub struct PersonalRulePlanChange {
     pub affected_tools: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonalRulePlan {
     pub id: String,
     /// Unix time in seconds; the daemon also enforces the in-memory expiry.
@@ -80,6 +109,8 @@ pub struct PersonalRulePlan {
     /// Named or previously enrolled tools that will not receive this change.
     #[serde(default)]
     pub unmanaged_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_merge: Option<PageRuleMergePreview>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

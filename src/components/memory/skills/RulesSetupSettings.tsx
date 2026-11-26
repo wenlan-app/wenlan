@@ -9,7 +9,7 @@ import {
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { Button, Card } from "../settings/primitives";
-import { RulesSetupReviews, SettingsChanges } from "./RulesSetupReviews";
+import { PersonalRuleReview, RulesSetupReviews, SettingsChanges } from "./RulesSetupReviews";
 import { RulesToolsHeader } from "./RulesToolsHeader";
 import { RulesSetupDiff } from "./RulesSetupDiff";
 import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice, rulesSetupSkillSource } from "./rulesSetupText";
@@ -82,6 +82,8 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
         {status.can_restore && <Button type="button" disabled={busy} onClick={() => setDialog("restore")}>{t("rulesSetup.restoreOpen")}</Button>}
       </header>
       <RulesToolsHeader delivers setupOnly reviewCount={count} onReview={() => setPanel("review")} />
+      {panel === "status" && review.data?.items.map((item) => item.kind === "personal_plan" && item.plan.page_merge
+        ? <PersonalRuleReview key={item.id} plan={item.plan} /> : null)}
       {panel === "status" ? <Card>
         <div className="rules-setup-status-panel">
           {lastCheck && <p>{t("rulesSetup.lastCheck", { date: new Intl.DateTimeFormat(i18n.resolvedLanguage, {

@@ -41,7 +41,7 @@ const MAX_UNMANAGED_SKILLS: usize = 40;
 const MAX_NIGHTLY_MODEL_CALLS: usize = 8;
 const MANAGED_MARKER: &str = ".wenlan-managed";
 const TOOL_FILES_RECORD: &str = "tool-rules-files.json";
-static SKILLS_MUTATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static SKILLS_MUTATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static NIGHTLY_RUNNING: AtomicBool = AtomicBool::new(false);
 
 struct NightlyRunningGuard;
@@ -1157,21 +1157,8 @@ async fn read_personal_rules_for_space(
     let mut lines = own.lines_in(Some(&space.name));
     let mut rules_page_id = None;
     if let Some((state, page)) = readable_rules_page(db, space).await? {
-        lines.extend(person_lines_of(db, own.root.as_deref(), &page, false, None).await?);
+        lines.extend(page_rule_lines(db, own.root.as_deref(), space, &state, &page).await?);
         if feature_enabled() {
-            let reconciled = skill_grow::reconcile_rules_page(
-                &space.name,
-                &state.lines,
-                &state.lines,
-                &state.deleted_fingerprints,
-                Some(&page.content),
-                last_page_edit_is_person(&page),
-            );
-            let mut derived = eligible_lines(db, &space.id, &reconciled.lines).await?;
-            // Checked on every read too, so a line approved as general before its
-            // page turned out to be a teammate's stops being one at once.
-            keep_general_to_own_pages(db, &mut derived).await?;
-            lines.extend(derived);
             rules_page_id = Some(page.id);
         }
     }
@@ -1185,6 +1172,31 @@ async fn read_personal_rules_for_space(
         saved_rules_page_ids: Vec::new(),
         lines,
     })
+}
+
+async fn page_rule_lines(
+    db: &MemoryDB,
+    root: Option<&Path>,
+    space: &wenlan_types::Space,
+    state: &SpaceRulesState,
+    page: &wenlan_types::Page,
+) -> Result<Vec<SkillLine>, ServerError> {
+    let mut lines = person_lines_of(db, root, page, false, None).await?;
+    if feature_enabled() {
+        let reconciled = skill_grow::reconcile_rules_page(
+            &space.name,
+            &state.lines,
+            &state.lines,
+            &state.deleted_fingerprints,
+            Some(&page.content),
+            last_page_edit_is_person(page),
+        );
+        let mut derived = eligible_lines(db, &space.id, &reconciled.lines).await?;
+        // A line may have been approved before the backing page was shared.
+        keep_general_to_own_pages(db, &mut derived).await?;
+        lines.extend(derived);
+    }
+    Ok(lines)
 }
 
 async fn read_rules_for_space(
@@ -1336,9 +1348,18 @@ pub async fn handle_read_rules(
     } else {
         saved_rules::page_ids(&db).await?
     };
+    let projected = if by_tool {
+        page_rules::projected_rules(&db).await?
+    } else {
+        None
+    };
     if no_space_named(&headers, query.space.as_deref()) {
         // No Space: only the general lines, read from every accepted Space.
-        let general = general_lines(&db, &own, None, by_tool).await?;
+        let general = if projected.is_some() {
+            Vec::new()
+        } else {
+            general_lines(&db, &own, None, by_tool).await?
+        };
         if by_tool {
             record_general_reads(&db, &tool, &general).await?;
         }
@@ -1347,11 +1368,25 @@ pub async fn handle_read_rules(
             space_name: String::new(),
             rules_page_id: None,
             saved_rules_page_ids: saved_pages,
-            lines: general.into_iter().map(|(_, line)| line).collect(),
+            lines: projected.unwrap_or_else(|| general.into_iter().map(|(_, line)| line).collect()),
         }));
     }
     let space = resolved_space(&db, &headers, query.space.as_deref()).await?;
     let mut response = read_rules_for_space(&db, &own, &space).await?;
+    if let Some(projected) = projected {
+        response.lines.retain(|line| !line.general);
+        let known: HashSet<_> = response
+            .lines
+            .iter()
+            .map(|line| line.text.trim().to_owned())
+            .collect();
+        response.lines.extend(
+            projected
+                .into_iter()
+                .filter(|line| !known.contains(line.text.trim())),
+        );
+        return Ok(PageResponse::Local(response));
+    }
     if by_tool && feature_enabled() && !response.lines.is_empty() {
         db.record_skill_rules_read(&tool, &space.id, &response.lines)
             .await?;
@@ -1444,22 +1479,62 @@ async fn preference_lines(db: &MemoryDB) -> Result<Vec<SkillLine>, ServerError> 
         .person_preferences(PREFERENCE_LINE_CAP)
         .await?
         .into_iter()
-        .map(|(id, text)| SkillLine {
-            id: format!("preference:{id}"),
-            kind: wenlan_types::SkillLineKind::Rule,
-            text: text.trim().to_string(),
-            source_page_id: String::new(),
-            source_page_title: "What you told your tools".to_string(),
-            source_revision: 0,
-            source_revision_at: 0,
-            source_quote: String::new(),
-            person_edited: false,
-            general: true,
-            hand_written: false,
-            saved_from: None,
-            saved_by: None,
-        })
+        .map(|(id, text)| preference_line(&id, &text))
         .collect())
+}
+
+fn preference_line(id: &str, text: &str) -> SkillLine {
+    SkillLine {
+        id: format!("preference:{id}"),
+        kind: wenlan_types::SkillLineKind::Rule,
+        text: text.trim().to_string(),
+        source_page_id: String::new(),
+        source_page_title: skill_grow::PREFERENCES_HEADING.to_string(),
+        source_revision: 0,
+        source_revision_at: 0,
+        source_quote: String::new(),
+        person_edited: false,
+        general: true,
+        hand_written: false,
+        saved_from: None,
+        saved_by: None,
+    }
+}
+
+/// After the move, a preference the person confirms becomes a shared rule
+/// at once; a tool asking to confirm one gets a plan for the person instead
+/// (returned). The memory itself is not changed here. Before the move this
+/// does nothing: the preference reaches tools from its memory.
+pub(crate) async fn preference_rule_on_confirm(
+    db: &MemoryDB,
+    headers: &HeaderMap,
+    source_id: &str,
+) -> Result<Option<String>, ServerError> {
+    if !crate::rulesync_routes::personal_rules::page_rules_merged()? {
+        return Ok(None);
+    }
+    let Some(memory) = db.get_memory_detail(source_id).await? else {
+        return Ok(None);
+    };
+    let person = crate::rulesync_routes::require_local_person(headers).is_ok();
+    let eligible = memory.memory_type.as_deref() == Some("preference")
+        && memory.space.as_deref().is_none_or(str::is_empty)
+        && !memory.content.trim().is_empty()
+        && (!person || memory.confirmed);
+    if !eligible {
+        return Ok(None);
+    }
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    let snapshot = page_rules::preference_snapshot(&preference_line(source_id, &memory.content));
+    if snapshot.rules.is_empty() {
+        return Ok(None);
+    }
+    let from_tool = if person {
+        memory.source_agent.filter(|agent| !agent.trim().is_empty())
+    } else {
+        None
+    };
+    crate::rulesync_routes::personal_rules::preference_change(headers, snapshot, from_tool).await
 }
 
 async fn record_general_reads(
@@ -2194,6 +2269,11 @@ async fn rules_by_layer(
 }
 
 pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
+    // After the move, page rules and confirmed preferences both reach tools
+    // from shared rules, so no line is generated.
+    if crate::rulesync_routes::personal_rules::page_rules_merged()? {
+        return Ok(Vec::new());
+    }
     let (db, page_root) = db_and_page_root(state).await?;
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
     let general: Vec<_> = general_lines(&db, &own, None, true)
@@ -2446,17 +2526,31 @@ async fn sync_rules_files(
 ) -> Result<(), ServerError> {
     let home = wenlan_core::config::wenlan_home();
     let (general, mut layers) = rules_by_layer(db, page_root).await?;
-    sync_rules_layer(&home, &home, &skill_grow::rules_layer_files(None, &general));
+    let projected = page_rules::projected_rules(db).await?;
+    sync_rules_layer(
+        &home,
+        &home,
+        &skill_grow::rules_layer_files(None, projected.as_deref().unwrap_or(&general)),
+    );
     if wenlan_core::rulesync_personal::enabled() {
-        let rules = skill_grow::tool_rules(&general);
-        match tokio::task::spawn_blocking(move || crate::rulesync_routes::sync_from_pages(&rules))
-            .await
+        // After the move every line reaches tools from shared rules.
+        let rules = match &projected {
+            Some(_) => Vec::new(),
+            None => skill_grow::tool_rules(&general),
+        };
+        let empty = rules.is_empty()
+            && crate::rulesync_routes::personal_rules::page_rules_unanswered()?
+            && !page_rules::all(db, page_root).await?.has_candidates();
+        match tokio::task::spawn_blocking(move || {
+            crate::rulesync_routes::sync_from_pages(&rules, empty)
+        })
+        .await
         {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "[rules setup] automatic delivery stopped"),
             Err(error) => tracing::warn!(%error, "[rules setup] automatic delivery worker failed"),
         }
-    } else {
+    } else if projected.is_none() {
         sync_tool_rules(db, dirs, &general).await;
     }
     let spaces = home.join("spaces");
@@ -3396,11 +3490,14 @@ pub async fn handle_accept_space_rules(
     AxumPath(id): AxumPath<String>,
     Query(scope): Query<SpaceAnswerScope>,
 ) -> Result<Json<SpaceRulesActionResponse>, ServerError> {
-    crate::memory_routes::require_person_to_accept(&headers)?;
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    let moved = crate::rulesync_routes::personal_rules::page_rules_merged()?;
+    if !moved {
+        crate::memory_routes::require_person_to_accept(&headers)?;
+    }
     if !feature_enabled() {
         return Err(ServerError::Conflict("skills_from_library is off".into()));
     }
-    let _serial = SKILLS_MUTATION_LOCK.lock().await;
     let (db, page_root) = {
         let state = state.read().await;
         (
@@ -3418,9 +3515,42 @@ pub async fn handle_accept_space_rules(
             "Space rules suggestion is not pending".into(),
         ));
     }
+    if moved && crate::rulesync_routes::require_local_person(&headers).is_err() {
+        let snapshot = page_rules::pending_space_rules(&db, &space, &rules).await?;
+        let plan = crate::rulesync_routes::personal_rules::page_change(
+            &headers,
+            Vec::new(),
+            snapshot,
+            Default::default(),
+        )
+        .await?;
+        return Ok(Json(SpaceRulesActionResponse {
+            space_id: id,
+            status: plan.map_or_else(
+                || "suggested".into(),
+                |id| format!("pending personal-rule plan {id}"),
+            ),
+            rules_page_id: rules.rules_page_id,
+            undo_available: false,
+        }));
+    }
+    if moved {
+        // Refuse before the page changes when shared rules cannot follow it.
+        crate::rulesync_routes::personal_rules::page_change_ready()?;
+    }
     let page_id = accept_space(&db, page_root.as_deref(), &mut rules, space).await?;
     if !scope.this_space_only {
         record_library_answer(true)?;
+    }
+    if moved {
+        let snapshot = page_rules::snapshot(&db, page_root.as_deref(), Some(&page_id)).await?;
+        crate::rulesync_routes::personal_rules::page_change(
+            &headers,
+            Vec::new(),
+            snapshot,
+            Default::default(),
+        )
+        .await?;
     }
     sync_rules_files_locked(&db, page_root.as_deref(), &SkillDirs::system()).await;
     Ok(Json(SpaceRulesActionResponse {
@@ -4190,6 +4320,7 @@ pub async fn handle_self_report(
     ))
 }
 
+pub(crate) mod page_rules;
 mod saved_rules;
 
 #[cfg(test)]

@@ -1741,6 +1741,8 @@ pub fn run() {
             search::rules_setup_sync,
             search::rules_setup_skill_updates,
             search::rules_setup_review_list,
+            search::rules_setup_apply_personal_plan,
+            search::rules_setup_decline_page_merge,
             search::rules_setup_skill_review,
             search::rules_setup_settings_apply,
             search::rules_setup_dismiss_update,

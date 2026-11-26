@@ -4,9 +4,9 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-  applyRulesReview, applyRulesSettings, dismissRulesSkillUpdate, previewRulesReview, reviewRulesSkill,
+  applyPersonalRulePlan, applyRulesReview, applyRulesSettings, declinePageRuleMerge, dismissRulesSkillUpdate, previewRulesReview, reviewRulesSkill,
   type PullbackAction, type PullbackCard, type PullbackDecision, type PullbackPreview, type RulesSettingsPlan,
-  type RulesReviewItem, type RulesReviewList, type RulesSetupStatus, type RulesSkillReviewRequest,
+  type PersonalRulePlan, type RulesReviewItem, type RulesReviewList, type RulesSetupStatus, type RulesSkillReviewRequest,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { Button } from "../settings/primitives";
@@ -14,6 +14,8 @@ import { refreshRulesSetup } from "./useRulesSetup";
 import { RulesSetupDiff } from "./RulesSetupDiff";
 import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice } from "./rulesSetupText";
 import "./rulesSetup.css";
+
+type OtherReviewItem = Exclude<RulesReviewItem, { kind: "tool_edit" | "personal_plan" }>;
 
 export function RulesSetupReviews({ review }: { readonly review: RulesReviewList }) {
   const { t, i18n } = useTranslation();
@@ -26,7 +28,7 @@ export function RulesSetupReviews({ review }: { readonly review: RulesReviewList
     id: string; label: string; details?: React.ReactNode; apply: () => Promise<unknown>;
   } | null>(null);
 
-  async function prepareOther(item: Exclude<RulesReviewItem, { kind: "tool_edit" }>, action: PullbackAction, label: string) {
+  async function prepareOther(item: OtherReviewItem, action: PullbackAction, label: string) {
     setBusy(item.id);
     setFeedback(null);
     try {
@@ -121,7 +123,9 @@ export function RulesSetupReviews({ review }: { readonly review: RulesReviewList
   const currentOther = otherPreview && review.items.some((item) => item.id === otherPreview.id);
   return (
     <>
-      {review.items.map((item) => item.kind === "tool_edit" ? (
+      {review.items.map((item) => item.kind === "personal_plan" ? (
+        <PersonalRuleReview key={item.id} plan={item.plan} />
+      ) : item.kind === "tool_edit" ? (
         <ReviewCard key={item.id} card={item.card} answers={item.answers} tools={review.review_tools}
           busy={busy !== null || !!currentReview || !!currentOther} onChoice={(decision, label) => void prepare(decision, label)} />
       ) : (
@@ -156,6 +160,49 @@ export function RulesSetupReviews({ review }: { readonly review: RulesReviewList
       )}
     </>
   );
+}
+
+export function PersonalRuleReview({ plan }: { readonly plan: PersonalRulePlan }) {
+  const { t } = useTranslation();
+  const client = useQueryClient();
+  const heading = useId();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const move = plan.page_merge;
+
+  async function answer(apply: boolean) {
+    setBusy(true);
+    setFailed(false);
+    try {
+      if (apply) await applyPersonalRulePlan(plan.id);
+      else await declinePageRuleMerge(plan.id);
+    } catch {
+      setFailed(true);
+    } finally {
+      await refreshRulesSetup(client);
+      setBusy(false);
+    }
+  }
+
+  return <article className="rules-setup-review" aria-labelledby={heading}>
+    <h2 id={heading}>{move ? t("rulesSetup.movePageRules", { count: move.rule_count }) : t("rulesSetup.reviewPersonalRule")}</h2>
+    {move?.excludes_space_only && <p>{t("rulesSetup.keepSpaceRules")}</p>}
+    {plan.changes.map(({ diff }, index) => diff && <RulesSetupDiff key={index} diff={diff} />)}
+    {!!move?.excluded.length && <>
+      <p>{t("rulesSetup.credentialSkipped")}</p>
+      <ul className="rules-setup-files">{move.excluded.map(({ page_id, line }) => (
+        <li key={`${page_id}:${line}`}>{t("rulesSetup.credentialPosition", { source: page_id ?? t("rulesSetup.conversationPreferences"), line })}</li>
+      ))}</ul>
+    </>}
+    {!!plan.blocked_tools.length && <p>{t("rulesSetup.reviewRemaining")}</p>}
+    <div className="rules-setup-actions">
+      <Button type="button" variant="primary" disabled={busy || !!plan.blocked_tools.length} onClick={() => void answer(true)}>
+        {t(move ? "rulesSetup.moveRules" : "rulesSetup.applyPersonalRule")}
+      </Button>
+      {move && <Button type="button" disabled={busy} onClick={() => void answer(false)}>{t("rulesSetup.keepPageRules")}</Button>}
+    </div>
+    {failed && <p className="rules-setup-note" role="alert">{t("rulesSetup.changeFailed")}</p>}
+  </article>;
 }
 
 function ReviewCard({ card, answers, tools, busy, onChoice }: {
@@ -223,7 +270,7 @@ export function SettingsChanges({ plan }: { readonly plan: RulesSettingsPlan }) 
 }
 
 function OtherReviewCard({ item, toolName, busy, onChoice }: {
-  readonly item: Exclude<RulesReviewItem, { kind: "tool_edit" }>;
+  readonly item: OtherReviewItem;
   readonly toolName?: string;
   readonly busy: boolean;
   readonly onChoice: (action: PullbackAction, label: string) => void;

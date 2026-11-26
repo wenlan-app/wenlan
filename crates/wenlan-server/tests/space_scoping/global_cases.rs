@@ -388,6 +388,18 @@ pub async fn global_routes_enforce_scope_contracts() {
         ),
         (
             Method::Get,
+            "/api/rules/personal/merge-pages",
+            "/api/rules/personal/merge-pages",
+            None,
+        ),
+        (
+            Method::Post,
+            "/api/rules/personal/merge-pages",
+            "/api/rules/personal/merge-pages",
+            Some(serde_json::json!({"plan_id":"missing"})),
+        ),
+        (
+            Method::Get,
             "/api/rules/personal/plan/missing",
             "/api/rules/personal/plan/{id}",
             None,

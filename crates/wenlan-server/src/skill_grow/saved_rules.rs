@@ -327,6 +327,16 @@ pub(super) async fn save_rule_in(
     let saver = saver(&db, headers).await?;
 
     let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    let moved = space.is_none()
+        && kind == SkillLineKind::Rule
+        && crate::rulesync_routes::personal_rules::page_rules_merged()?;
+    if moved
+        && !wenlan_core::rulesync_personal::credentials::credential_line_numbers(&text).is_empty()
+    {
+        return Err(ServerError::ValidationError(refused(
+            "this rule may contain a credential",
+        )));
+    }
     let ledger = db.saved_rules_pages().await?;
     let now = chrono::Utc::now().timestamp();
     if let Some(reason) =
@@ -358,9 +368,41 @@ pub(super) async fn save_rule_in(
              Once the person accepts or dismisses that card in the Wenlan app, save this one",
         )));
     }
+    if moved && crate::rulesync_routes::require_local_person(headers).is_err() {
+        // After the move a tool proposes; the page stays as it is.
+        let plan = crate::rulesync_routes::personal_rules::propose_shared_line(
+            headers,
+            Vec::new(),
+            skill_grow::tool_file_text(&text),
+            true,
+        )
+        .await?;
+        let page = page_of(&db, &entry).await?;
+        return Ok(SaveRuleResponse {
+            status: SavedRuleStatus::Waiting,
+            rule_id: None,
+            space_name: String::new(),
+            page_id: page
+                .as_ref()
+                .map(|page| page.id.clone())
+                .unwrap_or_default(),
+            page_title: page.map(|page| page.title).unwrap_or_default(),
+            saved_from: saver.label,
+            revision_card_id: None,
+            message: format!(
+                "This rule waits for the person to confirm personal-rule plan {plan}."
+            ),
+        });
+    }
     let page = match page_of(&db, &entry).await? {
         Some(page) => page,
         None => make_page(&db, page_root, space.as_ref()).await?,
+    };
+    let before_rules = if moved {
+        crate::rulesync_routes::personal_rules::page_change_ready()?;
+        Some(page_rules::snapshot(&db, page_root, Some(&page.id)).await?)
+    } else {
+        None
     };
     let content = match skill_grow::page_with_saved_rule(&page.content, kind, &text) {
         Ok(content) => content,
@@ -497,10 +539,18 @@ pub(super) async fn save_rule_in(
                 }
             })
             .await?;
+            let pending = if let Some(before) = before_rules {
+                let after = page_rules::snapshot(&db, page_root, Some(&written.id)).await?;
+                page_rules::apply_delta(headers, before, after).await?
+            } else {
+                None
+            };
             sync_rules_files_locked(&db, page_root, &dirs).await;
             let rule_id = skill_grow::line_id(kind, &written.id, 0, &text);
             let silenced = skill_grow::page_is_not_for_ai_tools(&written.content);
-            let message = if silenced {
+            let message = if let Some(plan) = &pending {
+                format!("This rule waits for the person to confirm personal-rule plan {plan}.")
+            } else if silenced {
                 format!(
                     "Saved on the page {:?}, but that page is marked #not-for-ai-tools, so AI \
                      tools are not told its rules until the mark is taken off.",
@@ -515,8 +565,12 @@ pub(super) async fn save_rule_in(
                 )
             };
             Ok(SaveRuleResponse {
-                status: SavedRuleStatus::Saved,
-                rule_id: Some(rule_id),
+                status: if pending.is_some() {
+                    SavedRuleStatus::Waiting
+                } else {
+                    SavedRuleStatus::Saved
+                },
+                rule_id: pending.is_none().then_some(rule_id),
                 space_name,
                 page_id: written.id,
                 page_title: written.title,
@@ -615,6 +669,37 @@ pub(super) async fn remove_rule_in(
     if let Some(reason) = may {
         return Err(refused_with(axum::http::StatusCode::FORBIDDEN, reason));
     }
+    let moved = crate::rulesync_routes::personal_rules::page_rules_merged()?;
+    if moved
+        && entry.space_id.is_empty()
+        && line.general
+        && crate::rulesync_routes::require_local_person(headers).is_err()
+    {
+        // After the move a tool proposes; the page stays as it is.
+        let plan = crate::rulesync_routes::personal_rules::propose_shared_line(
+            headers,
+            Vec::new(),
+            skill_grow::tool_file_text(&line.text),
+            false,
+        )
+        .await?;
+        return Ok(RemoveRuleResponse {
+            status: SavedRuleStatus::Waiting,
+            id: id.to_string(),
+            page_id: page.id,
+            page_title: page.title,
+            revision_card_id: None,
+            message: format!(
+                "This removal waits for the person to confirm personal-rule plan {plan}."
+            ),
+        });
+    }
+    let before_rules = if moved {
+        crate::rulesync_routes::personal_rules::page_change_ready()?;
+        Some(page_rules::snapshot(&db, page_root, Some(&page.id)).await?)
+    } else {
+        None
+    };
     let (content, _) = skill_grow::page_without_rule(
         &SkillPageInput {
             id: page.id.clone(),
@@ -644,16 +729,22 @@ pub(super) async fn remove_rule_in(
             revision_card_id: card,
         }),
         Landed::Wrote(written) => {
+            let pending = if let Some(before) = before_rules {
+                let after = page_rules::snapshot(&db, page_root, Some(&written.id)).await?;
+                page_rules::apply_delta(headers, before, after).await?
+            } else {
+                None
+            };
             sync_rules_files_locked(&db, page_root, &dirs).await;
             Ok(RemoveRuleResponse {
-                status: SavedRuleStatus::Removed,
+                status: if pending.is_some() { SavedRuleStatus::Waiting } else { SavedRuleStatus::Removed },
                 id: id.to_string(),
                 page_id: written.id,
-                message: format!(
+                message: pending.map_or_else(|| format!(
                     "Removed. AI tools are no longer told this rule; it was taken off the page \
                      {:?}, whose history keeps it.",
                     written.title
-                ),
+                ), |plan| format!("This removal waits for the person to confirm personal-rule plan {plan}.")),
                 page_title: written.title,
                 revision_card_id: None,
             })

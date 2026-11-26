@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use axum::{http::HeaderMap, Json};
+use axum::{extract::State, http::HeaderMap, Json};
 use tokio::sync::Mutex;
 use wenlan_core::{
     rulesync_adopt::AdoptedSkill,
@@ -28,7 +28,7 @@ use super::{
 };
 #[cfg(test)]
 use crate::rulesync_apply::FileRoot;
-use crate::{error::ServerError, rulesync_registry, rulesync_settings_routes};
+use crate::{error::ServerError, rulesync_registry, rulesync_settings_routes, state::SharedState};
 
 struct CachedUpdates {
     source: String,
@@ -76,7 +76,10 @@ pub(super) async fn existing_update_check() -> Result<Vec<AdoptedSkillUpdate>, S
     visible_updates(updates(&home, &skills).await.map_err(conflict)?, &dismissed).map_err(conflict)
 }
 
-pub(super) async fn list(headers: HeaderMap) -> Result<Json<RulesReviewList>, ServerError> {
+pub(super) async fn list(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<RulesReviewList>, ServerError> {
     require_local_rules_access(&headers)?;
     if !enabled() {
         return Ok(Json(RulesReviewList::default()));
@@ -93,6 +96,13 @@ pub(super) async fn list(headers: HeaderMap) -> Result<Json<RulesReviewList>, Se
     })
     .await?;
     let rows = updates(&home, &skills).await.map_err(conflict)?;
+    if super::require_local_person(&headers).is_ok() {
+        match super::personal_rules::merge_preview(&state).await {
+            Ok(Some(plan)) => queue.items.insert(0, page_plan_item(plan)),
+            Ok(None) => (),
+            Err(error) => tracing::debug!(%error, "Page-rule move preview is unavailable"),
+        }
+    }
     for update in visible_updates(rows, &dismissed).map_err(conflict)? {
         if let Some((_, id)) = update_offer(&update).map_err(conflict)? {
             queue.items.push(RulesReviewItem {
@@ -122,6 +132,11 @@ fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
             }
         })
         .collect::<Vec<_>>();
+    items.extend(
+        super::personal_rules::pending_page_plans(setup)
+            .into_iter()
+            .map(page_plan_item),
+    );
     let mut tools = status.review_tools;
     for proposal in rulesync_registry::pending_skill_reviews(&setup.data)? {
         if let Some(target) = proposal_tool(&proposal)
@@ -160,6 +175,14 @@ fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
         items,
         review_tools: tools,
     })
+}
+
+fn page_plan_item(plan: wenlan_types::personal_rules::PersonalRulePlan) -> RulesReviewItem {
+    RulesReviewItem {
+        id: plan.id.clone(),
+        answers: Vec::new(),
+        content: RulesReviewContent::PersonalPlan { plan },
+    }
 }
 
 pub(super) fn proposal_tool(

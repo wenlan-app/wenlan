@@ -2588,6 +2588,7 @@ pub async fn handle_update_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     crate::team_actor::TeamActor(actor): crate::team_actor::TeamActor,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
 ) -> Result<
     PageResponse<wenlan_types::responses::ManualPageWriteResponse, MemberManualWrite>,
@@ -2629,6 +2630,12 @@ pub async fn handle_update_page(
     // then can a heading whose words changed be read as renamed.
     let edited_from = (req.expected_version == Some(before.version)).then_some(before.content);
     let edited_to = req.content.clone();
+    let rule_edit = if private {
+        crate::skill_grow::page_rules::PageEdit::begin(&db, page_root.as_deref(), &id, &headers)
+            .await?
+    } else {
+        None
+    };
 
     // Use captured server state, never global config (which would point an
     // isolated handler at the user's vault). Core commits DB + receipt first.
@@ -2683,6 +2690,11 @@ pub async fn handle_update_page(
     // "somebody else edited this," which is both wrong and unactionable.
     use wenlan_core::post_write::WriteOutcome;
     if result.outcome == WriteOutcome::Wrote {
+        if let Some(rule_edit) = rule_edit {
+            rule_edit
+                .finish(&db, page_root.as_deref(), &id, &headers)
+                .await?;
+        }
         if let Some(before) = edited_from.as_deref() {
             // Links to a renamed heading follow it, so `[[Page#heading]]`
             // still opens that section, here and in Obsidian.

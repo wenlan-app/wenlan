@@ -405,6 +405,8 @@ main|post|/api/rules/setup/skill-updates|wenlan_server::rulesync_routes::skill_u
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
 main|post|/api/rules/personal/show|wenlan_server::rulesync_routes::personal_rules::show
 main|post|/api/rules/personal/propose|wenlan_server::rulesync_routes::personal_rules::propose
+main|get|/api/rules/personal/merge-pages|wenlan_server::rulesync_routes::personal_rules::preview_merge_pages
+main|post|/api/rules/personal/merge-pages|wenlan_server::rulesync_routes::personal_rules::decline_merge_pages
 main|get|/api/rules/personal/plan/{id}|wenlan_server::rulesync_routes::personal_rules::plan
 main|post|/api/rules/personal/apply|wenlan_server::rulesync_routes::personal_rules::apply
 main|get|/api/rules/personal/history|wenlan_server::rulesync_routes::personal_rules::history

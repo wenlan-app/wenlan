@@ -802,6 +802,7 @@ impl WenlanClient {
         let response = self
             .client
             .post(self.url(&path))
+            .headers(person_headers())
             .json(body)
             .send()
             .await

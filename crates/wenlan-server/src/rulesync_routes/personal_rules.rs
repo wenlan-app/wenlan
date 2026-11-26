@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Preview and commit personal shared and per-tool rule changes.
 
+mod pages;
 #[cfg(test)]
 mod tests;
+pub(crate) use pages::{
+    merged_page_rules, page_change_ready, page_rules_merged, page_rules_unanswered, PageRule,
+    PageRuleSnapshot, PageRulesState,
+};
+use pages::{PagePlan, MERGE_CAUSE, PAGES_PROPOSER, PAGE_CHANGE_CAUSE};
 
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -11,7 +17,8 @@ use axum::extract::Path as RoutePath;
 use serde::Serialize;
 use uuid::Uuid;
 use wenlan_core::rulesync_rule_plan::{
-    confirmed_personal_rule_origins, personal_rule_content_digest, preview_personal_rule_edits,
+    confirmed_personal_rule_origins, personal_rule_content_digest, personal_rule_edit_diffs,
+    preview_personal_rule_edits,
 };
 use wenlan_types::personal_rules::{
     PersonalRuleApplyRequest, PersonalRuleEdit, PersonalRuleLayer, PersonalRuleLayerOrigins,
@@ -28,6 +35,7 @@ const HISTORY_DIRECTORY: &str = "rule-history";
 static PLANS: LazyLock<Mutex<BTreeMap<Uuid, HeldPlan>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
+#[derive(Clone)]
 struct HeldPlan {
     home: PathBuf,
     data: PathBuf,
@@ -36,6 +44,7 @@ struct HeldPlan {
     edits: Vec<PersonalRuleEdit>,
     signature: String,
     restore: Option<PersonalRuleVersion>,
+    pages: Option<PagePlan>,
 }
 
 struct Prepared {
@@ -44,6 +53,13 @@ struct Prepared {
     next_master: PersonalMaster,
     next_authored: BTreeMap<PathBuf, restore_rules::AuthoredRules>,
     signature: String,
+    page_origins: Option<Vec<Option<PersonalRuleOrigin>>>,
+}
+
+struct PlanEdits<'a> {
+    edits: &'a [PersonalRuleEdit],
+    pages: Option<&'a PagePlan>,
+    restore: Option<&'a PersonalRuleVersion>,
 }
 
 /// The data-root files are private, and AI callers may only read or propose
@@ -212,6 +228,8 @@ struct PlanBinding<'a> {
     codex_sync_replaced: bool,
     claude_imported_rules: &'a Option<BTreeSet<String>>,
     generated: &'a [String],
+    page_rules: PageRulesState,
+    pages: Option<&'a PagePlan>,
     origins: &'a [PersonalRuleLayerOrigins],
     history: &'a [String],
     authored: &'a BTreeMap<PathBuf, restore_rules::AuthoredRules>,
@@ -237,10 +255,32 @@ fn settled(manifest: &Manifest) -> Result<()> {
 }
 
 impl Setup {
+    #[cfg(test)]
     fn prepare_rule_plan(
         &self,
         manifest: &Manifest,
         edits: &[PersonalRuleEdit],
+        generated: &[String],
+        proposer: Option<String>,
+        render: &impl Fn(&str, &str) -> Result<SkillFiles>,
+    ) -> Result<Prepared> {
+        self.prepare_plan(
+            manifest,
+            PlanEdits {
+                edits,
+                pages: None,
+                restore: None,
+            },
+            generated,
+            proposer,
+            render,
+        )
+    }
+
+    fn prepare_plan(
+        &self,
+        manifest: &Manifest,
+        request: PlanEdits<'_>,
         generated: &[String],
         proposer: Option<String>,
         render: &impl Fn(&str, &str) -> Result<SkillFiles>,
@@ -255,7 +295,48 @@ impl Setup {
             current_master.overrides.is_empty(),
             "An older tool-only edit cannot be represented as a separate rule layer. It was kept unchanged; reconcile it before changing personal rules."
         );
-        let mut changes = preview_personal_rule_edits(&current_master, edits)?;
+        let page_edit;
+        let mut page_origins = None;
+        let edits = if let Some(pages) = request.pages {
+            let (text, origins) = pages.prepare(manifest)?;
+            page_origins = Some(origins);
+            page_edit = [PersonalRuleEdit {
+                layer: PersonalRuleLayer::Shared,
+                text,
+            }];
+            &page_edit
+        } else {
+            request.edits
+        };
+        let mut changes = if request.pages.is_some() || request.restore.is_some() {
+            personal_rule_edit_diffs(&current_master, edits)?
+        } else {
+            preview_personal_rule_edits(&current_master, edits)?
+        };
+        if let Some(version) = request.restore {
+            for rule in &version.rules {
+                if changes.iter().any(|change| change.layer == rule.layer) {
+                    continue;
+                }
+                let current = show_layer(manifest, &rule.layer)?;
+                if current.text == rule.text && current.origins != rule.origins {
+                    changes.push(provenance_change(rule.layer.clone(), &rule.text));
+                }
+            }
+            ensure!(!changes.is_empty(), "There are no rule changes to propose.");
+        }
+        if let Some(origins) = &page_origins {
+            if changes.is_empty()
+                && (request.pages.is_some_and(PagePlan::is_merge)
+                    || origin_lines(manifest, &PersonalRuleLayer::Shared, &current_master.shared)?
+                        != *origins)
+            {
+                changes.push(provenance_change(
+                    PersonalRuleLayer::Shared,
+                    &current_master.shared,
+                ));
+            }
+        }
         let mut next_master = current_master.clone();
         let mut changed_tools = BTreeSet::new();
         let mut shared_changed = false;
@@ -277,6 +358,14 @@ impl Setup {
             }
         }
 
+        // A merge moves the page lines into shared now; the lines still
+        // generated after it (conversation preferences) keep being delivered.
+        let delivery_state = if request.pages.is_some_and(PagePlan::is_merge) {
+            PageRulesState::Merged
+        } else {
+            manifest.page_rules
+        };
+        let delivery_generated = &delivery_state.legacy_rules(&next_master.shared, generated);
         let root = self.home_files()?;
         let mut worktrees = DeliveryWorktrees::new(&self.home)?;
         let mut operations = Vec::new();
@@ -348,9 +437,11 @@ impl Setup {
                 ));
                 continue;
             }
-            let source_text = next_master.rule_text(target, generated).map_err(|_| {
-                anyhow::anyhow!("{target_name}: the rule change conflicts with a local edit.")
-            })?;
+            let source_text = next_master
+                .rule_text(target, delivery_generated)
+                .map_err(|_| {
+                    anyhow::anyhow!("{target_name}: the rule change conflicts with a local edit.")
+                })?;
             if let Some(authored) = next_authored.get_mut(path) {
                 *authored = authored.for_plan(
                     &source_text,
@@ -388,7 +479,12 @@ impl Setup {
                 path: path.clone(),
                 seen: expected.clone(),
                 desired,
-                kind: Some(Kind::rule(&next_master, target, generated, source_text)),
+                kind: Some(Kind::rule(
+                    &next_master,
+                    target,
+                    delivery_generated,
+                    source_text,
+                )),
                 allow_link: false,
             });
         }
@@ -435,6 +531,8 @@ impl Setup {
             codex_sync_replaced: manifest.master.codex_sync_replaced,
             claude_imported_rules: &manifest.master.claude_imported_rules,
             generated,
+            page_rules: manifest.page_rules,
+            pages: request.pages,
             origins: &manifest.personal_rule_origins,
             history: &manifest.personal_rule_history,
             authored: &manifest.authored_rules,
@@ -453,12 +551,27 @@ impl Setup {
                 changes,
                 blocked_tools: blocked,
                 unmanaged_tools: unmanaged,
+                page_merge: request.pages.and_then(PagePlan::preview),
             },
             operations,
             next_master,
             next_authored,
             signature,
+            page_origins,
         })
+    }
+}
+
+fn provenance_change(
+    layer: PersonalRuleLayer,
+    text: &str,
+) -> wenlan_types::personal_rules::PersonalRulePlanChange {
+    wenlan_types::personal_rules::PersonalRulePlanChange {
+        layer,
+        before: text.into(),
+        after: text.into(),
+        diff: String::new(),
+        affected_tools: Vec::new(),
     }
 }
 
@@ -553,12 +666,34 @@ pub(super) async fn apply(
     Json(request): Json<PersonalRuleApplyRequest>,
 ) -> Result<Json<PersonalRuleVersion>, ServerError> {
     require_local_person(&headers)?;
+    let setup = pages_setup().map_err(server_error)?;
+    let held = find_plan(&setup, &request.plan_id, false).map_err(server_error)?;
+    let _pages_lock = if held.pages.is_some() {
+        Some(crate::skill_grow::SKILLS_MUTATION_LOCK.lock().await)
+    } else {
+        None
+    };
+    let merge = match &held.pages {
+        Some(PagePlan::Merge(_)) => {
+            Some(crate::skill_grow::page_rules::merge_snapshot(&state).await?)
+        }
+        Some(PagePlan::Change { snapshot, .. }) => {
+            if !crate::skill_grow::page_rules::revisions_match(&state, &snapshot.revisions).await? {
+                find_plan(&setup, &request.plan_id, true).map_err(server_error)?;
+                return Err(ServerError::Conflict(
+                    "A page changed after the preview. Propose the change again.".into(),
+                ));
+            }
+            None
+        }
+        None => None,
+    };
     let generated = crate::skill_grow::general_tool_rules(&state).await?;
     tokio::task::spawn_blocking(move || {
         let setup = rendering_setup()?;
         let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
         let session = RenderSession::new(&setup.binary);
-        setup.apply_rule_plan(&request.plan_id, &generated, &|tool, text| {
+        setup.apply_plan(&request.plan_id, &generated, merge, &|tool, text| {
             setup.render_member_rule(&session, tool, text, &layers)
         })
     })
@@ -566,6 +701,280 @@ pub(super) async fn apply(
     .map_err(|error| ServerError::Internal(error.to_string()))?
     .map(Json)
     .map_err(server_error)
+}
+
+fn pages_setup() -> Result<Setup> {
+    Ok(Setup::new(
+        Setup::tool_home()?,
+        wenlan_core::config::data_root().join("rulesync"),
+    ))
+}
+
+pub(super) async fn preview_merge_pages(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<PersonalRulePlan>>, ServerError> {
+    require_local_reader(&headers)?;
+    Ok(Json(merge_preview(&state).await?))
+}
+
+pub(super) async fn merge_preview(
+    state: &SharedState,
+) -> Result<Option<PersonalRulePlan>, ServerError> {
+    let setup = pages_setup().map_err(server_error)?;
+    let manifest = setup
+        .load_if_present()
+        .map_err(server_error)?
+        .unwrap_or_else(empty_manifest);
+    if !manifest.page_rules.is_unanswered() {
+        return Ok(None);
+    }
+    let snapshot = crate::skill_grow::page_rules::merge_snapshot(state).await?;
+    if !snapshot.has_candidates() {
+        return Ok(None);
+    }
+    // Bound to the same lines the apply reads before the move.
+    let generated = crate::skill_grow::general_tool_rules(state).await?;
+    tokio::task::spawn_blocking(move || {
+        let page_plan = PagePlan::Merge(snapshot);
+        let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
+        let session = RenderSession::new(&setup.binary);
+        let prepared = setup.prepare_page_plan(
+            &manifest,
+            &page_plan,
+            &generated,
+            Some(PAGES_PROPOSER.into()),
+            &|tool, text| setup.render_member_rule(&session, tool, text, &layers),
+        )?;
+        Ok(Some(remember_plan(
+            &setup,
+            prepared,
+            Vec::new(),
+            None,
+            Some(page_plan),
+        )))
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map_err(server_error)
+}
+
+pub(super) async fn decline_merge_pages(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(request): Json<PersonalRuleApplyRequest>,
+) -> Result<Json<()>, ServerError> {
+    require_local_person(&headers)?;
+    let _serial = crate::skill_grow::SKILLS_MUTATION_LOCK.lock().await;
+    let snapshot = crate::skill_grow::page_rules::merge_snapshot(&state).await?;
+    tokio::task::spawn_blocking(move || {
+        let setup = pages_setup()?;
+        setup.decline_page_plan(&request.plan_id, &snapshot)
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(server_error)
+}
+
+impl Setup {
+    fn prepare_page_plan(
+        &self,
+        manifest: &Manifest,
+        pages: &PagePlan,
+        generated: &[String],
+        proposer: Option<String>,
+        render: &impl Fn(&str, &str) -> Result<SkillFiles>,
+    ) -> Result<Prepared> {
+        self.prepare_plan(
+            manifest,
+            PlanEdits {
+                edits: &[],
+                pages: Some(pages),
+                restore: None,
+            },
+            generated,
+            proposer,
+            render,
+        )
+    }
+
+    fn decline_page_plan(&self, id: &str, current: &PageRuleSnapshot) -> Result<()> {
+        let _lock = self.lock()?;
+        let held = find_plan(self, id, true)?;
+        let Some(PagePlan::Merge(previous)) = held.pages else {
+            bail!("This is not a page rule move.")
+        };
+        let mut manifest = self.load_if_present()?.unwrap_or_else(empty_manifest);
+        settled(&manifest)?;
+        ensure!(
+            manifest.page_rules.is_unanswered() && fingerprint(&previous)? == fingerprint(current)?,
+            "The page rules changed after the preview. Preview the move again."
+        );
+        // Declining changes only the offer. Existing tool-file edits need no
+        // resolution for the person to keep their current delivery.
+        manifest.page_rules = PageRulesState::Declined;
+        self.save(&manifest)
+    }
+}
+
+pub(super) fn pending_page_plans(setup: &Setup) -> Vec<PersonalRulePlan> {
+    let mut plans = PLANS.lock().unwrap_or_else(|error| error.into_inner());
+    plans.retain(|_, plan| plan.created.elapsed() < PLAN_LIFETIME);
+    plans
+        .values()
+        .filter(|plan| {
+            plan.data == setup.data
+                && plan.home == setup.home
+                && matches!(plan.pages, Some(PagePlan::Change { .. }))
+        })
+        .map(|plan| plan.response.clone())
+        .collect()
+}
+
+/// After the move, a tool's save or removal of a rule used in every Space
+/// becomes a personal-rule plan for shared rules. No page changes, so a page
+/// never holds a rule the tools are not told while the person decides.
+pub(crate) async fn propose_shared_line(
+    headers: &HeaderMap,
+    generated: Vec<String>,
+    line: String,
+    add: bool,
+) -> Result<String, ServerError> {
+    require_local_reader(headers)?;
+    let tool = proposer(headers)?;
+    tokio::task::spawn_blocking(move || {
+        let setup = rendering_setup()?;
+        let manifest = setup.load_if_present()?.unwrap_or_else(empty_manifest);
+        ensure!(
+            manifest.page_rules == PageRulesState::Merged,
+            "Page rules have not been moved."
+        );
+        let shared = &manifest.master.shared;
+        let text = if add {
+            pages::with_shared_line(shared, &line)
+        } else {
+            pages::without_shared_line(shared, &line)
+        };
+        ensure!(
+            text != *shared,
+            if add {
+                "This is already a rule used in every Space; nothing was proposed."
+            } else {
+                "No rule used in every Space has these words; nothing was proposed."
+            }
+        );
+        let edits = vec![PersonalRuleEdit {
+            layer: PersonalRuleLayer::Shared,
+            text,
+        }];
+        Ok(build_plan(&setup, edits, &generated, tool, None)?.id)
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map_err(|error| ServerError::Conflict(error.to_string()))
+}
+
+/// Called only by page actions that have already enforced their scope.
+/// The exact local-person gate is the authority for an immediate apply.
+pub(crate) async fn page_change(
+    headers: &HeaderMap,
+    generated: Vec<String>,
+    snapshot: PageRuleSnapshot,
+    remove: BTreeSet<String>,
+) -> Result<Option<String>, ServerError> {
+    let proposer = Some(PAGES_PROPOSER.into());
+    change_shared_lines(headers, generated, snapshot, remove, proposer).await
+}
+
+/// After the move, a confirmed preference becomes one shared line. The
+/// person's own confirm applies it at once; a tool's becomes a plan for the
+/// person to confirm. `proposer` is the tool the preference came from.
+pub(crate) async fn preference_change(
+    headers: &HeaderMap,
+    mut snapshot: PageRuleSnapshot,
+    from_tool: Option<String>,
+) -> Result<Option<String>, ServerError> {
+    let proposer = match from_tool {
+        Some(tool) => Some(tool),
+        None => proposer(headers)?,
+    };
+    for rule in &mut snapshot.rules {
+        rule.proposer.clone_from(&proposer);
+    }
+    change_shared_lines(headers, Vec::new(), snapshot, BTreeSet::new(), proposer).await
+}
+
+async fn change_shared_lines(
+    headers: &HeaderMap,
+    generated: Vec<String>,
+    snapshot: PageRuleSnapshot,
+    remove: BTreeSet<String>,
+    proposer: Option<String>,
+) -> Result<Option<String>, ServerError> {
+    require_local_reader(headers)?;
+    let confirmed = require_local_person(headers).is_ok();
+    if snapshot.rules.is_empty() && remove.is_empty() {
+        return Ok(None);
+    }
+    tokio::task::spawn_blocking(move || {
+        let setup = rendering_setup()?;
+        let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
+        let session = RenderSession::new(&setup.binary);
+        let change = PageChange {
+            snapshot,
+            remove,
+            confirmed,
+            proposer,
+        };
+        setup.change_page_rules(&generated, change, &|tool, text| {
+            setup.render_member_rule(&session, tool, text, &layers)
+        })
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map_err(server_error)
+}
+
+/// One change to the page-backed shared lines, and whether the local person
+/// is the one asking for it.
+pub(super) struct PageChange {
+    pub snapshot: PageRuleSnapshot,
+    pub remove: BTreeSet<String>,
+    pub confirmed: bool,
+    pub proposer: Option<String>,
+}
+
+impl Setup {
+    fn change_page_rules(
+        &self,
+        generated: &[String],
+        change: PageChange,
+        render: &impl Fn(&str, &str) -> Result<SkillFiles>,
+    ) -> Result<Option<String>> {
+        let PageChange {
+            snapshot,
+            remove,
+            confirmed,
+            proposer,
+        } = change;
+        let _lock = self.lock()?;
+        let manifest = self.load_if_present()?.unwrap_or_else(empty_manifest);
+        let pages = PagePlan::Change { snapshot, remove };
+        let prepared = self.prepare_page_plan(&manifest, &pages, generated, proposer, render)?;
+        if prepared.plan.changes.is_empty() {
+            return Ok(None);
+        }
+        let plan = remember_plan(self, prepared, Vec::new(), None, Some(pages));
+        if confirmed {
+            let held = find_plan(self, &plan.id, true)?;
+            self.commit_rule_plan(&held, generated, render)
+                .context("The page was saved, but shared rules did not change")?;
+            Ok(None)
+        } else {
+            Ok(Some(plan.id))
+        }
+    }
 }
 
 pub(super) async fn history(
@@ -633,6 +1042,7 @@ fn remember_plan(
     mut prepared: Prepared,
     edits: Vec<PersonalRuleEdit>,
     restore: Option<PersonalRuleVersion>,
+    pages: Option<PagePlan>,
 ) -> PersonalRulePlan {
     let id = Uuid::new_v4();
     prepared.plan.id = id.simple().to_string();
@@ -640,6 +1050,15 @@ fn remember_plan(
     let response = prepared.plan;
     let mut plans = PLANS.lock().unwrap_or_else(|error| error.into_inner());
     plans.retain(|_, plan| plan.created.elapsed() < PLAN_LIFETIME);
+    if pages.as_ref().is_some_and(PagePlan::is_merge) {
+        if let Some(plan) = plans.values().find(|plan| {
+            plan.home == setup.home
+                && plan.data == setup.data
+                && plan.signature == prepared.signature
+        }) {
+            return plan.response.clone();
+        }
+    }
     if plans.len() >= MAX_PLANS {
         if let Some(oldest) = plans
             .iter()
@@ -659,6 +1078,7 @@ fn remember_plan(
             edits,
             signature: prepared.signature,
             restore,
+            pages,
         },
     );
     response
@@ -673,15 +1093,7 @@ fn find_plan(setup: &Setup, id: &str, consume: bool) -> Result<HeldPlan> {
         .filter(|held| held.home == setup.home && held.data == setup.data)
         .context("This plan has expired. Propose the change again.")?;
     if !consume {
-        return Ok(HeldPlan {
-            home: held.home.clone(),
-            data: held.data.clone(),
-            created: held.created,
-            response: held.response.clone(),
-            edits: held.edits.clone(),
-            signature: held.signature.clone(),
-            restore: held.restore.clone(),
-        });
+        return Ok(held.clone());
     }
     Ok(plans.remove(&id).expect("the matching plan is present"))
 }
@@ -697,11 +1109,18 @@ fn build_plan(
     let manifest = setup.load_if_present()?.unwrap_or_else(empty_manifest);
     let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
     let session = RenderSession::new(&setup.binary);
-    let prepared =
-        setup.prepare_rule_plan(&manifest, &edits, generated, proposer, &|tool, text| {
-            setup.render_member_rule(&session, tool, text, &layers)
-        })?;
-    Ok(remember_plan(setup, prepared, edits, restore))
+    let prepared = setup.prepare_plan(
+        &manifest,
+        PlanEdits {
+            edits: &edits,
+            pages: None,
+            restore: restore.as_ref(),
+        },
+        generated,
+        proposer,
+        &|tool, text| setup.render_member_rule(&session, tool, text, &layers),
+    )?;
+    Ok(remember_plan(setup, prepared, edits, restore, None))
 }
 
 /// History files are written before the manifest checkpoint. This intent is
@@ -711,12 +1130,36 @@ fn build_plan(
 #[serde(deny_unknown_fields)]
 pub(super) struct RuleHistoryJournal {
     files: BTreeMap<String, Vec<u8>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    archives: BTreeMap<String, Vec<u8>>,
 }
 
 fn history_path(id: &str) -> Result<PathBuf> {
     let parsed = Uuid::parse_str(id).context("Invalid rule version.")?;
     ensure!(parsed.simple().to_string() == id, "Invalid rule version.");
     Ok(Path::new(HISTORY_DIRECTORY).join(format!("v-{id}.json")))
+}
+
+fn archive_path(id: &str) -> Result<PathBuf> {
+    let history = history_path(id)?;
+    Ok(Path::new(HISTORY_DIRECTORY).join("archive").join(
+        history
+            .file_name()
+            .context("Missing rule history file name")?,
+    ))
+}
+
+impl RuleHistoryJournal {
+    fn entries(&self) -> impl Iterator<Item = Result<(PathBuf, &Vec<u8>)>> {
+        self.files
+            .iter()
+            .map(|(id, bytes)| Ok((history_path(id)?, bytes)))
+            .chain(
+                self.archives
+                    .iter()
+                    .map(|(id, bytes)| Ok((archive_path(id)?, bytes))),
+            )
+    }
 }
 
 fn write_history_files(setup: &Setup, journal: &RuleHistoryJournal) -> Result<()> {
@@ -735,8 +1178,8 @@ fn write_history_files(setup: &Setup, journal: &RuleHistoryJournal) -> Result<()
         Snapshot::Directory { .. } => (),
         _ => bail!("The rule history folder is not a private directory."),
     }
-    for (id, bytes) in &journal.files {
-        let path = history_path(id)?;
+    for entry in journal.entries() {
+        let (path, bytes) = entry?;
         let desired = Snapshot::file(bytes.clone());
         match root.read_private(&path, None)? {
             Snapshot::Absent => ensure!(
@@ -746,6 +1189,9 @@ fn write_history_files(setup: &Setup, journal: &RuleHistoryJournal) -> Result<()
             current if current == desired => (),
             _ => bail!("A rule history version already exists with different contents."),
         }
+    }
+    if !journal.archives.is_empty() {
+        root.sync_directory(&directory.join("archive"))?;
     }
     root.sync_directory(directory)?;
     root.sync_directory(Path::new(""))?;
@@ -757,8 +1203,8 @@ pub(super) fn discard_history_journal(setup: &Setup, manifest: &mut Manifest) ->
         return Ok(());
     };
     let root = setup.data_files()?.with_private_directories();
-    for (id, bytes) in &journal.files {
-        let path = history_path(id)?;
+    for entry in journal.entries() {
+        let (path, bytes) = entry?;
         let expected = Snapshot::file(bytes.clone());
         match root.read_private(&path, None)? {
             Snapshot::Absent => (),
@@ -768,6 +1214,9 @@ pub(super) fn discard_history_journal(setup: &Setup, manifest: &mut Manifest) ->
             ),
             _ => bail!("A rule history version changed during recovery. It was left in place."),
         }
+    }
+    if !journal.archives.is_empty() {
+        root.sync_directory(&Path::new(HISTORY_DIRECTORY).join("archive"))?;
     }
     root.sync_directory(Path::new(HISTORY_DIRECTORY))?;
     manifest.personal_rule_journal = None;
@@ -809,6 +1258,18 @@ fn safe_origin_value(value: Option<&str>) -> bool {
     })
 }
 
+fn safe_page_origins(origin: &PersonalRuleOrigin) -> bool {
+    origin.pages.iter().all(|page| {
+        origin.layer == PersonalRuleLayer::Shared
+            && page.location.line != 0
+            && safe_origin_value(page.location.page_id.as_deref())
+            && safe_origin_value(Some(&page.rule_id))
+            && safe_origin_value(page.author.as_deref())
+            && page.proposer == PAGES_PROPOSER
+            && page.confirmer == "person"
+    })
+}
+
 /// Personal metadata is persisted alongside the master. Reject invented or
 /// unsafe journal contents before they can be displayed or used in recovery.
 pub(super) fn validate_personal_metadata(manifest: &Manifest) -> Result<()> {
@@ -832,7 +1293,8 @@ pub(super) fn validate_personal_metadata(manifest: &Manifest) -> Result<()> {
                 origin.layer == record.layer
                     && safe_origin_value(origin.author.as_deref())
                     && safe_origin_value(origin.proposer.as_deref())
-                    && safe_origin_value(origin.confirmer.as_deref()),
+                    && safe_origin_value(origin.confirmer.as_deref())
+                    && safe_page_origins(origin),
                 "Invalid saved rule origins."
             );
         }
@@ -855,6 +1317,30 @@ pub(super) fn validate_personal_metadata(manifest: &Manifest) -> Result<()> {
             ensure!(version.summary.id == *id, "Invalid rule history journal.");
             validate_version(&version)?;
         }
+        ensure!(journal.archives.len() <= 1, "Invalid rule archive journal.");
+        for (id, bytes) in &journal.archives {
+            archive_path(id)?;
+            let version: PersonalRuleVersion = serde_json::from_slice(
+                journal
+                    .files
+                    .get(id)
+                    .context("Missing merge version for rule archive")?,
+            )?;
+            ensure!(
+                version.summary.cause == MERGE_CAUSE,
+                "Invalid rule archive journal."
+            );
+            let pages: BTreeMap<String, Vec<String>> =
+                serde_json::from_slice(bytes).context("Invalid rule archive journal")?;
+            ensure!(
+                pages
+                    .iter()
+                    .all(|(page, lines)| safe_origin_value(Some(page))
+                        && lines.iter().all(|line| !line.contains(['\n', '\r'])
+                            && credential_line_numbers(line).is_empty())),
+                "Invalid rule archive journal."
+            );
+        }
     }
     Ok(())
 }
@@ -863,7 +1349,7 @@ fn validate_version(version: &PersonalRuleVersion) -> Result<()> {
     ensure!(
         matches!(
             version.summary.cause.as_str(),
-            "baseline" | "change" | "restore"
+            "baseline" | "change" | "restore" | MERGE_CAUSE | PAGE_CHANGE_CAUSE
         ),
         "Invalid rule history version."
     );
@@ -897,7 +1383,8 @@ fn validate_version(version: &PersonalRuleVersion) -> Result<()> {
                 origin.layer == rule.layer
                     && safe_origin_value(origin.author.as_deref())
                     && safe_origin_value(origin.proposer.as_deref())
-                    && safe_origin_value(origin.confirmer.as_deref()),
+                    && safe_origin_value(origin.confirmer.as_deref())
+                    && safe_page_origins(origin),
                 "Invalid rule history origin."
             );
         }
@@ -977,6 +1464,7 @@ pub(super) struct RulePlanUpdate {
     origins: Vec<PersonalRuleLayerOrigins>,
     history: Vec<String>,
     authored: Option<BTreeMap<PathBuf, restore_rules::AuthoredRules>>,
+    merge_pages: bool,
 }
 
 impl RulePlanUpdate {
@@ -985,6 +1473,9 @@ impl RulePlanUpdate {
         manifest.personal_rule_origins = self.origins;
         manifest.personal_rule_history = self.history;
         manifest.personal_rule_journal = None;
+        if self.merge_pages {
+            manifest.page_rules = PageRulesState::Merged;
+        }
         if let Some(authored) = self.authored {
             manifest.authored_rules = authored;
         }
@@ -1095,6 +1586,8 @@ fn stage_master_history_with_origin(
             confirmer: confirmer.clone(),
             layer: change.layer.clone(),
             time: Some(at),
+            pages: Vec::new(),
+            kept_shared: false,
         };
         let record = confirmed_personal_rule_origins(
             &change.layer,
@@ -1136,7 +1629,10 @@ fn stage_master_history_with_origin(
         .iter()
         .map(|version| Ok((version.summary.id.clone(), serde_json::to_vec(version)?)))
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let journal = RuleHistoryJournal { files };
+    let journal = RuleHistoryJournal {
+        files,
+        archives: BTreeMap::new(),
+    };
     manifest.personal_rule_journal = Some(journal.clone());
     setup.save(manifest)?;
     if let Err(error) = write_history_files(setup, &journal) {
@@ -1148,6 +1644,7 @@ fn stage_master_history_with_origin(
         origins,
         history,
         authored: None,
+        merge_pages: false,
     }))
 }
 
@@ -1211,8 +1708,30 @@ fn next_origins(
     manifest: &Manifest,
     held: &HeldPlan,
     at: i64,
+    page_origins: Option<Vec<Option<PersonalRuleOrigin>>>,
 ) -> Result<Vec<PersonalRuleLayerOrigins>> {
     let mut records = manifest.personal_rule_origins.clone();
+    if let Some(mut lines) = page_origins {
+        let change = &held.response.changes[0];
+        for origin in lines.iter_mut().flatten() {
+            if origin.time.is_none() && !origin.kept_shared && !origin.pages.is_empty() {
+                origin.time = Some(at);
+                if held.pages.as_ref().is_some_and(|pages| !pages.is_merge()) {
+                    origin.author = Some("person".into());
+                }
+            }
+        }
+        records.retain(|record| record.layer != PersonalRuleLayer::Shared);
+        records.push(PersonalRuleLayerOrigins {
+            layer: PersonalRuleLayer::Shared,
+            content_digest: personal_rule_content_digest(
+                &PersonalRuleLayer::Shared,
+                &change.after,
+            )?,
+            lines,
+        });
+        return Ok(records);
+    }
     for change in &held.response.changes {
         let old = records.iter().find(|record| record.layer == change.layer);
         let confirmed = PersonalRuleOrigin {
@@ -1221,6 +1740,8 @@ fn next_origins(
             confirmer: Some("person".into()),
             layer: change.layer.clone(),
             time: Some(at),
+            pages: Vec::new(),
+            kept_shared: false,
         };
         let restored = held.restore.as_ref().and_then(|version| {
             version.rules.iter().find(|rule| {
@@ -1256,15 +1777,40 @@ fn next_origins(
 }
 
 impl Setup {
+    #[cfg(test)]
     fn apply_rule_plan(
         &self,
         id: &str,
         generated: &[String],
         render: &impl Fn(&str, &str) -> Result<SkillFiles>,
     ) -> Result<PersonalRuleVersion> {
+        self.apply_plan(id, generated, None, render)
+    }
+
+    fn apply_plan(
+        &self,
+        id: &str,
+        generated: &[String],
+        current_merge: Option<PageRuleSnapshot>,
+        render: &impl Fn(&str, &str) -> Result<SkillFiles>,
+    ) -> Result<PersonalRuleVersion> {
         let _lock = self.lock()?;
         // A plan is consumed even when it is stale or a write is refused.
-        let held = find_plan(self, id, true)?;
+        let mut held = find_plan(self, id, true)?;
+        if held.pages.as_ref().is_some_and(PagePlan::is_merge) {
+            held.pages = Some(PagePlan::Merge(
+                current_merge.context("Preview the page rules again.")?,
+            ));
+        }
+        self.commit_rule_plan(&held, generated, render)
+    }
+
+    fn commit_rule_plan(
+        &self,
+        held: &HeldPlan,
+        generated: &[String],
+        render: &impl Fn(&str, &str) -> Result<SkillFiles>,
+    ) -> Result<PersonalRuleVersion> {
         let root = self.home_files()?;
         let mut manifest = self.load_if_present()?.unwrap_or_else(empty_manifest);
         settled(&manifest)?;
@@ -1275,9 +1821,13 @@ impl Setup {
                 "The history version changed after the preview. Propose the restore again."
             );
         }
-        let prepared = self.prepare_rule_plan(
+        let prepared = self.prepare_plan(
             &manifest,
-            &held.edits,
+            PlanEdits {
+                edits: &held.edits,
+                pages: held.pages.as_ref(),
+                restore: held.restore.as_ref(),
+            },
             generated,
             held.response.proposer.clone(),
             render,
@@ -1291,7 +1841,7 @@ impl Setup {
             "A tool needs review before these rules can be changed. Propose the change again after resolving it."
         );
         let at = chrono::Utc::now().timestamp();
-        let origins = next_origins(&manifest, &held, at)?;
+        let origins = next_origins(&manifest, held, at, prepared.page_origins)?;
         let mut history = manifest.personal_rule_history.clone();
         let mut versions = Vec::new();
         if history.is_empty() {
@@ -1307,14 +1857,19 @@ impl Setup {
             &manifest,
             PersonalRuleVersionSummary {
                 id: next_id.clone(),
-                cause: if held.restore.is_some() {
+                cause: if held.pages.as_ref().is_some_and(PagePlan::is_merge) {
+                    MERGE_CAUSE
+                } else if held.pages.is_some() {
+                    PAGE_CHANGE_CAUSE
+                } else if held.restore.is_some() {
                     "restore"
                 } else {
                     "change"
                 }
                 .into(),
                 time: Some(at),
-                author: Some("person".into()),
+                author: (!held.pages.as_ref().is_some_and(PagePlan::is_merge))
+                    .then(|| "person".into()),
                 proposer: held.response.proposer.clone(),
                 confirmer: Some("person".into()),
                 layers: held
@@ -1328,13 +1883,17 @@ impl Setup {
         manifest.master = old_master;
         manifest.personal_rule_origins = old_origins;
         let version = version?;
-        history.push(next_id);
+        history.push(next_id.clone());
         versions.push(version.clone());
         let files = versions
             .iter()
             .map(|version| Ok((version.summary.id.clone(), serde_json::to_vec(version)?)))
             .collect::<Result<BTreeMap<_, _>>>()?;
-        let journal = RuleHistoryJournal { files };
+        let archives = match held.pages.as_ref().and_then(PagePlan::archive) {
+            Some(archive) => BTreeMap::from([(next_id, serde_json::to_vec(&archive)?)]),
+            None => BTreeMap::new(),
+        };
+        let journal = RuleHistoryJournal { files, archives };
         manifest.personal_rule_journal = Some(journal.clone());
         self.save(&manifest)?;
         if let Err(error) = write_history_files(self, &journal) {
@@ -1346,6 +1905,7 @@ impl Setup {
             origins,
             history,
             authored: Some(prepared.next_authored),
+            merge_pages: held.pages.as_ref().is_some_and(PagePlan::is_merge),
         };
         if prepared.operations.is_empty() {
             update.commit(&mut manifest);

@@ -358,6 +358,7 @@ fn map_contents<From, To>(
         personal_rule_origins: manifest.personal_rule_origins.clone(),
         personal_rule_history: manifest.personal_rule_history.clone(),
         personal_rule_journal: manifest.personal_rule_journal.clone(),
+        page_rules: manifest.page_rules,
         legacy_source_following: manifest.legacy_source_following,
         rule_import_notice_pending: manifest.rule_import_notice_pending,
         imported_rule_paths: manifest.imported_rule_paths.clone(),

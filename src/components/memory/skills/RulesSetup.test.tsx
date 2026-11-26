@@ -77,6 +77,33 @@ beforeEach(async () => {
   await i18n.changeLanguage("en");
 });
 
+it("UX-SKILL-6: offers the page-rule diff and applies it with one confirmation", async () => {
+  const move = {
+    id: "page-move", kind: "personal_plan", answers: [], plan: {
+      id: "page-move", changes: [{ diff: diff("shared rules", "Before", "Check the receipt.") }],
+      blocked_tools: [], unmanaged_tools: [], page_merge: {
+        rule_count: 1, excludes_space_only: true, excluded: [{ page_id: "fixture-page", line: 4 }],
+      },
+    },
+  };
+  let applied = false;
+  mock.mockImplementation(async (command) => {
+    if (command === "rules_setup_status") return status;
+    if (command === "rules_setup_review_list") return { items: applied ? [] : [move], review_tools: {} };
+    if (command === "rules_setup_apply_personal_plan") { applied = true; return; }
+    return undefined;
+  });
+  mount(<RulesSetupSettings />);
+  const card = await screen.findByRole("article", { name: "Move 1 rule from your pages into your rules" });
+  expect(card).toHaveTextContent("Check the receipt.");
+  expect(card).toHaveTextContent("Rules for one Space stay on their pages.");
+  expect(card).toHaveTextContent("fixture-page, line 4");
+  expect(mock).not.toHaveBeenCalledWith("rules_setup_apply_personal_plan", expect.anything());
+  await userEvent.click(within(card).getByRole("button", { name: "Move rules" }));
+  expect(mock).toHaveBeenCalledWith("rules_setup_apply_personal_plan", { planId: "page-move" });
+  await waitFor(() => expect(screen.queryByRole("article", { name: /Move 1 rule/ })).toBeNull());
+});
+
 it("UX-SKILL-24: shows a new scope card while Rules stays open without Sync", async () => {
   function OpenRulesReviews() {
     const review = useRulesSetupReview(true);

@@ -60,6 +60,411 @@ fn adopted_fixture() -> Fixture {
     fixture
 }
 
+fn page_rule(text: &str, id: &str, line: usize) -> PageRule {
+    PageRule {
+        text: text.into(),
+        source_text: text.into(),
+        location: wenlan_types::personal_rules::PageRuleLocation {
+            page_id: Some(id.into()),
+            line,
+        },
+        rule_id: format!("{id}:{line}"),
+        author: None,
+        proposer: None,
+    }
+}
+
+fn preference_rule(text: &str, memory: &str, line: usize) -> PageRule {
+    PageRule {
+        text: text.into(),
+        source_text: text.into(),
+        location: wenlan_types::personal_rules::PageRuleLocation {
+            page_id: None,
+            line,
+        },
+        rule_id: format!("preference:{memory}"),
+        author: None,
+        proposer: None,
+    }
+}
+
+fn preview_page_move(
+    fixture: &Fixture,
+    snapshot: PageRuleSnapshot,
+    generated: &[String],
+) -> PersonalRulePlan {
+    let manifest = fixture
+        .setup
+        .load_if_present()
+        .unwrap()
+        .unwrap_or_else(empty_manifest);
+    let pages = PagePlan::Merge(snapshot);
+    let prepared = fixture
+        .setup
+        .prepare_page_plan(
+            &manifest,
+            &pages,
+            generated,
+            Some(PAGES_PROPOSER.into()),
+            &fixture_rule_renderer,
+        )
+        .unwrap();
+    remember_plan(&fixture.setup, prepared, Vec::new(), None, Some(pages))
+}
+
+#[test]
+fn personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_files() {
+    use super::super::tests::{CLAUDE, CODEX};
+
+    let fixture = adopted_fixture();
+    let generated = [
+        "One rule.".into(),
+        "Check the original receipt.".into(),
+        "Keep meeting notes short.".into(),
+    ];
+    fixture.sync_generated(&generated);
+    // The third line is a confirmed preference. It moves too, under its own
+    // heading, and a preference saying the same as a page rule is kept once.
+    let snapshot = PageRuleSnapshot {
+        rules: vec![
+            page_rule(&generated[0], "rule-page", 4),
+            page_rule(&generated[1], "rule-page", 7),
+            preference_rule(&generated[2], "mem_notes", 1),
+            preference_rule(&generated[1], "mem_receipt", 2),
+        ],
+        revisions: BTreeMap::from([("rule-page".into(), 3)]),
+        ..Default::default()
+    };
+    let old = std::fs::read(fixture.setup.data.join(storage::MANIFEST)).unwrap();
+    let old_tool = std::fs::read(fixture.setup.home.join(CODEX)).unwrap();
+    let plan = preview_page_move(&fixture, snapshot.clone(), &generated);
+    assert_eq!(plan.page_merge.as_ref().unwrap().rule_count, 3);
+    assert!(plan
+        .changes
+        .iter()
+        .any(|change| change.after.contains(&generated[2])));
+    assert_eq!(
+        std::fs::read(fixture.setup.data.join(storage::MANIFEST)).unwrap(),
+        old
+    );
+    assert_eq!(
+        std::fs::read(fixture.setup.home.join(CODEX)).unwrap(),
+        old_tool
+    );
+    let version = fixture
+        .setup
+        .apply_plan(&plan.id, &generated, Some(snapshot), &fixture_rule_renderer)
+        .unwrap();
+    assert_eq!(version.summary.cause, MERGE_CAUSE);
+    assert_eq!(version.summary.proposer.as_deref(), Some(PAGES_PROPOSER));
+    assert_eq!(version.summary.confirmer.as_deref(), Some("person"));
+    assert_eq!(version.summary.author, None);
+    let shared = &version.rules[0];
+    let shared_line = |text| {
+        shared
+            .text
+            .lines()
+            .zip(&shared.origins)
+            .find(|(line, _)| *line == text)
+            .unwrap()
+            .1
+            .as_ref()
+            .unwrap()
+    };
+    let duplicate = shared_line("One rule.");
+    assert!(duplicate.kept_shared);
+    assert_eq!(
+        duplicate.pages[0].location.page_id.as_deref(),
+        Some("rule-page")
+    );
+    assert_eq!(duplicate.pages[0].location.line, 4);
+    assert_eq!(duplicate.pages[0].author, None);
+    assert!(shared
+        .text
+        .contains("## How I work\n\n- Check the original receipt."));
+    assert!(shared
+        .text
+        .contains("## What you told your tools\n\n- Keep meeting notes short."));
+    assert_eq!(shared.text.matches(generated[1].as_str()).count(), 1);
+    let preference = shared_line("- Keep meeting notes short.");
+    assert_eq!(preference.pages[0].rule_id, "preference:mem_notes");
+    assert_eq!(preference.pages[0].location.page_id, None);
+    let receipt = shared_line("- Check the original receipt.");
+    assert!(receipt
+        .pages
+        .iter()
+        .any(|page| page.rule_id == "preference:mem_receipt"));
+    let archive_path = fixture
+        .setup
+        .data
+        .join(archive_path(&version.summary.id).unwrap());
+    let archive = std::fs::read(&archive_path).unwrap();
+    let pages: BTreeMap<String, Vec<String>> = serde_json::from_slice(&archive).unwrap();
+    assert_eq!(pages["rule-page"], generated[..2]);
+    assert_eq!(pages.len(), 1);
+
+    // Passing the original generated data through the writer again models a
+    // stale background read: nothing is generated after the move, so every
+    // line reaches each tool once, from shared rules.
+    assert!(fixture.sync_generated(&generated).blocked.is_empty());
+    assert!(fixture.sync_generated(&generated).proposals.is_empty());
+    let each_once = |lines: &[String]| {
+        for path in [CLAUDE, CODEX] {
+            let delivered = std::fs::read_to_string(fixture.setup.home.join(path)).unwrap();
+            for line in lines {
+                assert_eq!(
+                    delivered.matches(line.as_str()).count(),
+                    1,
+                    "{path}: {line}"
+                );
+            }
+            assert_eq!(
+                delivered.matches("What you told your tools").count(),
+                1,
+                "{path}"
+            );
+        }
+    };
+    each_once(&generated);
+    // Forgetting or unconfirming a preference memory leaves its rule: the
+    // generated lines no longer carry it, and the rule stays.
+    assert!(fixture.sync_generated(&[]).blocked.is_empty());
+    each_once(&generated);
+
+    // After the move a tool's confirm of a new preference is a plan, and
+    // the person's own confirm adds it at once, proposed by the tool.
+    let later = "Answer in short paragraphs.";
+    let change = |confirmed| PageChange {
+        snapshot: PageRuleSnapshot {
+            rules: vec![preference_rule(later, "mem_later", 1)],
+            ..Default::default()
+        },
+        remove: BTreeSet::new(),
+        confirmed,
+        proposer: Some("claude-code".into()),
+    };
+    let pending = fixture
+        .setup
+        .change_page_rules(&[], change(false), &fixture_rule_renderer)
+        .unwrap();
+    assert!(pending.is_some());
+    assert!(!fixture
+        .setup
+        .load()
+        .unwrap()
+        .unwrap()
+        .master
+        .shared
+        .contains(later));
+    assert!(fixture
+        .setup
+        .change_page_rules(&[], change(true), &fixture_rule_renderer)
+        .unwrap()
+        .is_none());
+    each_once(&[
+        generated[0].clone(),
+        generated[1].clone(),
+        generated[2].clone(),
+        later.into(),
+    ]);
+    let manifest = fixture.setup.load().unwrap().unwrap();
+    let added = read_version(
+        &fixture.setup,
+        &manifest,
+        manifest.personal_rule_history.last().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(added.summary.proposer.as_deref(), Some("claude-code"));
+    assert_eq!(added.summary.confirmer.as_deref(), Some("person"));
+    assert!(added.rules[0].text.contains(
+        "## What you told your tools\n\n- Keep meeting notes short.\n- Answer in short paragraphs."
+    ));
+
+    assert_eq!(manifest.page_rules, PageRulesState::Merged);
+    assert!(manifest
+        .master
+        .overlays
+        .values()
+        .all(|text| !text.contains(&generated[1])));
+    assert_eq!(
+        read_version(&fixture.setup, &manifest, &version.summary.id)
+            .unwrap()
+            .rules[0]
+            .origins,
+        shared.origins
+    );
+    assert_eq!(std::fs::read(archive_path).unwrap(), archive);
+}
+
+#[test]
+fn personal_rules_page_merge_stale_refusal_and_decline_keep_legacy_delivery() {
+    use super::super::tests::CODEX;
+    let fixture = adopted_fixture();
+    let snapshot = PageRuleSnapshot {
+        rules: vec![page_rule("Read the decision log.", "page", 2)],
+        ..Default::default()
+    };
+    let generated = [snapshot.rules[0].text.clone()];
+    fixture.sync_generated(&generated);
+    let plan = preview_page_move(&fixture, snapshot.clone(), &[]);
+    let mut changed = snapshot.clone();
+    changed.revisions.insert("page".into(), 2);
+    let result = fixture
+        .setup
+        .apply_plan(&plan.id, &[], Some(changed), &fixture_rule_renderer);
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("changed after the preview"));
+    let plan = preview_page_move(&fixture, snapshot.clone(), &[]);
+    fixture
+        .setup
+        .decline_page_plan(&plan.id, &snapshot)
+        .unwrap();
+    fixture.setup.mark_empty_page_rules().unwrap();
+    let manifest = fixture.setup.load().unwrap().unwrap();
+    assert_eq!(manifest.page_rules, PageRulesState::Declined);
+    assert!(PagePlan::Merge(snapshot).prepare(&manifest).is_err());
+    assert!(!manifest.master.shared.contains(&generated[0]));
+    assert!(fixture.sync_generated(&generated).blocked.is_empty());
+    assert!(std::fs::read_to_string(fixture.setup.home.join(CODEX))
+        .unwrap()
+        .contains(&generated[0]));
+}
+
+#[test]
+fn personal_rules_page_merge_recovers_only_the_uncommitted_archive() {
+    let fixture = Fixture::plain();
+    let snapshot = PageRuleSnapshot {
+        rules: vec![page_rule("Read the change log.", "page", 1)],
+        ..Default::default()
+    };
+    let plan = preview_page_move(&fixture, snapshot.clone(), &[]);
+    let version = fixture
+        .setup
+        .apply_plan(&plan.id, &[], Some(snapshot), &fixture_rule_renderer)
+        .unwrap();
+    let committed = fixture.setup.load().unwrap().unwrap();
+    let files = committed
+        .personal_rule_history
+        .iter()
+        .map(|id| {
+            (
+                id.clone(),
+                std::fs::read(fixture.setup.data.join(history_path(id).unwrap())).unwrap(),
+            )
+        })
+        .collect();
+    let path = fixture
+        .setup
+        .data
+        .join(archive_path(&version.summary.id).unwrap());
+    let archive = std::fs::read(&path).unwrap();
+    let mut interrupted = empty_manifest();
+    interrupted.personal_rule_journal = Some(RuleHistoryJournal {
+        files,
+        archives: BTreeMap::from([(version.summary.id, archive.clone())]),
+    });
+    fixture.setup.save(&interrupted).unwrap();
+    let root = fixture.setup.home_files().unwrap();
+    std::fs::write(&path, "A newer archive copy.").unwrap();
+    let error = fixture
+        .setup
+        .recover_pending(&root, &mut interrupted)
+        .unwrap_err();
+    assert!(error.to_string().contains("changed during recovery"));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "A newer archive copy."
+    );
+    std::fs::write(&path, archive).unwrap();
+    fixture
+        .setup
+        .recover_pending(&root, &mut interrupted)
+        .unwrap();
+    assert!(!path.exists());
+    let restored = fixture.setup.load().unwrap().unwrap();
+    assert!(restored.page_rules.is_unanswered());
+    assert!(restored.personal_rule_journal.is_none());
+    assert!(restored.master.shared.is_empty());
+}
+
+#[test]
+fn personal_rules_empty_page_migration_works_with_one_or_no_tool() {
+    use super::super::tests::CODEX;
+    for one_tool in [false, true] {
+        let fixture = Fixture::plain();
+        if one_tool {
+            std::fs::create_dir(fixture.setup.home.join(".codex")).unwrap();
+            fixture.write(CODEX, "An existing local rule.\n");
+        }
+        fixture.setup.mark_empty_page_rules().unwrap();
+        if one_tool {
+            fixture.adopt_from_plan();
+        }
+        let manifest = fixture.setup.load().unwrap().unwrap();
+        assert_eq!(manifest.page_rules, PageRulesState::Merged);
+        assert!(manifest.personal_rule_history.is_empty());
+        let snapshot = PageRuleSnapshot {
+            rules: vec![page_rule("Use the locally recorded decision.", "page", 1)],
+            ..Default::default()
+        };
+        fixture
+            .setup
+            .change_page_rules(
+                &[],
+                PageChange {
+                    snapshot,
+                    remove: BTreeSet::new(),
+                    confirmed: true,
+                    proposer: Some(PAGES_PROPOSER.into()),
+                },
+                &fixture_rule_renderer,
+            )
+            .unwrap();
+        let manifest = fixture.setup.load().unwrap().unwrap();
+        assert!(manifest
+            .master
+            .shared
+            .contains("Use the locally recorded decision."));
+        if one_tool {
+            let delivered = std::fs::read_to_string(fixture.setup.home.join(CODEX)).unwrap();
+            assert!(delivered.contains("An existing local rule."));
+            assert_eq!(
+                delivered
+                    .matches("Use the locally recorded decision.")
+                    .count(),
+                1
+            );
+        } else {
+            assert_eq!(std::fs::read_dir(&fixture.setup.home).unwrap().count(), 0);
+        }
+    }
+}
+
+#[test]
+fn rules_page_change_waits_while_a_moved_tool_file_has_an_unreviewed_edit() {
+    use super::super::tests::CODEX;
+    let fixture = Fixture::plain();
+    std::fs::create_dir(fixture.setup.home.join(".codex")).unwrap();
+    fixture.write(CODEX, "An existing local rule.\n");
+    fixture.setup.mark_empty_page_rules().unwrap();
+    fixture.adopt_from_plan();
+    let mut manifest = fixture.setup.load().unwrap().unwrap();
+    assert_eq!(manifest.page_rules, PageRulesState::Merged);
+    pages::page_change_settled(&manifest).unwrap();
+    let receipt = manifest
+        .delivered
+        .values_mut()
+        .find(|receipt| matches!(receipt.kind, Kind::Rule { .. }))
+        .unwrap();
+    receipt.observed = Some(receipt.delivered.clone());
+    let error = pages::page_change_settled(&manifest)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("needs review first"), "{error}");
+}
+
 #[test]
 fn personal_rule_show_keeps_legacy_tool_only_overrides_visible_or_refuses_ambiguity() {
     let fixture = adopted_fixture();
@@ -635,7 +1040,7 @@ fn propose_with_origin(
         .setup
         .prepare_rule_plan(&manifest, &edits, &[], proposer, &fixture_rule_renderer)
         .unwrap();
-    remember_plan(&fixture.setup, prepared, edits, restore)
+    remember_plan(&fixture.setup, prepared, edits, restore, None)
 }
 
 fn apply(fixture: &Fixture, plan: &PersonalRulePlan) -> Result<PersonalRuleVersion> {

@@ -29,6 +29,8 @@ use wenlan_types::rulesync_skill::{SavedSkillScope, SkillProposalOrigin};
 /// the CLI guessing where any text belongs.
 #[derive(Debug, Subcommand)]
 pub enum PersonalRulesCmd {
+    /// Preview moving page rules into shared rules and confirm at a terminal.
+    MergePages,
     /// The shared personal rules that apply across tools.
     Shared {
         #[command(subcommand)]
@@ -92,6 +94,19 @@ pub async fn run_personal_rules(
     let has_ai_identity = agent_name.is_some() || session.session.is_some();
     let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
     match command {
+        PersonalRulesCmd::MergePages => {
+            let Some(plan) = client.preview_merge_page_rules().await? else {
+                println!("There are no page rules waiting to move.");
+                return Ok(());
+            };
+            print!("{}", personal_rule_plan(&plan));
+            require_personal_rule_confirmation(
+                has_ai_identity,
+                io::stdin().is_terminal(),
+                io::stdout().is_terminal(),
+            )?;
+            confirm_and_apply_personal_plan(&client, &plan).await
+        }
         PersonalRulesCmd::Shared { command } => {
             run_personal_layer(
                 &client,
@@ -205,15 +220,26 @@ async fn confirm_and_apply_personal_plan(
     client: &WenlanClient,
     plan: &wenlan_types::personal_rules::PersonalRulePlan,
 ) -> Result<()> {
-    if !person_types_yes(&mut io::stdin().lock(), &mut io::stdout(), &plan.id)? {
+    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest {
+        plan_id: plan.id.clone(),
+    };
+    let accepted = if plan.page_merge.is_some() {
+        let answer =
+            person_rule_answer(&mut io::stdin().lock(), &mut io::stdout(), &plan.id, true)?;
+        if answer == Some(false) {
+            client.decline_merge_page_rules(&request).await?;
+            println!("Kept the current page rules delivery.");
+            return Ok(());
+        }
+        answer == Some(true)
+    } else {
+        person_types_yes(&mut io::stdin().lock(), &mut io::stdout(), &plan.id)?
+    };
+    if !accepted {
         println!("Nothing was changed.");
         return Ok(());
     }
-    let version = client
-        .apply_personal_rule_plan(&wenlan_types::personal_rules::PersonalRuleApplyRequest {
-            plan_id: plan.id.clone(),
-        })
-        .await?;
+    let version = client.apply_personal_rule_plan(&request).await?;
     println!("Applied as personal rule version {}.", version.summary.id);
     if !plan.unmanaged_tools.is_empty() {
         println!(
@@ -245,13 +271,31 @@ fn person_types_yes(
     output: &mut dyn io::Write,
     plan_id: &str,
 ) -> Result<bool> {
-    write!(output, "Apply plan {plan_id}? Type yes to go on: ")?;
+    Ok(person_rule_answer(input, output, plan_id, false)? == Some(true))
+}
+
+fn person_rule_answer(
+    input: &mut dyn io::BufRead,
+    output: &mut dyn io::Write,
+    plan_id: &str,
+    can_decline: bool,
+) -> Result<Option<bool>> {
+    if can_decline {
+        write!(
+            output,
+            "Apply plan {plan_id}? Type yes to move the rules or no to keep the current delivery: "
+        )?;
+    } else {
+        write!(output, "Apply plan {plan_id}? Type yes to go on: ")?;
+    }
     output.flush()?;
     let mut answer = String::new();
-    if input.read_line(&mut answer)? == 0 {
-        return Ok(false);
-    }
-    Ok(answer.trim().eq_ignore_ascii_case("yes"))
+    input.read_line(&mut answer)?;
+    Ok(match answer.trim().to_ascii_lowercase().as_str() {
+        "yes" => Some(true),
+        "no" if can_decline => Some(false),
+        _ => None,
+    })
 }
 
 fn read_personal_rule_edits(
@@ -320,6 +364,23 @@ fn personal_rule_show(shown: &wenlan_types::personal_rules::PersonalRuleShow) ->
                     .time
                     .map_or_else(|| "unknown".into(), |time| time.to_string())
             ));
+            for page in &origin.pages {
+                writeln!(
+                    output,
+                    "  From {}, line {} · author {} · proposer {} · confirmer {}",
+                    page.location
+                        .page_id
+                        .as_deref()
+                        .map_or_else(|| "conversation preferences".into(), one_line),
+                    page.location.line,
+                    page.author
+                        .as_deref()
+                        .map_or_else(|| "unknown".into(), one_line),
+                    one_line(&page.proposer),
+                    one_line(&page.confirmer)
+                )
+                .unwrap();
+            }
         }
     }
     output
@@ -328,9 +389,34 @@ fn personal_rule_show(shown: &wenlan_types::personal_rules::PersonalRuleShow) ->
 fn personal_rule_plan(plan: &wenlan_types::personal_rules::PersonalRulePlan) -> String {
     let mut output = format!("Plan {} (expires {})\n", plan.id, plan.expires_at);
     output.push_str(&format!(
-        "Proposed by: {}\nAuthor on confirmation: person\n",
+        "Proposed by: {}\n",
         printable(plan.proposer.as_deref().unwrap_or("person or unknown")),
     ));
+    if let Some(merge) = &plan.page_merge {
+        writeln!(
+            output,
+            "Move {} rules from your pages into your rules.",
+            merge.rule_count
+        )
+        .unwrap();
+        if merge.excludes_space_only {
+            writeln!(output, "Rules for one Space stay on their pages.").unwrap();
+        }
+        for excluded in &merge.excluded {
+            writeln!(
+                output,
+                "Possible credential, skipped: {}, line {}",
+                excluded
+                    .page_id
+                    .as_deref()
+                    .map_or_else(|| "conversation preferences".into(), one_line),
+                excluded.line
+            )
+            .unwrap();
+        }
+    } else {
+        output.push_str("Author on confirmation: person\n");
+    }
     for change in &plan.changes {
         output.push_str(&format!(
             "\n{}\nAffected tools: {}\n",
@@ -788,6 +874,9 @@ async fn answer_item(
                     token: plan.token,
                 })
                 .await?
+        }
+        RulesReviewContent::PersonalPlan { .. } => {
+            bail!("Confirm this personal rule plan in Wenlan or from your own terminal.")
         }
     };
     show(format, quiet, &report, |report| {
@@ -1678,6 +1767,15 @@ fn review_for_a_person(review: &RulesReviewList) -> String {
                     writeln!(out, "  {}", one_line(notice)).unwrap();
                 }
             }
+            RulesReviewContent::PersonalPlan { plan } => {
+                out.push('\n');
+                out.push_str(&personal_rule_plan(plan));
+                if plan.page_merge.is_some() {
+                    out.push_str("  wenlan rules merge-pages\n");
+                } else {
+                    writeln!(out, "  wenlan rules shared apply {}", plan.id).unwrap();
+                }
+            }
         }
         writeln!(
             out,
@@ -1911,6 +2009,22 @@ mod tests {
         assert!(String::from_utf8(output)
             .unwrap()
             .contains("Type yes to go on"));
+    }
+
+    #[test]
+    fn personal_rules_page_move_requires_an_explicit_yes_or_no() {
+        let mut output = Vec::new();
+        for (typed, expected) in [
+            ("yes\n", Some(true)),
+            ("no\n", Some(false)),
+            ("n\n", None),
+            ("", None),
+        ] {
+            assert_eq!(
+                person_rule_answer(&mut typed.as_bytes(), &mut output, "fixture", true).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -1321,11 +1321,23 @@ export interface RulesSkillProposal {
   changes?: { removed: string[]; oversized?: unknown[]; permissions?: unknown[] };
 }
 
+export interface PersonalRulePlan {
+  id: string;
+  changes: { diff: string }[];
+  blocked_tools: string[];
+  page_merge?: {
+    rule_count: number;
+    excludes_space_only: boolean;
+    excluded: { page_id: string | null; line: number }[];
+  };
+}
+
 export type RulesReviewItem = { id: string; answers: PullbackAction[] } & (
   | { kind: "tool_edit"; card: PullbackCard }
   | { kind: "skill_proposal"; proposal: RulesSkillProposal }
   | { kind: "skill_update"; update: AdoptedSkillUpdate }
   | { kind: "settings"; plan: RulesSettingsPlan }
+  | { kind: "personal_plan"; plan: PersonalRulePlan }
 );
 
 export interface RulesReviewList {
@@ -1360,6 +1372,8 @@ export interface RulesSyncReport {
 
 export const getRulesSetupStatus = () => invoke<RulesSetupStatus>("rules_setup_status");
 export const getRulesSetupReview = () => invoke<RulesReviewList>("rules_setup_review_list");
+export const applyPersonalRulePlan = (planId: string) => invoke<void>("rules_setup_apply_personal_plan", { planId });
+export const declinePageRuleMerge = (planId: string) => invoke<void>("rules_setup_decline_page_merge", { planId });
 export const reviewRulesSkill = (request: RulesSkillReviewRequest) => invoke<RulesSkillReviewResult>("rules_setup_skill_review", { request });
 export const applyRulesSettings = (token: string) => invoke<RulesSyncReport>("rules_setup_settings_apply", { token });
 export const dismissRulesSkillUpdate = (id: string) => invoke<void>("rules_setup_dismiss_update", { id });
