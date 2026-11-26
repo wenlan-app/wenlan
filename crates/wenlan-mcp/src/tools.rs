@@ -92,6 +92,10 @@ const READ_ONLY_TEAM_INSTRUCTIONS: &str = concat!(
     read_only_team_note!()
 );
 
+/// What a search result names for a memory kept in no Space (the daemon's
+/// internal id for the unfiled Space, `wenlan-core`'s `UNFILED_SPACE_ID`).
+const UNFILED_SPACE_ID: &str = "00000000-0000-4000-8000-000000000001";
+
 /// How many matches the "other Spaces" probe asks for; more than this reads "5 or more".
 const OTHER_SPACES_PROBE_LIMIT: usize = 5;
 
@@ -109,7 +113,7 @@ fn other_spaces_message(
         let name = hit
             .space
             .as_deref()
-            .filter(|name| !name.is_empty())
+            .filter(|name| !name.is_empty() && *name != UNFILED_SPACE_ID)
             .unwrap_or("uncategorized")
             .to_string();
         if !holding.contains(&name) {
@@ -172,7 +176,7 @@ pub enum ToolProfile {
     /// answers when called by name, exactly as under `Standard`.
     Daily,
     /// What the Wenlan plugins pass: the `daily` tools plus exactly the
-    /// tools the plugin skills name ([`PLUGIN_EXTRA_TOOL_NAMES`]). Like
+    /// tools the plugin skills name. Like
     /// `Daily`, a shorter list and not a boundary.
     Plugin,
     /// Expose only tools needed to read existing knowledge.
@@ -12115,6 +12119,11 @@ mod tests {
         };
         assert!(other_spaces_message("demo", "pnpm", &[]).is_none());
         let one = other_spaces_message("demo", "pnpm", &[hit(None)]).unwrap();
+        // The unfiled Space's internal id reads as "uncategorized".
+        let unfiled = hit(Some(UNFILED_SPACE_ID));
+        assert!(other_spaces_message("demo", "pnpm", &[unfiled])
+            .unwrap()
+            .contains("in other Spaces: uncategorized."));
         assert!(
             one.contains("1 match in other Spaces: uncategorized"),
             "{one}"
