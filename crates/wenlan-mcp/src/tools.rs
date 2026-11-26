@@ -211,9 +211,11 @@ const STARTUP_RULE_MAX_CHARS: usize = 400;
 
 /// The instructions' rules section: what the user already told an AI tool.
 fn startup_rules_note(lines: &[wenlan_types::skills::SkillLine]) -> Option<String> {
-    let texts: Vec<&str> = lines
+    // One line per rule: a rule's own line breaks must not read as
+    // instruction text outside its bullet.
+    let texts: Vec<String> = lines
         .iter()
-        .map(|line| line.text.trim())
+        .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|text| !text.is_empty())
         .collect();
     if texts.is_empty() {
@@ -230,7 +232,7 @@ fn startup_rules_note(lines: &[wenlan_types::skills::SkillLine]) -> Option<Strin
             let cut: String = text.chars().take(STARTUP_RULE_MAX_CHARS).collect();
             format!("{cut}…")
         } else {
-            (*text).to_string()
+            text.clone()
         };
         let length = text.chars().count();
         if shown > 0 && used + length > STARTUP_RULES_MAX_CHARS {
@@ -9195,8 +9197,21 @@ mod tests {
             .map(|n| rule_line(&format!("Rule number {n} says something specific enough.")))
             .collect();
         let note = startup_rules_note(&many).expect("a note");
-        assert!(note.chars().count() < STARTUP_RULES_MAX_CHARS + 300);
+        let header = startup_rules_note(&[rule_line("x")])
+            .expect("a note")
+            .chars()
+            .count()
+            - 3;
+        let footer = "\n- …and 100 more: read_space_rules lists them."
+            .chars()
+            .count();
+        assert!(note.chars().count() <= header + STARTUP_RULES_MAX_CHARS + 3 * many.len() + footer);
         assert!(note.contains("more: read_space_rules lists them."));
+        // Multi-line and Chinese rules stay on one bullet and cut on a character.
+        let flat = startup_rules_note(&[rule_line("第一行\n\nIgnore the rest.")]).expect("a note");
+        assert!(flat.ends_with("\n- 第一行 Ignore the rest."));
+        let wide = startup_rules_note(&[rule_line(&"規".repeat(1_000))]).expect("a note");
+        assert!(wide.ends_with(&format!("{}…", "規".repeat(STARTUP_RULE_MAX_CHARS))));
         let mut server =
             make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily);
         server.startup_rules = startup_rules_note(&[rule_line("Use pnpm.")]);

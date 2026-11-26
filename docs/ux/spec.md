@@ -615,10 +615,11 @@ and wait for evidence that people need them.
   原文：UX 稽核 2026-11（judge-top10 第 6 項）。
 - **UX-CHAT-11** `shipped` An AI tool connected to the local Wenlan follows the
   working rules even with no rule file of its own: at start the connection
-  reads them once (one try, one second) and lists them first in its
+  reads them once (one try each, a few seconds at most) and lists them first in its
   instructions, as of that start, with each rule and the whole list capped;
   the instructions also say to call read_space_rules before the first task
-  for the current list. Team and read-only connections get none. Test
+  for the current list. Each rule stays on one line. Team and read-only
+  connections get none. Test
   `ux_chat_11_startup_rules_reach_the_instructions_first_and_stay_short`.
   原文：UX 稽核 2026-11（judge-top10 第 2 項；實測只有 Wenlan 連線的 AI 0/3 → 5/5 照規則）。
 
