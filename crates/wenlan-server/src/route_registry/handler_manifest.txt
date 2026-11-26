@@ -383,6 +383,8 @@ main|get|/api/team/my-tools|wenlan_server::team_routes::handle_my_tools
 main|delete|/api/team/my-tools/{id}|wenlan_server::team_routes::handle_remove_my_tool
 main|post|/api/team/spaces|wenlan_server::team_routes::handle_host_space
 main|post|/api/team/library/terminal|wenlan_server::team_routes::library::terminal
+main|get|/api/team/joined/library|wenlan_server::team_routes::handle_joined_library
+main|get|/api/team/joined/{team_id}/pages/{page_id}|wenlan_server::team_routes::handle_joined_page
 main|post|/api/team/join|wenlan_server::team_routes::handle_join
 main|post|/api/team/start|wenlan_server::team_routes::handle_start_team
 main|post|/api/team/stop|wenlan_server::team_routes::handle_stop_team

@@ -778,7 +778,7 @@ fn print_library_spaces(spaces: &[TeamSpaceAccess], indent: &str) {
     if spaces.is_empty() {
         return;
     }
-    println!("{indent}In the team library (your AI tools read these from the team server; they are not copied to this computer):");
+    println!("{indent}In the team library (shown in the Wenlan app under the team's name and read from the team server):");
     for s in spaces {
         println!("{indent}  {} ({})", s.space, access_words(s.access));
     }

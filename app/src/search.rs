@@ -3956,6 +3956,28 @@ pub async fn team_host_space(
         .await
 }
 
+/// Reads every joined team's library for the member app. The daemon keeps the
+/// member keys and proxies them only to their matching team servers.
+#[tauri::command]
+pub async fn team_joined_library(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::team_library::JoinedTeamLibraries, String> {
+    daemon_client(&state).await.team_joined_library().await
+}
+
+/// Reads one joined team page, including its server-filtered sources.
+#[tauri::command]
+pub async fn team_joined_page(
+    state: tauri::State<'_, State>,
+    team_id: String,
+    page_id: String,
+) -> Result<wenlan_types::team_library::JoinedTeamPage, String> {
+    daemon_client(&state)
+        .await
+        .team_joined_page(&team_id, &page_id)
+        .await
+}
+
 /// Reads a join code: the server's Spaces this person can use.
 #[tauri::command]
 pub async fn team_join(

@@ -120,6 +120,11 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         )
         .route("/api/team/spaces", post(handle_host_space))
         .route("/api/team/library/terminal", post(library::terminal))
+        .route("/api/team/joined/library", get(handle_joined_library))
+        .route(
+            "/api/team/joined/{team_id}/pages/{page_id}",
+            get(handle_joined_page),
+        )
         .route("/api/team/join", post(handle_join))
         .route("/api/team/start", post(handle_start_team))
         .route("/api/team/stop", post(handle_stop_team))
@@ -834,6 +839,211 @@ pub async fn handle_list_memberships(
     Ok(Json(
         blocking(|| shared_space::membership_infos_at(&shared_space::settings_path())).await?,
     ))
+}
+
+/// GET /api/team/joined/library — the member app's read-only view of every
+/// joined team's team library. Each team is isolated: the member key stays in
+/// the request to that team's own URL and never enters the returned payload.
+pub(crate) async fn handle_joined_library(
+    headers: HeaderMap,
+) -> crate::member_view::MemberResponse {
+    if !crate::memory_routes::caller_is_person(&headers) {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Only the person can read joined team pages.",
+        );
+    }
+    let teams = match joined(None).await {
+        Ok(teams) => teams,
+        Err(ServerError::ValidationError(_)) => Vec::new(),
+        Err(error) => return crate::member_view::MemberResponse::from_error(error),
+    };
+    let mut result = Vec::with_capacity(teams.len());
+    for (url, key, cached_team) in teams {
+        let library =
+            remote::library::<wenlan_types::team_library::TeamLibraryInfo>(&url, &key, "").await;
+        let (team, state) = match library {
+            Ok(info) => {
+                let pages = remote::library::<wenlan_types::team_library::TeamPages>(
+                    &url,
+                    &key,
+                    "/pages?limit=200&offset=0",
+                )
+                .await;
+                match pages {
+                    Ok(pages) => (
+                        Some(info.team.clone()),
+                        team_joined_library_ready(&info, &pages),
+                    ),
+                    Err(error) => (
+                        Some(info.team),
+                        wenlan_types::team_library::JoinedTeamLibraryState::Unreachable {
+                            reason: unreachable_library_reason(&error),
+                        },
+                    ),
+                }
+            }
+            Err(error) => (
+                cached_team,
+                wenlan_types::team_library::JoinedTeamLibraryState::Unreachable {
+                    reason: unreachable_library_reason(&error),
+                },
+            ),
+        };
+        result.push(wenlan_types::team_library::JoinedTeamLibrary {
+            team,
+            library: state,
+        });
+    }
+    crate::member_view::MemberResponse::json(
+        StatusCode::OK,
+        wenlan_types::team_library::JoinedTeamLibraries { teams: result },
+    )
+}
+
+/// GET /api/team/joined/{team_id}/pages/{page_id} — one read-only team page
+/// and the server-filtered citations that accompany it.
+pub(crate) async fn handle_joined_page(
+    headers: HeaderMap,
+    Path((team_id, page_id)): Path<(String, String)>,
+) -> crate::member_view::MemberResponse {
+    if !crate::memory_routes::caller_is_person(&headers) {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Only the person can read joined team pages.",
+        );
+    }
+    let teams = match joined(None).await {
+        Ok(teams) => teams,
+        Err(ServerError::ValidationError(_)) => Vec::new(),
+        Err(error) => return crate::member_view::MemberResponse::from_error(error),
+    };
+    let encoded_page = remote::urlencoding_component(&page_id);
+    for (url, key, cached_team) in teams {
+        if cached_team.as_ref().is_some_and(|team| team.id != team_id) {
+            continue;
+        }
+        let info =
+            match remote::library::<wenlan_types::team_library::TeamLibraryInfo>(&url, &key, "")
+                .await
+            {
+                Ok(info) if info.team.id == team_id => info,
+                Ok(_) => continue,
+                Err(error) if cached_team.as_ref().is_some_and(|team| team.id == team_id) => {
+                    return crate::member_view::MemberResponse::json(
+                        StatusCode::OK,
+                        wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                            reason: unreachable_library_reason(&error),
+                        },
+                    );
+                }
+                Err(_) => continue,
+            };
+        let page = match remote::library::<wenlan_types::team_library::TeamItem>(
+            &url,
+            &key,
+            &format!("/pages/{encoded_page}"),
+        )
+        .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                return crate::member_view::MemberResponse::json(
+                    StatusCode::OK,
+                    wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                        reason: unreachable_library_reason(&error),
+                    },
+                )
+            }
+        };
+        let sources = match remote::library::<wenlan_types::team_library::TeamPageSources>(
+            &url,
+            &key,
+            &format!("/pages/{encoded_page}/sources"),
+        )
+        .await
+        {
+            Ok(sources) => sources,
+            Err(error) => {
+                return crate::member_view::MemberResponse::json(
+                    StatusCode::OK,
+                    wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                        reason: unreachable_library_reason(&error),
+                    },
+                )
+            }
+        };
+        return crate::member_view::MemberResponse::json(
+            StatusCode::OK,
+            wenlan_types::team_library::JoinedTeamPage::Ready {
+                page: Box::new(team_joined_page_read(&info, page)),
+                sources,
+            },
+        );
+    }
+    crate::member_view::MemberResponse::problem(StatusCode::NOT_FOUND, "The team was not found.")
+}
+
+fn unreachable_library_reason(error: &str) -> String {
+    format!("can't reach the team server: {error}")
+}
+
+fn team_joined_library_ready(
+    info: &wenlan_types::team_library::TeamLibraryInfo,
+    pages: &wenlan_types::team_library::TeamPages,
+) -> wenlan_types::team_library::JoinedTeamLibraryState {
+    let spaces = info
+        .spaces
+        .iter()
+        .map(|space| wenlan_types::team_library::TeamLibrarySpace {
+            space: space.clone(),
+            pages: pages
+                .pages
+                .iter()
+                .filter(|page| page.space_id.as_ref() == Some(&space.id))
+                .map(|page| team_page_summary(info, page))
+                .collect(),
+        })
+        .collect();
+    wenlan_types::team_library::JoinedTeamLibraryState::Ready { spaces }
+}
+
+fn team_page_summary(
+    info: &wenlan_types::team_library::TeamLibraryInfo,
+    page: &wenlan_types::team_library::TeamItem,
+) -> wenlan_types::team_library::TeamPageSummary {
+    wenlan_types::team_library::TeamPageSummary {
+        id: page.item_id.clone(),
+        title: page.title.clone(),
+        space: page.space_id.as_ref().and_then(|id| {
+            info.spaces
+                .iter()
+                .find(|space| &space.id == id)
+                .map(|space| space.name.clone())
+        }),
+        published_by: page.publisher.clone(),
+        published_at: page.published_at.clone(),
+    }
+}
+
+fn team_joined_page_read(
+    info: &wenlan_types::team_library::TeamLibraryInfo,
+    page: wenlan_types::team_library::TeamItem,
+) -> wenlan_types::team_library::TeamPageRead {
+    wenlan_types::team_library::TeamPageRead {
+        id: page.item_id,
+        title: page.title,
+        body: page.body,
+        space: page.space_id.as_ref().and_then(|id| {
+            info.spaces
+                .iter()
+                .find(|space| &space.id == id)
+                .map(|space| space.name.clone())
+        }),
+        published_by: page.publisher,
+        published_at: page.published_at,
+        read_only: true,
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

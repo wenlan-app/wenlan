@@ -605,6 +605,10 @@ impl Library {
                 .clone_from(&previous.item.contributor);
             record.item.publisher.clone_from(&previous.item.publisher);
             record.citations.clone_from(&previous.citations);
+            record
+                .item
+                .published_at
+                .clone_from(&previous.item.published_at);
             record.private_source |= previous.private_source;
             record.migrated_page = previous.migrated_page;
             record.legacy_origin.clone_from(&previous.legacy_origin);
@@ -792,6 +796,7 @@ fn new_item(
         authorship: Some(TeamAuthorship::Human),
         publisher: Some(actor.clone()),
         last_editor: Some(actor.clone()),
+        published_at: Some(chrono::Utc::now().to_rfc3339()),
     }
 }
 

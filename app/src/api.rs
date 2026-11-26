@@ -1072,6 +1072,29 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    /// Reads the member's joined team-library index through the person-only
+    /// daemon route.
+    pub async fn team_joined_library(
+        &self,
+    ) -> Result<wenlan_types::team_library::JoinedTeamLibraries, String> {
+        self.get_json_as_person("/api/team/joined/library").await
+    }
+
+    /// Reads one page from a joined team library through the person-only
+    /// daemon route.
+    pub async fn team_joined_page(
+        &self,
+        team_id: &str,
+        page_id: &str,
+    ) -> Result<wenlan_types::team_library::JoinedTeamPage, String> {
+        let path = format!(
+            "/api/team/joined/{}/pages/{}",
+            percent_encode_path_segment(team_id),
+            percent_encode_path_segment(page_id),
+        );
+        self.get_json_as_person(&path).await
+    }
+
     // ── Health ──────────────────────────────────────────────────────
 
     pub async fn health(&self) -> Result<HealthResponse, String> {

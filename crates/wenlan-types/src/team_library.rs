@@ -98,6 +98,12 @@ pub struct TeamItem {
     pub authorship: Option<TeamAuthorship>,
     pub publisher: Option<TeamPerson>,
     pub last_editor: Option<TeamPerson>,
+    /// RFC 3339 time at which this item was first published.
+    ///
+    /// Older team library manifests did not record this field, so it remains
+    /// optional when reading those manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +113,7 @@ pub enum TeamCitation {
     PrivateSource { label: String },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamPageSources {
     pub page_id: String,
@@ -145,6 +151,76 @@ pub struct TeamLibraryInfo {
     pub team: TeamInfo,
     pub spaces: Vec<TeamGroup>,
     pub team_memories: bool,
+}
+
+/// The compact page row shown in a member's team-library list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamPageSummary {
+    pub id: String,
+    pub title: String,
+    pub space: Option<String>,
+    pub published_by: Option<TeamPerson>,
+    pub published_at: Option<String>,
+}
+
+/// One page opened from a member's team-library list. Team pages are always
+/// read-only in the member app.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamPageRead {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub space: Option<String>,
+    pub published_by: Option<TeamPerson>,
+    pub published_at: Option<String>,
+    pub read_only: bool,
+}
+
+/// A library Space and the pages visible to one member.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamLibrarySpace {
+    pub space: TeamGroup,
+    pub pages: Vec<TeamPageSummary>,
+}
+
+/// The connection state for one joined team's library.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum JoinedTeamLibraryState {
+    Ready { spaces: Vec<TeamLibrarySpace> },
+    Unreachable { reason: String },
+}
+
+/// One joined team as seen by the member app. A cached team identity is kept
+/// when the server is unreachable so the UI can name the failed team.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JoinedTeamLibrary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamInfo>,
+    pub library: JoinedTeamLibraryState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JoinedTeamLibraries {
+    pub teams: Vec<JoinedTeamLibrary>,
+}
+
+/// The response for one page in a joined team library.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum JoinedTeamPage {
+    Ready {
+        page: Box<TeamPageRead>,
+        sources: TeamPageSources,
+    },
+    Unreachable {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

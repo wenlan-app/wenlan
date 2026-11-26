@@ -1785,6 +1785,8 @@ pub fn run() {
             search::team_member_tools,
             search::team_remove_member_tool,
             search::team_host_space,
+            search::team_joined_library,
+            search::team_joined_page,
             search::team_join,
             search::team_start,
             search::team_stop,

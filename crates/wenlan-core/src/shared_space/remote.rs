@@ -36,6 +36,7 @@ use crate::rulesync_team::{self, TeamRuleLayer};
 pub const MIRROR_DIR: &str = "team-mirror";
 
 const TIMEOUT: Duration = Duration::from_secs(30);
+const LIBRARY_TIMEOUT: Duration = Duration::from_secs(5);
 const PARALLEL: usize = 8;
 /// The largest version file sent or taken.
 pub const MAX_VERSION_BYTES: usize = 8 * 1024 * 1024;
@@ -116,6 +117,15 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("cannot reach the team server: {error}"))
 }
 
+fn library_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(LIBRARY_TIMEOUT)
+        .timeout(LIBRARY_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("cannot reach the team server: {error}"))
+}
+
 fn space_url(url: &str, space: &str, rest: &str) -> String {
     let mut out = format!("{url}/team/v1/spaces/");
     out.push_str(&urlencoding_component(space));
@@ -124,7 +134,7 @@ fn space_url(url: &str, space: &str, rest: &str) -> String {
 }
 
 /// Percent-encodes one path segment.
-fn urlencoding_component(text: &str) -> String {
+pub fn urlencoding_component(text: &str) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
         match byte {
@@ -235,6 +245,37 @@ pub async fn account(
     path: &str,
 ) -> Result<serde_json::Value, String> {
     call_team(url, key, method, &format!("/team/v1/account{path}"), None).await
+}
+
+/// Reads one member-visible team-library endpoint with the member key. The
+/// caller supplies only a path below `/team/v1/library`; this helper validates
+/// the team's URL and never follows redirects, so the key is sent only to the
+/// joined team's own address.
+pub async fn library<T: serde::de::DeserializeOwned>(
+    url: &str,
+    key: &str,
+    path: &str,
+) -> Result<T, String> {
+    let url = check_url(url)?;
+    let endpoint = format!("{url}/team/v1/library{path}");
+    let response = library_client()?
+        .get(endpoint)
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|error| unreachable(&url, error))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(match status.as_u16() {
+            401 => refused(&url, status),
+            403 => "the team server does not let this member use the team library".into(),
+            _ => refused(&url, status),
+        });
+    }
+    response
+        .json::<T>()
+        .await
+        .map_err(|_| format!("{url} is not a Wenlan team server"))
 }
 
 async fn call_team(

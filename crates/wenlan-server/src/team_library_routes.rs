@@ -167,6 +167,7 @@ impl Host {
                                 authorship,
                                 publisher: None,
                                 last_editor: editor,
+                                published_at: matching.map(|head| head.meta.ts.clone()),
                             },
                             private_source,
                             file: legacy,
