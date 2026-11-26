@@ -10859,7 +10859,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_read_only_team_member_is_told_how_to_get_edit_rights() {
+    async fn ux_who_10_a_read_only_team_member_is_told_how_to_get_edit_rights() {
         let sentence = "You can read this team's pages. To edit, sign in with Google or GitHub on the team's web page (needs the team's https address), or ask the team owner.";
         let member = |profile| {
             WenlanMcpServer::new_with_identity(
@@ -12077,7 +12077,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step() {
+    async fn ux_chat_10_a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step() {
         // Nothing listens on this port.
         let server = WenlanMcpServer::new(
             WenlanClient::new("http://127.0.0.1:1".into()),
@@ -12150,7 +12150,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_zero_result_recall_says_when_other_spaces_match() {
+    async fn ux_chat_9_a_zero_result_recall_says_when_other_spaces_match() {
         use wiremock::matchers::{body_partial_json, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock = MockServer::start().await;
@@ -12198,7 +12198,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_of_a_preference_says_it_waits_for_the_person_and_how() {
+    fn ux_chat_8_capture_of_a_preference_says_it_waits_for_the_person_and_how() {
         let mut resp = StoreMemoryResponse {
             source_id: "mem_pref".into(),
             chunks_created: 1,

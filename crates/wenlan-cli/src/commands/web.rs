@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn a_headless_linux_session_opens_no_browser() {
+    fn ux_cli_9_a_headless_linux_session_opens_no_browser() {
         let none = |_: &str| false;
         let display = |name: &str| name == "DISPLAY";
         if cfg!(target_os = "linux") {

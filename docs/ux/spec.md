@@ -387,7 +387,7 @@ and wait for evidence that people need them.
   address), or ask the team owner." The AI tool's instructions for such a
   connection, its refusal, and the team server's refusal carry it. In the AI
   tool, a member who can edit and meets another refusal is not told this. Tests
-  `a_read_only_team_member_is_told_how_to_get_edit_rights`,
+  `ux_who_10_a_read_only_team_member_is_told_how_to_get_edit_rights`,
   `only_a_read_only_member_is_told_how_to_get_edit_rights_on_a_403` and
   `round6_hosted_mcp_routes_return_the_typed_member_response`.
   原文：UX 稽核 2026-11（journey 3，已核准）。
@@ -589,7 +589,7 @@ and wait for evidence that people need them.
   `wenlan rules shared apply <plan id>`; the Wenlan app is named only as
   another way, never as required. The refusal an AI tool gets from
   `confirm_memory` and the hint under `wenlan memories pending` say the same.
-  Tests `capture_of_a_preference_says_it_waits_for_the_person_and_how` and
+  Tests `ux_chat_8_capture_of_a_preference_says_it_waits_for_the_person_and_how` and
   `confirm_memory_of_a_preference_names_the_terminal_step`.
   原文：UX 稽核 2026-11（judge-top10 第 1 項）。
 
@@ -600,7 +600,7 @@ and wait for evidence that people need them.
   It never says the thing was saved or that it exists. A connection limited to
   one Space does not look. Tests
   `other_spaces_message_names_the_spaces_and_the_next_step`,
-  `a_zero_result_recall_says_when_other_spaces_match` and
+  `ux_chat_9_a_zero_result_recall_says_when_other_spaces_match` and
   `zero_results_hint_does_not_claim_the_memory_exists`.
   原文：UX 稽核 2026-11（judge-top10 第 3 項）。
 
@@ -610,7 +610,7 @@ and wait for evidence that people need them.
   `wenlan start`); no install menu. When Wenlan connected but did not answer
   in time, it says the save may or may not have landed and to check with
   recall before retrying, and never says it is not running. Tests
-  `a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step`
+  `ux_chat_10_a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step`
   and `a_daemon_that_connected_but_did_not_answer_is_not_called_stopped`.
   原文：UX 稽核 2026-11（judge-top10 第 6 項）。
 
@@ -1907,7 +1907,7 @@ and wait for evidence that people need them.
   counts as having one) it says so in one line and does not wait; otherwise it
   waits up to a minute for the browser to read its launcher file, says so if
   none did, and leaves no folder behind. Tests
-  `a_headless_linux_session_opens_no_browser` and
+  `ux_cli_9_a_headless_linux_session_opens_no_browser` and
   `a_launcher_nobody_reads_is_removed_when_the_wait_ends`.
   原文：UX 稽核 2026-11（journey 1-2 S7）。
 
