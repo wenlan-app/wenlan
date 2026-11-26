@@ -193,8 +193,7 @@ async fn finish(client: &WenlanClient, args: &SetupArgs) -> anyhow::Result<()> {
 
     let running = client.health().await.is_ok();
     if running {
-        let adopted =
-            super::rulesync::adopt_during_setup(args.format, &tools.connected_labels()).await;
+        let adopted = super::rulesync::adopt_during_setup(args.format).await;
         if should_offer_setup_share(
             adopted,
             args.person,

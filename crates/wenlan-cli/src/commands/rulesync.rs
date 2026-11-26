@@ -1451,7 +1451,10 @@ fn setup_sync_line(sync: &SetupSync) -> String {
         || "rule count unavailable".to_string(),
         |count| plural(count, "rule"),
     );
-    let mut line = format!("Set up {tools}: {rules}, {}.", plural(sync.skills, "skill"));
+    let mut line = format!(
+        "Rules written for {tools}: {rules}, {}.",
+        plural(sync.skills, "skill")
+    );
     if sync.left_alone > 0 {
         line.push_str(&format!(
             " {} {} left as {} {}.",
@@ -1468,8 +1471,8 @@ fn setup_sync_line(sync: &SetupSync) -> String {
 /// in and sync once, with no question and no terminal needed. A plan that
 /// cannot be adopted safely is left alone with one line saying so; setup
 /// itself still succeeds.
-pub(super) async fn adopt_during_setup(format: ResolvedFormat, connected: &[&str]) -> bool {
-    match try_adopt_during_setup(format, connected).await {
+pub(super) async fn adopt_during_setup(format: ResolvedFormat) -> bool {
+    match try_adopt_during_setup(format).await {
         Ok(adopted) => adopted,
         Err(error) => {
             let message = format!(
@@ -1532,7 +1535,7 @@ pub(super) async fn share_during_setup(details: bool, keep_rule: &[usize]) {
     }
 }
 
-async fn try_adopt_during_setup(format: ResolvedFormat, connected: &[&str]) -> Result<bool> {
+async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<bool> {
     rulesync_personal::set_enabled(true)?;
     // An AI tool running setup says who it is; the daemon then adopts only
     // the plan it just previewed (the same check as `rules adopt --confirm`).
@@ -1604,13 +1607,6 @@ async fn try_adopt_during_setup(format: ResolvedFormat, connected: &[&str]) -> R
                 managed
                     .as_ref()
                     .is_none_or(|managed| managed.contains(&tool.name))
-            })
-            // Name only tools that are connected: an empty tool folder with no
-            // tool behind it is not "set up".
-            .filter(|tool| {
-                connected
-                    .iter()
-                    .any(|name| name.eq_ignore_ascii_case(&tool.name))
             })
             .map(|tool| tool.name.clone())
             .collect(),

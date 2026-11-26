@@ -49,17 +49,13 @@ fn reads_one_space(client: &WenlanClient) -> bool {
             .unwrap_or(true)
 }
 
-/// The line after "(no recalled memories)" when other Spaces match.
+/// The line after "(no recalled memories)" when other Spaces may hold related ones.
 fn other_spaces_hint(query: &str, found: usize) -> Option<String> {
-    let count = match found {
-        0 => return None,
-        1 => "1 match".to_string(),
-        n if n >= OTHER_SPACES_PROBE => format!("{n} or more matches"),
-        n => format!("{n} matches"),
-    };
-    Some(format!(
-        "{count} in other Spaces: `wenlan --all-spaces recall {query:?}` shows them."
-    ))
+    (found > 0).then(|| {
+        format!(
+            "Nothing in this Space. Other Spaces have possibly related memories: `wenlan --all-spaces recall {query:?}` shows them."
+        )
+    })
 }
 
 fn format_table(response: &SearchMemoryResponse) -> String {
@@ -115,18 +111,15 @@ mod tests {
     use super::{format_table, other_spaces_hint};
 
     #[test]
-    fn zero_results_hint_counts_other_spaces() {
+    fn zero_results_hint_does_not_claim_the_memory_exists() {
         assert_eq!(other_spaces_hint("pnpm", 0), None);
-        assert_eq!(
-            other_spaces_hint("pnpm", 1).unwrap(),
-            "1 match in other Spaces: `wenlan --all-spaces recall \"pnpm\"` shows them."
+        let hint = other_spaces_hint("pnpm", 2).unwrap();
+        assert!(hint.contains("possibly related"), "{hint}");
+        assert!(
+            hint.contains("`wenlan --all-spaces recall \"pnpm\"`"),
+            "{hint}"
         );
-        assert!(other_spaces_hint("q", 3)
-            .unwrap()
-            .starts_with("3 matches in other Spaces"));
-        assert!(other_spaces_hint("q", 5)
-            .unwrap()
-            .starts_with("5 or more matches"));
+        assert!(!hint.contains("was saved"), "{hint}");
     }
 
     use wenlan_types::responses::SearchMemoryResponse;

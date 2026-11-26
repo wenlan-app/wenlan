@@ -172,11 +172,6 @@ impl Tools {
             .any(|tool| *tool == CODEX)
     }
 
-    /// The display names of the connected tools, as the rules plan names them.
-    pub(super) fn connected_labels(&self) -> Vec<&'static str> {
-        self.connected.iter().map(|tool| tool.label).collect()
-    }
-
     pub(super) fn connect_names(&self) -> Vec<&'static str> {
         self.connected.iter().map(|tool| tool.connect_as).collect()
     }

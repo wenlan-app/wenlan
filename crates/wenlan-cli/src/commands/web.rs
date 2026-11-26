@@ -20,7 +20,7 @@ pub fn browser_url_with_pass(base_url: &str, pass: &str) -> String {
 
 /// How long `wenlan open` waits for a browser to read the launcher file before
 /// it gives up and returns (the daemon keeps the pass for a minute).
-const BROWSER_WAIT: Duration = Duration::from_secs(10);
+const BROWSER_WAIT: Duration = Duration::from_secs(60);
 
 pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
     let plain = browser_url(client.base_url());
@@ -33,7 +33,11 @@ pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
         client.browser_pass_as_person().await.ok()
     };
     println!("Wenlan in your browser: {plain}");
-    if !can_open_a_browser(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty())) {
+    let version = std::fs::read_to_string("/proc/version").unwrap_or_default();
+    if !can_open_a_browser(
+        |name| std::env::var_os(name).is_some_and(|value| !value.is_empty()),
+        &version,
+    ) {
         println!("No desktop session was found here, so no browser was opened. Open the address above in a browser.");
         return Ok(());
     }
@@ -52,12 +56,14 @@ pub async fn run(client: &WenlanClient) -> anyhow::Result<()> {
 }
 
 /// Whether a browser can be started from here. On Linux that needs a display
-/// (or a `BROWSER` command); elsewhere the system always has one to try.
-fn can_open_a_browser(has_var: impl Fn(&str) -> bool) -> bool {
+/// or a `BROWSER` command, or WSL (where opening goes through Windows);
+/// elsewhere the system always has one to try.
+fn can_open_a_browser(has_var: impl Fn(&str) -> bool, version_text: &str) -> bool {
     !cfg!(target_os = "linux")
-        || ["DISPLAY", "WAYLAND_DISPLAY", "BROWSER"]
+        || ["DISPLAY", "WAYLAND_DISPLAY", "BROWSER", "WSL_DISTRO_NAME"]
             .iter()
             .any(|name| has_var(name))
+        || version_text.to_ascii_lowercase().contains("microsoft")
 }
 
 /// Unix: the address with the pass never goes on a command line, which
@@ -200,10 +206,19 @@ mod tests {
         let none = |_: &str| false;
         let display = |name: &str| name == "DISPLAY";
         if cfg!(target_os = "linux") {
-            assert!(!super::can_open_a_browser(none));
-            assert!(super::can_open_a_browser(display));
+            assert!(!super::can_open_a_browser(none, "Linux version 6.1 (gcc)"));
+            assert!(super::can_open_a_browser(display, ""));
+            // WSL opens the page through Windows.
+            assert!(super::can_open_a_browser(
+                none,
+                "Linux ... microsoft-standard-WSL2"
+            ));
+            assert!(super::can_open_a_browser(
+                |name| name == "WSL_DISTRO_NAME",
+                ""
+            ));
         } else {
-            assert!(super::can_open_a_browser(none));
+            assert!(super::can_open_a_browser(none, ""));
         }
     }
 

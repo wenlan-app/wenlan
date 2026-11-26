@@ -287,8 +287,10 @@ impl WenlanClient {
                     last_err = Some(e);
                 }
                 Err(e) => {
+                    // Connected, then no answer (timeout, reset): the daemon is
+                    // running and the request may have landed.
                     tracing::debug!(error = %e, "daemon request failed");
-                    return Err(WenlanError::Unreachable(self.base_url.clone()));
+                    return Err(WenlanError::NoAnswer);
                 }
             }
         }
@@ -620,6 +622,9 @@ pub enum WenlanError {
     /// A save got no answer within [`SAVE_DEADLINE`]. It may still land.
     #[error("Wenlan did not answer the save in time")]
     Busy,
+
+    #[error("Wenlan did not answer in time")]
+    NoAnswer,
 }
 
 fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {

@@ -96,7 +96,7 @@ const READ_ONLY_TEAM_INSTRUCTIONS: &str = concat!(
 /// internal id for the unfiled Space, `wenlan-core`'s `UNFILED_SPACE_ID`).
 const UNFILED_SPACE_ID: &str = "00000000-0000-4000-8000-000000000001";
 
-/// How many matches the "other Spaces" probe asks for; more than this reads "5 or more".
+/// How many matches the "other Spaces" probe asks for.
 const OTHER_SPACES_PROBE_LIMIT: usize = 5;
 
 /// The line a zero-result recall in `space` gets when other Spaces match.
@@ -120,18 +120,10 @@ fn other_spaces_message(
             holding.push(name);
         }
     }
-    let count = if found.len() >= OTHER_SPACES_PROBE_LIMIT {
-        format!("{} or more matches", found.len())
-    } else if found.len() == 1 {
-        "1 match".to_string()
-    } else {
-        format!("{} matches", found.len())
-    };
     Some(format!(
-        "Nothing matched in Space `{space}`, but {count} in other Spaces: {}. Call recall again \
-         with `space` set to one of those to read them (the person can run \
-         `wenlan --all-spaces recall {query:?}` in a terminal). It was saved; it is in another \
-         Space.",
+        "Nothing in Space `{space}`. Other Spaces have possibly related memories: {}. Recall \
+         there (`space` set to one of those) to check; the person can run \
+         `wenlan --all-spaces recall {query:?}` in a terminal.",
         holding.join(", ")
     ))
 }
@@ -283,7 +275,8 @@ pub fn plugin_profile_lists(name: &str) -> bool {
 /// Added to the standard instructions under the `plugin` profile.
 const PLUGIN_INSTRUCTIONS_NOTE: &str = "\n\nThis connection lists the tools the Wenlan plugin \
      uses. A person accepts a proposed refinement or revision in the Wenlan app (these tools \
-     only list and turn them down); `wenlan curate` in a terminal lists and dismisses them. \
+     only list and turn them down); `wenlan curate` in a terminal lists and dismisses pending \
+     revisions only. \
      With a terminal, `wenlan tool list` shows Wenlan's other tools.";
 /// Added to the standard instructions under the `daily` profile, so the AI
 /// tool knows the list it sees is not all of Wenlan.
@@ -3126,6 +3119,10 @@ fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
         WenlanError::ResponseTooLarge => format!(
             "The daemon response exceeded Wenlan MCP's size limit. The {verb} was not completed."
         ),
+        WenlanError::NoAnswer => format!(
+            "Wenlan did not answer in time; the {verb} may or may not have landed. Check with \
+             recall before retrying."
+        ),
         WenlanError::Busy => format!(
             "Wenlan is busy and did not finish the {verb} within {} minutes. It may still \
              finish: check whether it was saved before trying again.",
@@ -4093,7 +4090,6 @@ impl WenlanMcpServer {
                 linked_json
             ));
         }
-        let mut output = output;
         if resp.results.is_empty() {
             if let Some(line) = self.other_spaces_line(&client, &req).await {
                 output.push_str("\n\n");
@@ -9057,7 +9053,7 @@ mod tests {
         assert!(plugin.local_only_refusal("accept_refinement").is_none());
         let info = plugin.get_info().instructions.expect("instructions");
         assert!(info.contains("accepts a proposed refinement or revision in the Wenlan app"));
-        assert!(info.contains("wenlan curate"));
+        assert!(info.contains("wenlan curate") && info.contains("pending revisions only"));
     }
 
     #[test]
@@ -12065,6 +12061,18 @@ mod tests {
         assert!(!msg.contains("quality"));
     }
 
+    #[test]
+    fn a_daemon_that_connected_but_did_not_answer_is_not_called_stopped() {
+        let text = text_of(&tool_error(WenlanError::NoAnswer, "memory store"));
+        assert!(text.contains("did not answer in time"), "{text}");
+        assert!(text.contains("may or may not have landed"), "{text}");
+        assert!(text.contains("recall before retrying"), "{text}");
+        assert!(
+            !text.contains("not running") && !text.contains("nothing was saved"),
+            "{text}"
+        );
+    }
+
     #[tokio::test]
     async fn a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step() {
         // Nothing listens on this port.
@@ -12123,24 +12131,19 @@ mod tests {
         let unfiled = hit(Some(UNFILED_SPACE_ID));
         assert!(other_spaces_message("demo", "pnpm", &[unfiled])
             .unwrap()
-            .contains("in other Spaces: uncategorized."));
+            .contains("possibly related memories: uncategorized."));
         assert!(
-            one.contains("1 match in other Spaces: uncategorized"),
+            one.contains("possibly related memories: uncategorized."),
             "{one}"
         );
+        assert!(!one.contains("was saved"), "{one}");
         assert!(
             one.contains("`wenlan --all-spaces recall \"pnpm\"`"),
             "{one}"
         );
         let two =
             other_spaces_message("demo", "pnpm", &[hit(Some("work")), hit(Some("work"))]).unwrap();
-        assert!(two.contains("2 matches in other Spaces: work."), "{two}");
-        let many: Vec<_> = (0..OTHER_SPACES_PROBE_LIMIT)
-            .map(|_| hit(Some("a")))
-            .collect();
-        assert!(other_spaces_message("demo", "q", &many)
-            .unwrap()
-            .contains("5 or more matches"));
+        assert!(two.contains("possibly related memories: work."), "{two}");
     }
 
     #[tokio::test]
@@ -12185,10 +12188,10 @@ mod tests {
         };
         let text = text_of(&server.recall_impl(params(Some("demo"))).await.unwrap());
         assert!(text.starts_with("0 results"), "{text}");
-        assert!(text.contains("1 match in other Spaces: work"), "{text}");
+        assert!(text.contains("possibly related memories: work"), "{text}");
         // No Space chosen: nothing is hidden, so there is nothing to say.
         let text = text_of(&server.recall_impl(params(None)).await.unwrap());
-        assert!(!text.contains("other Spaces"), "{text}");
+        assert!(!text.contains("Other Spaces"), "{text}");
     }
 
     #[test]
