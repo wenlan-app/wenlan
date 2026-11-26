@@ -510,10 +510,21 @@ pub struct RulesReviewItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RulesReviewContent {
-    ToolEdit { card: PullbackCard },
-    SkillProposal { proposal: SkillProposal },
-    SkillUpdate { update: AdoptedSkillUpdate },
-    Settings { plan: SettingsPlan },
+    ToolEdit {
+        card: PullbackCard,
+    },
+    SkillProposal {
+        proposal: SkillProposal,
+    },
+    SkillUpdate {
+        update: AdoptedSkillUpdate,
+    },
+    Settings {
+        plan: SettingsPlan,
+    },
+    PersonalPlan {
+        plan: crate::personal_rules::PersonalRulePlan,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

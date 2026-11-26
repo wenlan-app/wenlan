@@ -1093,6 +1093,8 @@ mod catalog_tests {
         assert!(Cli::try_parse_from(["wenlan", "rules", "tool", "claude", "show"]).is_ok());
         assert!(Cli::try_parse_from(["wenlan", "rules", "tool", "codex", "show"]).is_ok());
         assert!(Cli::try_parse_from(["wenlan", "rules", "history", "list"]).is_ok());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "merge-pages"]).is_ok());
+        assert!(Cli::try_parse_from(["wenlan", "rules", "merge-pages", "--yes"]).is_err());
     }
 
     #[test]

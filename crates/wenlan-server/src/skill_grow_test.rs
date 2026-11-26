@@ -3927,6 +3927,448 @@ fn save_request(text: &str, every_space: bool) -> wenlan_types::SaveRuleRequest 
     }
 }
 
+fn isolate_page_rule_store(scratch: &Scratch) -> EnvGuard {
+    let env = EnvGuard::set(&[("WENLAN_DEV_STATE_DIR", &scratch.data)]);
+    let tool_home = scratch.data.join("ai-tools/home");
+    std::fs::create_dir_all(&tool_home).unwrap();
+    let setup = crate::rulesync_routes::Setup::system().unwrap();
+    assert_eq!(setup.home, tool_home);
+    assert_eq!(setup.data, scratch.data.join("rulesync"));
+    env
+}
+
+async fn page_rule_api(
+    scratch: &Scratch,
+    method: &str,
+    path: &str,
+    body: serde_json::Value,
+    agent: Option<&str>,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    use axum::body::Body;
+    use tower::ServiceExt;
+    let mut request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(
+            wenlan_types::requests::PERSON_KEY_HEADER,
+            crate::person_key::test_key(),
+        )
+        .header("content-type", "application/json");
+    if let Some(agent) = agent {
+        request = request.header("x-agent-name", agent);
+    }
+    let result = crate::router::build_router(scratch.shared.clone())
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap();
+    let status = result.status();
+    let bytes = axum::body::to_bytes(result.into_body(), 1_000_000)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn skill_grow_page_merge_excludes_credentials_and_scoped_rules_and_keeps_original_page() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let fixture_token = format!("ghp_{}", "Z".repeat(36));
+    let id = write_page_in_folder(
+        &scratch,
+        31,
+        None,
+        "Rules",
+        "Work habits",
+        &format!("- Review the receipt with @review.\n- Token {fixture_token}"),
+        "publish",
+    )
+    .await;
+    let before = scratch.db.get_page(&id).await.unwrap().unwrap();
+    scratch
+        .db
+        .create_space("Office", None, false)
+        .await
+        .unwrap();
+    let mut scoped = save_request("Use the office checklist.", false);
+    scoped.space = Some("Office".into());
+    save_rule(&scratch, &person_headers(), scoped)
+        .await
+        .unwrap();
+
+    let endpoint = "/api/rules/personal/merge-pages";
+    let (status, preview) = page_rule_api(
+        &scratch,
+        "GET",
+        endpoint,
+        serde_json::Value::Null,
+        Some("codex"),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(!preview.to_string().contains(&fixture_token));
+    assert!(!preview.to_string().contains("Use the office checklist."));
+    assert_eq!(preview["page_merge"]["rule_count"], 1);
+    assert_eq!(
+        preview["page_merge"]["excluded"],
+        serde_json::json!([{ "page_id": id, "line": 2 }])
+    );
+    assert!(!scratch.data.join("rulesync/personal.json").exists());
+    let apply = serde_json::json!({"plan_id": preview["id"]});
+    let (status, _) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/apply",
+        apply.clone(),
+        Some("codex"),
+    )
+    .await;
+    assert!(!status.is_success());
+    let (status, version) =
+        page_rule_api(&scratch, "POST", "/api/rules/personal/apply", apply, None).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{version}");
+    assert!(!version.to_string().contains(&fixture_token));
+    let rule = version["rules"][0]["text"].as_str().unwrap();
+    assert!(rule.contains("Review the receipt with &#64;review."));
+    let archive_path = std::fs::read_dir(scratch.data.join("rulesync/rule-history/archive"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let archive = std::fs::read_to_string(&archive_path).unwrap();
+    assert!(!archive.contains(&fixture_token));
+    assert!(archive.contains("Review the receipt with @review."));
+    assert_eq!(
+        scratch.db.get_page(&id).await.unwrap().unwrap().content,
+        before.content
+    );
+    assert!(
+        page_rule_api(&scratch, "GET", endpoint, serde_json::Value::Null, None)
+            .await
+            .1
+            .is_null()
+    );
+
+    let (_, history) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/rules/personal/history",
+        serde_json::Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(history.as_array().unwrap().len(), 2);
+    let baseline = history[0]["id"].as_str().unwrap();
+    let (status, undo) = page_rule_api(
+        &scratch,
+        "POST",
+        &format!("/api/rules/personal/history/{baseline}/propose"),
+        serde_json::json!({}),
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{undo}");
+    let (status, restored) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/apply",
+        serde_json::json!({"plan_id":undo["id"]}),
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{restored}");
+    assert_eq!(restored["rules"][0]["text"], "");
+    assert_eq!(std::fs::read_to_string(archive_path).unwrap(), archive);
+}
+
+#[tokio::test]
+async fn skill_grow_person_page_accept_applies_with_history_and_ai_accept_waits() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let _rulesync = EnvGuard::set(&[("WENLAN_RULESYNC", Path::new("1"))]);
+    sync_rules_files_locked(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert!(crate::rulesync_routes::personal_rules::page_rules_merged().unwrap());
+    let (status, preview) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/rules/personal/merge-pages",
+        serde_json::Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(preview.is_null());
+    let space = scratch
+        .db
+        .create_space("Habits", None, false)
+        .await
+        .unwrap();
+    create_person_page(
+        &scratch.db,
+        &scratch.pages,
+        "Habits",
+        "Working agreements",
+        GENERAL_QUOTE,
+    )
+    .await;
+    let mut model = GrowModel::new();
+    model.general_in = Some("Habits".into());
+    assert_eq!(refresh(&scratch, &model).await.suggestions, 1);
+    let accept = format!(
+        "/api/skills/spaces/{}/accept?this_space_only=true",
+        space.id
+    );
+    let (status, answer) = page_rule_api(
+        &scratch,
+        "POST",
+        &accept,
+        serde_json::Value::Null,
+        Some("codex"),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{answer}");
+    let id = answer["status"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("pending personal-rule plan ")
+        .unwrap();
+    let (status, _) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/apply",
+        serde_json::json!({"plan_id":id}),
+        Some("codex"),
+    )
+    .await;
+    assert!(!status.is_success());
+    assert_eq!(
+        scratch
+            .db
+            .space_rules_state(&space.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SpaceRulesStatus::Suggested
+    );
+    let (_, history) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/rules/personal/history",
+        serde_json::Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(history, serde_json::json!([]));
+
+    let (status, answer) =
+        page_rule_api(&scratch, "POST", &accept, serde_json::Value::Null, None).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{answer}");
+    let (_, shown) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/show",
+        serde_json::json!({"layer":{"kind":"shared"}}),
+        None,
+    )
+    .await;
+    assert!(shown["text"].as_str().unwrap().contains(GENERAL_QUOTE));
+    let (_, history) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/rules/personal/history",
+        serde_json::Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(history[1]["proposer"], "Wenlan pages");
+    assert_eq!(history[1]["confirmer"], "person");
+    let rules_page_id = answer["rules_page_id"].as_str().unwrap();
+    let rules_page = scratch.db.get_page(rules_page_id).await.unwrap().unwrap();
+    let (status, stopped) = page_rule_api(&scratch, "POST", &format!("/api/memory/{rules_page_id}/update-page"),
+        serde_json::json!({"content": format!("{}\n\n{}", skill_grow::NOT_FOR_AI_TOOLS_MARKER, rules_page.content), "expected_version":rules_page.version}), None).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{stopped}");
+    let (_, after_stop) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/show",
+        serde_json::json!({"layer":{"kind":"shared"}}),
+        None,
+    )
+    .await;
+    assert!(!after_stop["text"].as_str().unwrap().contains(GENERAL_QUOTE));
+    let baseline = history[0]["id"].as_str().unwrap();
+    let (_, undo) = page_rule_api(
+        &scratch,
+        "POST",
+        &format!("/api/rules/personal/history/{baseline}/propose"),
+        serde_json::json!({}),
+        None,
+    )
+    .await;
+    let (status, restored) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/apply",
+        serde_json::json!({"plan_id":undo["id"]}),
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{restored}");
+    assert_eq!(restored["rules"][0]["text"], "");
+    let (_, rules) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/skills/rules",
+        serde_json::Value::Null,
+        Some("codex"),
+    )
+    .await;
+    assert!(!rules.to_string().contains(GENERAL_QUOTE));
+}
+
+#[tokio::test]
+async fn skill_grow_saved_global_rule_waits_for_a_person_and_local_remove_lands() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    crate::rulesync_routes::Setup::system()
+        .unwrap()
+        .mark_empty_page_rules()
+        .unwrap();
+    let local = save_rule(
+        &scratch,
+        &person_headers(),
+        save_request("Finish the active check first.", true),
+    )
+    .await
+    .unwrap();
+    assert_eq!(local.status, wenlan_types::SavedRuleStatus::Saved);
+    let (_, shared) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/show",
+        serde_json::json!({"layer":{"kind":"shared"}}),
+        None,
+    )
+    .await;
+    assert!(shared["text"]
+        .as_str()
+        .unwrap()
+        .contains("Finish the active check first."));
+    let mut agent = HeaderMap::new();
+    agent.insert("x-agent-name", HeaderValue::from_static("codex"));
+    let text = "Use the first-party run log.";
+    let waiting = save_rule(&scratch, &agent, save_request(text, true))
+        .await
+        .unwrap();
+    assert_eq!(waiting.status, wenlan_types::SavedRuleStatus::Waiting);
+    // After the move an AI save is a shared-rules plan only: the person's
+    // page is not changed until the person confirms.
+    let page_id = local.page_id.clone();
+    let page_before = scratch.db.get_page(&page_id).await.unwrap().unwrap();
+    assert!(!page_before.content.contains(text));
+    let (_, rules) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/skills/rules",
+        serde_json::Value::Null,
+        Some("codex"),
+    )
+    .await;
+    assert!(!rules.to_string().contains(text));
+    let plan_id = |message: &str| {
+        message
+            .trim_end_matches('.')
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .to_string()
+    };
+    let (status, version) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/apply",
+        serde_json::json!({"plan_id":plan_id(&waiting.message)}),
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{version}");
+    assert!(version["rules"][0]["text"].as_str().unwrap().contains(text));
+    assert_eq!(
+        scratch
+            .db
+            .get_page(&page_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        page_before.version
+    );
+    // An AI tool editing the rules page directly is refused before the save.
+    let (status, refused) = page_rule_api(
+        &scratch,
+        "POST",
+        &format!("/api/memory/{page_id}/update-page"),
+        serde_json::json!({
+            "content": format!("{}\n- Skip the check.\n", page_before.content),
+            "expected_version": page_before.version,
+        }),
+        Some("codex"),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT, "{refused}");
+    assert!(
+        refused.to_string().contains("propose_personal_rules"),
+        "{refused}"
+    );
+    assert_eq!(
+        scratch
+            .db
+            .get_page(&page_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        page_before.content
+    );
+    // The person removes their own saved rule: it leaves shared rules.
+    let removed = remove_rule(
+        &scratch,
+        &person_headers(),
+        local.rule_id.as_deref().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(removed.status, wenlan_types::SavedRuleStatus::Removed);
+    let (_, shared) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/show",
+        serde_json::json!({"layer":{"kind":"shared"}}),
+        None,
+    )
+    .await;
+    let shared = shared["text"].as_str().unwrap();
+    assert!(
+        !shared.contains("Finish the active check first."),
+        "{shared}"
+    );
+    assert!(shared.contains(text), "{shared}");
+}
+
 async fn save_rule(
     scratch: &Scratch,
     headers: &HeaderMap,

@@ -4273,6 +4273,31 @@ pub async fn rules_setup_review_list(
 }
 
 #[tauri::command]
+pub async fn rules_setup_apply_personal_plan(
+    state: tauri::State<'_, State>,
+    plan_id: String,
+) -> Result<(), String> {
+    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest { plan_id };
+    let _: wenlan_types::personal_rules::PersonalRuleVersion = daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/personal/apply", &request)
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn rules_setup_decline_page_merge(
+    state: tauri::State<'_, State>,
+    plan_id: String,
+) -> Result<(), String> {
+    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest { plan_id };
+    daemon_client(&state)
+        .await
+        .post_json_as_person("/api/rules/personal/merge-pages", &request)
+        .await
+}
+
+#[tauri::command]
 pub async fn rules_setup_skill_review(
     state: tauri::State<'_, State>,
     request: wenlan_types::rulesync_skill::SkillReviewRequest,

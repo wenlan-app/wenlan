@@ -813,9 +813,9 @@ and wait for evidence that people need them.
   their own words, or one on a page that follows only their pages. A line
   quoting only what an AI wrote from its own reading is left out; one the
   person saw on the ask counts by their yes.
-  With the one-store migration (planned for a later PR), rules already
-  eligible keep their status. New AI-proposed rule text needs the person's
-  confirmation of that exact change, even when the library was accepted.
+  Moving rules keeps the lines already eligible, apart from lines that may
+  contain a credential. After the move, a new rule proposed by an AI tool
+  needs the person's confirmation of that exact change.
   Tests `after_the_library_yes_a_line_an_ai_wrote_does_not_reach_every_tool_unseen`
   and `a_rule_from_a_following_page_changes_the_night_after_that_page_catches_up`.
   原文（後一段）：「上述提到的問題都要修好」（2026-11-21，設計 v5 F4「推斷的點升規則前對到你的原句」）。
@@ -840,8 +840,8 @@ and wait for evidence that people need them.
   reported changing its approach or Wenlan recorded the read, with no counts.
   Stop makes the page unreadable to AI tools at once but leaves it in Wenlan so
   it can be started again.
-  With the one-store migration (planned for a later PR), rule lines on this
-  page are a view of the personal rule store, not a second editable store.
+  After the move, the person's accept, edit or Stop changes the shared
+  rules used in every Space and can be undone in rule history.
   原文：「可以」（2026-11-15 17:33Z，回覆[草圖](https://claude.ai/artifact/EqEaFuewDn2qBRyBrG7eHn)）。
 - **UX-SKILL-3** `shipped` Under those lines, a suggestion for a skill the
   person owns shows the old line struck through, the proposed grounded line,
@@ -865,8 +865,10 @@ and wait for evidence that people need them.
   "What you told your tools" with a cap apart from the page rules. They have no page, so nothing is counted as borrowed from one;
   the Rules list in the app does not mix them in, and a Space's own rules, a
   repository copy of them and a team member's read never include them.
-  With the one-store migration (planned for a later PR), eligible personal
-  rules and their scope come from the same personal rule store.
+  The move brings the page rules used in every Space into shared rules.
+  Rules for one Space stay on their pages. Confirmed preferences are not
+  moved: they keep their own section, so confirming or forgetting one still
+  changes what tools get.
   原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
 - **UX-SKILL-6** `shipped` The rules AI tools may read are also kept as files
   in Wenlan's own folder, in the `AGENTS.md` shape other tools already read:
@@ -880,9 +882,9 @@ and wait for evidence that people need them.
   With `WENLAN_RULESYNC=1` (pending acceptance), an adopted personal setup
   has one local master for shared and tool-specific rules and each skill's
   target list. Wenlan keeps the rule pages and their provenance available.
-  The planned one-store migration keeps shared, scoped, tool-specific and
-  referenced personal rules in that store; rule pages and delivered files
-  become projections. Following referenced files is planned for a later PR.
+  Wenlan offers to move these rules once, with a diff and one confirm.
+  Saying no keeps the current delivery. After the move, tool files get
+  these lines from shared rules. Following referenced files is planned for a later PR.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -1023,8 +1025,8 @@ and wait for evidence that people need them.
   Team and project edits follow UX-SKILL-9.
   With personal-rule plans, an AI-proposed personal rule or change
   confirmed for its exact text counts as the person's for that version
-  (UX-SKILL-14). Existing eligible rules retain their status in the planned
-  one-store migration. Page rule editing and migration come in a later PR.
+  (UX-SKILL-14). After the move, the person's change to an every-Space rule
+  on a rules page is recorded in rule history and can be undone there.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
   Tests `rulesync_tagged_overlay_edits_and_insertions_use_history_without_review`,
   `rulesync_untagged_delivery_keeps_the_legacy_scope_review`, and
@@ -1064,9 +1066,9 @@ and wait for evidence that people need them.
   The opt-in writer uses its delivery record for the status. When rulesync
   has no output for a connected tool, the status is "not written, reads via
   MCP."
-  With the one-store migration (planned for a later PR), the page renders
-  the stored origin, scope and eligibility rather than deciding authorship
-  from its own copy. Unknown origins remain unknown.
+  Rule history keeps the page sources of moved rules. An existing shared
+  line keeps its origin when the same line also came from a page. Unknown
+  origins remain unknown.
   原文：決定 3：「A rules page shows two things. Under each rule, the page it came from. At the top of the page, which AI tools the rules are used in. Wording limit: say the tool is connected and the rules were delivered; never say the AI always follows them.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:28Z–22:30Z；記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 3）；草圖 `Main.dc.html` 右側規則頁（「用在 … 已連接，規則已送達」「來自〈…〉」「你寫的」「AI 從你的頁面整理出一條，還沒算數」「接受／不要」）。
 - **UX-SKILL-12** `shipped` Skills are reached the same way from every door.
   The skills Wenlan holds (each with where it is used, where it came from and
@@ -1168,8 +1170,9 @@ and wait for evidence that people need them.
   Record the proposing tool and the person who confirmed it separately.
   Unconfirmed AI text does not become a rule. `add_rule` must not bypass this
   confirmation. The one-line, 300-character, plain-sentence limits still apply
-  to a saved rule. With the one-store migration (planned for a later PR), the
-  saved-rules page is a view of the store and keeps its source and history.
+  to a saved rule. After the move, the person's save or removal for every
+  Space changes shared rules and goes in rule history. A tool's save or
+  removal waits for the person to confirm its personal-rule plan.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 - **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the

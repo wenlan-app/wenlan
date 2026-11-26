@@ -8090,7 +8090,7 @@ impl WenlanMcpServer {
         self.read_personal_rules_impl(params).await
     }
     #[tool(
-        description = "Propose one plan for all edits. Name each shared or tool layer; ask if unspecified. No rules change until the person reviews and types yes in `wenlan rules shared apply <plan-id>`. Local stdio only; no MCP apply.",
+        description = "Propose one plan for all edits. Name each shared or tool layer; ask if unspecified. Nothing changes until the person types yes in `wenlan rules shared apply <plan-id>`. merge_pages alone previews the page move. No MCP apply.",
         annotations(
             title = "Propose personal rules",
             read_only_hint = false,

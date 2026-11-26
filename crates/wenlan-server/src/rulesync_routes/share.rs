@@ -296,6 +296,9 @@ impl Setup {
     ) -> Result<RulesSyncReport> {
         let _lock = self.lock()?;
         let mut manifest = self.share_manifest()?;
+        let generated = &manifest
+            .page_rules
+            .legacy_rules(&manifest.master.shared, generated);
         let root = self.home_files()?;
         self.claim_key_intents(&root, &mut manifest)?;
         let share = self.plan_share(&root, &manifest, keep_rule, &render_skills)?;

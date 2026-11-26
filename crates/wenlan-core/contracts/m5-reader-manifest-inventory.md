@@ -913,7 +913,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/checkout` | main | no | not_applicable | `none` | — | checkout-specific rules receipt and private output path |
 | `POST` | `/api/rules/setup/restore` | main | no | not_applicable | `none` | — | local tool setup restoration receipt |
 | `POST` | `/api/rules/setup/skill-updates` | main | no | not_applicable | `none` | — | release metadata for personally adopted tools, no page text |
-| `GET` | `/api/rules/setup/review` | main | no | not_applicable | `none` | — | person-only local tool setup review queue |
+| `GET` | `/api/rules/setup/review` | main | yes | automatic | `none` | review_list::list | private review queue can contain a preview of eligible page rules |
 | `POST` | `/api/rules/setup/review/dismiss-update` | main | no | not_applicable | `none` | — | dismisses a local release notice without changing a page |
 | `POST` | `/api/rules/setup/review` | main | no | not_applicable | `none` | — | local tool setup review receipt with local file diffs |
 | `POST` | `/api/rules/setup/review/preview` | main | no | not_applicable | `none` | — | local tool setup review preview with local file diffs and destination permissions |
@@ -922,7 +922,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |
 | `POST` | `/api/rules/personal/show` | main | no | not_applicable | `none` | — | local personal master text and line origins; no Page records |
 | `POST` | `/api/rules/personal/propose` | main | no | not_applicable | `none` | — | local personal master and submitted rule edit preview; no Page records |
-| `GET` | `/api/rules/personal/plan/{id}` | main | no | not_applicable | `none` | — | in-memory personal rule edit preview; no Page records |
+| `GET` | `/api/rules/personal/merge-pages` | main | yes | automatic | `none` | merge_preview | private preview of approved every-Space rules through the eligible page reader |
+| `POST` | `/api/rules/personal/merge-pages` | main | no | not_applicable | `none` | — | person declines the local move offer; response contains no page text |
+| `GET` | `/api/rules/personal/plan/{id}` | main | yes | automatic | `none` | personal_rules::plan | private in-memory preview can contain an eligible page's rules |
 | `POST` | `/api/rules/personal/apply` | main | no | not_applicable | `none` | — | person-confirmed local personal rule version; no Page records |
 | `GET` | `/api/rules/personal/history` | main | no | not_applicable | `none` | — | local personal rule version summaries; no Page records |
 | `GET` | `/api/rules/personal/history/{id}` | main | no | not_applicable | `none` | — | local personal rule history snapshot; no Page records |
@@ -1048,7 +1050,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `read_source` | no | not_applicable | `none` | exact file or webpage text; rejects page sources |
 | `read_space_rules` | yes | automatic | `none` | tool handler |
 | `read_personal_rules` | no | not_applicable | `none` | local personal master; no Page records |
-| `propose_personal_rules` | no | not_applicable | `none` | local personal master and submitted rule edit; no Page records |
+| `propose_personal_rules` | yes | automatic | `none` | GET /api/rules/personal/merge-pages uses the eligible page reader |
 | `save_skill` | no | not_applicable | `none` | proposal receipt and preview of the submitted skill files; no Page prose |
 | `report_space_rule_use` | no | not_applicable | `none` | structured rule id and fixed changed_plan outcome only; no Page prose |
 | `list_skills` | no | not_applicable | `none` | held SKILL.md folders: names, scope, source and safety verdict; no Page prose |
@@ -1567,7 +1569,7 @@ carrying the authority of agreement.
 | `core/db.rs::entity_enrichment_for_claim` | `pub` | no | no | — | `core/db.rs::prepare_entity_enrichment` |
 | `core/db.rs::find_distillation_clusters` | `pub` | no | no | — | `core/db.rs::find_distillation_clusters_scoped` |
 | `core/db.rs::first_active_page` | `pub` | no | no | — | `core/db.rs::list_pages` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit`, `server/team_library_routes.rs::check_originals`, `server/things_read_pages.rs::candidate`, `server/things_read_pages.rs::change_in_place` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/original_routes.rs::handle_keep_original`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::archive_page_for`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_restore_page_version`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/skill_grow.rs::handle_undo_space_rules`, `server/skill_grow.rs::load_rules_folders`, `server/skill_grow.rs::readable_rules_page`, `server/skill_grow.rs::source_line_is_eligible`, `server/skill_grow.rs::write_maintained_rules_page`, `server/skill_grow/page_rules.rs::pending_space_rules`, `server/skill_grow/page_rules.rs::projected_rules`, `server/skill_grow/page_rules.rs::revisions_match`, `server/skill_grow/page_rules.rs::snapshot`, `server/skill_grow/saved_rules.rs::make_page`, `server/skill_grow/saved_rules.rs::page_of`, `server/skill_grow/saved_rules.rs::save_rule_in`, `server/skill_grow/saved_rules.rs::write_rule_change`, `server/steep_new_routes.rs::handle_steep_new_commit_inner`, `server/steep_routes.rs::handle_steep_claim`, `server/steep_routes.rs::handle_steep_commit`, `server/team_library_routes.rs::check_originals`, `server/things_read_pages.rs::candidate`, `server/things_read_pages.rs::change_in_place` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::graph_stream_touches` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/db.rs::insert_page_with_kind` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_basis` |
@@ -1967,10 +1969,14 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal`, `server/sentence_routes.rs::handle_revert_sentences` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::handle_undo_space_rules` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/skill_grow.rs::load_rules_folders` | `private` | no | no | `server/skill_grow.rs::load` | `core/db.rs::get_page` |
-| `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_personal_rules_for_space` | `core/db.rs::get_page` |
+| `server/skill_grow.rs::readable_rules_page` | `private` | no | no | `server/skill_grow.rs::read_personal_rules_for_space`, `server/skill_grow/page_rules.rs::snapshot` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::refresh_with` | `private` | no | no | `server/skill_grow.rs::handle_refresh`, `server/skill_grow.rs::run_nightly_if_due` | `server/skill_grow.rs::refresh_unlocked` |
 | `server/skill_grow.rs::source_line_is_eligible` | `private` | no | no | `server/skill_grow.rs::eligible_lines` | `core/db.rs::get_page` |
 | `server/skill_grow.rs::write_maintained_rules_page` | `private` | no | no | `server/skill_grow.rs::process_space` | `core/db.rs::get_page`, `core/db.rs::try_update_page_content_with_changelog_at_version_and_basis` |
+| `server/skill_grow/page_rules.rs::pending_space_rules` | `pub(super)` | no | no | `server/skill_grow.rs::handle_accept_space_rules` | `core/db.rs::get_page` |
+| `server/skill_grow/page_rules.rs::projected_rules` | `pub(super)` | no | no | `server/skill_grow.rs::handle_read_rules`, `server/skill_grow.rs::sync_rules_files` | `core/db.rs::get_page` |
+| `server/skill_grow/page_rules.rs::revisions_match` | `pub(crate)` | no | no | `server/rulesync_routes/personal_rules.rs::apply` | `core/db.rs::get_page` |
+| `server/skill_grow/page_rules.rs::snapshot` | `pub(super)` | yes | no | — | `core/db.rs::get_page` |
 | `server/skill_grow/saved_rules.rs::make_page` | `private` | no | no | `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
 | `server/skill_grow/saved_rules.rs::page_of` | `pub(super)` | no | no | `server/skill_grow.rs::load_saved`, `server/skill_grow/saved_rules.rs::page_ids`, `server/skill_grow/saved_rules.rs::remove_rule_in`, `server/skill_grow/saved_rules.rs::save_rule_in` | `core/db.rs::get_page` |
 | `server/skill_grow/saved_rules.rs::save_rule_in` | `pub(super)` | no | no | `server/skill_grow/saved_rules.rs::handle_save_rule` | `core/db.rs::get_page` |

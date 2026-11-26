@@ -59,6 +59,8 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "rules_setup_restore",
   "rules_setup_skill_updates",
   "rules_setup_review_list",
+  "rules_setup_apply_personal_plan",
+  "rules_setup_decline_page_merge",
   "rules_setup_skill_review",
   "rules_setup_settings_apply",
   "rules_setup_dismiss_update",

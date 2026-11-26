@@ -58,7 +58,7 @@ use crate::state::SharedState;
 mod displaced;
 mod key_shares;
 mod personal_files;
-mod personal_rules;
+pub(crate) mod personal_rules;
 mod personal_settings;
 mod restore_rules;
 mod review_list;
@@ -92,6 +92,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/setup/review/preview", post(review_preview))
         .route("/api/rules/personal/show", post(personal_rules::show))
         .route("/api/rules/personal/propose", post(personal_rules::propose))
+        .route(
+            "/api/rules/personal/merge-pages",
+            get(personal_rules::preview_merge_pages).post(personal_rules::decline_merge_pages),
+        )
         .route("/api/rules/personal/plan/{id}", get(personal_rules::plan))
         .route("/api/rules/personal/apply", post(personal_rules::apply))
         .route("/api/rules/personal/history", get(personal_rules::history))
@@ -373,6 +377,11 @@ async fn execute(
         require_personal_rules_writer(&headers)?;
     }
     let ai_caller = ai_caller(&headers);
+    let page_serial = if matches!(operation, Operation::Sync | Operation::Adopt(_)) {
+        Some(crate::skill_grow::SKILLS_MUTATION_LOCK.lock().await)
+    } else {
+        None
+    };
     let generated = if matches!(
         operation,
         Operation::Sync | Operation::Review(_) | Operation::Share(_)
@@ -381,6 +390,14 @@ async fn execute(
     } else {
         Vec::new()
     };
+    let has_db = state.read().await.db.is_some();
+    let empty_page_rules = page_serial.is_some()
+        && generated.is_empty()
+        && has_db
+        && personal_rules::page_rules_unanswered()?
+        && !crate::skill_grow::page_rules::merge_snapshot(&state)
+            .await?
+            .has_candidates();
     let result = tokio::task::spawn_blocking(move || {
         let setup = if matches!(operation, Operation::Restore(_)) {
             Setup::system()?
@@ -397,7 +414,11 @@ async fn execute(
                     let plan = setup.preview_adoption(home)?;
                     validate_confirmed_adoption(&request, &plan)?;
                 }
-                setup.adopt(&request)
+                let report = setup.adopt(&request)?;
+                if empty_page_rules {
+                    setup.mark_empty_page_rules()?;
+                }
+                Ok(report)
             }
             Operation::Share(request) => {
                 let approval = &request.approval;
@@ -417,14 +438,20 @@ async fn execute(
                 )
             }
             Operation::Restore(options) => setup.restore_with_options(options),
-            Operation::Sync => setup.sync_for_caller(
-                &generated,
-                if ai_caller {
-                    SyncCaller::Agent
-                } else {
-                    SyncCaller::Person
-                },
-            ),
+            Operation::Sync => {
+                let report = setup.sync_for_caller(
+                    &generated,
+                    if ai_caller {
+                        SyncCaller::Agent
+                    } else {
+                        SyncCaller::Person
+                    },
+                )?;
+                if empty_page_rules {
+                    setup.mark_empty_page_rules()?;
+                }
+                Ok(report)
+            }
             Operation::Review(request) => setup.review(&request, &generated),
         }
     })
@@ -435,9 +462,15 @@ async fn execute(
         .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
-pub(crate) fn sync_from_pages(generated: &[String]) -> Result<()> {
+pub(crate) fn sync_from_pages(generated: &[String], empty: bool) -> Result<()> {
     let setup = Setup::system()?;
-    if setup.data.join("personal.json").is_file() {
+    if empty {
+        setup.mark_empty_page_rules()?;
+    }
+    if setup
+        .load_if_present()?
+        .is_some_and(|manifest| manifest.adopted)
+    {
         let report = setup.sync_for_caller(generated, SyncCaller::Background)?;
         if !report.blocked.is_empty() {
             tracing::warn!(
@@ -1145,6 +1178,11 @@ struct Manifest<Content = Vec<u8>> {
     personal_rule_history: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     personal_rule_journal: Option<personal_rules::RuleHistoryJournal>,
+    #[serde(
+        default,
+        skip_serializing_if = "personal_rules::PageRulesState::is_unanswered"
+    )]
+    page_rules: personal_rules::PageRulesState,
     /// Old manifests omitted the flag while the external source was followed.
     #[serde(
         rename = "shared_source_following",
@@ -1261,6 +1299,7 @@ impl Manifest {
             personal_rule_origins: Vec::new(),
             personal_rule_history: Vec::new(),
             personal_rule_journal: None,
+            page_rules: Default::default(),
             legacy_source_following: false,
             rule_import_notice_pending: false,
             imported_rule_paths: BTreeSet::new(),
@@ -3190,6 +3229,9 @@ impl Setup {
         caller: SyncCaller,
     ) -> Result<RulesSyncReport> {
         ensure!(manifest.adopted, "finish restoring the local setup first");
+        let generated = &manifest
+            .page_rules
+            .legacy_rules(&manifest.master.shared, generated);
         let mut result = report("Checked the local tool setup");
         let settings = wenlan_core::shared_space::settings_path();
         let layers = rulesync_team::load_layers(&settings)?;
@@ -3266,6 +3308,9 @@ impl Setup {
             .load()?
             .filter(|manifest| manifest.adopted)
             .context("run wenlan rules adopt first")?;
+        let generated = &manifest
+            .page_rules
+            .legacy_rules(&manifest.master.shared, generated);
         crate::rulesync_checkout::open(self, repo, &manifest.master, generated)
     }
 
@@ -3548,6 +3593,9 @@ impl Setup {
         blocked: &BTreeSet<PathBuf>,
         result: &mut RulesSyncReport,
     ) -> Result<()> {
+        let generated = &manifest
+            .page_rules
+            .legacy_rules(&manifest.master.shared, generated);
         let had_issues = !std::mem::take(&mut manifest.delivery_issues).is_empty();
         let paths: Vec<_> = manifest
             .active_deliveries()

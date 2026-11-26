@@ -73,6 +73,17 @@ pub fn preview_personal_rule_edits(
     master: &PersonalMaster,
     edits: &[PersonalRuleEdit],
 ) -> Result<Vec<PersonalRulePlanChange>> {
+    let changes = personal_rule_edit_diffs(master, edits)?;
+    ensure!(!changes.is_empty(), "There are no rule changes to propose.");
+    Ok(changes)
+}
+
+/// A page merge or history restore can change provenance without changing any
+/// text. These callers still use the same safety checks and diff.
+pub fn personal_rule_edit_diffs(
+    master: &PersonalMaster,
+    edits: &[PersonalRuleEdit],
+) -> Result<Vec<PersonalRulePlanChange>> {
     ensure!(
         !edits.is_empty(),
         "Choose at least one rule layer to change."
@@ -103,7 +114,6 @@ pub fn preview_personal_rule_edits(
             affected_tools: affected_tools(master, &edit.layer),
         });
     }
-    ensure!(!changes.is_empty(), "There are no rule changes to propose.");
     Ok(changes)
 }
 
@@ -204,6 +214,8 @@ mod tests {
             confirmer: Some("person".into()),
             layer,
             time: Some(42),
+            pages: Vec::new(),
+            kept_shared: false,
         }
     }
 

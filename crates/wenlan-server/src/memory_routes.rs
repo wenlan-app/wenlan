@@ -2095,6 +2095,27 @@ pub async fn handle_accept_revision(
     };
     let agent = extract_agent_name(&headers, None);
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
+    let rule_edit = if crate::rulesync_routes::personal_rules::page_rules_merged()? {
+        if let Some(card) = db
+            .open_page_cards()
+            .await?
+            .into_iter()
+            .find(|card| card.card_id == id)
+        {
+            let edit = crate::skill_grow::page_rules::PageEdit::begin(
+                &db,
+                Some(&knowledge_path),
+                &card.page_id,
+                &headers,
+            )
+            .await?;
+            edit.map(|edit| (edit, card.page_id))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     // Legacy callers send either no body or an empty JSON object. Every other
     // payload must pass the complete, strict typed edit request parser below.
     let ordinary_acceptance = if body.is_empty() {
@@ -2128,6 +2149,12 @@ pub async fn handle_accept_revision(
         )
         .await?
     };
+    if result.wrote {
+        if let Some((edit, page)) = rule_edit {
+            edit.finish(&db, Some(&knowledge_path), &page, &headers)
+                .await?;
+        }
+    }
     // The accepted text may be on a rules page (UX-SKILL-10).
     crate::skill_grow::rules_may_have_changed(&state).await;
     Ok(Json(result))

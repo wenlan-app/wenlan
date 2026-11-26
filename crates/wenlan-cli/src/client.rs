@@ -956,6 +956,21 @@ impl WenlanClient {
             .await
     }
 
+    pub(crate) async fn preview_merge_page_rules(
+        &self,
+    ) -> Result<Option<wenlan_types::personal_rules::PersonalRulePlan>> {
+        self.get_json("/api/rules/personal/merge-pages", false)
+            .await
+    }
+
+    pub(crate) async fn decline_merge_page_rules(
+        &self,
+        request: &wenlan_types::personal_rules::PersonalRuleApplyRequest,
+    ) -> Result<()> {
+        self.post_json_as_person("/api/rules/personal/merge-pages", request, None, true)
+            .await
+    }
+
     pub(crate) async fn apply_personal_rule_plan(
         &self,
         request: &wenlan_types::personal_rules::PersonalRuleApplyRequest,

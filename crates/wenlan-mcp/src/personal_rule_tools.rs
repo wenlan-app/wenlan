@@ -51,7 +51,11 @@ pub struct PersonalRuleEditParam {
 #[serde(deny_unknown_fields)]
 pub struct ProposePersonalRulesParams {
     /// All edits from this request, grouped into one plan and one diff.
+    #[serde(default)]
     pub edits: Vec<PersonalRuleEditParam>,
+    /// Preview moving approved every-Space rules from pages. Supply no edits.
+    #[serde(default)]
+    pub merge_pages: bool,
 }
 
 fn invalid_layer(layer: &PersonalRuleLayer) -> bool {
@@ -142,6 +146,28 @@ impl WenlanMcpServer {
                 None,
             ));
         }
+        if params.merge_pages {
+            if !params.edits.is_empty() {
+                return Err(McpError::invalid_params(
+                    "Preview the page-rule move on its own, without layer edits.",
+                    None,
+                ));
+            }
+            return match self
+                .client
+                .get::<Option<PersonalRulePlan>>("/api/rules/personal/merge-pages")
+                .await
+            {
+                Ok(Some(plan)) => query_success(plan),
+                Ok(None) => query_success(serde_json::json!({"page_merge_pending": false})),
+                Err(error) => Ok(CallToolResult::error(vec![
+                    rmcp::model::ContentBlock::text(safe_daemon_error(
+                        error,
+                        "Wenlan could not preview the move. No rules changed.",
+                    )),
+                ])),
+            };
+        }
         if params.edits.is_empty() {
             return Err(McpError::invalid_params(
                 "Provide at least one layer edit; no plan was created.",
@@ -186,6 +212,28 @@ mod tests {
         matchers::{body_json, header, method, path},
         Mock, MockServer, ResponseTemplate,
     };
+
+    #[tokio::test]
+    async fn personal_rules_page_merge_preview_only_calls_the_read_endpoint() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/api/rules/personal/merge-pages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id":"fixture", "expires_at":1, "proposer":"Wenlan pages", "changes":[], "blocked_tools":[],
+                "page_merge":{"rule_count":1, "excluded":[], "excludes_space_only":true}
+            })))
+            .expect(1).mount(&mock).await;
+        let result = server(&mock.uri(), TransportMode::Stdio)
+            .propose_personal_rules_impl(ProposePersonalRulesParams {
+                edits: vec![],
+                merge_pages: true,
+            })
+            .await
+            .unwrap();
+        let plan: PersonalRulePlan =
+            serde_json::from_value(result.structured_content.unwrap()).unwrap();
+        assert_eq!(plan.page_merge.unwrap().rule_count, 1);
+        assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+    }
 
     fn server(url: &str, transport: TransportMode) -> WenlanMcpServer {
         WenlanMcpServer::new(
@@ -249,6 +297,7 @@ mod tests {
 
         let result = server(&mock.uri(), TransportMode::Stdio)
             .propose_personal_rules_impl(ProposePersonalRulesParams {
+                merge_pages: false,
                 edits: vec![
                     PersonalRuleEditParam {
                         layer: PersonalRuleLayerParam::Shared,
@@ -284,6 +333,7 @@ mod tests {
             .await;
         let result = server(&mock.uri(), TransportMode::Stdio)
             .propose_personal_rules_impl(ProposePersonalRulesParams {
+                merge_pages: false,
                 edits: vec![PersonalRuleEditParam {
                     layer: PersonalRuleLayerParam::Shared,
                     text: "sk-live-this-must-not-escape".into(),
@@ -315,6 +365,7 @@ mod tests {
             .await;
         let result = server(&mock.uri(), TransportMode::Stdio)
             .propose_personal_rules_impl(ProposePersonalRulesParams {
+                merge_pages: false,
                 edits: vec![PersonalRuleEditParam {
                     layer: PersonalRuleLayerParam::Shared,
                     text: "Unreturned submitted text".into(),
@@ -345,7 +396,10 @@ mod tests {
             .await;
         assert!(result.is_err());
         let result = server(&mock.uri(), TransportMode::Http)
-            .propose_personal_rules_impl(ProposePersonalRulesParams { edits: vec![] })
+            .propose_personal_rules_impl(ProposePersonalRulesParams {
+                edits: vec![],
+                merge_pages: false,
+            })
             .await;
         assert!(result.is_err());
         assert!(mock.received_requests().await.unwrap().is_empty());
