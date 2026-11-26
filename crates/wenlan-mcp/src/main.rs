@@ -227,7 +227,9 @@ async fn run_stdio(
         None,
     )
     .with_tool_profile(tool_profile)
-    .with_folder_space(folder);
+    .with_folder_space(folder)
+    .with_startup_rules()
+    .await;
     let service = server
         .serve(stdio())
         .await

@@ -203,6 +203,44 @@ const REPAIR_PLAN_NO_ANSWER: &str = "The repair plan request was sent but Wenlan
      Do not retry this call: the cached lint reports were consumed. Run `lint` again and open \
      a new plan once Wenlan answers.";
 
+/// Most characters of rule text the instructions carry; the rest are named
+/// by count and `read_space_rules` lists them.
+const STARTUP_RULES_MAX_CHARS: usize = 1_200;
+
+/// The instructions' rules section: what the user already told an AI tool.
+fn startup_rules_note(lines: &[wenlan_types::skills::SkillLine]) -> Option<String> {
+    let texts: Vec<&str> = lines
+        .iter()
+        .map(|line| line.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect();
+    if texts.is_empty() {
+        return None;
+    }
+    let mut note = String::from(
+        "\n\nThe user's working rules (they said these once; follow them without asking again):",
+    );
+    let mut used = 0;
+    let mut shown = 0;
+    for text in &texts {
+        let length = text.chars().count();
+        if shown > 0 && used + length > STARTUP_RULES_MAX_CHARS {
+            break;
+        }
+        note.push_str("\n- ");
+        note.push_str(text);
+        used += length;
+        shown += 1;
+    }
+    if shown < texts.len() {
+        note.push_str(&format!(
+            "\n- …and {} more: read_space_rules lists them.",
+            texts.len() - shown
+        ));
+    }
+    Some(note)
+}
+
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources", "read_space_rules"];
 /// What the `daily` profile lists: reading, saving, writing and reshaping
 /// pages, the approved working rules and saving one the person asks for,
@@ -645,6 +683,9 @@ pub struct WenlanMcpServer {
     /// Stdio only: keeps the working folder's Space current before each call.
     folder_space: Option<std::sync::Arc<crate::folder_space::FolderSpaceWatch>>,
     team_library: Option<(bool, team_library::Lookup)>,
+    /// Stdio only: the working rules read once at start, put into the
+    /// instructions so a tool with no rule file still follows them.
+    startup_rules: Option<String>,
 }
 
 // ===== Parameter Structs =====
@@ -7283,6 +7324,7 @@ impl WenlanMcpServer {
             space_pin: None,
             folder_space: None,
             team_library: None,
+            startup_rules: None,
         }
     }
 
@@ -7292,6 +7334,48 @@ impl WenlanMcpServer {
         self.folder_space = Some(std::sync::Arc::new(
             crate::folder_space::FolderSpaceWatch::new(hint),
         ));
+        self
+    }
+
+    /// Read the working rules once at start (local stdio only) so the
+    /// instructions carry them: an AI tool with no rule file follows them
+    /// without having to think of calling `read_space_rules`. A daemon that
+    /// does not answer quickly changes nothing.
+    pub async fn with_startup_rules(mut self) -> Self {
+        if self.transport != TransportMode::Stdio
+            || self.agent_identity.team_member().is_some()
+            || !matches!(
+                self.tool_profile,
+                ToolProfile::Standard | ToolProfile::Daily | ToolProfile::Plugin
+            )
+        {
+            return self;
+        }
+        let read = async {
+            if let Some(folder_space) = &self.folder_space {
+                folder_space.refresh(&self.client).await;
+            }
+            match effective_space(&None) {
+                Some(space) => {
+                    self.client
+                        .get_with_query::<_, SpaceRulesResponse>(
+                            "/api/skills/rules",
+                            &[("space", space)],
+                        )
+                        .await
+                }
+                None => {
+                    self.client
+                        .get::<SpaceRulesResponse>("/api/skills/rules")
+                        .await
+                }
+            }
+        };
+        if let Ok(Ok(response)) =
+            tokio::time::timeout(std::time::Duration::from_millis(1500), read).await
+        {
+            self.startup_rules = startup_rules_note(&response.lines);
+        }
         self
     }
 
@@ -8891,13 +8975,14 @@ impl ServerHandler for WenlanMcpServer {
              - brief carries work across sessions: read it when resuming project work or when the user asks to \
                catch up; handoff writes it for the next session.\n\
              - recall finds one specific thing (\"what's Alice's role?\", \"our auth decision\").\n\
-             - get_page_sources shows what a page rests on.\n\n\
+             - get_page_sources shows what a page rests on.\n\
+             - read_space_rules: before your first task in a session, call read_space_rules once and follow it: the user said these once.\n\n\
              BRIEF vs RECALL: brief is the Space-owned project snapshot; recall is a targeted lookup. \
              Brief reads never create or mutate state; handoff writes.\n\n\
              You set each capture's type and entity yourself, in every mode. When Steep runs automatically, \
              the backend also scores quality, adds tags, and deduplicates in the background; when it runs on \
-             demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
-             conversational context, why something matters, and what the user actually cares about."
+             demand, distill hands you clusters and steep hands you out of date pages. Either way, add what only you know: the \
+             context, why it matters, and what the user cares about."
         );
         let note = match self.tool_profile {
             ToolProfile::Daily => Some(DAILY_INSTRUCTIONS_NOTE),
@@ -8906,6 +8991,10 @@ impl ServerHandler for WenlanMcpServer {
         };
         if let (Some(note), Some(instructions)) = (note, info.instructions.as_mut()) {
             instructions.push_str(note);
+        }
+        if let (Some(rules), Some(instructions)) = (&self.startup_rules, info.instructions.as_mut())
+        {
+            instructions.push_str(rules);
         }
         info
     }
@@ -9086,6 +9175,64 @@ mod tests {
             let parameter: SaveSkillToolParam = serde_json::from_value(serde_json::json!(target))
                 .unwrap_or_else(|error| panic!("{target} should deserialize: {error}"));
             assert_eq!(parameter, expected_param);
+        }
+    }
+
+    fn rule_line(text: &str) -> wenlan_types::skills::SkillLine {
+        serde_json::from_value(serde_json::json!({
+            "id": text, "kind": "rule", "text": text, "source_page_id": "p",
+            "source_page_title": "Rules", "source_revision": 1,
+            "source_revision_at": 0, "source_quote": text
+        }))
+        .expect("rule line")
+    }
+
+    /// The rules read at start go into the instructions, so an AI tool
+    /// with no rule file follows them (real run: with only the Wenlan
+    /// connection it chose npm although the user had said pnpm).
+    #[test]
+    fn startup_rules_reach_the_instructions_and_stay_short() {
+        assert_eq!(startup_rules_note(&[]), None);
+        let note =
+            startup_rules_note(&[rule_line("Use pnpm, never npm, in this repo.")]).expect("a note");
+        assert!(note.contains("follow them without asking again"));
+        assert!(note.contains("- Use pnpm, never npm, in this repo."));
+        let many: Vec<_> = (0..100)
+            .map(|n| rule_line(&format!("Rule number {n} says something specific enough.")))
+            .collect();
+        let note = startup_rules_note(&many).expect("a note");
+        assert!(note.chars().count() < STARTUP_RULES_MAX_CHARS + 300);
+        assert!(note.contains("more: read_space_rules lists them."));
+        let mut server =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily);
+        server.startup_rules = startup_rules_note(&[rule_line("Use pnpm.")]);
+        assert!(server
+            .get_info()
+            .instructions
+            .expect("instructions")
+            .ends_with("- Use pnpm."));
+    }
+
+    /// An AI tool that has only the Wenlan connection (no rule file) is told
+    /// to read the working rules before its first task (real run: it chose
+    /// npm although the user had said pnpm, and never called a Wenlan tool).
+    #[test]
+    fn every_local_profile_says_to_read_the_working_rules_first() {
+        for profile in [
+            ToolProfile::Daily,
+            ToolProfile::Plugin,
+            ToolProfile::Standard,
+        ] {
+            let instructions =
+                make_server_with_profile(TransportMode::Stdio, "agent", None, profile)
+                    .get_info()
+                    .instructions
+                    .expect("instructions");
+            assert!(
+                instructions
+                    .contains("before your first task in a session, call read_space_rules once"),
+                "{profile:?}"
+            );
         }
     }
 
