@@ -248,6 +248,31 @@ impl WenlanClient {
         Some(spaces.into_iter().map(|space| space.name).collect())
     }
 
+    /// The working rules for `space` (or the every-Space ones), asked once
+    /// at start with a short timeout and no retry, so a stopped daemon
+    /// delays nothing. `None` when the daemon did not answer.
+    pub async fn startup_rules(
+        &self,
+        space: Option<&str>,
+    ) -> Option<wenlan_types::skills::SpaceRulesResponse> {
+        let mut request = self
+            .client
+            .get(format!("{}/api/skills/rules", self.base_url));
+        if let Some(space) = space {
+            request = request.query(&[("space", space)]);
+        }
+        let response = self
+            .attach_common_headers(request)
+            .timeout(Duration::from_secs(1))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        response.json().await.ok()
+    }
+
     /// Set the agent name to be sent as `x-agent-name` header on every request.
     pub fn with_agent_name(mut self, name: String) -> Self {
         self.agent_identity = Some(AgentIdentity::from(name));

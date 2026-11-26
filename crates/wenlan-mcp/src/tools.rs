@@ -206,6 +206,8 @@ const REPAIR_PLAN_NO_ANSWER: &str = "The repair plan request was sent but Wenlan
 /// Most characters of rule text the instructions carry; the rest are named
 /// by count and `read_space_rules` lists them.
 const STARTUP_RULES_MAX_CHARS: usize = 1_200;
+/// Most characters of one rule; a longer one is cut and read_space_rules has it whole.
+const STARTUP_RULE_MAX_CHARS: usize = 400;
 
 /// The instructions' rules section: what the user already told an AI tool.
 fn startup_rules_note(lines: &[wenlan_types::skills::SkillLine]) -> Option<String> {
@@ -218,17 +220,24 @@ fn startup_rules_note(lines: &[wenlan_types::skills::SkillLine]) -> Option<Strin
         return None;
     }
     let mut note = String::from(
-        "\n\nThe user's working rules (they said these once; follow them without asking again):",
+        "The user's working rules, as of this session's start (they said these once; follow \
+         them without asking again; read_space_rules has the current list):",
     );
     let mut used = 0;
     let mut shown = 0;
     for text in &texts {
+        let text: String = if text.chars().count() > STARTUP_RULE_MAX_CHARS {
+            let cut: String = text.chars().take(STARTUP_RULE_MAX_CHARS).collect();
+            format!("{cut}…")
+        } else {
+            (*text).to_string()
+        };
         let length = text.chars().count();
         if shown > 0 && used + length > STARTUP_RULES_MAX_CHARS {
             break;
         }
         note.push_str("\n- ");
-        note.push_str(text);
+        note.push_str(&text);
         used += length;
         shown += 1;
     }
@@ -7351,29 +7360,11 @@ impl WenlanMcpServer {
         {
             return self;
         }
-        let read = async {
-            if let Some(folder_space) = &self.folder_space {
-                folder_space.refresh(&self.client).await;
-            }
-            match effective_space(&None) {
-                Some(space) => {
-                    self.client
-                        .get_with_query::<_, SpaceRulesResponse>(
-                            "/api/skills/rules",
-                            &[("space", space)],
-                        )
-                        .await
-                }
-                None => {
-                    self.client
-                        .get::<SpaceRulesResponse>("/api/skills/rules")
-                        .await
-                }
-            }
-        };
-        if let Ok(Ok(response)) =
-            tokio::time::timeout(std::time::Duration::from_millis(1500), read).await
-        {
+        if let Some(folder_space) = &self.folder_space {
+            folder_space.refresh(&self.client).await;
+        }
+        let space = effective_space(&None);
+        if let Some(response) = self.client.startup_rules(space.as_deref()).await {
             self.startup_rules = startup_rules_note(&response.lines);
         }
         self
@@ -8992,9 +8983,11 @@ impl ServerHandler for WenlanMcpServer {
         if let (Some(note), Some(instructions)) = (note, info.instructions.as_mut()) {
             instructions.push_str(note);
         }
+        // The rules go first: a client may keep only the start of long
+        // instructions.
         if let (Some(rules), Some(instructions)) = (&self.startup_rules, info.instructions.as_mut())
         {
-            instructions.push_str(rules);
+            *instructions = format!("{rules}\n\n{instructions}");
         }
         info
     }
@@ -9191,11 +9184,12 @@ mod tests {
     /// with no rule file follows them (real run: with only the Wenlan
     /// connection it chose npm although the user had said pnpm).
     #[test]
-    fn startup_rules_reach_the_instructions_and_stay_short() {
+    fn ux_chat_11_startup_rules_reach_the_instructions_first_and_stay_short() {
         assert_eq!(startup_rules_note(&[]), None);
         let note =
             startup_rules_note(&[rule_line("Use pnpm, never npm, in this repo.")]).expect("a note");
         assert!(note.contains("follow them without asking again"));
+        assert!(note.contains("read_space_rules has the current list"));
         assert!(note.contains("- Use pnpm, never npm, in this repo."));
         let many: Vec<_> = (0..100)
             .map(|n| rule_line(&format!("Rule number {n} says something specific enough.")))
@@ -9206,11 +9200,11 @@ mod tests {
         let mut server =
             make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily);
         server.startup_rules = startup_rules_note(&[rule_line("Use pnpm.")]);
-        assert!(server
-            .get_info()
-            .instructions
-            .expect("instructions")
-            .ends_with("- Use pnpm."));
+        let instructions = server.get_info().instructions.expect("instructions");
+        assert!(instructions.starts_with("The user's working rules"));
+        assert!(instructions.contains("- Use pnpm.\n\nWenlan holds the user's docs"));
+        let long = startup_rules_note(&[rule_line(&"x".repeat(1_000))]).expect("a note");
+        assert!(long.chars().count() < STARTUP_RULE_MAX_CHARS + 300);
     }
 
     /// An AI tool that has only the Wenlan connection (no rule file) is told
