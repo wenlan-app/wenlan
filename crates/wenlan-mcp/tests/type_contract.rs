@@ -667,6 +667,7 @@ async fn t8b_confirm_memory_reports_missing_row() {
         .respond_with(ResponseTemplate::new(200).set_body_json(&ConfirmResponse {
             confirmed: true,
             updated: true,
+            rule_plan: None,
         }))
         .mount(&hit_mock)
         .await;
@@ -685,6 +686,7 @@ async fn t8b_confirm_memory_reports_missing_row() {
         .respond_with(ResponseTemplate::new(200).set_body_json(&ConfirmResponse {
             confirmed: true,
             updated: false,
+            rule_plan: None,
         }))
         .mount(&miss_mock)
         .await;
@@ -696,6 +698,26 @@ async fn t8b_confirm_memory_reports_missing_row() {
             .expect("confirm_memory_impl failed for updated=false"),
     );
     assert_eq!(miss_text, "Memory mem_miss not found.");
+
+    // After the rule move, a tool's confirm of a preference is a rule plan.
+    let (plan_mock, plan_client) = setup().await;
+    Mock::given(method("POST"))
+        .and(path("/api/memory/confirm/mem_pref"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&ConfirmResponse {
+            confirmed: false,
+            updated: true,
+            rule_plan: Some("plan_1".into()),
+        }))
+        .mount(&plan_mock)
+        .await;
+    let plan_text = text_of(
+        &make_server(plan_client)
+            .confirm_memory_impl("mem_pref")
+            .await
+            .expect("confirm_memory_impl failed for a rule plan"),
+    );
+    assert!(plan_text.contains("plan_1"), "{plan_text}");
+    assert!(plan_text.contains("not confirmed"), "{plan_text}");
 }
 
 #[tokio::test]

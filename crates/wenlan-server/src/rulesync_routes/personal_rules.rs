@@ -688,13 +688,7 @@ pub(super) async fn apply(
         }
         None => None,
     };
-    // A page plan delivers page lines through shared rules, so only the
-    // confirmed preferences still come from generated lines.
-    let generated = if held.pages.is_some() {
-        crate::skill_grow::preference_tool_rules(&state).await?
-    } else {
-        crate::skill_grow::general_tool_rules(&state).await?
-    };
+    let generated = crate::skill_grow::general_tool_rules(&state).await?;
     tokio::task::spawn_blocking(move || {
         let setup = rendering_setup()?;
         let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
@@ -739,16 +733,19 @@ pub(super) async fn merge_preview(
     if !snapshot.has_candidates() {
         return Ok(None);
     }
-    // Bound to the same lines the apply delivers: the preferences, which stay.
-    let generated = crate::skill_grow::preference_tool_rules(state).await?;
+    // Bound to the same lines the apply reads before the move.
+    let generated = crate::skill_grow::general_tool_rules(state).await?;
     tokio::task::spawn_blocking(move || {
         let page_plan = PagePlan::Merge(snapshot);
         let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
         let session = RenderSession::new(&setup.binary);
-        let prepared =
-            setup.prepare_page_plan(&manifest, &page_plan, &generated, &|tool, text| {
-                setup.render_member_rule(&session, tool, text, &layers)
-            })?;
+        let prepared = setup.prepare_page_plan(
+            &manifest,
+            &page_plan,
+            &generated,
+            Some(PAGES_PROPOSER.into()),
+            &|tool, text| setup.render_member_rule(&session, tool, text, &layers),
+        )?;
         Ok(Some(remember_plan(
             &setup,
             prepared,
@@ -786,6 +783,7 @@ impl Setup {
         manifest: &Manifest,
         pages: &PagePlan,
         generated: &[String],
+        proposer: Option<String>,
         render: &impl Fn(&str, &str) -> Result<SkillFiles>,
     ) -> Result<Prepared> {
         self.prepare_plan(
@@ -796,7 +794,7 @@ impl Setup {
                 restore: None,
             },
             generated,
-            Some(PAGES_PROPOSER.into()),
+            proposer,
             render,
         )
     }
@@ -885,6 +883,35 @@ pub(crate) async fn page_change(
     snapshot: PageRuleSnapshot,
     remove: BTreeSet<String>,
 ) -> Result<Option<String>, ServerError> {
+    let proposer = Some(PAGES_PROPOSER.into());
+    change_shared_lines(headers, generated, snapshot, remove, proposer).await
+}
+
+/// After the move, a confirmed preference becomes one shared line. The
+/// person's own confirm applies it at once; a tool's becomes a plan for the
+/// person to confirm. `proposer` is the tool the preference came from.
+pub(crate) async fn preference_change(
+    headers: &HeaderMap,
+    mut snapshot: PageRuleSnapshot,
+    from_tool: Option<String>,
+) -> Result<Option<String>, ServerError> {
+    let proposer = match from_tool {
+        Some(tool) => Some(tool),
+        None => proposer(headers)?,
+    };
+    for rule in &mut snapshot.rules {
+        rule.proposer.clone_from(&proposer);
+    }
+    change_shared_lines(headers, Vec::new(), snapshot, BTreeSet::new(), proposer).await
+}
+
+async fn change_shared_lines(
+    headers: &HeaderMap,
+    generated: Vec<String>,
+    snapshot: PageRuleSnapshot,
+    remove: BTreeSet<String>,
+    proposer: Option<String>,
+) -> Result<Option<String>, ServerError> {
     require_local_reader(headers)?;
     let confirmed = require_local_person(headers).is_ok();
     if snapshot.rules.is_empty() && remove.is_empty() {
@@ -894,7 +921,13 @@ pub(crate) async fn page_change(
         let setup = rendering_setup()?;
         let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
         let session = RenderSession::new(&setup.binary);
-        setup.change_page_rules(&generated, snapshot, remove, confirmed, &|tool, text| {
+        let change = PageChange {
+            snapshot,
+            remove,
+            confirmed,
+            proposer,
+        };
+        setup.change_page_rules(&generated, change, &|tool, text| {
             setup.render_member_rule(&session, tool, text, &layers)
         })
     })
@@ -903,19 +936,32 @@ pub(crate) async fn page_change(
     .map_err(server_error)
 }
 
+/// One change to the page-backed shared lines, and whether the local person
+/// is the one asking for it.
+pub(super) struct PageChange {
+    pub snapshot: PageRuleSnapshot,
+    pub remove: BTreeSet<String>,
+    pub confirmed: bool,
+    pub proposer: Option<String>,
+}
+
 impl Setup {
     fn change_page_rules(
         &self,
         generated: &[String],
-        snapshot: PageRuleSnapshot,
-        remove: BTreeSet<String>,
-        confirmed: bool,
+        change: PageChange,
         render: &impl Fn(&str, &str) -> Result<SkillFiles>,
     ) -> Result<Option<String>> {
+        let PageChange {
+            snapshot,
+            remove,
+            confirmed,
+            proposer,
+        } = change;
         let _lock = self.lock()?;
         let manifest = self.load_if_present()?.unwrap_or_else(empty_manifest);
         let pages = PagePlan::Change { snapshot, remove };
-        let prepared = self.prepare_page_plan(&manifest, &pages, generated, render)?;
+        let prepared = self.prepare_page_plan(&manifest, &pages, generated, proposer, render)?;
         if prepared.plan.changes.is_empty() {
             return Ok(None);
         }

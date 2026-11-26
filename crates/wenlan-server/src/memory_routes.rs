@@ -1738,6 +1738,24 @@ async fn refuse_ai_confirming_working_memory(
     Ok(())
 }
 
+/// After the move, a person's confirm of a preference also changes shared
+/// rules, so it waits while a tool's rule file needs review.
+fn preference_rule_ready() -> Result<(), ServerError> {
+    crate::rulesync_routes::personal_rules::page_change_ready().map_err(|_| {
+        ServerError::Conflict(
+            "A tool's rule file needs review first. Review it in Rules, then confirm this \
+             preference again."
+                .into(),
+        )
+    })
+}
+
+fn preference_rule_failed(error: ServerError) -> ServerError {
+    ServerError::Conflict(format!(
+        "The preference was confirmed, but your rules did not change: {error}"
+    ))
+}
+
 /// POST /api/memory/confirm/{source_id}
 pub async fn handle_confirm_memory(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -1752,7 +1770,24 @@ pub async fn handle_confirm_memory(
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
+    let preference = crate::skill_grow::is_person_preference(&db, &source_id).await;
+    let moved = preference && crate::rulesync_routes::personal_rules::page_rules_merged()?;
+    if moved && confirmed && !caller_is_person(&headers) {
+        // After the move a tool's confirm of a preference is a proposal: the
+        // memory stays unconfirmed and the person confirms the rule plan.
+        let rule_plan =
+            crate::skill_grow::preference_rule_on_confirm(&db, &headers, &source_id).await?;
+        return Ok(Json(ConfirmResponse {
+            confirmed: false,
+            updated: true,
+            rule_plan,
+        }));
+    }
     refuse_ai_confirming_working_memory(&db, &headers, &source_id).await?;
+    if moved && confirmed {
+        // Refuse before the memory changes when shared rules cannot follow.
+        preference_rule_ready()?;
+    }
     let stability = if confirmed { "confirmed" } else { "new" };
     let updated = db
         .set_stability(&source_id, stability)
@@ -1762,12 +1797,23 @@ pub async fn handle_confirm_memory(
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", source_id)));
     }
-    // A preference kept in no Space is given to the person's tools once
-    // confirmed, and no longer when not.
-    if crate::skill_grow::is_person_preference(&db, &source_id).await {
+    // Before the move, a preference kept in no Space is given to the
+    // person's tools once confirmed, and no longer when not. After it, the
+    // person's confirm adds it to their shared rules; unconfirming or
+    // forgetting the memory leaves the rule, which they remove in Rules.
+    if moved && confirmed {
+        crate::skill_grow::preference_rule_on_confirm(&db, &headers, &source_id)
+            .await
+            .map_err(preference_rule_failed)?;
+    }
+    if preference {
         crate::skill_grow::rules_may_have_changed(&state).await;
     }
-    Ok(Json(ConfirmResponse { confirmed, updated }))
+    Ok(Json(ConfirmResponse {
+        confirmed,
+        updated,
+        rule_plan: None,
+    }))
 }
 
 /// POST /api/memory/list
@@ -2410,6 +2456,17 @@ pub async fn handle_update_memory(
         refuse_ai_confirming_working_memory(&db, &headers, &id).await?;
     }
     let preference_before = crate::skill_grow::is_person_preference(&db, &id).await;
+    let newly_confirmed = req.confirmed == Some(true)
+        && crate::rulesync_routes::personal_rules::page_rules_merged()?
+        && db
+            .get_memory_detail(&id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|memory| !memory.confirmed);
+    if newly_confirmed && preference_before {
+        preference_rule_ready()?;
+    }
 
     let memory_type = req
         .memory_type
@@ -2431,7 +2488,13 @@ pub async fn handle_update_memory(
     )
     .await
     .map_err(ServerError::from)?;
-    if preference_before || crate::skill_grow::is_person_preference(&db, &id).await {
+    let preference_after = crate::skill_grow::is_person_preference(&db, &id).await;
+    if newly_confirmed && preference_after {
+        crate::skill_grow::preference_rule_on_confirm(&db, &headers, &id)
+            .await
+            .map_err(preference_rule_failed)?;
+    }
+    if preference_before || preference_after {
         crate::skill_grow::rules_may_have_changed(&state).await;
     }
     Ok(Json(wenlan_types::responses::SuccessResponse { ok: true }))

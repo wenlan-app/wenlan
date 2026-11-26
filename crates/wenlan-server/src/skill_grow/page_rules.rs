@@ -17,8 +17,6 @@ pub(super) async fn all(
     db: &MemoryDB,
     root: Option<&Path>,
 ) -> Result<PageRuleSnapshot, ServerError> {
-    // Confirmed conversation preferences are not moved: they stay with their
-    // memories, and tools keep getting them from there after the move.
     let mut snapshot = snapshot(db, root, None).await?;
     // Preserve delivery order and the cap. A second page with the same exact
     // sentence contributes provenance without taking another slot.
@@ -27,7 +25,19 @@ pub(super) async fn all(
         rules.contains(&rule.text)
             || (rules.len() < skill_grow::RULES_MAIN_FILE_MAX && rules.insert(rule.text.clone()))
     });
+    // Confirmed preferences move too, in the order tools get them today,
+    // each recording the memory it came from. The memory itself stays.
+    for (index, line) in preference_lines(db).await?.iter().enumerate() {
+        add_rule(&mut snapshot, None, index + 1, line);
+    }
     Ok(snapshot)
+}
+
+/// One confirmed preference as a shared-line change, after the move.
+pub(super) fn preference_snapshot(line: &SkillLine) -> PageRuleSnapshot {
+    let mut snapshot = PageRuleSnapshot::default();
+    add_rule(&mut snapshot, None, 1, line);
+    snapshot
 }
 
 pub(super) async fn snapshot(
@@ -143,6 +153,7 @@ fn add_rule(
         author: (line.hand_written || line.person_edited)
             .then_some("person".to_owned())
             .filter(|_| page.is_some()),
+        proposer: None,
     });
 }
 
@@ -169,11 +180,16 @@ pub(super) async fn projected_rules(db: &MemoryDB) -> Result<Option<Vec<SkillLin
     };
     let mut projected = Vec::with_capacity(rows.len());
     for (text, origin) in rows {
+        let preference =
+            origin.location.page_id.is_none() && origin.rule_id.starts_with("preference:");
         let page_id = origin.location.page_id.unwrap_or_default();
-        let (title, version) = db
-            .get_page(&page_id)
-            .await?
-            .map_or_else(|| (String::new(), 0), |page| (page.title, page.version));
+        let (title, version) = if preference {
+            (skill_grow::PREFERENCES_HEADING.to_owned(), 0)
+        } else {
+            db.get_page(&page_id)
+                .await?
+                .map_or_else(|| (String::new(), 0), |page| (page.title, page.version))
+        };
         projected.push(SkillLine {
             id: origin.rule_id,
             kind: wenlan_types::SkillLineKind::Rule,
@@ -190,23 +206,12 @@ pub(super) async fn projected_rules(db: &MemoryDB) -> Result<Option<Vec<SkillLin
             saved_by: None,
         });
     }
-    // Confirmed preferences are never moved, so they still come from their
-    // memories after the page rules.
-    let held: HashSet<_> = projected
-        .iter()
-        .map(|line| line.text.trim().to_owned())
-        .collect();
-    projected.extend(
-        preference_lines(db)
-            .await?
-            .into_iter()
-            .filter(|line| !held.contains(line.text.trim())),
-    );
+    // Confirmed preferences moved with the page rules, so shared rules hold
+    // every line tools follow.
     Ok(Some(projected))
 }
 
 pub(super) async fn apply_delta(
-    db: &MemoryDB,
     headers: &HeaderMap,
     before: PageRuleSnapshot,
     mut after: PageRuleSnapshot,
@@ -223,13 +228,7 @@ pub(super) async fn apply_delta(
     after
         .rules
         .retain(|new| !before.rules.iter().any(|old| unchanged(old, new)));
-    crate::rulesync_routes::personal_rules::page_change(
-        headers,
-        super::preference_rule_texts(db).await?,
-        after,
-        removed,
-    )
-    .await
+    crate::rulesync_routes::personal_rules::page_change(headers, Vec::new(), after, removed).await
 }
 
 pub(crate) struct PageEdit {
@@ -285,7 +284,7 @@ impl PageEdit {
     ) -> Result<(), ServerError> {
         if let Some(before) = self.before {
             let after = snapshot(db, root, Some(id)).await?;
-            apply_delta(db, headers, before, after).await?;
+            apply_delta(headers, before, after).await?;
         }
         Ok(())
     }

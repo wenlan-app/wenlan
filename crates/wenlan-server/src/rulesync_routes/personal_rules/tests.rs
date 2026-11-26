@@ -70,6 +70,21 @@ fn page_rule(text: &str, id: &str, line: usize) -> PageRule {
         },
         rule_id: format!("{id}:{line}"),
         author: None,
+        proposer: None,
+    }
+}
+
+fn preference_rule(text: &str, memory: &str, line: usize) -> PageRule {
+    PageRule {
+        text: text.into(),
+        source_text: text.into(),
+        location: wenlan_types::personal_rules::PageRuleLocation {
+            page_id: None,
+            line,
+        },
+        rule_id: format!("preference:{memory}"),
+        author: None,
+        proposer: None,
     }
 }
 
@@ -86,7 +101,13 @@ fn preview_page_move(
     let pages = PagePlan::Merge(snapshot);
     let prepared = fixture
         .setup
-        .prepare_page_plan(&manifest, &pages, generated, &fixture_rule_renderer)
+        .prepare_page_plan(
+            &manifest,
+            &pages,
+            generated,
+            Some(PAGES_PROPOSER.into()),
+            &fixture_rule_renderer,
+        )
         .unwrap();
     remember_plan(&fixture.setup, prepared, Vec::new(), None, Some(pages))
 }
@@ -102,20 +123,26 @@ fn personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_
         "Keep meeting notes short.".into(),
     ];
     fixture.sync_generated(&generated);
-    // The third line is a confirmed conversation preference: it is not
-    // moved and keeps arriving from its memory.
+    // The third line is a confirmed preference. It moves too, under its own
+    // heading, and a preference saying the same as a page rule is kept once.
     let snapshot = PageRuleSnapshot {
         rules: vec![
             page_rule(&generated[0], "rule-page", 4),
             page_rule(&generated[1], "rule-page", 7),
+            preference_rule(&generated[2], "mem_notes", 1),
+            preference_rule(&generated[1], "mem_receipt", 2),
         ],
         revisions: BTreeMap::from([("rule-page".into(), 3)]),
         ..Default::default()
     };
     let old = std::fs::read(fixture.setup.data.join(storage::MANIFEST)).unwrap();
     let old_tool = std::fs::read(fixture.setup.home.join(CODEX)).unwrap();
-    let plan = preview_page_move(&fixture, snapshot.clone(), &generated[2..]);
-    assert_eq!(plan.page_merge.as_ref().unwrap().rule_count, 2);
+    let plan = preview_page_move(&fixture, snapshot.clone(), &generated);
+    assert_eq!(plan.page_merge.as_ref().unwrap().rule_count, 3);
+    assert!(plan
+        .changes
+        .iter()
+        .any(|change| change.after.contains(&generated[2])));
     assert_eq!(
         std::fs::read(fixture.setup.data.join(storage::MANIFEST)).unwrap(),
         old
@@ -126,12 +153,7 @@ fn personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_
     );
     let version = fixture
         .setup
-        .apply_plan(
-            &plan.id,
-            &generated[2..],
-            Some(snapshot),
-            &fixture_rule_renderer,
-        )
+        .apply_plan(&plan.id, &generated, Some(snapshot), &fixture_rule_renderer)
         .unwrap();
     assert_eq!(version.summary.cause, MERGE_CAUSE);
     assert_eq!(version.summary.proposer.as_deref(), Some(PAGES_PROPOSER));
@@ -160,7 +182,18 @@ fn personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_
     assert!(shared
         .text
         .contains("## How I work\n\n- Check the original receipt."));
-    assert!(!shared.text.contains(&generated[2]));
+    assert!(shared
+        .text
+        .contains("## What you told your tools\n\n- Keep meeting notes short."));
+    assert_eq!(shared.text.matches(generated[1].as_str()).count(), 1);
+    let preference = shared_line("- Keep meeting notes short.");
+    assert_eq!(preference.pages[0].rule_id, "preference:mem_notes");
+    assert_eq!(preference.pages[0].location.page_id, None);
+    let receipt = shared_line("- Check the original receipt.");
+    assert!(receipt
+        .pages
+        .iter()
+        .any(|page| page.rule_id == "preference:mem_receipt"));
     let archive_path = fixture
         .setup
         .data
@@ -168,42 +201,85 @@ fn personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_
     let archive = std::fs::read(&archive_path).unwrap();
     let pages: BTreeMap<String, Vec<String>> = serde_json::from_slice(&archive).unwrap();
     assert_eq!(pages["rule-page"], generated[..2]);
+    assert_eq!(pages.len(), 1);
 
     // Passing the original generated data through the writer again models a
-    // stale background read. Pullback must still see no second layer.
+    // stale background read: nothing is generated after the move, so every
+    // line reaches each tool once, from shared rules.
     assert!(fixture.sync_generated(&generated).blocked.is_empty());
     assert!(fixture.sync_generated(&generated).proposals.is_empty());
-    for path in [CLAUDE, CODEX] {
-        let delivered = std::fs::read_to_string(fixture.setup.home.join(path)).unwrap();
-        for line in &generated {
-            assert_eq!(delivered.matches(line).count(), 1);
-        }
-    }
-    // After the move a new confirmed preference reaches every tool, and a
-    // forgotten one leaves, while the moved page lines stay exactly once.
-    let later = [generated[2].clone(), "Answer in short paragraphs.".into()];
-    assert!(fixture.sync_generated(&later).blocked.is_empty());
-    for path in [CLAUDE, CODEX] {
-        let delivered = std::fs::read_to_string(fixture.setup.home.join(path)).unwrap();
-        for line in generated.iter().chain(&later) {
+    let each_once = |lines: &[String]| {
+        for path in [CLAUDE, CODEX] {
+            let delivered = std::fs::read_to_string(fixture.setup.home.join(path)).unwrap();
+            for line in lines {
+                assert_eq!(
+                    delivered.matches(line.as_str()).count(),
+                    1,
+                    "{path}: {line}"
+                );
+            }
             assert_eq!(
-                delivered.matches(line.as_str()).count(),
+                delivered.matches("What you told your tools").count(),
                 1,
-                "{path}: {line}"
+                "{path}"
             );
         }
-    }
-    assert!(fixture.sync_generated(&later[1..]).blocked.is_empty());
-    for path in [CLAUDE, CODEX] {
-        let delivered = std::fs::read_to_string(fixture.setup.home.join(path)).unwrap();
-        assert!(!delivered.contains(&generated[2]), "{path}");
-        assert_eq!(
-            delivered.matches(generated[1].as_str()).count(),
-            1,
-            "{path}"
-        );
-    }
+    };
+    each_once(&generated);
+    // Forgetting or unconfirming a preference memory leaves its rule: the
+    // generated lines no longer carry it, and the rule stays.
+    assert!(fixture.sync_generated(&[]).blocked.is_empty());
+    each_once(&generated);
+
+    // After the move a tool's confirm of a new preference is a plan, and
+    // the person's own confirm adds it at once, proposed by the tool.
+    let later = "Answer in short paragraphs.";
+    let change = |confirmed| PageChange {
+        snapshot: PageRuleSnapshot {
+            rules: vec![preference_rule(later, "mem_later", 1)],
+            ..Default::default()
+        },
+        remove: BTreeSet::new(),
+        confirmed,
+        proposer: Some("claude-code".into()),
+    };
+    let pending = fixture
+        .setup
+        .change_page_rules(&[], change(false), &fixture_rule_renderer)
+        .unwrap();
+    assert!(pending.is_some());
+    assert!(!fixture
+        .setup
+        .load()
+        .unwrap()
+        .unwrap()
+        .master
+        .shared
+        .contains(later));
+    assert!(fixture
+        .setup
+        .change_page_rules(&[], change(true), &fixture_rule_renderer)
+        .unwrap()
+        .is_none());
+    each_once(&[
+        generated[0].clone(),
+        generated[1].clone(),
+        generated[2].clone(),
+        later.into(),
+    ]);
     let manifest = fixture.setup.load().unwrap().unwrap();
+    let added = read_version(
+        &fixture.setup,
+        &manifest,
+        manifest.personal_rule_history.last().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(added.summary.proposer.as_deref(), Some("claude-code"));
+    assert_eq!(added.summary.confirmer.as_deref(), Some("person"));
+    assert!(added.rules[0].text.contains(
+        "## What you told your tools\n\n- Keep meeting notes short.\n- Answer in short paragraphs."
+    ));
+
     assert_eq!(manifest.page_rules, PageRulesState::Merged);
     assert!(manifest
         .master
@@ -335,7 +411,16 @@ fn personal_rules_empty_page_migration_works_with_one_or_no_tool() {
         };
         fixture
             .setup
-            .change_page_rules(&[], snapshot, BTreeSet::new(), true, &fixture_rule_renderer)
+            .change_page_rules(
+                &[],
+                PageChange {
+                    snapshot,
+                    remove: BTreeSet::new(),
+                    confirmed: true,
+                    proposer: Some(PAGES_PROPOSER.into()),
+                },
+                &fixture_rule_renderer,
+            )
             .unwrap();
         let manifest = fixture.setup.load().unwrap().unwrap();
         assert!(manifest

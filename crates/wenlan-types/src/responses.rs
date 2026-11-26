@@ -125,6 +125,11 @@ pub struct ConfirmResponse {
     /// `true` so a newer client reads an older daemon's 200 as a real update.
     #[serde(default = "crate::requests::default_true")]
     pub updated: bool,
+    /// After the one-time rule move, an AI tool's confirm of a preference
+    /// leaves the memory unconfirmed and proposes it as a rule instead: the
+    /// id of that plan, which the person confirms in the Wenlan app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_plan: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

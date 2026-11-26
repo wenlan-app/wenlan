@@ -4699,7 +4699,13 @@ impl WenlanMcpServer {
             // without `updated`, which defaults to `true` so that response
             // still reads as success (mirrors forget_impl's flag branch).
             Ok(resp) => Ok(CallToolResult::success(vec![ContentBlock::text(
-                if resp.updated {
+                if let Some(plan) = resp.rule_plan {
+                    format!(
+                        "Memory {memory_id} is not confirmed: a preference is the person's to \
+                         confirm. It was proposed as a rule instead (plan {plan}); the person \
+                         confirms it in the Wenlan app."
+                    )
+                } else if resp.updated {
                     format!("Memory {} confirmed.", memory_id)
                 } else {
                     format!("Memory {} not found.", memory_id)

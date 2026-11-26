@@ -372,7 +372,7 @@ pub(super) async fn save_rule_in(
         // After the move a tool proposes; the page stays as it is.
         let plan = crate::rulesync_routes::personal_rules::propose_shared_line(
             headers,
-            super::preference_rule_texts(&db).await?,
+            Vec::new(),
             skill_grow::tool_file_text(&text),
             true,
         )
@@ -541,7 +541,7 @@ pub(super) async fn save_rule_in(
             .await?;
             let pending = if let Some(before) = before_rules {
                 let after = page_rules::snapshot(&db, page_root, Some(&written.id)).await?;
-                page_rules::apply_delta(&db, headers, before, after).await?
+                page_rules::apply_delta(headers, before, after).await?
             } else {
                 None
             };
@@ -678,7 +678,7 @@ pub(super) async fn remove_rule_in(
         // After the move a tool proposes; the page stays as it is.
         let plan = crate::rulesync_routes::personal_rules::propose_shared_line(
             headers,
-            super::preference_rule_texts(&db).await?,
+            Vec::new(),
             skill_grow::tool_file_text(&line.text),
             false,
         )
@@ -731,7 +731,7 @@ pub(super) async fn remove_rule_in(
         Landed::Wrote(written) => {
             let pending = if let Some(before) = before_rules {
                 let after = page_rules::snapshot(&db, page_root, Some(&written.id)).await?;
-                page_rules::apply_delta(&db, headers, before, after).await?
+                page_rules::apply_delta(headers, before, after).await?
             } else {
                 None
             };

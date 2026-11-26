@@ -1479,22 +1479,62 @@ async fn preference_lines(db: &MemoryDB) -> Result<Vec<SkillLine>, ServerError> 
         .person_preferences(PREFERENCE_LINE_CAP)
         .await?
         .into_iter()
-        .map(|(id, text)| SkillLine {
-            id: format!("preference:{id}"),
-            kind: wenlan_types::SkillLineKind::Rule,
-            text: text.trim().to_string(),
-            source_page_id: String::new(),
-            source_page_title: "What you told your tools".to_string(),
-            source_revision: 0,
-            source_revision_at: 0,
-            source_quote: String::new(),
-            person_edited: false,
-            general: true,
-            hand_written: false,
-            saved_from: None,
-            saved_by: None,
-        })
+        .map(|(id, text)| preference_line(&id, &text))
         .collect())
+}
+
+fn preference_line(id: &str, text: &str) -> SkillLine {
+    SkillLine {
+        id: format!("preference:{id}"),
+        kind: wenlan_types::SkillLineKind::Rule,
+        text: text.trim().to_string(),
+        source_page_id: String::new(),
+        source_page_title: skill_grow::PREFERENCES_HEADING.to_string(),
+        source_revision: 0,
+        source_revision_at: 0,
+        source_quote: String::new(),
+        person_edited: false,
+        general: true,
+        hand_written: false,
+        saved_from: None,
+        saved_by: None,
+    }
+}
+
+/// After the move, a preference the person confirms becomes a shared rule
+/// at once; a tool asking to confirm one gets a plan for the person instead
+/// (returned). The memory itself is not changed here. Before the move this
+/// does nothing: the preference reaches tools from its memory.
+pub(crate) async fn preference_rule_on_confirm(
+    db: &MemoryDB,
+    headers: &HeaderMap,
+    source_id: &str,
+) -> Result<Option<String>, ServerError> {
+    if !crate::rulesync_routes::personal_rules::page_rules_merged()? {
+        return Ok(None);
+    }
+    let Some(memory) = db.get_memory_detail(source_id).await? else {
+        return Ok(None);
+    };
+    let person = crate::rulesync_routes::require_local_person(headers).is_ok();
+    let eligible = memory.memory_type.as_deref() == Some("preference")
+        && memory.space.as_deref().is_none_or(str::is_empty)
+        && !memory.content.trim().is_empty()
+        && (!person || memory.confirmed);
+    if !eligible {
+        return Ok(None);
+    }
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    let snapshot = page_rules::preference_snapshot(&preference_line(source_id, &memory.content));
+    if snapshot.rules.is_empty() {
+        return Ok(None);
+    }
+    let from_tool = if person {
+        memory.source_agent.filter(|agent| !agent.trim().is_empty())
+    } else {
+        None
+    };
+    crate::rulesync_routes::personal_rules::preference_change(headers, snapshot, from_tool).await
 }
 
 async fn record_general_reads(
@@ -2228,21 +2268,11 @@ async fn rules_by_layer(
     Ok((general, layers))
 }
 
-/// After the page rules move, they live in shared rules. Confirmed
-/// preferences stay with their memories, so a change to them still reaches
-/// tools through these lines.
-pub(crate) async fn preference_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
-    let (db, _) = db_and_page_root(state).await?;
-    preference_rule_texts(&db).await
-}
-
-pub(crate) async fn preference_rule_texts(db: &MemoryDB) -> Result<Vec<String>, ServerError> {
-    Ok(skill_grow::tool_rules(&preference_lines(db).await?))
-}
-
 pub(crate) async fn general_tool_rules(state: &SharedState) -> Result<Vec<String>, ServerError> {
+    // After the move, page rules and confirmed preferences both reach tools
+    // from shared rules, so no line is generated.
     if crate::rulesync_routes::personal_rules::page_rules_merged()? {
-        return preference_tool_rules(state).await;
+        return Ok(Vec::new());
     }
     let (db, page_root) = db_and_page_root(state).await?;
     let own = OwnRulePages::load(&db, page_root.as_deref()).await?;
@@ -2503,16 +2533,9 @@ async fn sync_rules_files(
         &skill_grow::rules_layer_files(None, projected.as_deref().unwrap_or(&general)),
     );
     if wenlan_core::rulesync_personal::enabled() {
-        // After the move page rules reach tools from shared rules; the
-        // projection keeps only the preferences, which are never moved.
+        // After the move every line reaches tools from shared rules.
         let rules = match &projected {
-            Some(projected) => skill_grow::tool_rules(
-                &projected
-                    .iter()
-                    .filter(|line| skill_grow::is_person_preference_line(line))
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            ),
+            Some(_) => Vec::new(),
             None => skill_grow::tool_rules(&general),
         };
         let empty = rules.is_empty()
@@ -3496,7 +3519,7 @@ pub async fn handle_accept_space_rules(
         let snapshot = page_rules::pending_space_rules(&db, &space, &rules).await?;
         let plan = crate::rulesync_routes::personal_rules::page_change(
             &headers,
-            preference_rule_texts(&db).await?,
+            Vec::new(),
             snapshot,
             Default::default(),
         )
@@ -3523,7 +3546,7 @@ pub async fn handle_accept_space_rules(
         let snapshot = page_rules::snapshot(&db, page_root.as_deref(), Some(&page_id)).await?;
         crate::rulesync_routes::personal_rules::page_change(
             &headers,
-            preference_rule_texts(&db).await?,
+            Vec::new(),
             snapshot,
             Default::default(),
         )

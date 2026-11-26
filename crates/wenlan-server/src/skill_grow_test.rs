@@ -4086,6 +4086,170 @@ async fn skill_grow_page_merge_excludes_credentials_and_scoped_rules_and_keeps_o
     assert_eq!(std::fs::read_to_string(archive_path).unwrap(), archive);
 }
 
+/// The one-time move takes confirmed preferences into shared rules with the
+/// page lines, once each. After it, the person's confirm adds a preference
+/// right away, an AI tool's confirm only proposes it, and forgetting the
+/// memory leaves the shared line alone.
+#[tokio::test]
+async fn skill_grow_page_merge_moves_preferences_and_later_confirms_follow_the_person() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    const RECEIPT: &str = "Keep the receipt with the change.";
+    const LATER: &str = "I prefer plain words in summaries.";
+    const FROM_AI: &str = "I prefer one question at a time.";
+    write_page_in_folder(
+        &scratch,
+        32,
+        None,
+        "Rules",
+        "Work habits",
+        &format!("- {RECEIPT}"),
+        "publish",
+    )
+    .await;
+    seed_memory_for_preferences(
+        &scratch.db,
+        "pref-1",
+        SMALL_COMMITS,
+        "preference",
+        None,
+        true,
+    )
+    .await;
+    seed_memory_for_preferences(&scratch.db, "pref-2", RECEIPT, "preference", None, true).await;
+    seed_memory_for_preferences(&scratch.db, "pref-3", LATER, "preference", None, false).await;
+    seed_memory_for_preferences(&scratch.db, "pref-4", FROM_AI, "preference", None, false).await;
+
+    let endpoint = "/api/rules/personal/merge-pages";
+    let (status, preview) =
+        page_rule_api(&scratch, "GET", endpoint, serde_json::Value::Null, None).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{preview}");
+    // One page line and one new preference; the preference that repeats the
+    // page line takes no second slot.
+    assert_eq!(preview["page_merge"]["rule_count"], 2, "{preview}");
+    let (status, version) = page_rule_api(
+        &scratch,
+        "POST",
+        "/api/rules/personal/apply",
+        serde_json::json!({"plan_id": preview["id"]}),
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{version}");
+    assert!(crate::rulesync_routes::personal_rules::page_rules_merged().unwrap());
+    let shared = || std::fs::read_to_string(scratch.data.join("rulesync/personal.json")).unwrap();
+    assert!(shared().contains(skill_grow::PREFERENCES_HEADING));
+    assert_eq!(shared().matches(SMALL_COMMITS).count(), 1);
+    assert_eq!(shared().matches(RECEIPT).count(), 1);
+    let once_each = |rules: &SpaceRulesResponse, text: &str| {
+        rules
+            .lines
+            .iter()
+            .filter(|line| line.text.contains(text))
+            .count()
+    };
+    let rules = read_rules_as_codex(&scratch, None).await;
+    assert_eq!(once_each(&rules, SMALL_COMMITS), 1);
+    assert_eq!(once_each(&rules, RECEIPT), 1);
+
+    // An AI tool's confirm leaves the memory waiting and only proposes it.
+    let mut ai = HeaderMap::new();
+    ai.insert("x-agent-name", HeaderValue::from_static("codex"));
+    let reply = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        ai,
+        axum::extract::Path("pref-4".to_string()),
+        None,
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(!reply.confirmed);
+    assert!(reply.rule_plan.is_some());
+    assert!(!shared().contains(FROM_AI));
+    let memory = scratch
+        .db
+        .get_memory_detail("pref-4")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!memory.confirmed);
+
+    // The person's confirm adds it to shared rules at once.
+    let reply = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("pref-3".to_string()),
+        None,
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(reply.confirmed);
+    assert!(reply.rule_plan.is_none());
+    assert_eq!(shared().matches(LATER).count(), 1);
+    let rules = read_rules_as_codex(&scratch, None).await;
+    assert_eq!(once_each(&rules, LATER), 1);
+    assert_eq!(once_each(&rules, SMALL_COMMITS), 1);
+
+    // Forgetting the memory does not change the rule store.
+    let _ = crate::memory_routes::handle_delete_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("pref-3".to_string()),
+        axum::extract::Query(Default::default()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(shared().matches(LATER).count(), 1);
+}
+
+/// A new person with no rules pages and no preferences has nothing to move,
+/// and confirming their first preference still works.
+#[tokio::test]
+async fn skill_grow_page_merge_with_nothing_to_move_leaves_a_new_person_working() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let (status, preview) = page_rule_api(
+        &scratch,
+        "GET",
+        "/api/rules/personal/merge-pages",
+        serde_json::Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(preview.is_null(), "{preview}");
+    seed_memory_for_preferences(
+        &scratch.db,
+        "first",
+        SMALL_COMMITS,
+        "preference",
+        None,
+        false,
+    )
+    .await;
+    let reply = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("first".to_string()),
+        None,
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(reply.confirmed);
+    assert!(reply.rule_plan.is_none());
+}
+
 #[tokio::test]
 async fn skill_grow_person_page_accept_applies_with_history_and_ai_accept_waits() {
     let _lock = crate::TEST_DATA_DIR_LOCK

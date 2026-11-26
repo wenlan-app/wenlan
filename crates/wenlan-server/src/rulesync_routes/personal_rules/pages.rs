@@ -26,25 +26,14 @@ impl PageRulesState {
     }
 
     /// The generated lines a tool file still gets after `shared`. Before the
-    /// move that is every line. After it, page rules live in shared, so only
-    /// lines shared does not already hold remain: confirmed conversation
-    /// preferences, which stay with their memories and are never moved.
-    pub(crate) fn legacy_rules(&self, shared: &str, generated: &[String]) -> Vec<String> {
-        if *self != Self::Merged {
-            return generated.to_vec();
+    /// move that is every line. After it, page rules and confirmed
+    /// preferences both live in shared, so nothing is generated: each line
+    /// reaches a tool once, from shared rules.
+    pub(crate) fn legacy_rules(&self, _shared: &str, generated: &[String]) -> Vec<String> {
+        if *self == Self::Merged {
+            return Vec::new();
         }
-        let held: BTreeSet<_> = shared
-            .lines()
-            .map(|line| {
-                let line = line.trim();
-                line.strip_prefix("- ").unwrap_or(line).trim()
-            })
-            .collect();
-        generated
-            .iter()
-            .filter(|line| !held.contains(line.trim()))
-            .cloned()
-            .collect()
+        generated.to_vec()
     }
 }
 
@@ -55,6 +44,16 @@ pub(crate) struct PageRule {
     pub location: PageRuleLocation,
     pub rule_id: String,
     pub author: Option<String>,
+    /// Who proposed the line, when not the pages themselves: the tool a
+    /// confirmed preference came from.
+    pub proposer: Option<String>,
+}
+
+impl PageRule {
+    /// A confirmed preference: it has no page, and its id names its memory.
+    pub(crate) fn is_preference(&self) -> bool {
+        self.location.page_id.is_none() && self.rule_id.starts_with("preference:")
+    }
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -162,7 +161,10 @@ impl PagePlan {
                 location: rule.location.clone(),
                 rule_id: rule.rule_id.clone(),
                 author: rule.author.clone(),
-                proposer: PAGES_PROPOSER.into(),
+                proposer: rule
+                    .proposer
+                    .clone()
+                    .unwrap_or_else(|| PAGES_PROPOSER.into()),
                 confirmer: "person".into(),
             };
             let sentence = rule.text.trim();
@@ -185,7 +187,12 @@ impl PagePlan {
             }
             let mut origin = page_origin(Some(&page), false);
             origin.pages.push(page);
-            add_under_heading(&mut lines, "How I work", bullet, origin);
+            let heading = if rule.is_preference() {
+                wenlan_core::skill_grow::PREFERENCES_HEADING
+            } else {
+                "How I work"
+            };
+            add_under_heading(&mut lines, heading, bullet, origin);
         }
         let (text, origins): (Vec<_>, Vec<_>) = lines.into_iter().unzip();
         Ok((text.concat(), origins))

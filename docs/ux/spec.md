@@ -502,7 +502,13 @@ and wait for evidence that people need them.
   waits for your OK as a proposed revision while the confirmed one stands.
   Only you confirm a preference, tool problem or lesson: an AI tool's
   confirm is refused. The rules files of your tools follow a preference
-  being confirmed, unconfirmed, edited, forgotten, restored or replaced. A
+  being confirmed, unconfirmed, edited, forgotten, restored or replaced.
+  After the one-time move of rules (UX-SKILL-5), preferences are part of
+  shared rules, the one place tools follow: your confirm adds a new one
+  there at once, recorded in rule history and undoable; an AI tool's confirm
+  leaves the memory waiting and proposes the rule as a plan for you to
+  confirm; and unconfirming or forgetting the memory no longer changes the
+  rules, which you change in Rules. A
   reading of a Space shared with other people is shown none of your
   preferences, so a preference it restates cannot replace one (it stays as
   it is), and none of the thing's map points no night kept yet; its topics
@@ -530,6 +536,9 @@ and wait for evidence that people need them.
   `a_confirmed_preference_is_replaced_only_when_the_person_says_so`,
   `only_the_person_confirms_a_preference`,
   `ux_chat_5_the_rules_files_follow_a_preference_being_confirmed_and_forgotten`,
+  `skill_grow_page_merge_moves_preferences_and_later_confirms_follow_the_person`,
+  `skill_grow_page_merge_with_nothing_to_move_leaves_a_new_person_working`,
+  `personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_files`,
   `what_the_person_told_their_tools_has_its_own_section_and_cap`,
   `ux_chat_5_a_preference_in_no_space_reaches_the_persons_tools_in_every_space`,
   `ux_chat_5_a_preference_is_not_written_into_the_rules_of_a_space_shared_with_others`,
@@ -865,10 +874,17 @@ and wait for evidence that people need them.
   "What you told your tools" with a cap apart from the page rules. They have no page, so nothing is counted as borrowed from one;
   the Rules list in the app does not mix them in, and a Space's own rules, a
   repository copy of them and a team member's read never include them.
-  The move brings the page rules used in every Space into shared rules.
-  Rules for one Space stay on their pages. Confirmed preferences are not
-  moved: they keep their own section, so confirming or forgetting one still
-  changes what tools get.
+  The move brings the page rules used in every Space into shared rules,
+  and the confirmed preferences with them, under "What you told your
+  tools" in the same order. A preference that says the same as a page rule
+  is kept once, and each one records the memory it came from. One preview
+  and one confirm cover both, and the move never changes or deletes a
+  memory. Rules for one Space stay on their pages. After the move, shared
+  rules are the one place tools follow: each line reaches each tool once,
+  and Wenlan no longer adds the preference section on top. A memory can
+  still hold the same preference without changing what tools get; the
+  person's confirm of a new preference adds it to shared rules at once,
+  and forgetting the memory leaves the rule where it is.
   原文：選擇卡「加全局一份」（2026-11-15 21:24Z，問：「要不要加一份全局的「我的做事方式」？」）；「還有我們有全局跟空間範圍的 skill」（2026-11-15 21:24Z）。
 - **UX-SKILL-6** `shipped` The rules AI tools may read are also kept as files
   in Wenlan's own folder, in the `AGENTS.md` shape other tools already read:
@@ -884,7 +900,7 @@ and wait for evidence that people need them.
   target list. Wenlan keeps the rule pages and their provenance available.
   Wenlan offers to move these rules once, with a diff and one confirm.
   Saying no keeps the current delivery. After the move, tool files get
-  these lines from shared rules. Following referenced files is planned for a later PR.
+  these lines, preferences included, from shared rules alone. Following referenced files is planned for a later PR.
   原文：「現在只想要把這層整合好再 .wenlan」（2026-11-15 22:20Z）；「AGENTS 檔案可以分層 不論是個人還是空間/專案/repo」（2026-11-15 22:39Z）。
 - **UX-SKILL-7** `shipped` For a Space connected to a repository, the wiki
   pull request also puts that Space's own rules (rules only, not decisions or
@@ -1026,7 +1042,10 @@ and wait for evidence that people need them.
   With personal-rule plans, an AI-proposed personal rule or change
   confirmed for its exact text counts as the person's for that version
   (UX-SKILL-14). After the move, the person's change to an every-Space rule
-  on a rules page is recorded in rule history and can be undone there.
+  on a rules page is recorded in rule history and can be undone there. The
+  same holds for a preference the person confirms after the move
+  (UX-CHAT-5): it is added to shared rules at once, with the tool that saved
+  it as proposer and the person as confirmer.
   原文：決定 4：「A rule the person writes themselves counts at once. AI tools get it and `wenlan rules` prints it, with no model needed. Rules the AI derives from pages still need the person's accept.」Qi-Xuan 以輸入「A」回答此題（2026-11-16 22:30Z；題目與決定記錄於 `/mnt/project-files/readme-2026-11/cover-v3/2026-11-16-app-changes-from-cover.md`，決定 4）。存成規則的補充（2026-11-17）：見 UX-SKILL-14；這句補充的英文字句待 Qi-Xuan 確認。連結改名的補充（2026-11-17，審查發現）：Wenlan 自己改連結不算人寫的；英文字句待 Qi-Xuan 確認。
   Tests `rulesync_tagged_overlay_edits_and_insertions_use_history_without_review`,
   `rulesync_untagged_delivery_keeps_the_legacy_scope_review`, and
@@ -1172,7 +1191,10 @@ and wait for evidence that people need them.
   confirmation. The one-line, 300-character, plain-sentence limits still apply
   to a saved rule. After the move, the person's save or removal for every
   Space changes shared rules and goes in rule history. A tool's save or
-  removal waits for the person to confirm its personal-rule plan.
+  removal waits for the person to confirm its personal-rule plan. A
+  confirmed preference (UX-CHAT-5) is part of shared rules after the move in
+  the same way: the person's confirm adds it, and an AI tool's confirm
+  leaves the memory unconfirmed and proposes the rule as a plan instead.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 - **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the
