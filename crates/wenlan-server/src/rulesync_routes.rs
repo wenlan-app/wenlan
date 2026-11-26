@@ -586,6 +586,17 @@ impl Setup {
         let Some(mut manifest) = self.load_if_present()? else {
             return Ok(status);
         };
+        if manifest.key_skills_dropped || !manifest.key_blobs_to_remove.is_empty() {
+            self.save(&manifest)?;
+            storage::remove_key_blobs(
+                &self.data_files()?.with_private_directories(),
+                &self.data,
+                &manifest,
+            )?;
+            manifest.key_blobs_to_remove.clear();
+            manifest.key_skills_dropped = false;
+            self.save(&manifest)?;
+        }
         status.adopted = manifest.adopted;
         status.notes.clone_from(&manifest.keys.notes);
         if !manifest.keys.intents.is_empty() {
@@ -794,6 +805,11 @@ impl Setup {
             {
                 row.state = RulesToolState::NeedsReview;
             }
+        }
+        if person && !manifest.key_skills_notice.is_empty() {
+            status.notes.push(format!("Wenlan stopped keeping these skills because a file looks like it holds a key: {}. They stay in your tools.", manifest.key_skills_notice.join(", ")));
+            manifest.key_skills_notice.clear();
+            self.save(&manifest)?;
         }
         if person && manifest.rule_import_notice_pending {
             status.notes.push(RULE_IMPORT_NOTICE.into());
@@ -1191,6 +1207,12 @@ struct Manifest<Content = Vec<u8>> {
     legacy_source_following: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     rule_import_notice_pending: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    key_skills_notice: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    key_blobs_to_remove: Vec<String>,
+    #[serde(skip)]
+    key_skills_dropped: bool,
     /// A rule source can also be a tool's native rule path. Keep that file
     /// out of discovery when enrolling tools again.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -1302,6 +1324,9 @@ impl Manifest {
             page_rules: Default::default(),
             legacy_source_following: false,
             rule_import_notice_pending: false,
+            key_skills_notice: Vec::new(),
+            key_blobs_to_remove: Vec::new(),
+            key_skills_dropped: false,
             imported_rule_paths: BTreeSet::new(),
             backup,
             authored_rules: BTreeMap::new(),
@@ -6866,6 +6891,108 @@ mod tests {
         assert_eq!(f.text(asset), contents);
         assert_no_fixture_keys(&f.setup.data, &[], &[key]);
         assert_no_fixture_keys(&f.setup.home, &[asset], &[key]);
+    }
+
+    #[test]
+    fn rulesync_saved_skill_with_a_key_is_dropped_and_the_setup_loads() {
+        let f = Fixture::new();
+        let path = ".claude/skills/example/SKILL.md";
+        fs::create_dir_all(f.setup.home.join(".claude/skills/example")).unwrap();
+        f.write(
+            path,
+            "---\nname: example\ndescription: Fixture\n---\nSafe.\n",
+        );
+        fs::create_dir_all(f.setup.home.join(".claude/skills/other")).unwrap();
+        f.write(
+            ".claude/skills/other/SKILL.md",
+            "---\nname: other\ndescription: Fixture\n---\nOther skill.\n",
+        );
+        f.adopt_from_plan();
+        let before = fs::read(f.setup.home.join(path)).unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let skill = manifest
+            .master
+            .skills
+            .iter_mut()
+            .find(|s| s.name == "example")
+            .unwrap();
+        let secret = RULE_CREDENTIALS[0].0.as_bytes().to_vec();
+        *skill.files.values_mut().next().unwrap() = secret.clone();
+        manifest
+            .backup
+            .insert(PathBuf::from(path), Snapshot::file(secret.clone()));
+        let receipt = manifest.delivered.get_mut(Path::new(path)).unwrap();
+        receipt.delivered = Snapshot::file(secret.clone());
+        receipt.observed = Some(Snapshot::file(secret));
+        f.setup.save(&manifest).unwrap();
+        // An older build could also leave an unreferenced copy behind.
+        let stale = RULE_CREDENTIALS[0].0.as_bytes();
+        let stale_blob = f.setup.data.join("personal-blobs").join("0".repeat(64));
+        fs::write(&stale_blob, [stale, b"old".as_slice()].concat()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&stale_blob, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let status = f.setup.status().unwrap();
+        assert!(!stale_blob.exists());
+        let kept = f.setup.load().unwrap().unwrap();
+        assert!(kept.master.skills.iter().any(|skill| skill.name == "other"));
+        assert!(kept
+            .master
+            .skills
+            .iter()
+            .all(|skill| skill.name != "example"));
+        assert!(kept
+            .unmanaged_skills
+            .contains(Path::new(".claude/skills/example")));
+        assert!(status.notes.iter().any(|n| n == "Wenlan stopped keeping these skills because a file looks like it holds a key: example. They stay in your tools."));
+        assert_eq!(fs::read(f.setup.home.join(path)).unwrap(), before);
+        assert_no_fixture_keys(&f.setup.data, &[], &[RULE_CREDENTIALS[0].1]);
+        let report = f.sync_generated(&["A later rule.".into()]);
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(f.text(CLAUDE).contains("A later rule."));
+        assert!(f
+            .text(".claude/skills/other/SKILL.md")
+            .contains("Other skill."));
+        assert!(f
+            .setup
+            .status()
+            .unwrap()
+            .notes
+            .iter()
+            .all(|n| !n.contains("stopped keeping")));
+        let manifest_path = f.setup.data.join(storage::MANIFEST);
+        let settled = fs::read(&manifest_path).unwrap();
+        f.setup.status().unwrap();
+        assert_eq!(fs::read(manifest_path).unwrap(), settled);
+        assert_eq!(fs::read(f.setup.home.join(path)).unwrap(), before);
+    }
+
+    #[test]
+    fn rulesync_legacy_rule_and_skill_credentials_leave_the_saved_setup_in_place() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.setup.home.join(".claude/skills/example")).unwrap();
+        f.write(
+            ".claude/skills/example/SKILL.md",
+            "---\nname: example\ndescription: Fixture\n---\nSafe.\n",
+        );
+        f.adopt_from_plan();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let skill = manifest
+            .master
+            .skills
+            .iter_mut()
+            .find(|s| s.name == "example")
+            .unwrap();
+        *skill.files.values_mut().next().unwrap() = RULE_CREDENTIALS[1].0.as_bytes().to_vec();
+        manifest.master.shared = RULE_CREDENTIALS[0].0.into();
+        f.setup.save(&manifest).unwrap();
+        let path = f.setup.data.join(storage::MANIFEST);
+        let before = fs::read(&path).unwrap();
+        let failure = f.setup.status().unwrap_err().to_string();
+        assert!(failure.contains("holds text that looks like a key"));
+        assert_eq!(fs::read(path).unwrap(), before);
     }
 
     #[test]
