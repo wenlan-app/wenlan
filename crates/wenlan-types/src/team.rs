@@ -13,6 +13,7 @@
 //! every computer.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// What a member may do in one Space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -410,6 +411,9 @@ pub struct TeamRulesManifest {
     pub project: Option<TeamRulesProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<TeamProjectSkill>,
+    /// Decisions on this member's proposals, keyed by proposal id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub proposal_decisions: BTreeMap<String, bool>,
 }
 
 /// A project master follows the Space's grant and is rendered for its bound repo.

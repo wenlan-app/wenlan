@@ -2220,6 +2220,7 @@ mod tests {
             written: Vec::new(),
             blocked: vec![".codex/AGENTS.md: Review your changes before syncing.".into()],
             blocked_codes: Vec::new(),
+            notice_codes: Vec::new(),
             proposals: Vec::new(),
             message: "Checked the local tool setup".into(),
             kept_in_place: Vec::new(),
@@ -2234,6 +2235,7 @@ mod tests {
             written: Vec::new(),
             blocked: Vec::new(),
             blocked_codes: Vec::new(),
+            notice_codes: Vec::new(),
             proposals: Vec::new(),
             message: "Synced settings".into(),
             kept_in_place: vec![

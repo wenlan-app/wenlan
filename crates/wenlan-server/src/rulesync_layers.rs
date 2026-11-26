@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{bail, ensure, Context, Result};
+use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_personal::{
     fingerprint, line_changes, write_named_root_rule, RULE_PRECEDENCE,
 };
-use wenlan_core::rulesync_team::TeamRuleLayer;
+use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_core::skill_grow::tool_file_text;
 
 const START: &str = "<!-- WENLAN SHARED RULES ";
@@ -234,9 +235,138 @@ pub(crate) fn edits<'a>(before: &'a str, after: &'a str) -> Result<Vec<(&'a str,
     Ok(edits)
 }
 
+/// The local file's exact edits and their IDs in the Space's proposal history.
+/// The approved delivery stays the baseline until the proposal is decided.
+pub(crate) type ProposalReceipts = BTreeMap<String, ProposalReceipt>;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ProposalReceipt {
+    edit: String,
+    proposal: String,
+}
+
+pub(crate) enum SharedReview {
+    Pending,
+    Decided { rejected: bool },
+}
+
+pub(crate) fn review_edits(
+    settings: &Path,
+    accessible: &BTreeMap<String, &TeamRuleLayer>,
+    edits: Vec<(&str, Block<'_>)>,
+    receipts: &mut ProposalReceipts,
+) -> Result<SharedReview> {
+    receipts.retain(|key, _| edits.iter().any(|(changed, _)| *changed == key));
+    let mut pending = false;
+    let mut rejected = false;
+    for (key, change) in edits {
+        let layer = accessible
+            .get(key)
+            .context("This shared layer is no longer accessible.")?;
+        let edit = fingerprint(&(change.revision, change.body))?;
+        if let Some(receipt) = receipts.get(key) {
+            let decision = layer.proposal_decisions.get(&receipt.proposal);
+            if receipt.edit == edit {
+                pending |= decision.is_none();
+                rejected |= decision == Some(&false);
+                continue;
+            }
+            ensure!(decision.is_some(), "This section changed again while its proposal is open. Your latest edit is still in the file.");
+        }
+        let markdown = proposed_markdown(layer, &change)?;
+        let proposal =
+            rulesync_team::queue_proposal(settings, &layer.id, change.revision, &markdown)?;
+        let decision = layer.proposal_decisions.get(&proposal);
+        pending |= decision.is_none();
+        rejected |= decision == Some(&false);
+        receipts.insert(key.to_owned(), ProposalReceipt { edit, proposal });
+    }
+    Ok(if pending {
+        SharedReview::Pending
+    } else {
+        SharedReview::Decided { rejected }
+    })
+}
+
+pub(crate) fn report_rejection(result: &mut wenlan_types::rulesync::RulesSyncReport) {
+    use wenlan_types::rulesync::RulesSetupCode;
+    let notice = RulesSetupCode::SharedRuleRejected.into();
+    if !result.notice_codes.contains(&notice) {
+        result
+            .message
+            .push_str("\nA shared rule edit was rejected. Wenlan restored the approved rules.");
+        result.notice_codes.push(notice);
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use wenlan_core::{shared_space, team};
+    use wenlan_types::team::{TeamAccess, TeamSpaceAccess};
+
+    pub(crate) const PROJECT: &str = "B1 test project";
+    pub(crate) const REMOTE: &str = "https://github.com/fixture/rules-test.git";
+    pub(crate) const APPROVED: &str = "Use the approved checklist.\n";
+
+    pub(crate) fn hosted_fixture(data: &Path) -> (std::path::PathBuf, team::Member, team::Member) {
+        let settings = data.join("shared-spaces.json");
+        let team_path = data.join(team::TEAM_FILE);
+        let (owner, _) = team::owner_key(&team_path, "Owner").unwrap();
+        std::fs::write(data.join("repo-wiki.json"), serde_json::to_vec(&serde_json::json!({
+            "bindings": [{"space": PROJECT, "repo_root": data.join("repo"), "folder": "wiki", "remote_url": REMOTE}]
+        })).unwrap()).unwrap();
+        team::set_everyone(&team_path, rulesync_team::SPACE, Some(TeamAccess::Read)).unwrap();
+        for name in [rulesync_team::SPACE, PROJECT] {
+            let scope = shared_space::Scope::Space(name.into());
+            let folder = team::new_hosted_folder(&settings);
+            shared_space::join_at(&settings, &scope, &folder, "Owner").unwrap();
+            shared_space::update_share(&settings, &scope, |share| share.hosted = true).unwrap();
+            shared_space::ensure_space_file(
+                &folder,
+                &scope,
+                name,
+                &shared_space::SpaceMember {
+                    id: owner.id.clone(),
+                    name: owner.name.clone(),
+                },
+            )
+            .unwrap();
+            let proposal = rulesync_team::update_hosted_rules(&settings, name, APPROVED).unwrap();
+            rulesync_team::decide_local_space_proposal(&settings, name, &proposal, true).unwrap();
+        }
+        let (writer, _) = team::add_member(
+            &team_path,
+            "Writer",
+            &[rulesync_team::SPACE, PROJECT].map(|space| TeamSpaceAccess {
+                space: space.into(),
+                access: TeamAccess::Write,
+                id: None,
+            }),
+        )
+        .unwrap();
+        (settings, owner, writer)
+    }
+
+    pub(crate) fn render_fixture_section(layer: &TeamRuleLayer) -> String {
+        let stage_dir = tempfile::tempdir().unwrap();
+        let label = if layer.project.is_some() {
+            "Project"
+        } else {
+            "Team"
+        };
+        stage(stage_dir.path(), label, std::slice::from_ref(layer)).unwrap();
+        let path = stage_dir.path().join("rules").join(format!(
+            "{}-{}.md",
+            label.to_ascii_lowercase(),
+            key(layer).unwrap()
+        ));
+        std::fs::read_to_string(path)
+            .unwrap()
+            .strip_prefix("---\nroot: true\n---\n")
+            .unwrap()
+            .to_owned()
+    }
 
     #[test]
     fn isolates_edits_and_can_remove_inaccessible_layers() {

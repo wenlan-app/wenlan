@@ -204,6 +204,9 @@ pub async fn run(
                         "Checkout files in {}",
                         file_label(&receipt.directory.display().to_string())
                     );
+                    if !receipt.report.notice_codes.is_empty() {
+                        println!("{}", printable(&receipt.report.message));
+                    }
                     for blocked in receipt.report.blocked {
                         eprintln!("{}", terminal_error(anyhow::anyhow!(blocked)));
                     }

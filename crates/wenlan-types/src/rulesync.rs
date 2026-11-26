@@ -91,6 +91,9 @@ pub enum RulesSetupCode {
     PersonalPreviewFailed,
     RuleEncoding,
     SharedRuleChanged,
+    SharedRulePending,
+    SharedRuleRejected,
+    MixedRuleLayers,
     RuleCompareFailed,
     MetadataChanged,
     SkillUnmanaged,
@@ -382,6 +385,8 @@ pub struct RulesSyncReport {
     pub blocked: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_codes: Vec<RulesSetupNotice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notice_codes: Vec<RulesSetupNotice>,
     /// Settings intentionally left in their native tool during sync.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_in_place: Vec<KeptInPlace>,

@@ -2927,6 +2927,7 @@ async fn team_files(
             &folder,
             access,
             &shared_pages,
+            &member.id,
         )
     })
     .await;

@@ -277,7 +277,7 @@ mod tests {
         f.write(command, "After.\n");
         f.write(
             CODEX,
-            &f.text(CODEX).replace("Codex only.", "Edited in Codex."),
+            &f.text(CODEX).replace("Second rule.", "Edited in Codex."),
         );
         {
             let _lock = f.setup.lock().unwrap();

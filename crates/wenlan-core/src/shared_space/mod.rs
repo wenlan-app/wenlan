@@ -549,6 +549,7 @@ fn remember_team_rule_pull(
                         && before.revision == layer.revision
                         && before.project == layer.project
                         && before.skills == layer.skills
+                        && before.proposal_decisions == layer.proposal_decisions
                         && before.synced_at.get(..10) == layer.synced_at.get(..10)
                 }) {
                     return (false, ());

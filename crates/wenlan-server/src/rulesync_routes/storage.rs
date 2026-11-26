@@ -423,6 +423,7 @@ fn map_contents<From, To>(
         unmanaged_personal_files: manifest.unmanaged_personal_files.clone(),
         worktree_writes: manifest.worktree_writes.clone(),
         scope_reviews: manifest.scope_reviews.clone(),
+        shared_rule_proposals: manifest.shared_rule_proposals.clone(),
         scope_review_heads: manifest.scope_review_heads.clone(),
         dismissed_skill_updates: manifest.dismissed_skill_updates.clone(),
         kept_share_rules: manifest.kept_share_rules.clone(),
