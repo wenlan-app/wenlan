@@ -389,6 +389,53 @@ fn personal_rules_page_merge_recovers_only_the_uncommitted_archive() {
     assert!(restored.master.shared.is_empty());
 }
 
+/// A preference a person confirmed keeps the tool that proposed it; the
+/// saved rules must stay readable after that (found in a real first run:
+/// every rules read failed with "Invalid saved rule origins.").
+#[test]
+fn confirmed_preference_from_a_tool_keeps_rules_readable() {
+    let fixture = Fixture::plain();
+    fixture.setup.mark_empty_page_rules().unwrap();
+    let mut preference = preference_rule("Use pnpm, never npm, in this repo.", "mem_pnpm", 1);
+    preference.proposer = Some("wenlan-cli".into());
+    fixture
+        .setup
+        .change_page_rules(
+            &[],
+            PageChange {
+                snapshot: PageRuleSnapshot {
+                    rules: vec![preference],
+                    ..Default::default()
+                },
+                remove: BTreeSet::new(),
+                confirmed: true,
+                proposer: Some("wenlan-cli".into()),
+            },
+            &fixture_rule_renderer,
+        )
+        .unwrap();
+    let manifest = fixture.setup.load().unwrap().unwrap();
+    assert!(manifest
+        .master
+        .shared
+        .contains("Use pnpm, never npm, in this repo."));
+
+    assert!(safe_tool_name("claude-code"));
+    assert!(!safe_tool_name("claude\u{200b}code"));
+    assert!(!safe_tool_name("  "));
+
+    // A page line still has to come from the pages themselves.
+    let mut forged = manifest.clone();
+    for record in &mut forged.personal_rule_origins {
+        for origin in record.lines.iter_mut().flatten() {
+            for page in &mut origin.pages {
+                page.location.page_id = Some("page".into());
+            }
+        }
+    }
+    assert!(validate_personal_metadata(&forged).is_err());
+}
+
 #[test]
 fn personal_rules_empty_page_migration_works_with_one_or_no_tool() {
     use super::super::tests::CODEX;

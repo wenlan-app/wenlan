@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=68541013432cdb2f734f25767882905f29693ff410202bdb10dbd4cd5d60f2dd -->
+<!-- README_SYNC: source=README.md sha256=97ea03cacce998407168538642742fc1741e363f2aa1a4b39d8869b429c62694 -->
 
 <p align="center">
   <picture>
@@ -97,7 +97,7 @@
 
    裝了[插件](docs/setup-with-ai.md)，這兩句就是 `/capture` 和 `/recall`。[全部指令](plugin/skills/README.md)。
 
-3. 過一晚，文瀾把你定下的事整理成文件和規則，每條都附出處。
+3. 你的 AI 工具把你定下的事整理成文件和規則，每條都附出處。裝了[外掛](docs/setup-with-ai.md)的 Claude Code，下次打開時會自己開始；其他情況，跟你的 AI 工具說「幫我寫頁面」。裝了本機模型或 API 金鑰，文瀾也可以在背景自己做。
 
    第一次會問你一次。你說好之後，規則就寫進各個 AI 工具自己的規則檔。
 
@@ -173,7 +173,7 @@ OKF 資料夾也可以。掃描版 PDF 須先擷取文字。[匯入教學](docs/
 
 ## 它怎麼幫你整理
 
-你的 AI 工具把你帶進來的資料寫成 Markdown 頁面，連起相關的頁面、標出每句的出處，並保持最新。
+你的 AI 工具把你帶進來的資料寫成 Markdown 頁面，連起相關的頁面、標出引用的出處，並保持最新。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hant.animated.svg" alt="示意流程：AI 對話、文件與資料夾（含 Obsidian）、程式碼和網頁內容進入沉澱。它把幾則記憶寫成新頁、整併重複的頁，並更新舊頁，引用會對照來源查核；設成「先問我」的頁會等你點頭。它也會找出新關聯，處理矛盾時改用較新的說法，舊的留在紀錄可還原。下次再問，AI 工具會引用更新後的頁面。" width="100%">

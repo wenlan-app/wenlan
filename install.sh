@@ -209,31 +209,11 @@ printf '\033[1;32m━━━━━━━━━━━━━━━━━━━━�
 printf '\n'
 printf 'Next steps:\n\n'
 if [[ -z "${REQUESTED_TAG}" ]]; then
-  printf '  1. Reload your shell (or open a new terminal):\n'
+  printf '  Set up Wenlan and connect your AI tools:\n'
   printf '\n'
-  printf '       source %s\n' "${RC_FILE}"
+  printf '       "%s/wenlan" setup\n' "${BIN_DIR}"
   printf '\n'
-  printf '  2. Set up Wenlan:\n'
-  printf '\n'
-  printf '       wenlan setup --basic\n'
-  printf '\n'
-  printf '  3. Register Wenlan as a background service (launchd):\n'
-  printf '\n'
-  printf '       wenlan background on\n'
-  printf '\n'
-  printf '  4. Verify the daemon and memory setup:\n'
-  printf '\n'
-  printf '       wenlan status\n'
-  printf '\n'
-  printf '  5. Add the MCP server to Claude Desktop or Cursor:\n'
-  printf '\n'
-  printf '       {\n'
-  printf '         "mcpServers": {\n'
-  printf '           "wenlan": {\n'
-  printf '             "command": "%s/wenlan-mcp"\n' "${BIN_DIR}"
-  printf '           }\n'
-  printf '         }\n'
-  printf '       }\n'
+  printf '  In a new terminal, plain `wenlan` works too.\n'
   printf '\n'
 else
   printf '  1. Use this exact tagged release in the current shell session:\n'
@@ -264,10 +244,7 @@ else
   printf '     That replaces the stable com.wenlan.server LaunchAgent.\n'
   printf '\n'
 fi
-printf '\033[1;33mNote:\033[0m Wenlan can store and retrieve memories without a local model or API key.\n'
-printf '      Distill cycles are opt-in with `wenlan models install`.\n'
-printf '      Anthropic can be configured with `wenlan keys set anthropic`.\n'
 if [[ -n "${REQUESTED_TAG}" ]]; then
-  printf '      Manual release page for this install: %s\n' "${RELEASE_PAGE}"
+  printf '\033[1;33mNote:\033[0m Manual release page for this install: %s\n' "${RELEASE_PAGE}"
 fi
 printf '\n'
