@@ -895,7 +895,10 @@ pub(crate) async fn preference_change(
     mut snapshot: PageRuleSnapshot,
     from_tool: Option<String>,
 ) -> Result<Option<String>, ServerError> {
-    let proposer = match from_tool {
+    // A saved tool name that could not be shown safely is not kept: the line
+    // is still the person's, and an unsafe name would make every later
+    // rules read fail.
+    let proposer = match from_tool.filter(|tool| safe_tool_name(tool)) {
         Some(tool) => Some(tool),
         None => proposer(headers)?,
     };
@@ -1262,10 +1265,11 @@ fn safe_origin_value(value: Option<&str>) -> bool {
 /// has no page and keeps the tool it came from (`wenlan-cli`, `claude-code`).
 fn proposer_fits(page: &wenlan_types::personal_rules::PersonalRulePageOrigin) -> bool {
     let preference = page.location.page_id.is_none() && page.rule_id.starts_with("preference:");
-    page.proposer == PAGES_PROPOSER
-        || (preference
-            && !page.proposer.trim().is_empty()
-            && safe_origin_value(Some(&page.proposer)))
+    page.proposer == PAGES_PROPOSER || (preference && safe_tool_name(&page.proposer))
+}
+
+fn safe_tool_name(name: &str) -> bool {
+    !name.trim().is_empty() && safe_origin_value(Some(name))
 }
 
 fn safe_page_origins(origin: &PersonalRuleOrigin) -> bool {

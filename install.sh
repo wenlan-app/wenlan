@@ -211,7 +211,7 @@ printf 'Next steps:\n\n'
 if [[ -z "${REQUESTED_TAG}" ]]; then
   printf '  Set up Wenlan and connect your AI tools:\n'
   printf '\n'
-  printf '       %s/wenlan setup\n' "${BIN_DIR}"
+  printf '       "%s/wenlan" setup\n' "${BIN_DIR}"
   printf '\n'
   printf '  In a new terminal, plain `wenlan` works too.\n'
   printf '\n'

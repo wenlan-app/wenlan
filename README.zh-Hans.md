@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=57f2ffa3f1db17b63c3e91b8870d29a3982a440a7d04c3f6118bdad14c8d33f4 -->
+<!-- README_SYNC: source=README.md sha256=97ea03cacce998407168538642742fc1741e363f2aa1a4b39d8869b429c62694 -->
 
 <p align="center">
   <picture>
@@ -97,7 +97,7 @@
 
    装了[插件](docs/setup-with-ai.md)，这两句就是 `/capture` 和 `/recall`。[全部指令](plugin/skills/README.md)。
 
-3. 你的 AI 工具把你定下的事整理成文档和规则，每条都附出处。下次打开 Claude Code 时它会自己开始；在其他工具里，跟它说“帮我写页面”。装了本地模型或 API 密钥，文澜也可以在后台自己做。
+3. 你的 AI 工具把你定下的事整理成文档和规则，每条都附出处。装了[插件](docs/setup-with-ai.md)的 Claude Code，下次打开时会自己开始；其他情况，跟你的 AI 工具说“帮我写页面”。装了本地模型或 API 密钥，文澜也可以在后台自己做。
 
    第一次会问你一次。你说好之后，规则就写进各个 AI 工具自己的规则文件。
 

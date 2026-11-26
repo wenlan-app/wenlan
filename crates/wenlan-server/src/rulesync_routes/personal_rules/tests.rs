@@ -420,6 +420,10 @@ fn confirmed_preference_from_a_tool_keeps_rules_readable() {
         .shared
         .contains("Use pnpm, never npm, in this repo."));
 
+    assert!(safe_tool_name("claude-code"));
+    assert!(!safe_tool_name("claude\u{200b}code"));
+    assert!(!safe_tool_name("  "));
+
     // A page line still has to come from the pages themselves.
     let mut forged = manifest.clone();
     for record in &mut forged.personal_rule_origins {
