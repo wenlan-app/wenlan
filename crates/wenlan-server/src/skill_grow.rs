@@ -1501,22 +1501,101 @@ fn preference_line(id: &str, text: &str) -> SkillLine {
     }
 }
 
-/// After the move, a preference the person confirms becomes a shared rule
-/// at once; a tool asking to confirm one gets a plan for the person instead
-/// (returned). The memory itself is not changed here. Before the move this
-/// does nothing: the preference reaches tools from its memory.
+fn preference_names_absolute_path(text: &str) -> bool {
+    text.split_whitespace().any(|word| {
+        let word = word.trim_matches(|c: char| {
+            matches!(c, '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | '.')
+        });
+        let bytes = word.as_bytes();
+        Path::new(word).is_absolute()
+            || word.starts_with("\\\\")
+            || (bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\'))
+    })
+}
+
+/// A confirmed preference for a repository-bound Space proposes a project
+/// rule. After the personal-page move, a preference with no Space becomes a
+/// personal shared rule; a tool asking to confirm one gets a plan instead.
+/// The memory itself is not changed here.
 pub(crate) async fn preference_rule_on_confirm(
     db: &MemoryDB,
     headers: &HeaderMap,
     source_id: &str,
 ) -> Result<Option<String>, ServerError> {
-    if !crate::rulesync_routes::personal_rules::page_rules_merged()? {
-        return Ok(None);
-    }
     let Some(memory) = db.get_memory_detail(source_id).await? else {
         return Ok(None);
     };
     let person = crate::rulesync_routes::require_local_person(headers).is_ok();
+    if person && memory.confirmed && memory.memory_type.as_deref() == Some("preference") {
+        if let Some(space_name) = memory.space.as_deref().filter(|space| !space.is_empty()) {
+            let Some(space) = db.get_space(space_name).await? else {
+                return Ok(None);
+            };
+            let content = memory.content.trim().to_owned();
+            if content.is_empty() {
+                return Ok(None);
+            }
+            if content.contains(['\n', '\r']) {
+                return Err(ServerError::Conflict("A repository preference must be one line. Edit the preference and confirm it again.".into()));
+            }
+            if preference_names_absolute_path(&content) {
+                return Err(ServerError::Conflict("A repository preference cannot contain an absolute path. Edit the preference and confirm it again.".into()));
+            }
+            tokio::task::spawn_blocking(move || -> Result<(), ServerError> {
+                let settings = wenlan_core::shared_space::settings_path();
+                let binding = wenlan_core::repo_wiki::binding_at(
+                    &settings.with_file_name("repo-wiki.json"),
+                    &space.name,
+                )?;
+                let Some(repo_id) = binding
+                    .and_then(|binding| binding.remote_url)
+                    .as_deref()
+                    .and_then(wenlan_core::rulesync_team::repo_identity)
+                else {
+                    return Ok(());
+                };
+                let Some(layer) = wenlan_core::rulesync_team::project_layer_for_local_space(
+                    &settings,
+                    &space.name,
+                )?
+                else {
+                    return Ok(());
+                };
+                if !layer.project.as_ref().is_some_and(|project| {
+                    project.space == space.name && project.repo_id.as_ref() == Some(&repo_id)
+                }) {
+                    return Ok(());
+                }
+                let bullet = format!("- {content}");
+                if layer.markdown.lines().any(|line| line.trim() == bullet) {
+                    return Ok(());
+                }
+                let mut markdown = layer.markdown;
+                if !markdown.is_empty() && !markdown.ends_with('\n') {
+                    markdown.push('\n');
+                }
+                markdown.push_str(&bullet);
+                markdown.push('\n');
+                wenlan_core::rulesync_team::queue_proposal(
+                    &settings,
+                    &layer.id,
+                    &layer.revision,
+                    &markdown,
+                    wenlan_core::shared_space::version::AuthorKind::Person,
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| ServerError::Internal(error.to_string()))??;
+            return Ok(None);
+        }
+    }
+    if !crate::rulesync_routes::personal_rules::page_rules_merged()? {
+        return Ok(None);
+    }
     let eligible = memory.memory_type.as_deref() == Some("preference")
         && memory.space.as_deref().is_none_or(str::is_empty)
         && !memory.content.trim().is_empty()

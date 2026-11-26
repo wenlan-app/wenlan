@@ -1,0 +1,987 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Native files scoped to a checkout that belongs to the member's team.
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use anyhow::{bail, ensure, Context, Result};
+use wenlan_core::rulesync_team::TeamRuleLayer;
+use wenlan_types::rulesync::{RulesSetupCode as Code, RulesSyncReport};
+
+use crate::{
+    rulesync_apply::{ApplyOutcome, FileRoot, Snapshot},
+    rulesync_layers::{self, ProposalReceipts, SharedReview},
+    rulesync_routes::{text, with_bytes, Setup},
+};
+
+const START: &str = "<!-- WENLAN CHECKOUT RULES -->\n";
+const END: &str = "<!-- END WENLAN CHECKOUT RULES -->\n";
+const CODEX_HEADER: &str =
+    "# Written by Wenlan. Team rules for this repository; Wenlan rewrites this file.\n";
+const EXCLUDE_START: &str = "# Wenlan local rule files\n";
+const EXCLUDE_END: &str = "# End Wenlan local rule files\n";
+
+fn command(repo: &Path, args: &[&str]) -> Result<std::process::Output> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()?;
+    Ok(output)
+}
+
+fn managed_span(source: &str) -> Result<Option<std::ops::Range<usize>>> {
+    let Some(start) = source.find(START) else {
+        ensure!(
+            !source.contains("<!-- WENLAN CHECKOUT RULES") && !source.contains(END),
+            "checkout rule markers changed"
+        );
+        return Ok(None);
+    };
+    ensure!(
+        source.matches(START).count() == 1,
+        "checkout rule markers changed"
+    );
+    let end = source[start + START.len()..]
+        .find(END)
+        .map(|offset| start + START.len() + offset + END.len())
+        .context("checkout rule markers changed")?;
+    ensure!(
+        !source[end..].contains(END),
+        "checkout rule markers changed"
+    );
+    Ok(Some(start..end))
+}
+
+fn local_text(teams: &[TeamRuleLayer], project: &[TeamRuleLayer]) -> Result<String> {
+    let mut text = String::new();
+    for layer in teams {
+        text.push_str(&rulesync_layers::format_layer("Team", layer)?);
+    }
+    for layer in project {
+        text.push_str(&rulesync_layers::format_layer("Project", layer)?);
+    }
+    Ok(text)
+}
+
+fn write(root: &FileRoot, path: &Path, current: &Snapshot, next: Option<&str>) -> Result<bool> {
+    let desired = next.map_or(Snapshot::Absent, |value| {
+        with_bytes(current, value.as_bytes().to_vec())
+    });
+    if current == &desired {
+        return Ok(false);
+    }
+    ensure!(
+        root.apply(path, current, &desired, false)? == ApplyOutcome::Applied,
+        "checkout file changed during sync"
+    );
+    Ok(true)
+}
+
+fn alias(key: &str, file: &str) -> PathBuf {
+    PathBuf::from("checkouts")
+        .join(key)
+        .join("local")
+        .join(file)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn review(
+    settings: &Path,
+    setup: &Setup,
+    key: &str,
+    file: &str,
+    before: &str,
+    after: &str,
+    authorized: &BTreeMap<String, &TeamRuleLayer>,
+    receipts: &mut BTreeMap<PathBuf, ProposalReceipts>,
+) -> Result<SharedReview> {
+    let edits = rulesync_layers::edits(before, after)?;
+    ensure!(
+        !edits.is_empty()
+            && rulesync_layers::only_personal(before)? == rulesync_layers::only_personal(after)?,
+        "checkout rule markers changed"
+    );
+    let path = alias(key, file);
+    rulesync_layers::review_edits(
+        settings,
+        authorized,
+        edits,
+        receipts.entry(path.clone()).or_default(),
+        &path,
+        &setup.data,
+        &setup.home,
+    )
+}
+
+fn git_common_dir(repo: &Path) -> Result<PathBuf> {
+    let out = command(repo, &["rev-parse", "--git-common-dir"])?;
+    ensure!(out.status.success(), "cannot find Git common directory");
+    let value = String::from_utf8(out.stdout)?;
+    let path = Path::new(value.trim());
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo.join(path)
+    })
+}
+
+fn excluded(repo: &Path, path: &str) -> Result<bool> {
+    let out = command(repo, &["check-ignore", "-q", path])?;
+    Ok(out.status.success())
+}
+
+fn tracked(repo: &Path, path: &str) -> Result<bool> {
+    let out = command(repo, &["ls-files", "--error-unmatch", "--", path])?;
+    Ok(out.status.success())
+}
+
+fn update_exclude(repo: &Path, claude: bool, codex: bool) -> Result<()> {
+    let root = FileRoot::open(&git_common_dir(repo)?)?;
+    let path = Path::new("info/exclude");
+    let seen = root.read(path, false)?;
+    let original = match &seen {
+        Snapshot::File { .. } => text(&seen)?.to_owned(),
+        Snapshot::Absent => String::new(),
+        _ => bail!("Git exclude is not a regular file"),
+    };
+    let mut base = original.clone();
+    let mut owned_before = String::new();
+    if let Some(start) = base.find(EXCLUDE_START) {
+        let end = base[start..]
+            .find(EXCLUDE_END)
+            .map(|n| start + n + EXCLUDE_END.len())
+            .context("Git exclude Wenlan markers changed")?;
+        owned_before = base[start..end].to_owned();
+        base.replace_range(start..end, "");
+    }
+    let mut entries = Vec::new();
+    for (enabled, name) in [(claude, "CLAUDE.local.md"), (codex, ".codex/config.toml")] {
+        if enabled && (!excluded(repo, name)? || owned_before.contains(&format!("\n{name}\n"))) {
+            entries.push(name);
+        }
+    }
+    if !entries.is_empty() {
+        if !base.is_empty() && !base.ends_with('\n') {
+            base.push('\n');
+        }
+        base.push_str(EXCLUDE_START);
+        for entry in entries {
+            base.push_str(entry);
+            base.push('\n');
+        }
+        base.push_str(EXCLUDE_END);
+    }
+    if base != original {
+        ensure!(
+            root.apply(path, &seen, &with_bytes(&seen, base.into_bytes()), false)?
+                == ApplyOutcome::Applied,
+            "Git exclude changed during sync"
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn codex_home(home: &Path) -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"))
+}
+
+fn codex_trusted(codex_home: &Path, repo: &Path) -> Result<bool> {
+    let source = match fs::read_to_string(codex_home.join("config.toml")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let parsed: toml::Value = toml::from_str(&source).context("invalid Codex config")?;
+    let canonical = repo.canonicalize()?;
+    Ok(parsed
+        .get("projects")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|projects| {
+            projects.iter().any(|(path, value)| {
+                value.get("trust_level").and_then(toml::Value::as_str) == Some("trusted")
+                    && (Path::new(path) == repo
+                        || Path::new(path).canonicalize().ok().as_deref()
+                            == Some(canonical.as_path()))
+            })
+        }))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn sync(
+    setup: &Setup,
+    codex_home: &Path,
+    settings: &Path,
+    repo: &Path,
+    project: &[TeamRuleLayer],
+    teams: &[TeamRuleLayer],
+    authorized: &BTreeMap<String, &TeamRuleLayer>,
+    claude_record: &mut Option<String>,
+    codex_record: &mut Option<String>,
+    codex_dir_created: &mut bool,
+    receipts: &mut BTreeMap<PathBuf, ProposalReceipts>,
+    result: &mut RulesSyncReport,
+    person: bool,
+    key: &str,
+) -> Result<()> {
+    let root = FileRoot::open(repo)?;
+    let expected = local_text(teams, project)?;
+    let wanted = !project.is_empty();
+    let claude_path = Path::new("CLAUDE.local.md");
+    let current = root.read(claude_path, false)?;
+    let content = match &current {
+        Snapshot::File { .. } => Some(text(&current)?),
+        Snapshot::Absent => None,
+        _ => bail!("CLAUDE.local.md is not a regular file"),
+    };
+    let prior = claude_record.as_deref();
+    let span = content.map(managed_span).transpose().map(Option::flatten);
+    match span {
+        Err(_) => result.block(Code::CheckoutNeedsReview, format!("Your edits to the team rules in {}/CLAUDE.local.md were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display())),
+        Ok(span) => {
+            let existing = content.and_then(|content| span.as_ref().map(|range| &content[range.clone()]));
+            let changed = existing != prior;
+            let mut replace = !changed;
+            if changed && person && wanted {
+                let before = prior.unwrap_or_default();
+                let after = existing.unwrap_or_default();
+                match review(settings, setup, key, "CLAUDE.local.md", before, after, authorized, receipts) {
+                    Ok(SharedReview::Decided { rejected: true }) => replace = true,
+                    Ok(SharedReview::Decided { rejected: false }) => replace = true,
+                    Ok(_) | Err(_) => (),
+                }
+            }
+            if !replace {
+                result.block(Code::SharedRuleNeedsConfirm, format!("Your edits to the team rules in {}/CLAUDE.local.md were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display()));
+            } else {
+                let mut next = content.unwrap_or_default().to_owned();
+                let block = wanted.then(|| format!("{START}{expected}{END}"));
+                if let Some(range) = span {
+                    next.replace_range(range, block.as_deref().unwrap_or(""));
+                } else if let Some(block) = &block {
+                    if !next.is_empty() && !next.ends_with('\n') { next.push('\n'); }
+                    if !next.is_empty() && !next.ends_with("\n\n") { next.push('\n'); }
+                    next.push_str(block);
+                }
+                let desired = if next.is_empty() { None } else { Some(next.as_str()) };
+                if write(&root, claude_path, &current, desired)? { result.written.push(repo.join(claude_path).display().to_string()); }
+                *claude_record = block;
+                receipts.remove(&alias(key, "CLAUDE.local.md"));
+            }
+        }
+    }
+    let codex_path = Path::new(".codex/config.toml");
+    let trusted = codex_trusted(codex_home, repo)?;
+    let current = root.read(codex_path, false)?;
+    let current_text = match &current {
+        Snapshot::File { .. } => Some(text(&current)?),
+        Snapshot::Absent => None,
+        _ => bail!("Codex checkout config is not a regular file"),
+    };
+    if wanted && !trusted {
+        result.block(
+            Code::CheckoutNeedsReview,
+            format!(
+                "Codex won't get the team rules in {} until you trust this repository in Codex.",
+                repo.file_name().unwrap_or_default().to_string_lossy()
+            ),
+        );
+    }
+    if current_text.is_some_and(|value| !value.starts_with(CODEX_HEADER))
+        || (current_text.is_some() && tracked(repo, ".codex/config.toml")?)
+    {
+        result.block(
+            Code::CheckoutNeedsReview,
+            format!(
+                "Wenlan didn't change {}/.codex/config.toml because it isn't Wenlan's file.",
+                repo.display()
+            ),
+        );
+    } else {
+        let mut held = codex_record.is_some() && current_text.is_none() && wanted && trusted;
+        if let Some(after) = current_text {
+            if codex_record.as_deref() != Some(after) {
+                if let Some(before) = codex_record.as_deref() {
+                    let instructions = |source: &str| -> Result<String> {
+                        let value: toml::Value = toml::from_str(source)?;
+                        Ok(value
+                            .get("developer_instructions")
+                            .and_then(toml::Value::as_str)
+                            .context("Codex checkout instructions changed")?
+                            .to_owned())
+                    };
+                    let decision = instructions(before).and_then(|before| {
+                        let after = instructions(after)?;
+                        review(
+                            settings,
+                            setup,
+                            key,
+                            ".codex/config.toml",
+                            &before,
+                            &after,
+                            authorized,
+                            receipts,
+                        )
+                    });
+                    held = !matches!(decision, Ok(SharedReview::Decided { .. }));
+                } else {
+                    held = true;
+                }
+            }
+        }
+        if held {
+            result.block(Code::SharedRuleNeedsConfirm, format!("Your edits to the team rules in {}/.codex/config.toml were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display()));
+        } else {
+            let next = if wanted && trusted {
+                Some(format!(
+                    "{CODEX_HEADER}developer_instructions = {}\n",
+                    toml::Value::String(expected)
+                ))
+            } else {
+                None
+            };
+            if next.is_some() && current_text.is_none() && !repo.join(".codex").exists() {
+                fs::create_dir_all(repo.join(".codex"))?;
+                *codex_dir_created = true;
+            }
+            if write(&root, codex_path, &current, next.as_deref())? {
+                result
+                    .written
+                    .push(repo.join(codex_path).display().to_string());
+            }
+            *codex_record = next;
+            if !wanted || !trusted {
+                let directory = repo.join(".codex");
+                if *codex_dir_created
+                    && directory.is_dir()
+                    && fs::read_dir(&directory)?.next().is_none()
+                {
+                    fs::remove_dir(directory)?;
+                    *codex_dir_created = false;
+                }
+            }
+        }
+    }
+    update_exclude(repo, claude_record.is_some(), codex_record.is_some())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rulesync_routes::report;
+    use wenlan_core::rulesync_team;
+
+    #[test]
+    #[ignore = "creates persistent scratch repositories for a manual Codex run"]
+    fn checkout_codex_files_for_a_real_codex_run() {
+        let Some(root) = std::env::var_os("WENLAN_TEST_CODEX_CHECK_DIR").map(PathBuf::from) else {
+            return;
+        };
+        assert!(root.is_absolute());
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            fs::read_dir(&root).unwrap().next().is_none(),
+            "use an empty check directory"
+        );
+        let codex_home = root.join("codex-home");
+        let data = root.join("data");
+        fs::create_dir(&codex_home).unwrap();
+        fs::create_dir(&data).unwrap();
+        let setup = Setup {
+            home: codex_home.clone(),
+            data: data.clone(),
+            binary: PathBuf::from("unused"),
+        };
+        let remote = "https://github.com/fixture/codex-check.git";
+        let repo_id = rulesync_team::repo_identity(remote).unwrap();
+        let trusted = root.join("trusted-repo");
+        let untrusted = root.join("untrusted-repo");
+        for repo in [&trusted, &untrusted] {
+            fs::create_dir(repo).unwrap();
+            assert!(command(repo, &["init", "--quiet"])
+                .unwrap()
+                .status
+                .success());
+            assert!(command(repo, &["remote", "add", "origin", remote])
+                .unwrap()
+                .status
+                .success());
+        }
+        fs::write(
+            codex_home.join("config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                trusted.display()
+            ),
+        )
+        .unwrap();
+        let team = TeamRuleLayer {
+            id: "team-codex-check".into(),
+            name: "Codex check team".into(),
+            markdown: "- WENLAN_TEAM_CHECK_TOKEN".into(),
+            revision: "a".repeat(64),
+            synced_at: "2026-11-26".into(),
+            project: None,
+            skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
+        };
+        let project = TeamRuleLayer {
+            id: "project-codex-check".into(),
+            name: "Codex check project".into(),
+            markdown: "- WENLAN_PROJECT_CHECK_TOKEN".into(),
+            revision: "b".repeat(64),
+            synced_at: "2026-11-26".into(),
+            project: Some(wenlan_types::team::TeamRulesProject {
+                space: "Codex check".into(),
+                space_id: "codex-check".into(),
+                repo_id: Some(repo_id),
+            }),
+            skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
+        };
+        let authorized = [&team, &project]
+            .into_iter()
+            .map(|layer| (rulesync_layers::key(layer).unwrap(), layer))
+            .collect();
+        for repo in [&trusted, &untrusted] {
+            let mut claude = None;
+            let mut codex = None;
+            let mut codex_dir_created = false;
+            let mut receipts = BTreeMap::new();
+            let mut result = report("checkout");
+            sync(
+                &setup,
+                &codex_home,
+                &data.join("shared-spaces.json"),
+                repo,
+                std::slice::from_ref(&project),
+                std::slice::from_ref(&team),
+                &authorized,
+                &mut claude,
+                &mut codex,
+                &mut codex_dir_created,
+                &mut receipts,
+                &mut result,
+                true,
+                &wenlan_core::rulesync_personal::fingerprint(repo).unwrap(),
+            )
+            .unwrap();
+            assert!(repo.join("CLAUDE.local.md").exists());
+        }
+        let content = fs::read_to_string(trusted.join(".codex/config.toml")).unwrap();
+        assert!(content.contains("WENLAN_TEAM_CHECK_TOKEN"));
+        assert!(content.contains("WENLAN_PROJECT_CHECK_TOKEN"));
+        assert!(!untrusted.join(".codex/config.toml").exists());
+    }
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        setup: Setup,
+        repo: PathBuf,
+        key: String,
+        settings: PathBuf,
+        writer: wenlan_core::team::Member,
+        team: Vec<TeamRuleLayer>,
+        project: Vec<TeamRuleLayer>,
+        claude: Option<String>,
+        codex: Option<String>,
+        codex_dir_created: bool,
+        receipts: BTreeMap<PathBuf, ProposalReceipts>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let setup = Setup {
+                home: temp.path().join("home"),
+                data: temp.path().join("data"),
+                binary: PathBuf::from("unused"),
+            };
+            fs::create_dir_all(setup.home.join(".codex")).unwrap();
+            fs::create_dir(&setup.data).unwrap();
+            let repo = temp.path().join("repo");
+            fs::create_dir(&repo).unwrap();
+            assert!(command(&repo, &["init", "--quiet"])
+                .unwrap()
+                .status
+                .success());
+            assert!(command(
+                &repo,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    crate::rulesync_layers::tests::REMOTE
+                ]
+            )
+            .unwrap()
+            .status
+            .success());
+            let (settings, _, writer) = crate::rulesync_layers::tests::hosted_fixture(&setup.data);
+            fs::create_dir(setup.data.join("checkouts")).unwrap();
+            let key = wenlan_core::rulesync_personal::fingerprint(&repo).unwrap();
+            fs::write(
+                setup.data.join(format!("checkouts/{key}.json")),
+                serde_json::to_vec(&serde_json::json!({"format": 1, "checkout": {
+                    "repo": repo, "files": {}, "skills": {}, "pending": null, "unresolved": []
+                }}))
+                .unwrap(),
+            )
+            .unwrap();
+            let team = rulesync_team::load_layers(&settings).unwrap();
+            let project = rulesync_team::load_project_layers(&settings).unwrap();
+            assert!(!team.is_empty() && !project.is_empty());
+            Self {
+                _temp: temp,
+                setup,
+                repo,
+                key,
+                settings,
+                writer,
+                team,
+                project,
+                claude: None,
+                codex: None,
+                codex_dir_created: false,
+                receipts: BTreeMap::new(),
+            }
+        }
+
+        fn trust(&self) {
+            fs::write(
+                self.setup.home.join(".codex/config.toml"),
+                format!(
+                    "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                    self.repo.display()
+                ),
+            )
+            .unwrap();
+        }
+
+        fn run(&mut self) -> RulesSyncReport {
+            let mut result = report("checkout");
+            let authorized = self
+                .team
+                .iter()
+                .chain(&self.project)
+                .map(|layer| (rulesync_layers::key(layer).unwrap(), layer))
+                .collect();
+            sync(
+                &self.setup,
+                &self.setup.home.join(".codex"),
+                &self.settings,
+                &self.repo,
+                &self.project,
+                &self.team,
+                &authorized,
+                &mut self.claude,
+                &mut self.codex,
+                &mut self.codex_dir_created,
+                &mut self.receipts,
+                &mut result,
+                true,
+                &self.key,
+            )
+            .unwrap();
+            result
+        }
+    }
+
+    #[test]
+    fn checkout_local_files_get_team_and_project_rules_in_a_matching_repo() {
+        let mut f = Fixture::new();
+        f.trust();
+        let before = fs::read(f.repo.join(".gitignore")).ok();
+        f.run();
+        let content = fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap();
+        assert!(content.find("## Team rules").unwrap() < content.find("## Project rules").unwrap());
+        assert!(content.contains("Rules are listed from broadest to most specific"));
+        assert_eq!(fs::read(f.repo.join(".gitignore")).ok(), before);
+        let exclude =
+            fs::read_to_string(git_common_dir(&f.repo).unwrap().join("info/exclude")).unwrap();
+        assert!(exclude.contains("CLAUDE.local.md"));
+        assert!(exclude.contains(".codex/config.toml"));
+        f.run();
+        let repeated =
+            fs::read_to_string(git_common_dir(&f.repo).unwrap().join("info/exclude")).unwrap();
+        assert_eq!(repeated.matches("CLAUDE.local.md").count(), 1);
+        assert_eq!(repeated.matches(".codex/config.toml").count(), 1);
+        assert!(command(&f.repo, &["status", "--porcelain"])
+            .unwrap()
+            .stdout
+            .is_empty());
+    }
+
+    #[test]
+    fn checkout_local_files_skip_a_repo_of_no_team_project() {
+        let mut f = Fixture::new();
+        f.project.clear();
+        f.team.clear();
+        f.run();
+        assert!(!f.repo.join("CLAUDE.local.md").exists());
+    }
+
+    #[test]
+    fn checkout_codex_config_written_only_when_trusted() {
+        let mut f = Fixture::new();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("until you trust")));
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        f.trust();
+        f.run();
+        let content = fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap();
+        assert!(content.starts_with(CODEX_HEADER));
+        let value: toml::Value = toml::from_str(&content).unwrap();
+        assert!(value
+            .get("developer_instructions")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("## Team rules"));
+        fs::remove_file(f.setup.home.join(".codex/config.toml")).unwrap();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("until you trust")));
+        assert!(!f.repo.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn checkout_codex_config_refuses_a_file_that_is_not_wenlans() {
+        let mut f = Fixture::new();
+        f.trust();
+        fs::create_dir(f.repo.join(".codex")).unwrap();
+        fs::write(
+            f.repo.join(".codex/config.toml"),
+            "developer_instructions = 'mine'\n",
+        )
+        .unwrap();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("isn't Wenlan's file")));
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            "developer_instructions = 'mine'\n"
+        );
+    }
+
+    #[test]
+    fn checkout_codex_config_refuses_a_tracked_wenlan_header() {
+        let mut f = Fixture::new();
+        f.trust();
+        fs::create_dir(f.repo.join(".codex")).unwrap();
+        let existing = format!("{CODEX_HEADER}developer_instructions = 'keep'\n");
+        fs::write(f.repo.join(".codex/config.toml"), &existing).unwrap();
+        assert!(command(&f.repo, &["add", ".codex/config.toml"])
+            .unwrap()
+            .status
+            .success());
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("isn't Wenlan's file")));
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            existing
+        );
+    }
+
+    #[test]
+    fn checkout_local_files_keep_the_persons_own_lines() {
+        let mut f = Fixture::new();
+        fs::write(f.repo.join("CLAUDE.local.md"), "Own first.\nOwn last.\n").unwrap();
+        f.run();
+        f.run();
+        let content = fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap();
+        assert!(content.starts_with("Own first.\nOwn last.\n\n"));
+    }
+
+    #[test]
+    fn checkout_local_files_removed_after_access_is_revoked() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        f.project.clear();
+        f.team.clear();
+        f.run();
+        assert!(!f.repo.join("CLAUDE.local.md").exists());
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        let exclude =
+            fs::read_to_string(git_common_dir(&f.repo).unwrap().join("info/exclude")).unwrap();
+        assert!(!exclude.contains(EXCLUDE_START));
+    }
+
+    #[test]
+    fn checkout_local_block_hand_edit_is_kept_and_reported() {
+        let mut f = Fixture::new();
+        f.run();
+        let path = f.repo.join("CLAUDE.local.md");
+        let content = fs::read_to_string(&path)
+            .unwrap()
+            .replace("Use the approved checklist.", "Use my checklist.");
+        fs::write(&path, &content).unwrap();
+        let report = f.run();
+        assert_eq!(fs::read_to_string(path).unwrap(), content);
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("shared-edits")));
+    }
+
+    #[test]
+    fn checkout_local_files_without_a_receipt_are_left_for_review() {
+        let mut f = Fixture::new();
+        f.trust();
+        let rules = local_text(&f.team, &f.project).unwrap();
+        let claude = format!("{START}{rules}{END}My later edit.\n");
+        fs::write(f.repo.join("CLAUDE.local.md"), &claude).unwrap();
+        fs::create_dir(f.repo.join(".codex")).unwrap();
+        let codex = format!(
+            "{CODEX_HEADER}developer_instructions = {}\n",
+            toml::Value::String(rules)
+        );
+        fs::write(f.repo.join(".codex/config.toml"), &codex).unwrap();
+        let report = f.run();
+        assert_eq!(
+            report
+                .blocked
+                .iter()
+                .filter(|line| line.contains("shared-edits"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+    }
+
+    #[test]
+    fn checkout_local_exclude_uses_the_linked_worktree_common_dir() {
+        let mut f = Fixture::new();
+        assert!(command(
+            &f.repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init"
+            ]
+        )
+        .unwrap()
+        .status
+        .success());
+        let linked = f._temp.path().join("linked");
+        assert!(command(
+            &f.repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "linked",
+                linked.to_str().unwrap()
+            ]
+        )
+        .unwrap()
+        .status
+        .success());
+        f.repo = linked;
+        f.run();
+        let common = git_common_dir(&f.repo).unwrap();
+        assert!(fs::read_to_string(common.join("info/exclude"))
+            .unwrap()
+            .contains("CLAUDE.local.md"));
+    }
+
+    fn pending_id(f: &Fixture) -> String {
+        let answers = crate::rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        assert_eq!(answers.waiting.values().next().unwrap().files.len(), 2);
+        answers.waiting.keys().next().unwrap().clone()
+    }
+
+    fn edit_both(f: &mut Fixture) -> (String, String) {
+        f.trust();
+        f.run();
+        let claude = f.repo.join("CLAUDE.local.md");
+        let codex = f.repo.join(".codex/config.toml");
+        let claude_edited = fs::read_to_string(&claude).unwrap().replacen(
+            "Use the approved checklist.",
+            "Use the revised checklist.",
+            1,
+        );
+        let codex_edited = fs::read_to_string(&codex).unwrap().replacen(
+            "Use the approved checklist.",
+            "Use the revised checklist.",
+            1,
+        );
+        fs::write(claude, &claude_edited).unwrap();
+        fs::write(codex, &codex_edited).unwrap();
+        (claude_edited, codex_edited)
+    }
+
+    #[test]
+    fn rulesync_checkout_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection() {
+        use wenlan_core::team::{self, CredentialKind};
+        let mut f = Fixture::new();
+        let (claude, codex) = edit_both(&mut f);
+        assert!(f
+            .run()
+            .blocked
+            .iter()
+            .any(|line| line.contains("shared-edits")));
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        let id = pending_id(&f);
+        crate::rulesync_routes::decide_shared_edit_at(
+            &f.setup,
+            &f.settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
+        )
+        .unwrap();
+        let team_path = f.settings.with_file_name(team::TEAM_FILE);
+        let proposals = rulesync_team::pending_proposals(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            CredentialKind::BrowserSession,
+        )
+        .unwrap();
+        assert_eq!(proposals.len(), 1);
+        rulesync_team::decide_proposal(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            CredentialKind::BrowserSession,
+            &proposals[0].id,
+            false,
+        )
+        .unwrap();
+        f.team = rulesync_team::load_layers(&f.settings).unwrap();
+        f.run();
+        assert!(!fs::read_to_string(f.repo.join("CLAUDE.local.md"))
+            .unwrap()
+            .contains("revised checklist"));
+        assert!(!fs::read_to_string(f.repo.join(".codex/config.toml"))
+            .unwrap()
+            .contains("revised checklist"));
+    }
+
+    #[test]
+    fn rulesync_checkout_write_holder_applies_their_team_hand_edit_with_one_confirmation() {
+        use wenlan_core::team::{self, CredentialKind};
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        crate::rulesync_routes::decide_shared_edit_at(
+            &f.setup,
+            &f.settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
+        )
+        .unwrap();
+        let team_path = f.settings.with_file_name(team::TEAM_FILE);
+        let proposals = rulesync_team::pending_proposals(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            CredentialKind::BrowserSession,
+        )
+        .unwrap();
+        assert_eq!(proposals.len(), 1);
+        rulesync_team::decide_proposal(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            CredentialKind::BrowserSession,
+            &proposals[0].id,
+            true,
+        )
+        .unwrap();
+        f.team = rulesync_team::load_layers(&f.settings).unwrap();
+        let report = f.run();
+        assert!(
+            report
+                .blocked
+                .iter()
+                .all(|line| !line.contains("Your edits")),
+            "{report:?}"
+        );
+        assert!(fs::read_to_string(f.repo.join("CLAUDE.local.md"))
+            .unwrap()
+            .contains("revised checklist"));
+        assert!(fs::read_to_string(f.repo.join(".codex/config.toml"))
+            .unwrap()
+            .contains("revised checklist"));
+    }
+
+    #[test]
+    fn rulesync_checkout_declined_shared_edit_restores_approved_lines_on_person_sync() {
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        crate::rulesync_routes::decide_shared_edit_at(
+            &f.setup,
+            &f.settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: false },
+        )
+        .unwrap();
+        f.run();
+        assert!(!fs::read_to_string(f.repo.join("CLAUDE.local.md"))
+            .unwrap()
+            .contains("revised checklist"));
+        assert!(!fs::read_to_string(f.repo.join(".codex/config.toml"))
+            .unwrap()
+            .contains("revised checklist"));
+    }
+
+    #[test]
+    fn rulesync_checkout_stale_shared_edit_cannot_be_sent() {
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        fs::write(f.repo.join("CLAUDE.local.md"), f.claude.as_deref().unwrap()).unwrap();
+        let answer = crate::rulesync_routes::decide_shared_edit_at(
+            &f.setup,
+            &f.settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
+        );
+        assert!(answer.is_err());
+    }
+}

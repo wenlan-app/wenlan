@@ -72,6 +72,7 @@ pub mod router;
 pub mod routes;
 mod rulesync_apply;
 mod rulesync_checkout;
+mod rulesync_checkout_local;
 mod rulesync_layers;
 mod rulesync_registry;
 mod rulesync_routes;

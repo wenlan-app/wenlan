@@ -1672,6 +1672,207 @@ fn approve_project_master(scratch: &Scratch, space: &str, versions: &[&str]) {
 }
 
 #[tokio::test]
+async fn repo_preference_goes_to_that_repos_project_rules() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let space = scratch
+        .db
+        .create_space("Design", None, false)
+        .await
+        .unwrap();
+    approve_project_master(&scratch, &space.name, &["Review every edit"]);
+    const PREFERENCE: &str = "Keep reviews short and concrete.";
+    seed_memory_for_preferences(
+        &scratch.db,
+        "repo-pref",
+        PREFERENCE,
+        "preference",
+        Some(&space.name),
+        false,
+    )
+    .await;
+    let stored = scratch
+        .db
+        .get_memory_detail("repo-pref")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.space.as_deref(), Some(space.name.as_str()));
+    assert_eq!(stored.memory_type.as_deref(), Some("preference"));
+    assert_eq!(stored.content, PREFERENCE);
+    assert!(crate::rulesync_routes::require_local_person(&person_headers()).is_ok());
+    let settings = wenlan_core::shared_space::settings_path();
+    let binding =
+        wenlan_core::repo_wiki::binding_at(&settings.with_file_name("repo-wiki.json"), &space.name)
+            .unwrap()
+            .unwrap();
+    let layer = wenlan_core::rulesync_team::project_layer_for_local_space(&settings, &space.name)
+        .unwrap()
+        .unwrap();
+    assert_eq!(layer.project.as_ref().unwrap().space, space.name);
+    assert_eq!(
+        layer.project.as_ref().unwrap().repo_id,
+        binding
+            .remote_url
+            .as_deref()
+            .and_then(wenlan_core::rulesync_team::repo_identity)
+    );
+    let result = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("repo-pref".into()),
+        None,
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(result.confirmed && result.rule_plan.is_none());
+    let stored = scratch
+        .db
+        .get_memory_detail("repo-pref")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.confirmed);
+    assert_eq!(stored.space.as_deref(), Some(space.name.as_str()));
+    assert_eq!(stored.memory_type.as_deref(), Some("preference"));
+    let proposals =
+        wenlan_core::rulesync_team::local_space_proposals(&settings, &space.name).unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(
+        proposals[0].markdown,
+        format!("Review every edit\n- {PREFERENCE}\n")
+    );
+    assert!(!proposals[0]
+        .markdown
+        .contains(&scratch.pages.display().to_string()));
+    assert_eq!(
+        wenlan_core::rulesync_team::hosted_project_layer(&settings, &space.name)
+            .unwrap()
+            .unwrap()
+            .markdown,
+        "Review every edit"
+    );
+}
+
+#[tokio::test]
+async fn preference_without_a_space_still_goes_to_personal_rules() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(true).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let _rulesync = EnvGuard::set(&[("WENLAN_RULESYNC", Path::new("1"))]);
+    sync_rules_files_locked(&scratch.db, Some(&scratch.pages), &scratch.skill_dirs()).await;
+    assert!(crate::rulesync_routes::personal_rules::page_rules_merged().unwrap());
+    const PREFERENCE: &str = "Use concise release notes.";
+    seed_memory_for_preferences(
+        &scratch.db,
+        "personal-pref",
+        PREFERENCE,
+        "preference",
+        None,
+        false,
+    )
+    .await;
+    let _ = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("personal-pref".into()),
+        None,
+    )
+    .await
+    .unwrap();
+    let personal = std::fs::read_to_string(scratch.data.join("rulesync/personal.json")).unwrap();
+    assert!(personal.contains(PREFERENCE));
+}
+
+#[tokio::test]
+async fn preference_in_a_space_without_project_rules_is_unchanged() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let space = scratch
+        .db
+        .create_space("Unbound", None, false)
+        .await
+        .unwrap();
+    seed_memory_for_preferences(
+        &scratch.db,
+        "unbound-pref",
+        "Use a short checklist.",
+        "preference",
+        Some(&space.name),
+        false,
+    )
+    .await;
+    let result = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("unbound-pref".into()),
+        None,
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(result.confirmed && result.rule_plan.is_none());
+    assert!(wenlan_core::rulesync_team::load_project_layers(
+        &wenlan_core::shared_space::settings_path()
+    )
+    .unwrap()
+    .is_empty());
+    assert!(!scratch.data.join("rulesync/personal.json").exists());
+}
+
+#[tokio::test]
+async fn repo_preference_with_an_absolute_path_is_refused() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let scratch = Scratch::new(false).await;
+    let _env = isolate_page_rule_store(&scratch);
+    let space = scratch
+        .db
+        .create_space("Design", None, false)
+        .await
+        .unwrap();
+    approve_project_master(&scratch, &space.name, &["Review every edit"]);
+    seed_memory_for_preferences(
+        &scratch.db,
+        "path-pref",
+        "Keep work under /private/tmp/secret",
+        "preference",
+        Some(&space.name),
+        false,
+    )
+    .await;
+    let error = crate::memory_routes::handle_confirm_memory(
+        axum::extract::State(scratch.shared.clone()),
+        person_headers(),
+        axum::extract::Path("path-pref".into()),
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("absolute path"), "{error}");
+    assert!(wenlan_core::rulesync_team::local_space_proposals(
+        &wenlan_core::shared_space::settings_path(),
+        &space.name
+    )
+    .unwrap()
+    .is_empty());
+}
+
+#[tokio::test]
 async fn round4_hosted_rules_reads_and_reports_use_the_approved_master() {
     const OLD: &str = "ROUND4 superseded instruction";
     const APPROVED: &str = "Use the reviewed agenda";

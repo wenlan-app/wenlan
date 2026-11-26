@@ -1797,11 +1797,9 @@ pub async fn handle_confirm_memory(
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", source_id)));
     }
-    // Before the move, a preference kept in no Space is given to the
-    // person's tools once confirmed, and no longer when not. After it, the
-    // person's confirm adds it to their shared rules; unconfirming or
-    // forgetting the memory leaves the rule, which they remove in Rules.
-    if moved && confirmed {
+    // A preference with no Space follows the personal-rule move. A confirmed
+    // preference in a bound Space proposes a project rule independently.
+    if confirmed && (moved || caller_is_person(&headers)) {
         crate::skill_grow::preference_rule_on_confirm(&db, &headers, &source_id)
             .await
             .map_err(preference_rule_failed)?;
@@ -2457,14 +2455,16 @@ pub async fn handle_update_memory(
     }
     let preference_before = crate::skill_grow::is_person_preference(&db, &id).await;
     let newly_confirmed = req.confirmed == Some(true)
-        && crate::rulesync_routes::personal_rules::page_rules_merged()?
         && db
             .get_memory_detail(&id)
             .await
             .ok()
             .flatten()
             .is_some_and(|memory| !memory.confirmed);
-    if newly_confirmed && preference_before {
+    if newly_confirmed
+        && preference_before
+        && crate::rulesync_routes::personal_rules::page_rules_merged()?
+    {
         preference_rule_ready()?;
     }
 
@@ -2489,7 +2489,7 @@ pub async fn handle_update_memory(
     .await
     .map_err(ServerError::from)?;
     let preference_after = crate::skill_grow::is_person_preference(&db, &id).await;
-    if newly_confirmed && preference_after {
+    if newly_confirmed && (preference_after || caller_is_person(&headers)) {
         crate::skill_grow::preference_rule_on_confirm(&db, &headers, &id)
             .await
             .map_err(preference_rule_failed)?;

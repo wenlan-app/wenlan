@@ -49,6 +49,12 @@ async fn checkout(
 #[derive(Default, Serialize, Deserialize)]
 struct Checkout {
     repo: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_claude: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_codex: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    local_codex_dir_created: bool,
     files: BTreeMap<PathBuf, Snapshot>,
     skills: BTreeMap<PathBuf, SkillDelivery>,
     pending: Option<PendingDelivery>,
@@ -80,6 +86,37 @@ fn read_checkout(bytes: &[u8]) -> Result<Checkout> {
         UnsupportedRulesyncState
     );
     Ok(stored.checkout)
+}
+
+pub(crate) fn local_recorded_path(data: &Path, relative: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut parts = relative.components();
+    if parts.next()?.as_os_str() != "checkouts" {
+        return None;
+    }
+    let key = parts.next()?.as_os_str().to_str()?;
+    if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    if parts.next()?.as_os_str() != "local" {
+        return None;
+    }
+    let file = parts.as_path();
+    if file != Path::new("CLAUDE.local.md") && file != Path::new(".codex/config.toml") {
+        return None;
+    }
+    let root = FileRoot::open(data).ok()?;
+    let state = root
+        .read(&Path::new("checkouts").join(format!("{key}.json")), false)
+        .ok()?;
+    let Snapshot::File { bytes, .. } = state else {
+        return None;
+    };
+    let checkout = read_checkout(&bytes).ok()?;
+    if fingerprint(&checkout.repo).ok()?.as_str() != key {
+        return None;
+    }
+    let repo = checkout.repo.canonicalize().ok()?;
+    Some((repo, file.to_path_buf()))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -477,11 +514,11 @@ impl Job<'_> {
                         == Some(&id)
                 })
                 .collect::<Vec<_>>(),
-            None => Vec::new(),
+            _ => Vec::new(),
         };
         let teams = match master {
-            Some(_) => rulesync_team::load_layers(&self.settings)?,
-            None => Vec::new(),
+            Some(_) if !project.is_empty() => rulesync_team::load_layers(&self.settings)?,
+            _ => Vec::new(),
         };
         let skills = ProjectSkills::from_layers(&project)?;
         let authorized: BTreeMap<_, _> = project
@@ -738,6 +775,34 @@ impl Job<'_> {
             } else if changed {
                 result.written.push(path.display().to_string());
             }
+        }
+        let local = crate::rulesync_checkout_local::sync(
+            self.setup,
+            &crate::rulesync_checkout_local::codex_home(&self.setup.home),
+            &self.settings,
+            &checkout.repo,
+            &project,
+            &teams,
+            &authorized,
+            &mut checkout.local_claude,
+            &mut checkout.local_codex,
+            &mut checkout.local_codex_dir_created,
+            &mut checkout.shared_rule_proposals,
+            &mut result,
+            self.can_restore_rejection,
+            state_path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|_| state_path.file_stem())
+                .and_then(|s| s.to_str())
+                .context("invalid checkout key")?,
+        );
+        self.save(state_path, &record, &checkout)?;
+        if let Err(error) = local {
+            result.block(
+                Code::CheckoutNeedsReview,
+                format!("Checkout local files: {error:#}"),
+            );
         }
         report_blocks(&mut result, blocked);
         rulesync_layers::refresh_answers(&self.settings, &self.setup.data, &self.setup.home)?;
@@ -1005,6 +1070,73 @@ impl Job<'_> {
 mod tests {
     use super::*;
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
+
+    #[test]
+    fn rulesync_checkout_does_not_load_team_for_an_unmatched_origin() {
+        use crate::rulesync_layers::tests::hosted_fixture;
+        use std::{fs, process::Command};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, _, _) = hosted_fixture(&setup.data);
+        let repo = scratch.path().join("unmatched");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/other/repo.git",
+            ],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let key = fingerprint(&repo).unwrap();
+        let state_path = PathBuf::from(format!("checkouts/{key}.json"));
+        let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings,
+            root: &root,
+            directory: &directory,
+            can_restore_rejection: true,
+        };
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let report = job
+            .run_using(
+                &state_path,
+                Snapshot::Absent,
+                Checkout {
+                    repo: repo.clone(),
+                    ..Checkout::default()
+                },
+                Some(&master),
+                |project, team, _, _| {
+                    assert!(project.is_empty() && team.is_empty());
+                    Ok(RenderedCheckout::default())
+                },
+            )
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(!repo.join("CLAUDE.local.md").exists());
+        assert!(!repo.join(".codex/config.toml").exists());
+    }
 
     #[test]
     #[ignore = "requires WENLAN_TEST_RULESYNC_BINARY pointing to the pinned renderer"]
@@ -1309,6 +1441,15 @@ mod tests {
                 .unwrap()
                 .success());
         }
+        fs::create_dir(setup.home.join(".codex")).unwrap();
+        fs::write(
+            setup.home.join(".codex/config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
         let root = setup.data_files().unwrap();
         let session = rulesync_renderer::RenderSession::new(&setup.binary);
         let directory = Path::new("checkouts/example/rules");

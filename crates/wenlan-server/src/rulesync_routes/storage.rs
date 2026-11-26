@@ -361,6 +361,7 @@ fn map_contents<From, To>(
         page_rules: manifest.page_rules,
         legacy_source_following: manifest.legacy_source_following,
         rule_import_notice_pending: manifest.rule_import_notice_pending,
+        team_rules_moved_notice_pending: manifest.team_rules_moved_notice_pending,
         imported_rule_paths: manifest.imported_rule_paths.clone(),
         backup: manifest
             .backup

@@ -124,6 +124,8 @@ pub struct PersonalRuleVersionSummary {
     pub id: String,
     pub time: Option<i64>,
     pub cause: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub author: Option<String>,
     pub proposer: Option<String>,
     pub confirmer: Option<String>,
