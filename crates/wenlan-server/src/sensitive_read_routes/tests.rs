@@ -112,6 +112,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/rules/setup/share/preview"),
         (Method::Post, "/api/rules/setup/restore"),
         (Method::Post, "/api/rules/setup/skill-updates"),
+        (Method::Get, "/api/rules/setup/shared-edits"),
+        (Method::Post, "/api/rules/setup/shared-edits/decide"),
         (Method::Post, "/api/rules/setup/sync"),
         (Method::Post, "/api/rules/personal/show"),
         (Method::Post, "/api/rules/personal/propose"),

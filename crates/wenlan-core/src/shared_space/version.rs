@@ -83,6 +83,7 @@ pub struct Decides {
 pub enum AuthorKind {
     Person,
     Ai,
+    Unknown,
 }
 
 impl AuthorKind {
@@ -90,6 +91,7 @@ impl AuthorKind {
         match self {
             AuthorKind::Person => "person",
             AuthorKind::Ai => "ai",
+            AuthorKind::Unknown => "unknown",
         }
     }
 
@@ -97,6 +99,7 @@ impl AuthorKind {
         match text {
             "person" => Some(AuthorKind::Person),
             "ai" => Some(AuthorKind::Ai),
+            "unknown" => Some(AuthorKind::Unknown),
             _ => None,
         }
     }

@@ -402,6 +402,8 @@ main|post|/api/rules/setup/share|wenlan_server::rulesync_routes::share_items
 main|post|/api/rules/setup/share/preview|wenlan_server::rulesync_routes::share_preview
 main|post|/api/rules/setup/restore|wenlan_server::rulesync_routes::restore
 main|post|/api/rules/setup/skill-updates|wenlan_server::rulesync_routes::skill_updates
+main|get|/api/rules/setup/shared-edits|wenlan_server::rulesync_routes::shared_edits
+main|post|/api/rules/setup/shared-edits/decide|wenlan_server::rulesync_routes::decide_shared_edit
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
 main|post|/api/rules/personal/show|wenlan_server::rulesync_routes::personal_rules::show
 main|post|/api/rules/personal/propose|wenlan_server::rulesync_routes::personal_rules::propose

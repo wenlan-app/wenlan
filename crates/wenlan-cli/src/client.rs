@@ -927,6 +927,21 @@ impl WenlanClient {
         self.rules_request("/api/rules/setup/status", false).await
     }
 
+    pub(crate) async fn shared_rule_edits(
+        &self,
+    ) -> Result<Vec<wenlan_types::rulesync::SharedEditWaiting>> {
+        self.rules_request("/api/rules/setup/shared-edits", false)
+            .await
+    }
+
+    pub(crate) async fn decide_shared_rule_edit(
+        &self,
+        request: &wenlan_types::rulesync::SharedEditDecisionRequest,
+    ) -> Result<wenlan_types::rulesync::SharedEditDecision> {
+        self.post_json_as_person("/api/rules/setup/shared-edits/decide", request, None, true)
+            .await
+    }
+
     pub(crate) async fn rules_setup_review(
         &self,
     ) -> Result<wenlan_types::rulesync::RulesReviewList> {

@@ -121,12 +121,14 @@ pub const SETTINGS_FILE: &str = "shared-spaces.json";
 /// then `:` and their member id.
 pub const SHARED_PERSON: &str = "shared_person";
 pub const SHARED_AI: &str = "shared_ai";
+pub const SHARED_UNKNOWN: &str = "shared_unknown";
 
 /// `page_history.edited_by` of a version this person wrote on another of
 /// their own computers (the same member id): their own sentences, and
 /// their own AI tool's, never another member's.
 pub const OWN_DEVICE_PERSON: &str = "own_device";
 pub const OWN_DEVICE_AI: &str = "own_device_ai";
+pub const OWN_DEVICE_UNKNOWN: &str = "own_device_unknown";
 
 /// The key the library's pass and what it last held are kept under.
 pub const LIBRARY_KEY: &str = "library:";
@@ -165,6 +167,7 @@ pub fn shared_writer(edited_by: &str) -> Option<(AuthorKind, &str)> {
     let kind = match kind {
         SHARED_PERSON => AuthorKind::Person,
         SHARED_AI => AuthorKind::Ai,
+        SHARED_UNKNOWN => AuthorKind::Unknown,
         _ => return None,
     };
     version::is_safe_id(member).then_some((kind, member))
@@ -178,6 +181,7 @@ pub fn writer_edited_by(author: &Author, me: &str) -> String {
         return match author.kind {
             AuthorKind::Person => OWN_DEVICE_PERSON,
             AuthorKind::Ai => OWN_DEVICE_AI,
+            AuthorKind::Unknown => OWN_DEVICE_UNKNOWN,
         }
         .to_string();
     }
@@ -189,6 +193,7 @@ pub fn shared_edited_by(author: &Author) -> String {
     let kind = match author.kind {
         AuthorKind::Person => SHARED_PERSON,
         AuthorKind::Ai => SHARED_AI,
+        AuthorKind::Unknown => SHARED_UNKNOWN,
     };
     format!("{kind}:{}", author.member)
 }
@@ -4191,6 +4196,7 @@ async fn local_author(db: &MemoryDB, page: &Page, member: &str) -> Result<Author
                 })
             })
             .and_then(|entry| entry.get("agent")?.as_str().map(str::to_string)),
+        AuthorKind::Unknown => None,
     };
     Ok(Author {
         member: member.to_string(),

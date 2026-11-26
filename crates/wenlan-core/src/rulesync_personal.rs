@@ -77,7 +77,9 @@ pub fn case_alias_in(directory: &Dir, name: &OsStr) -> io::Result<Option<OsStrin
     ))
 }
 
-pub const RULE_PRECEDENCE: &str = "When instructions disagree, project rules come first, followed by team rules and personal rules.";
+pub const RULE_PRECEDENCE: &str =
+    "Rules are listed from broadest to most specific. When two disagree, follow the later one.";
+pub const LEGACY_RULE_PRECEDENCE: &str = "When instructions disagree, project rules come first, followed by team rules and personal rules.";
 
 #[cfg(any(windows, test))]
 const WINDOWS_INHERITED_ACE: u8 = 0x10;

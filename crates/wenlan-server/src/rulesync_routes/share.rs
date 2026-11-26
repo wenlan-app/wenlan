@@ -341,7 +341,7 @@ impl Setup {
         if delivery_pending {
             // Deliver saved rules before moving the approved lines.
             // Its receipt checks still protect local edits in each tool.
-            let pullback = inspect(&self.home, &root, &manifest)?;
+            let pullback = inspect(&self.home, &self.data, &root, &manifest)?;
             let blocked = pullback
                 .blocked
                 .into_keys()

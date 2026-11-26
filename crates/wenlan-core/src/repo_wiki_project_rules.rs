@@ -14,7 +14,7 @@ use super::{agents_block, git, run, sha256_hex, AGENTS_END, AGENTS_START, RULES_
 use crate::error::WenlanError;
 use crate::rulesync_personal::{
     describe_change, fingerprint, reject_secret_lines, write_named_root_rule, write_root_rule,
-    RULE_PRECEDENCE,
+    LEGACY_RULE_PRECEDENCE, RULE_PRECEDENCE,
 };
 use crate::skill_grow::tool_file_text;
 
@@ -420,7 +420,7 @@ pub(super) fn render(store: &Path, rules: &[String], team: &[String]) -> Result<
     fs::create_dir(&input)?;
     fs::create_dir(&output)?;
     write_root_rule(&input, &body).map_err(core_error)?;
-    let mut roots = vec![input];
+    let mut roots = Vec::new();
     if !team.is_empty() {
         let root = stage.path().join("team");
         let text = format!(
@@ -433,6 +433,7 @@ pub(super) fn render(store: &Path, rules: &[String], team: &[String]) -> Result<
         write_named_root_rule(&root, "team-rules", &text).map_err(core_error)?;
         roots.push(root);
     }
+    roots.push(input);
     let targets = TARGETS
         .iter()
         .map(|target| (*target).to_owned())
@@ -1014,7 +1015,7 @@ fn block(
                 section = Some(true);
                 continue;
             }
-            if line == RULE_PRECEDENCE {
+            if line == RULE_PRECEDENCE || line == LEGACY_RULE_PRECEDENCE {
                 continue;
             }
             let out = if section
@@ -1046,7 +1047,7 @@ fn block(
         }
         block.push_str(RULE_PRECEDENCE);
         block.push_str("\n\n");
-        for (heading, section) in [(RULES_HEADING, body), (TEAM_HEADING, team)] {
+        for (heading, section) in [(TEAM_HEADING, team), (RULES_HEADING, body)] {
             if !section.is_empty() {
                 block.push_str(heading);
                 block.push_str("\n\n");

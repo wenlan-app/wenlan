@@ -447,6 +447,7 @@ async fn review_project_rule(
                     &layer.id,
                     &layer.revision,
                     &markdown,
+                    wenlan_core::shared_space::version::AuthorKind::Ai,
                 )?;
                 rulesync_team::decide_local_space_proposal(&settings, &name, &queued, true)
                     .map_err(team_rule_error)?;

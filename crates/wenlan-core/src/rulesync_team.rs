@@ -703,6 +703,7 @@ pub fn queue_proposal(
     layer_id: &str,
     revision: &str,
     markdown: &str,
+    kind: version::AuthorKind,
 ) -> Result<String, WenlanError> {
     let file = team::read_team(&team_path(settings_path))?;
     for (space, _) in team::hosted_spaces(settings_path)? {
@@ -719,7 +720,7 @@ pub fn queue_proposal(
                 &hosted.folder,
                 &hosted.page_id,
                 &owner,
-                version::AuthorKind::Ai,
+                kind,
                 revision,
                 markdown,
                 &now(),
@@ -737,7 +738,7 @@ pub fn queue_proposal(
         &folder,
         &id,
         &share.member_id,
-        version::AuthorKind::Ai,
+        kind,
         revision,
         markdown,
         &now(),

@@ -162,6 +162,17 @@ struct RenderedCheckout {
     skills: BTreeMap<PathBuf, ProjectSkillFile>,
 }
 
+fn ordered_rule_roots(
+    team: Option<PathBuf>,
+    personal: PathBuf,
+    project: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    team.into_iter()
+        .chain(std::iter::once(personal))
+        .chain(project)
+        .collect()
+}
+
 struct ProjectSkillFile {
     source: String,
     bytes: Vec<u8>,
@@ -605,7 +616,14 @@ impl Job<'_> {
                             &authorized,
                             edits,
                             receipts,
+                            &self.directory.join(path),
+                            &self.setup.data,
+                            &self.setup.home,
                         ) {
+                            Ok(rulesync_layers::SharedReview::NeedsConfirm) => {
+                                pending_review.insert(path.clone());
+                                result.block(Code::SharedRuleNeedsConfirm, format!("{}: A team or project rule edit stays only in this file until you send it. Run `wenlan rules shared-edits` in your own terminal to send or decline it.", path.display()));
+                            }
                             Ok(rulesync_layers::SharedReview::Pending) => {
                                 pending_review.insert(path.clone());
                                 result.block(Code::SharedRulePending, format!("{}: A shared rule edit is still in this file while its proposal is reviewed.", path.display()));
@@ -722,6 +740,7 @@ impl Job<'_> {
             }
         }
         report_blocks(&mut result, blocked);
+        rulesync_layers::refresh_answers(&self.settings, &self.setup.data, &self.setup.home)?;
         Ok(result)
     }
 
@@ -935,15 +954,19 @@ impl Job<'_> {
         for target in ["claudecode", "codexcli"] {
             let stage = rulesync_renderer::new_stage(&self.setup.data)?;
             let output = stage.path().join("output");
-            let mut roots = Vec::new();
-            for (prefix, layers) in [("Project", project), ("Team", teams)] {
-                if !layers.is_empty() {
-                    let input = stage.path().join(prefix.to_ascii_lowercase());
-                    rulesync_layers::stage(&input, prefix, layers)?;
-                    roots.push(input);
-                }
+            // Broadest first: team, then personal, then project.
+            let team_root = if !teams.is_empty() {
+                let input = stage.path().join("team");
+                rulesync_layers::stage(&input, "Team", teams)?;
+                Some(input)
+            } else {
+                None
+            };
+            let project_root = stage.path().join("project");
+            if !project.is_empty() {
+                rulesync_layers::stage(&project_root, "Project", project)?;
             }
-            skills.stage(&stage.path().join("project"))?;
+            skills.stage(&project_root)?;
             let personal = stage.path().join("personal");
             let mut source = master.rule_text(target, generated)?;
             if target == "claudecode" {
@@ -955,7 +978,11 @@ impl Job<'_> {
                 )?;
             }
             write_root_rule(&personal, &source)?;
-            roots.push(personal);
+            let roots = ordered_rule_roots(
+                team_root,
+                personal,
+                (!project.is_empty()).then_some(project_root),
+            );
             std::fs::create_dir(&output)?;
             self.session.render(
                 stage.path(),
@@ -978,6 +1005,96 @@ impl Job<'_> {
 mod tests {
     use super::*;
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
+
+    #[test]
+    #[ignore = "requires WENLAN_TEST_RULESYNC_BINARY pointing to the pinned renderer"]
+    fn rulesync_checkout_claude_and_codex_roots_follow_team_personal_project_order() {
+        use crate::rulesync_layers::tests::{hosted_fixture, REMOTE};
+        use std::{fs, process::Command};
+        assert_eq!(std::env::var("WENLAN_NO_AUTOSTART").as_deref(), Ok("1"));
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary,
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, _, _) = hosted_fixture(&setup.data);
+        let repo = scratch.path().join("checkout");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &["remote", "add", "origin", REMOTE],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let directory = Path::new("checkouts/render/rules");
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings,
+            root: &root,
+            directory,
+            can_restore_rejection: true,
+        };
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let report = job
+            .run_using(
+                Path::new("checkouts/render.json"),
+                Snapshot::Absent,
+                Checkout {
+                    repo,
+                    ..Checkout::default()
+                },
+                Some(&master),
+                |project, teams, _, master| {
+                    assert_eq!(project.len(), 1);
+                    assert_eq!(teams.len(), 1);
+                    let mut project = project.to_vec();
+                    project[0].skills.push(TeamProjectSkill {
+                        name: "checked-procedure".into(),
+                        files: vec![TeamProjectSkillFile {
+                            path: "SKILL.md".into(),
+                            text: "---\nname: checked-procedure\ndescription: Checked procedure.\n---\nExpected skill\n".into(),
+                        }],
+                    });
+                    let skills = ProjectSkills::from_layers(&project)?;
+                    job.render(
+                        &project,
+                        teams,
+                        &skills,
+                        master,
+                        &["Personal instruction.".into()],
+                    )
+                },
+            )
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        for file in ["CLAUDE.md", "AGENTS.md"] {
+            let output = fs::read_to_string(setup.data.join(directory).join(file)).unwrap();
+            println!("----- rendered {file} -----\n{output}----- end {file} -----");
+            let team = output.find("Team rules for").unwrap();
+            let personal = output.find("Personal instruction.").unwrap();
+            let project = output.find("Project rules for").unwrap();
+            assert!(team < personal && personal < project, "{file}: {output}");
+            assert!(output.contains("Rules are listed from broadest to most specific. When two disagree, follow the later one."));
+        }
+        assert!(setup
+            .data
+            .join(directory)
+            .join(".agents/skills/checked-procedure/SKILL.md")
+            .is_file());
+    }
 
     #[cfg(not(windows))]
     #[test]
@@ -1259,9 +1376,18 @@ mod tests {
             let report = sync(true);
             assert_eq!(fs::read_to_string(&file).unwrap(), edited);
             assert!(report.proposals.is_empty());
-            assert_eq!(report.blocked_codes, [Code::SharedRulePending.into()]);
-            assert_eq!(pending().len(), 1);
+            assert_eq!(report.blocked_codes, [Code::SharedRuleNeedsConfirm.into()]);
+            assert!(pending().is_empty());
         }
+        let answers = crate::rulesync_shared_answers::read(&setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        let id = answers.waiting.keys().next().unwrap().clone();
+        crate::rulesync_routes::decide_shared_edit_at(
+            &setup,
+            &settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
+        )
+        .unwrap();
         let [proposal]: [_; 1] = pending().try_into().unwrap();
         assert_eq!(proposal.markdown, "Use the checkout checklist.\n");
         assert!(rulesync_team::local_proposals(&settings)

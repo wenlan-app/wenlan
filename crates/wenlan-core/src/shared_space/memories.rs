@@ -167,7 +167,12 @@ pub(super) fn parse(name: &str, bytes: &[u8]) -> Result<MemVersion, WenlanError>
         kind: match scalar(author, "kind").as_deref() {
             Some("person") => AuthorKind::Person,
             Some("ai") => AuthorKind::Ai,
-            _ => return Err(invalid(format!("{name}: author kind is not person or ai"))),
+            Some("unknown") => AuthorKind::Unknown,
+            _ => {
+                return Err(invalid(format!(
+                    "{name}: author kind is not person, ai, or unknown"
+                )))
+            }
         },
         agent: scalar(author, "agent"),
     };
