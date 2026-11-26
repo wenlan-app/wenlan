@@ -52,11 +52,18 @@ their computer stay there; no sync system can take those back.
 
 ## Encryption
 
+Members who join with only an invite link can read but not write. To write,
+they add Google or GitHub sign-in on the team's web page, and sign-in needs
+an `https://` address (a Tailscale `http://` address is not enough). So with
+Tailscale alone, everyone but the owner reads only. For a team where members
+write, use HTTPS from the start: the Docker setup's `https` profile (see
+*More options* below), then *Sign in with Google or GitHub*.
+
 The team listener speaks plain HTTP. Do one of these:
 
-- **Tailscale (simplest)**: put the server and every member on the same
-  tailnet and use `http://<server>.<tailnet>.ts.net:7879` or its `100.x`
-  address. Traffic is encrypted by Tailscale.
+- **Tailscale (simplest, members read only)**: put the server and every
+  member on the same tailnet and use `http://<server>.<tailnet>.ts.net:7879`
+  or its `100.x` address. Traffic is encrypted by Tailscale.
 - **HTTPS**: put a reverse proxy (Caddy, nginx, Cloudflare Tunnel) in front
   and use `https://wenlan.example.com`. The Docker setup below has one built
   in (see *More options* below): Caddy gets the certificate and renews it,
@@ -392,8 +399,9 @@ gets a new invite link to send them, so they can start again.
   can remove them.
 - **AI tool only, with an invite link**: add a remote MCP server with URL
   `https://wenlan.example.com/mcp` (or `/mcp/<Space>` when you have more than
-  one Space) and header `Authorization: Bearer wlt_…`. Members who may write
-  get the web-write tools (search, read, write, rename and delete pages,
+  one Space) and header `Authorization: Bearer wlt_…`. With the link alone
+  the member reads only (see *Encryption*). Members who may write, after
+  signing in with Google or GitHub, get the web-write tools (search, read, write, rename and delete pages,
   capture); read-only members get search only (`brief`, `recall`,
   `get_page_sources`). To change an existing page, the AI tool must pass the
   version it last read, so it never writes over a teammate's newer edit.

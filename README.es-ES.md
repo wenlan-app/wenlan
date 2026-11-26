@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=68541013432cdb2f734f25767882905f29693ff410202bdb10dbd4cd5d60f2dd -->
+<!-- README_SYNC: source=README.md sha256=57f2ffa3f1db17b63c3e91b8870d29a3982a440a7d04c3f6118bdad14c8d33f4 -->
 
 <p align="center">
   <picture>
@@ -97,7 +97,7 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
 
    Con el [plugin](docs/setup-with-ai.md) son `/capture` y `/recall`. [Comandos](plugin/skills/README.md).
 
-3. Por la noche, Wenlan ordena lo decidido en documentos y reglas, cada uno con su fuente.
+3. Tu IA ordena lo decidido en documentos y reglas, cada uno con su fuente. Claude Code empieza la próxima vez que lo abres; en otras herramientas, pídele que escriba tus páginas. Con un modelo local o una clave de API, Wenlan puede hacerlo en segundo plano.
 
    La primera vez pregunta una vez. Tras tu sí, las reglas van a los archivos de reglas de tus herramientas.
 

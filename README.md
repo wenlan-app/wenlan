@@ -95,7 +95,7 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
    With the [plugin](docs/setup-with-ai.md) these are `/capture` and `/recall`. [All commands](plugin/skills/README.md).
 
-3. Overnight, Wenlan sorts what you settled into docs and rules, each with its source.
+3. Your AI tool sorts what you settled into docs and rules, each with its source. Claude Code starts on it the next time you open it; in other tools, ask it to write your pages. With a local model or an API key, Wenlan can do it in the background.
 
    The first time, it asks you once. After your yes, the rules go into your AI tools’ own rules files.
 
