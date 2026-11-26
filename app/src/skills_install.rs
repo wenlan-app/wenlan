@@ -711,7 +711,7 @@ mod tests {
         // A measured absence beside an unread one is a measured no: "every
         // skill is installed" is false either way.
         let brief_marker = home
-            .join(".agents")
+            .join(".cursor")
             .join("skills")
             .join("wenlan-brief")
             .join(MANAGED_MARKER);
