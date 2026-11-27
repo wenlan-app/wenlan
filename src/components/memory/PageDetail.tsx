@@ -2832,7 +2832,7 @@ export default function PageDetail({
                 </button>
                 {moveOpen && <MovePageDialog page={page} onClose={() => setMoveOpen(false)} />}
                 {!web && pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
-                {!web && sharingOpen && (spaceOfPageShare
+                {sharingOpen && (spaceOfPageShare
                   ? <ShareDialog kind="space" target={spaceOfPageShare.target} title={spaceOfPageShare.target} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />
                   : <ShareDialog kind="page" target={page.id} title={page.title} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />)}
                 {actionMenuOpen ? (
@@ -2875,7 +2875,7 @@ export default function PageDetail({
                     ) : null}
                     {/* A page of a shared Space is shared with it: the item opens
                         that Space's members rather than sharing the page alone. */}
-                    {!web && page.status === "active" && !exampleWiki ? (
+                    {page.status === "active" && !exampleWiki ? (
                       <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); setSharingOpen(true); }}>
                         {t(spaceOfPageShare || ownPageShare ? "sharing.menuMembers" : "sharing.menuShare")}
                       </button>

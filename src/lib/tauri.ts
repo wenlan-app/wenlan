@@ -1582,6 +1582,103 @@ export interface TeamJoinResponse {
   };
 }
 
+export type TeamItemKind = "page" | "memory";
+export type TeamAuthorship = "human" | "ai";
+
+export interface TeamText {
+  title: string;
+  body: string;
+}
+
+export interface TeamOriginal {
+  kind: TeamItemKind;
+  id: string;
+  revision: number;
+}
+
+export interface TeamDraftOriginal {
+  original: TeamOriginal;
+  text: TeamText;
+}
+
+export interface TeamDraft {
+  item: TeamDraftOriginal;
+  sources: TeamDraftOriginal[];
+  omitted_sources: boolean;
+  authorship: TeamAuthorship | null;
+}
+
+export interface TeamPublication {
+  kind: TeamItemKind;
+  title: string;
+  body: string;
+  authorship: TeamAuthorship | null;
+  space_id: string | null;
+  item_id: string | null;
+  expected_revision: number | null;
+  memories: TeamText[];
+  private_source: boolean;
+  brief: boolean;
+}
+
+export interface TeamGroup {
+  id: string;
+  name: string;
+  restricted: boolean;
+}
+
+export interface TeamPerson {
+  id: string;
+  name: string;
+  owner: boolean;
+}
+
+export interface TeamAudience {
+  now: TeamPerson[];
+  later: string;
+}
+
+export interface TeamPublicationPreview {
+  id: string;
+  team: TeamInfo;
+  space: TeamGroup | null;
+  audience: TeamAudience;
+  draft: TeamPublication;
+}
+
+export interface TeamPublicationReceipt {
+  team_id: string;
+  item_id: string;
+  revision: number;
+  memory_ids: string[];
+}
+
+export type TeamTerminalReply =
+  | { result: "preview"; preview: TeamPublicationPreview }
+  | { result: "published"; receipt: TeamPublicationReceipt }
+  | { result: "space"; space: TeamGroup }
+  | { result: "done" };
+
+export async function teamLibraryDraft(kind: TeamItemKind, id: string): Promise<TeamDraft> {
+  return invoke("team_library_draft", { kind, id });
+}
+
+export async function teamLibrarySpaces(): Promise<TeamGroup[]> {
+  return invoke("team_library_spaces");
+}
+
+export async function teamLibraryPreview(draft: TeamPublication, originals: TeamOriginal[]): Promise<TeamTerminalReply> {
+  return invoke("team_library_preview", { draft, originals });
+}
+
+export async function teamLibraryPublish(previewId: string): Promise<TeamTerminalReply> {
+  return invoke("team_library_publish", { previewId });
+}
+
+export async function teamLibraryCreateSpace(name: string, restricted: boolean): Promise<TeamTerminalReply> {
+  return invoke("team_library_create_space", { name, restricted });
+}
+
 export async function teamStatus(): Promise<TeamStatus> {
   return invoke("team_status");
 }
@@ -1643,10 +1740,6 @@ export async function teamMemberTools(id: string): Promise<TeamToolKey[]> {
  *  Resolves to the tools left. */
 export async function teamRemoveMemberTool(id: string, key: string): Promise<TeamToolKey[]> {
   return invoke("team_remove_member_tool", { id, key });
-}
-
-export async function teamHostSpace(space: string): Promise<SharedSyncCounts> {
-  return invoke("team_host_space", { space, everyone: null });
 }
 
 /** Who has a hosted Space without being added one by one: every member

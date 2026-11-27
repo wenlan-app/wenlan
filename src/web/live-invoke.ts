@@ -159,6 +159,18 @@ const EXPLICIT_BROWSE_HEADERS = {
 
 const enc = encodeURIComponent;
 
+function teamError(operation: string, error: unknown): Error {
+  console.warn(`[team] ${operation} failed:`, error);
+  if (error instanceof HttpError && error.status === 403) return new Error("team_not_allowed");
+  if (operation === "create space" && error instanceof HttpError && error.status === 409) return new Error("team_space_taken");
+  if (error instanceof HttpError && (error.status === 404 || error.status === 409)) return new Error("team_page_changed");
+  return new Error("team_unavailable");
+}
+
+function teamRequest<T>(operation: string, request: Promise<T>): Promise<T> {
+  return request.catch((error: unknown) => { throw teamError(operation, error); });
+}
+
 // app/src/themes.rs folds a 422 refusal into `{ status: "refused", problems }`.
 async function themeWrite(call: () => Promise<any>): Promise<any> {
   try {
@@ -682,6 +694,23 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_shares: () => get("/api/shared"),
   share_space: (a) => post(`/api/spaces/${enc(String(a.space))}/shared/sync`, { folder: String(a.folder) }),
   team_status: () => get("/api/team"),
+  team_library_spaces: () => teamRequest("spaces", get("/api/team/library/spaces", AS_PERSON)),
+  team_library_draft: (a) => teamRequest(
+    "draft",
+    get(`/api/team/library/draft?kind=${enc(String(a.kind))}&id=${enc(String(a.id))}`, AS_PERSON),
+  ),
+  team_library_preview: (a) => teamRequest(
+    "preview",
+    post("/api/team/library/terminal", { action: "preview", draft: a.draft, originals: a.originals }, AS_PERSON),
+  ),
+  team_library_publish: (a) => teamRequest(
+    "publish",
+    post("/api/team/library/terminal", { action: "publish", preview_id: String(a.previewId) }, AS_PERSON),
+  ),
+  team_library_create_space: (a) => teamRequest(
+    "create space",
+    post("/api/team/library/terminal", { action: "create_space", name: String(a.name), restricted: Boolean(a.restricted) }, AS_PERSON),
+  ),
   team_rename: (a) => put("/api/team", { name: String(a.name) }),
   team_add_member: (a) => post("/api/team/members", { name: String(a.name), spaces: a.spaces ?? [], url: a.url ?? undefined }),
   team_update_member: (a) => put(`/api/team/members/${enc(String(a.id))}`, { name: a.name ?? undefined, spaces: a.spaces ?? undefined }),

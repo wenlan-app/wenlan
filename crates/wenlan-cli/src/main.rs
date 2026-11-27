@@ -224,7 +224,10 @@ enum Commands {
     },
     /// Connect an AI tool on this computer to a team with a short code you allow in a browser.
     Login(commands::login::LoginArgs),
-    /// Work with a team: start one here, invite people, or join with an invite link (start, share, invite, join, status, leave, update, remove, new-key, stop).
+    /// Work with a team: start one here, invite people, or join with an invite link.
+    #[command(
+        long_about = "Work with a team: start one here, invite people, or join with an invite link.\n\nPublication commands:\n  draft         Prepare a private publication draft.\n  publish       Review and publish a personal item.\n  withdraw      Withdraw a team item and its revisions.\n  create-space  Create a team Space for published pages.\n  grant         Set a member's team-library access."
+    )]
     Team {
         #[command(subcommand)]
         cmd: commands::team::TeamCmd,

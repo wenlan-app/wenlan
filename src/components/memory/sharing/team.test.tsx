@@ -11,10 +11,11 @@ import { teamGroups } from "../team/TeamPage";
 import { StartTeamDialog } from "../team/StartTeamDialog";
 import {
   joinTeamSpace,
+  listPages,
   listShares,
   listSpaces,
   teamAddMember,
-  teamHostSpace,
+  teamLibraryCreateSpace,
   teamJoin,
   teamRememberMembership,
   teamSetEveryone,
@@ -32,6 +33,7 @@ vi.mock("../../../lib/tauri", async () => {
   return {
     ...actual,
     listShares: vi.fn(),
+    listPages: vi.fn(),
     listSpaces: vi.fn(),
     teamJoin: vi.fn(),
     teamRememberMembership: vi.fn(),
@@ -42,7 +44,7 @@ vi.mock("../../../lib/tauri", async () => {
     teamUpdateMember: vi.fn(),
     teamNewMemberKey: vi.fn(),
     teamRemoveMember: vi.fn(),
-    teamHostSpace: vi.fn(),
+    teamLibraryCreateSpace: vi.fn(),
     teamSetEveryone: vi.fn(),
     joinTeamSpace: vi.fn(),
     createSpace: vi.fn(),
@@ -92,6 +94,7 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   vi.mocked(listShares).mockResolvedValue([]);
+  vi.mocked(listPages).mockResolvedValue([]);
   vi.mocked(listSpaces).mockResolvedValue([]);
   vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
   localStorage.clear();
@@ -255,14 +258,13 @@ describe("ShareDialog share mode", () => {
     expect(screen.queryByRole("button", { name: "‹ Back" })).not.toBeInTheDocument();
   });
 
-  it("hosts the Space for the team and then shows its members", async () => {
-    vi.mocked(listShares).mockResolvedValueOnce([]).mockResolvedValue([hostedShare]);
+  it("creates the team Space before showing its empty page walk", async () => {
     vi.mocked(teamStatus).mockResolvedValue(hostedStatus);
-    vi.mocked(teamHostSpace).mockResolvedValue({ exported: 0, applied: 0, conflicts: 0, skipped: 0 });
+    vi.mocked(teamLibraryCreateSpace).mockResolvedValue({ result: "space", space: { id: "team-space", name: "Product", restricted: false } });
     wrap(<ShareDialog kind="space" target="Product" title="Product" onClose={() => undefined} />);
     await userEvent.click(await screen.findByRole("button", { name: /With Team/ }));
-    await waitFor(() => expect(teamHostSpace).toHaveBeenCalledWith("Product"));
-    expect(await screen.findByRole("radio", { name: "Only some people" }, { timeout: 3000 })).toBeInTheDocument();
+    await waitFor(() => expect(teamLibraryCreateSpace).toHaveBeenCalledWith("Product", false));
+    expect(await screen.findByText("There are no pages in this Space yet.")).toBeInTheDocument();
   });
 });
 
