@@ -248,6 +248,31 @@ impl WenlanClient {
         Some(spaces.into_iter().map(|space| space.name).collect())
     }
 
+    /// The working rules for `space` (or the every-Space ones), asked once
+    /// at start with a short timeout and no retry, so a stopped daemon
+    /// delays nothing. `None` when the daemon did not answer.
+    pub async fn startup_rules(
+        &self,
+        space: Option<&str>,
+    ) -> Option<wenlan_types::skills::SpaceRulesResponse> {
+        let mut request = self
+            .client
+            .get(format!("{}/api/skills/rules", self.base_url));
+        if let Some(space) = space {
+            request = request.query(&[("space", space)]);
+        }
+        let response = self
+            .attach_common_headers(request)
+            .timeout(Duration::from_secs(1))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        response.json().await.ok()
+    }
+
     /// Set the agent name to be sent as `x-agent-name` header on every request.
     pub fn with_agent_name(mut self, name: String) -> Self {
         self.agent_identity = Some(AgentIdentity::from(name));
@@ -286,13 +311,20 @@ impl WenlanClient {
                     tracing::debug!(attempt, "daemon unreachable, retrying");
                     last_err = Some(e);
                 }
-                Err(e) => return Err(WenlanError::Unreachable(e.to_string())),
+                Err(e) => {
+                    // Connected, then no answer (timeout, reset): the daemon is
+                    // running and the request may have landed.
+                    tracing::debug!(error = %e, "daemon request failed");
+                    return Err(WenlanError::NoAnswer);
+                }
             }
         }
-        Err(WenlanError::Unreachable(last_err.map_or_else(
-            || "connection failed".into(),
-            |e| e.to_string(),
-        )))
+        if let Some(error) = last_err {
+            tracing::debug!(error = %error, "daemon unreachable");
+        }
+        // The address tried, not the transport's wording: it is what a person
+        // compares with `wenlan status`.
+        Err(WenlanError::Unreachable(self.base_url.clone()))
     }
 
     /// Parse a successful response body as JSON.
@@ -615,6 +647,9 @@ pub enum WenlanError {
     /// A save got no answer within [`SAVE_DEADLINE`]. It may still land.
     #[error("Wenlan did not answer the save in time")]
     Busy,
+
+    #[error("Wenlan did not answer in time")]
+    NoAnswer,
 }
 
 fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {

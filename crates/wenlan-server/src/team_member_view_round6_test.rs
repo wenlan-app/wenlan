@@ -759,6 +759,14 @@ async fn round6_hosted_mcp_routes_return_the_typed_member_response() {
         let (got, typed, reply) = send(path, key).await;
         assert_eq!(got, status, "{path}: {reply}");
         assert!(reply.contains(text), "{path}: {reply}");
+        if text == "not a Space of this member" {
+            // The refusal also says how to get edit rights.
+            assert!(
+                reply.contains("sign in with Google or GitHub")
+                    && reply.contains("ask the team owner"),
+                "{path}: {reply}"
+            );
+        }
         if !typed {
             untyped.push(format!("{path} {status}"));
         }

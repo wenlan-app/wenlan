@@ -386,8 +386,24 @@ fn personal_rule_show(shown: &wenlan_types::personal_rules::PersonalRuleShow) ->
     output
 }
 
+/// A unix time as the person's local clock time; the raw number when it cannot be shown.
+fn local_time(unix: i64) -> String {
+    chrono::DateTime::from_timestamp(unix, 0).map_or_else(
+        || unix.to_string(),
+        |at| {
+            at.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        },
+    )
+}
+
 fn personal_rule_plan(plan: &wenlan_types::personal_rules::PersonalRulePlan) -> String {
-    let mut output = format!("Plan {} (expires {})\n", plan.id, plan.expires_at);
+    let mut output = format!(
+        "Plan {} (expires {})\n",
+        plan.id,
+        local_time(plan.expires_at)
+    );
     output.push_str(&format!(
         "Proposed by: {}\n",
         printable(plan.proposer.as_deref().unwrap_or("person or unknown")),
@@ -931,6 +947,14 @@ struct SetupSync {
     left_alone: usize,
 }
 
+impl SetupSync {
+    /// No rule and no skill was brought in, so there is nothing to undo and
+    /// nothing worth a "set up" line.
+    fn changed_nothing(&self) -> bool {
+        self.rules.unwrap_or(0) == 0 && self.skills == 0
+    }
+}
+
 fn share_request(keep_rule: &[usize]) -> Result<SharePreviewRequest> {
     Ok(SharePreviewRequest {
         home: rulesync_personal::system_home()?.canonicalize()?,
@@ -1117,7 +1141,10 @@ impl StayReason {
 fn sharing_for_a_person(plan: &SharingPlan, details: bool, setup: bool) -> String {
     let mut out = String::new();
     if !has_safe_share(plan) && plan.key_servers.is_empty() {
-        out.push_str("Nothing to share.\n");
+        // Setup has said what it did; "Nothing to share" there is noise.
+        if !setup {
+            out.push_str("Nothing to share.\n");
+        }
     } else {
         out.push_str("Share with your other tools\n");
     }
@@ -1424,7 +1451,10 @@ fn setup_sync_line(sync: &SetupSync) -> String {
         || "rule count unavailable".to_string(),
         |count| plural(count, "rule"),
     );
-    let mut line = format!("Set up {tools}: {rules}, {}.", plural(sync.skills, "skill"));
+    let mut line = format!(
+        "Rules written for {tools}: {rules}, {}.",
+        plural(sync.skills, "skill")
+    );
     if sync.left_alone > 0 {
         line.push_str(&format!(
             " {} {} left as {} {}.",
@@ -1588,6 +1618,9 @@ async fn try_adopt_during_setup(format: ResolvedFormat) -> Result<bool> {
     };
     match format {
         ResolvedFormat::Json => println!("{}", terminal_json(&sync)?),
+        ResolvedFormat::Table if sync.changed_nothing() => {
+            println!("No rules or skills in your AI tools to bring in yet.");
+        }
         ResolvedFormat::Table => {
             print!("{}", wrap_setup_text(&printable(&setup_sync_line(&sync)))?);
             println!("To undo: wenlan rules restore");
@@ -1638,6 +1671,16 @@ pub(super) fn terminal_json(value: &impl Serialize) -> Result<String> {
         }
     }
     Ok(safe)
+}
+
+/// Whether adopting would change anything; a plan with nothing in it has no
+/// id worth showing.
+fn has_anything_to_adopt(plan: &AdoptionPlan) -> bool {
+    !plan.files.is_empty()
+        || plan.settings.is_some()
+        || !plan.skills.is_empty()
+        || !plan.tools.is_empty()
+        || !plan.new_files.is_empty()
 }
 
 fn plan_for_a_person(plan: &AdoptionPlan) -> String {
@@ -1699,7 +1742,7 @@ fn plan_for_a_person(plan: &AdoptionPlan) -> String {
         out.push_str(&settings_plan_for_a_person(settings));
     }
     append_kept_in_place_summary(&mut out, &plan.kept_in_place);
-    if !plan.plan_id.is_empty() {
+    if !plan.plan_id.is_empty() && has_anything_to_adopt(plan) {
         writeln!(
             &mut out,
             "Plan id: {} — to go ahead from an AI tool: wenlan rules adopt --confirm {}",
@@ -1812,6 +1855,20 @@ fn status_for_a_person(status: &RulesSetupStatus) -> String {
     }
     for note in &status.notes {
         writeln!(out, "{}", one_line(note)).unwrap();
+    }
+    for plan in &status.waiting_plans {
+        let confirm = if plan.page_merge {
+            "wenlan rules merge-pages".to_string()
+        } else {
+            format!("wenlan rules shared apply {}", one_line(&plan.id))
+        };
+        writeln!(
+            out,
+            "Waiting for your yes: plan {} (expires {}). Confirm with `{confirm}`, or see `wenlan rules review`.",
+            one_line(&plan.id),
+            local_time(plan.expires_at)
+        )
+        .unwrap();
     }
     for row in &status.tools {
         let state = match row.state {
@@ -1994,6 +2051,47 @@ mod tests {
             }))
             .unwrap();
         assert!(personal_rule_plan(&plan).contains("Not delivered to unmanaged tools: geminicli"));
+    }
+
+    #[test]
+    fn personal_rule_plan_shows_the_expiry_as_a_clock_time() {
+        let plan: wenlan_types::personal_rules::PersonalRulePlan =
+            serde_json::from_value(serde_json::json!({
+                "id": "plan", "expires_at": 1_795_728_968_i64, "proposer": null,
+                "changes": [], "blocked_tools": []
+            }))
+            .unwrap();
+        let first = personal_rule_plan(&plan)
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(!first.contains("1795728968"), "{first}");
+        assert!(first.starts_with("Plan plan (expires 2026-"), "{first}");
+    }
+
+    #[test]
+    fn rules_status_lists_a_plan_that_waits_for_the_person() {
+        use wenlan_types::rulesync::WaitingRulePlan;
+        let status = RulesSetupStatus {
+            enabled: true,
+            waiting_plans: vec![WaitingRulePlan {
+                id: "ca16".into(),
+                expires_at: 1_795_728_968,
+                proposer: None,
+                page_merge: false,
+            }],
+            ..Default::default()
+        };
+        let text = status_for_a_person(&status);
+        assert!(text.contains("Waiting for your yes: plan ca16"), "{text}");
+        assert!(text.contains("`wenlan rules shared apply ca16`"), "{text}");
+        assert!(!text.contains("1795728968"), "{text}");
+        let quiet = status_for_a_person(&RulesSetupStatus {
+            enabled: true,
+            ..Default::default()
+        });
+        assert!(!quiet.contains("Waiting for your yes"), "{quiet}");
     }
 
     #[test]
@@ -2371,6 +2469,62 @@ mod tests {
             1
         );
         assert!(!report_for_a_person(&report, false, &[]).contains("Kept "));
+    }
+
+    #[test]
+    fn setup_says_nothing_about_undo_or_sharing_when_nothing_changed() {
+        let nothing = SetupSync {
+            tools: vec!["Claude Code".into()],
+            rules: Some(0),
+            skills: 0,
+            following: 0,
+            copied: 0,
+            left_alone: 1,
+        };
+        assert!(nothing.changed_nothing());
+        let something = SetupSync {
+            rules: Some(2),
+            ..nothing
+        };
+        assert!(!something.changed_nothing());
+        let plan: SharingPlan = serde_json::from_value(serde_json::json!({
+            "plan_id": "", "token": "t"
+        }))
+        .unwrap();
+        assert_eq!(sharing_for_a_person(&plan, false, true), "");
+        assert_eq!(
+            sharing_for_a_person(&plan, false, false),
+            "Nothing to share.\n"
+        );
+    }
+
+    #[test]
+    fn an_empty_adoption_preview_shows_no_plan_id() {
+        let mut plan = AdoptionPlan {
+            plan_id: "abc123".into(),
+            token: "t".into(),
+            rule_lines: None,
+            settings: None,
+            files: Vec::new(),
+            rule_sources: Vec::new(),
+            skills: Vec::new(),
+            notes: Vec::new(),
+            tools: Vec::new(),
+            skipped_files: Vec::new(),
+            skipped_tools: Vec::new(),
+            skipped_tool_codes: Vec::new(),
+            note_codes: Vec::new(),
+            new_files: Vec::new(),
+            kept_in_place: Vec::new(),
+        };
+        assert!(!plan_for_a_person(&plan).contains("abc123"));
+        plan.tools = vec![wenlan_types::rulesync::AdoptionTool {
+            name: "Cursor".into(),
+            rule_files: 1,
+            skills: 0,
+            other_files: 0,
+        }];
+        assert!(plan_for_a_person(&plan).contains("abc123"));
     }
 
     #[test]

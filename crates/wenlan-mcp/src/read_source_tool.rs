@@ -168,7 +168,7 @@ impl WenlanMcpServer {
         if self.transport != TransportMode::Stdio
             || !matches!(
                 self.tool_profile,
-                ToolProfile::Standard | ToolProfile::Daily
+                ToolProfile::Standard | ToolProfile::Daily | ToolProfile::Plugin
             )
         {
             return Ok(refuse(

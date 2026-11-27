@@ -14,15 +14,48 @@ pub async fn run(
     query: String,
     limit: usize,
 ) -> Result<()> {
-    let response = client.recall(query, limit).await?;
+    let response = client.recall(query.clone(), limit).await?;
     if quiet {
         return Ok(());
     }
     match format {
         ResolvedFormat::Json => print_json(&response)?,
-        ResolvedFormat::Table => print!("{}", format_table(&response)),
+        ResolvedFormat::Table => {
+            print!("{}", format_table(&response));
+            if response.results.is_empty() && reads_one_space(client) {
+                // Best effort: a failed look adds nothing.
+                if let Ok(wider) = client
+                    .recall_outside_space(query.clone(), OTHER_SPACES_PROBE)
+                    .await
+                {
+                    if let Some(line) = other_spaces_hint(&query, wider.results.len()) {
+                        println!("{line}");
+                    }
+                }
+            }
+        }
     }
     Ok(())
+}
+
+/// How many matches outside the Space the zero-result hint asks for.
+const OTHER_SPACES_PROBE: usize = 5;
+
+/// A terminal pinned to one Space with `WENLAN_SPACE` chose not to see others.
+fn reads_one_space(client: &WenlanClient) -> bool {
+    client.is_space_scoped()
+        && std::env::var("WENLAN_SPACE")
+            .map(|space| space.trim().is_empty())
+            .unwrap_or(true)
+}
+
+/// The line after "(no recalled memories)" when other Spaces may hold related ones.
+fn other_spaces_hint(query: &str, found: usize) -> Option<String> {
+    (found > 0).then(|| {
+        format!(
+            "Nothing in this Space. Other Spaces have possibly related memories: `wenlan --all-spaces recall {query:?}` shows them."
+        )
+    })
 }
 
 fn format_table(response: &SearchMemoryResponse) -> String {
@@ -75,7 +108,20 @@ fn format_table(response: &SearchMemoryResponse) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_table;
+    use super::{format_table, other_spaces_hint};
+
+    #[test]
+    fn zero_results_hint_does_not_claim_the_memory_exists() {
+        assert_eq!(other_spaces_hint("pnpm", 0), None);
+        let hint = other_spaces_hint("pnpm", 2).unwrap();
+        assert!(hint.contains("possibly related"), "{hint}");
+        assert!(
+            hint.contains("`wenlan --all-spaces recall \"pnpm\"`"),
+            "{hint}"
+        );
+        assert!(!hint.contains("was saved"), "{hint}");
+    }
+
     use wenlan_types::responses::SearchMemoryResponse;
 
     #[test]

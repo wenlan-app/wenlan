@@ -74,7 +74,7 @@ fn grant(profile: ToolProfile) -> Option<MemberGrant> {
     match profile {
         ToolProfile::QueryOnly => Some(MemberGrant::Query),
         ToolProfile::WebWrite => Some(MemberGrant::Write),
-        ToolProfile::Standard | ToolProfile::Daily => None,
+        ToolProfile::Standard | ToolProfile::Daily | ToolProfile::Plugin => None,
     }
 }
 
@@ -125,7 +125,10 @@ pub(super) async fn dispatch(
     arguments: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<CallToolResult, McpError> {
     if server.tool_profile == ToolProfile::QueryOnly && !allowed(name, server.tool_profile) {
-        return Ok(member_error(QUERY_ONLY_REFUSAL_MESSAGE));
+        return Ok(member_error_owned(format!(
+            "{QUERY_ONLY_REFUSAL_MESSAGE} {}",
+            read_only_team_note!()
+        )));
     }
     if matches!(name, "capture" | "forget") {
         return Ok(member_error(
@@ -555,14 +558,23 @@ fn render_archive(receipt: &MemberRemovalReceipt) -> String {
     }
 }
 
-fn closed_error(error: &WenlanError) -> &'static str {
+/// A connection without the write profile is read-only (a link-only member's);
+/// only that one is told how to get edit rights. A member who can edit and
+/// still gets a 403 is not.
+fn closed_error(error: &WenlanError, server: &WenlanMcpServer) -> &'static str {
     match error {
         WenlanError::Api { status: 404, .. } => "This item was not found in the shared Space.",
         WenlanError::Api { status: 409, .. } => "The page changed. Read it again and retry.",
         WenlanError::Api { status: 422, .. } => "The request was refused; nothing was changed.",
+        WenlanError::Api { status: 403, .. } if server.tool_profile != ToolProfile::WebWrite => {
+            concat!(
+                "This tool is unavailable in this shared Space. ",
+                read_only_team_note!()
+            )
+        }
         WenlanError::Api { status: 403, .. } => "This tool is unavailable in this shared Space.",
         WenlanError::Api { .. } => "The shared Space request could not be completed.",
-        WenlanError::Unreachable(_) | WenlanError::Busy => {
+        WenlanError::Unreachable(_) | WenlanError::Busy | WenlanError::NoAnswer => {
             "The shared Space service could not complete this request."
         }
         WenlanError::Deserialize | WenlanError::ResponseTooLarge => {
@@ -588,7 +600,7 @@ async fn member_brief(
     };
     let response: MemberBrief = match client.post("/api/brief", &request).await {
         Ok(response) => response,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::Brief(response))
 }
@@ -601,7 +613,7 @@ async fn member_recall(
     let request = recall_search_request(params);
     let response: MemberRecall = match client.post("/api/memory/search", &request).await {
         Ok(response) => response,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::Recall(response))
 }
@@ -622,7 +634,7 @@ async fn member_sources(
         .await
     {
         Ok(response) => response,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::PageSources(MemberPageSources {
         page_id: params.page_id,
@@ -645,7 +657,7 @@ async fn member_rules(
     };
     let response = match result {
         Ok(response) => response,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::SpaceRules(response))
 }
@@ -667,7 +679,7 @@ async fn member_rule_report(
     let response: MemberRuleReport = match server.client.post("/api/skills/record", &request).await
     {
         Ok(response) => response,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::RuleUseReport(response))
 }
@@ -686,7 +698,7 @@ async fn member_read_page(
     let response: wenlan_types::member_view::MemberPageRead =
         match client.get(&format!("/api/pages/{}", params.page_id)).await {
             Ok(response) => response,
-            Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+            Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
         };
     Ok(MemberOutput::ReadPage(Box::new(response.into())))
 }
@@ -725,7 +737,7 @@ async fn member_list_pages(
         wenlan_types::member_view::MemberPageEntry,
     > = match server.client.get_with_query("/api/pages", &query).await {
         Ok(response) => response,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::ListPages(response.into()))
 }
@@ -794,7 +806,7 @@ async fn member_write_page(
                         current_version,
                     });
                 }
-                Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+                Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
             };
             Ok(MemberOutput::Write(MemberWriteResult::Updated {
                 page_id,
@@ -839,7 +851,7 @@ async fn member_write_page(
                         "The page could not be created. Choose another title or continue with a page you already know.",
                     ));
                 }
-                Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+                Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
             };
             Ok(MemberOutput::Write(MemberWriteResult::Created(receipt)))
         }
@@ -866,7 +878,7 @@ async fn member_rename_page(
     let path = format!("/api/pages/{}/rename", url_encode_simple(&params.page_id));
     let receipt: MemberRenamePageResponse = match server.client.post(&path, &request).await {
         Ok(receipt) => receipt,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::Rename(receipt))
 }
@@ -887,7 +899,7 @@ async fn member_archive_page(
         .await
     {
         Ok(receipt) => receipt,
-        Err(error) => return Ok(MemberOutput::Error(closed_error(&error))),
+        Err(error) => return Ok(MemberOutput::Error(closed_error(&error, server))),
     };
     Ok(MemberOutput::Archive(receipt))
 }
@@ -895,6 +907,31 @@ async fn member_archive_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_read_only_member_is_told_how_to_get_edit_rights_on_a_403() {
+        let member = |profile| {
+            WenlanMcpServer::new_with_identity(
+                crate::client::WenlanClient::new("http://127.0.0.1:19999".into()),
+                crate::tools::TransportMode::Http,
+                crate::tools::AgentIdentity::new("remote-mcp".into(), false)
+                    .for_team_member("m".into()),
+                None,
+            )
+            .with_tool_profile(profile)
+        };
+        let forbidden = WenlanError::Api {
+            status: 403,
+            reason: None,
+        };
+        let read_only = closed_error(&forbidden, &member(ToolProfile::QueryOnly));
+        assert!(
+            read_only.contains("sign in with Google or GitHub"),
+            "{read_only}"
+        );
+        let writer = closed_error(&forbidden, &member(ToolProfile::WebWrite));
+        assert_eq!(writer, "This tool is unavailable in this shared Space.");
+    }
 
     #[test]
     fn member_tool_catalog_matches_each_grant() {

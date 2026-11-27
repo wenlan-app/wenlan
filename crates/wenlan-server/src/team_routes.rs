@@ -2872,7 +2872,10 @@ fn member_space_folder(
     let Some(access) = crate::team_policy::access(member, space, true) else {
         return Err(Box::new(crate::member_view::MemberResponse::text(
             StatusCode::FORBIDDEN,
-            "not a Space of this member",
+            concat!(
+                "not a Space of this member. ",
+                crate::team_policy::read_only_member_note!()
+            ),
         )));
     };
     match team::hosted_folder(&state.settings_path, space) {
@@ -3145,7 +3148,10 @@ async fn team_put_version(
     if access != TeamAccess::Write {
         return crate::member_view::MemberResponse::text(
             StatusCode::FORBIDDEN,
-            "this member may only read this Space",
+            concat!(
+                "this member may only read this Space. ",
+                crate::team_policy::read_only_member_note!()
+            ),
         );
     }
     let Some(db) = &state.db else {

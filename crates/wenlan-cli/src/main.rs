@@ -848,7 +848,14 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             commands::setup::run_enrichment(&client, command, format).await?
         }
         Commands::Connect(args) => {
-            commands::mcp::run_connect(&client, args, cli.quiet).await?;
+            if let Err(error) = commands::mcp::run_connect(&client, args, cli.quiet).await {
+                // A missing tool is one plain line, not an error chain.
+                if let Some(missing) = error.downcast_ref::<commands::mcp::ToolNotFound>() {
+                    eprintln!("wenlan: {missing}");
+                    return Ok(ExitCode::FAILURE);
+                }
+                return Err(error);
+            }
         }
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
