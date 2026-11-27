@@ -363,6 +363,14 @@ and wait for evidence that people need them.
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
 
+- **UX-WHO-11** `shipped` A citation whose source does not clearly support its
+  sentence is still saved, and the page shows it with a visible amber "?"
+  beside its number ([2?]), in reading and editing, and says in words "source
+  doesn't clearly say this" when opened. Not-yet-checked citations get no "?".
+  Public copy never says every sentence has a source. Test
+  `UX-WHO-11 shows a visible question mark on an unconfirmed citation`.
+  原文：UX 稽核 2026-11（第 4 條，全照建議）：無法驗證的引用照存，但頁面上清楚標出；公開文案不說每句都有出處。
+
 - **UX-WHO-6** `shipped` Opening a sentence shows the lines of the
   conversation it came from: who said each one and when, at most three, each
   opening the whole conversation at that line. When no line says the same

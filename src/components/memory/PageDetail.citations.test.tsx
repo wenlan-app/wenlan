@@ -142,7 +142,7 @@ describe("PageDetail citations", () => {
     expect(chip1).toHaveAttribute("data-status", "verified");
     expect(chip2).toHaveAttribute("data-status", "unverified");
     expect(chip1).toHaveTextContent("[1]");
-    expect(chip2).toHaveTextContent("[2]");
+    expect(chip2).toHaveTextContent("[2?]");
     expect(textWithoutCitationChips(screen.getByTestId("page-document-reading"))).not.toMatch(/\[\d+\]/);
   });
 

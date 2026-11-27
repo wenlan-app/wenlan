@@ -193,7 +193,7 @@ describe("PageInfo", () => {
     });
     await user.click(screen.getByText(/Page info/i));
     const row = screen.getByTestId("page-info-source-row");
-    expect(within(row).getByText("unverified")).toBeInTheDocument();
+    expect(within(row).getByText("not confirmed by its source")).toBeInTheDocument();
     await user.click(within(row).getByRole("button"));
     expect(onMemoryClick).toHaveBeenCalledWith("mem-a");
   });

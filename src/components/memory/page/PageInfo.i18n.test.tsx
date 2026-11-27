@@ -133,7 +133,7 @@ describe("PageInfo i18n", () => {
     const headings = screen.getAllByRole("heading", { level: 4 });
     expect(headings.map((h) => h.textContent)).toEqual(["来源"]);
     const row = screen.getByTestId("page-info-source-row");
-    expect(within(row).getByText("未验证")).toBeInTheDocument();
+    expect(within(row).getByText("出处未确认")).toBeInTheDocument();
     expect(within(row).queryByText("未知代理")).toBeNull();
     expect(within(row).getByText("记忆")).toBeInTheDocument();
     // Source titles stay in their original language.
@@ -185,7 +185,7 @@ describe("PageInfo i18n", () => {
     const headings = screen.getAllByRole("heading", { level: 4 });
     expect(headings.map((h) => h.textContent)).toEqual(["來源"]);
     const row = screen.getByTestId("page-info-source-row");
-    expect(within(row).getByText("未驗證")).toBeInTheDocument();
+    expect(within(row).getByText("出處未確認")).toBeInTheDocument();
     expect(within(row).queryByText("未知代理")).toBeNull();
     expect(within(row).getByText("記憶")).toBeInTheDocument();
     expect(screen.getByText("引用：2（1 條未通過核對，0 條尚未核對）")).toBeInTheDocument();

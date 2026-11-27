@@ -191,7 +191,12 @@ export default function CitationChip({
           alignItems: "baseline",
         }}
       >
-        <span aria-hidden="true">[{number}]</span>
+        <span aria-hidden="true">
+          [{number}
+          {citation.status === "unverified" && !citation.historical && (
+            <span className="citation-chip__unconfirmed">?</span>
+          )}]
+        </span>
       </button>
       {open && (
         <CitationPopover

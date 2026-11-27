@@ -63,7 +63,7 @@ test('page, memory and source previews share rendering without changing Markdown
   await sourceLink.hover();
   const sourcePreview = page.locator('[data-reference-preview]');
   await expect(sourcePreview).toContainText('A local imported source excerpt.');
-  await expect(sourcePreview).toContainText(/unverified/i);
+  await expect(sourcePreview).toContainText(/not confirmed by its source/i);
   expect(controller.calls().filter(call => ['open_file', 'plugin:shell|open', 'update_page'].includes(call.command))).toEqual([]);
   expect(controller.calls().filter(call => call.command === 'get_page_explicit_browse' && (call.args as { id?: string }).id === 'linked-page')).toEqual([]);
   const raw = await editor.evaluate(el => (el as unknown as { cmTile: { root: { view: { state: { doc: { toString(): string } } } } } }).cmTile.root.view.state.doc.toString());
@@ -176,7 +176,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(citation).toHaveCSS('text-decoration-line', 'underline');
     await page.screenshot({ path: testInfo.outputPath(`quiet-authorship-${theme}.png`) });
     await citation.hover();
-    await expect(page.locator('[data-reference-preview]')).toContainText(/unverified/i);
+    await expect(page.locator('[data-reference-preview]')).toContainText(/not confirmed by its source/i);
     expect(controller.calls().filter(call => call.command === 'update_page')).toEqual([]);
   });
 }
