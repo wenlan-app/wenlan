@@ -145,6 +145,7 @@ impl Host {
                         let authorship = matching.map(|head| match head.meta.author.kind {
                             version::AuthorKind::Person => TeamAuthorship::Human,
                             version::AuthorKind::Ai => TeamAuthorship::Ai,
+                            version::AuthorKind::Unknown => TeamAuthorship::Unknown,
                         });
                         let legacy = matching
                             .filter(|head| {

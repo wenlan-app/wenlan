@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::rulesync_apply::{FileRoot, Snapshot};
+use crate::rulesync_shared_answers::{self, Answer, Answers, Waiting};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_personal::{
@@ -211,6 +213,14 @@ fn without<'a>(text: &str, blocks: impl Iterator<Item = Block<'a>>) -> String {
     output
 }
 
+pub(crate) fn replace_block_body(text: &str, key: &str, body: &str) -> Result<String> {
+    let blocks = blocks(text)?;
+    let block = blocks.get(key).context("shared rule section is missing")?;
+    let start = block.range.start + block.header.len();
+    let end = block.range.end - block.footer.len();
+    Ok(format!("{}{}{}", &text[..start], body, &text[end..]))
+}
+
 pub(crate) fn edits<'a>(before: &'a str, after: &'a str) -> Result<Vec<(&'a str, Block<'a>)>> {
     let before = blocks(before)?;
     let after = blocks(after)?;
@@ -242,27 +252,153 @@ pub(crate) type ProposalReceipts = BTreeMap<String, ProposalReceipt>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ProposalReceipt {
     edit: String,
-    proposal: String,
+    pub(crate) proposal: String,
 }
 
 pub(crate) enum SharedReview {
+    NeedsConfirm,
     Pending,
     Decided { rejected: bool },
 }
 
+fn recorded_path(
+    data: &Path,
+    home: &Path,
+    file: &str,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let relative = Path::new(file);
+    if relative
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let root = if relative.starts_with("checkouts") {
+        data
+    } else {
+        home
+    };
+    Some((root.to_path_buf(), relative.to_path_buf()))
+}
+
+pub(crate) fn waiting_in_file(
+    waiting: &Waiting,
+    file: &str,
+    _settings: &Path,
+    data: &Path,
+    home: &Path,
+) -> bool {
+    let Some((root_path, relative)) = recorded_path(data, home, file) else {
+        return false;
+    };
+    let Ok(root) = FileRoot::open(&root_path) else {
+        return false;
+    };
+    let Ok(Snapshot::File { bytes, .. }) = root.read(&relative, false) else {
+        return false;
+    };
+    let Ok(source) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    let Ok(blocks) = blocks(source) else {
+        return false;
+    };
+    let Ok(key) = fingerprint(&waiting.layer_id) else {
+        return false;
+    };
+    let Some(block) = blocks.get(key.as_str()) else {
+        return false;
+    };
+    block.revision == waiting.revision
+        && block.body == format!("{}\n", display_body(&waiting.markdown))
+}
+
+pub(crate) fn refresh_answers(settings: &Path, data: &Path, home: &Path) -> Result<Answers> {
+    let mut answers = rulesync_shared_answers::read(data)?;
+    if !answers.sent_edits.is_empty() {
+        let layers: Vec<_> = rulesync_team::load_layers(settings)?
+            .into_iter()
+            .chain(rulesync_team::load_project_layers(settings)?)
+            .collect();
+        let sent: Vec<_> = answers.sent_edits.keys().cloned().collect();
+        for id in sent {
+            let record = &answers.sent_edits[&id];
+            let layer = layers.iter().find(|layer| layer.id == record.edit.layer_id);
+            let decided =
+                layer.is_some_and(|layer| layer.proposal_decisions.contains_key(&record.proposal));
+            let queued = record.proposal_path.try_exists()?;
+            if decided || layer.is_none() || !queued {
+                if !decided && queued {
+                    rulesync_team::retire_queued_proposal_at(
+                        &record.proposal_path,
+                        &record.edit.revision,
+                        &record.proposal,
+                    )?;
+                }
+                answers.sent_edits.remove(&id);
+            }
+        }
+    }
+    answers.waiting.retain(|_, waiting| {
+        waiting
+            .files
+            .iter()
+            .any(|file| waiting_in_file(waiting, file, settings, data, home))
+    });
+    let settled: Vec<_> = answers
+        .answered_edits
+        .iter()
+        .filter(|(id, record)| {
+            let live: Vec<_> = record
+                .edit
+                .files
+                .iter()
+                .filter(|file| waiting_in_file(&record.edit, file, settings, data, home))
+                .collect();
+            live.is_empty()
+                || (matches!(answers.answers.get(*id), Some(Answer::Send { .. }))
+                    && live.iter().all(|file| record.received.contains(file)))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in settled {
+        answers.answered_edits.remove(&id);
+        answers.answers.remove(&id);
+    }
+    if data.exists() {
+        rulesync_shared_answers::save(data, &answers)?;
+    }
+    Ok(answers)
+}
+
 pub(crate) fn review_edits(
-    settings: &Path,
+    _settings: &Path,
     accessible: &BTreeMap<String, &TeamRuleLayer>,
     edits: Vec<(&str, Block<'_>)>,
     receipts: &mut ProposalReceipts,
+    file: &Path,
+    data: &Path,
+    home: &Path,
 ) -> Result<SharedReview> {
-    receipts.retain(|key, _| edits.iter().any(|(changed, _)| *changed == key));
+    let mut answers = refresh_answers(_settings, data, home)?;
+    receipts.retain(|key, receipt| {
+        edits.iter().any(|(changed, _)| *changed == key)
+            && (answers
+                .sent_edits
+                .values()
+                .any(|sent| sent.proposal == receipt.proposal)
+                || accessible
+                    .get(key)
+                    .is_some_and(|layer| layer.proposal_decisions.contains_key(&receipt.proposal)))
+    });
     let mut pending = false;
     let mut rejected = false;
+    let mut needs_confirm = false;
     for (key, change) in edits {
         let layer = accessible
             .get(key)
             .context("This shared layer is no longer accessible.")?;
+        let id = fingerprint(&(&layer.id, change.revision, change.body))?;
         let edit = fingerprint(&(change.revision, change.body))?;
         if let Some(receipt) = receipts.get(key) {
             let decision = layer.proposal_decisions.get(&receipt.proposal);
@@ -273,15 +409,71 @@ pub(crate) fn review_edits(
             }
             ensure!(decision.is_some(), "This section changed again while its proposal is open. Your latest edit is still in the file.");
         }
-        let markdown = proposed_markdown(layer, &change)?;
-        let proposal =
-            rulesync_team::queue_proposal(settings, &layer.id, change.revision, &markdown)?;
+        let proposal = match answers.answers.get(&id) {
+            Some(Answer::Send { proposal }) => proposal.clone(),
+            Some(Answer::Decline) => {
+                rejected = true;
+                continue;
+            }
+            None => {
+                if change.revision != layer.revision {
+                    ensure!(
+                        answers.waiting.contains_key(&id),
+                        "this shared rule edit needs the current approved revision"
+                    );
+                    needs_confirm = true;
+                    continue;
+                }
+                let markdown = proposed_markdown(layer, &change)?;
+                let path = file.display().to_string();
+                let waiting = answers.waiting.entry(id).or_insert_with(|| Waiting {
+                    layer_id: layer.id.clone(),
+                    layer_name: layer.name.clone(),
+                    revision: change.revision.to_owned(),
+                    markdown,
+                    files: Vec::new(),
+                    first_seen: chrono::Utc::now().to_rfc3339(),
+                });
+                if !waiting.files.contains(&path) {
+                    waiting.files.push(path);
+                }
+                needs_confirm = true;
+                continue;
+            }
+        };
         let decision = layer.proposal_decisions.get(&proposal);
         pending |= decision.is_none();
         rejected |= decision == Some(&false);
         receipts.insert(key.to_owned(), ProposalReceipt { edit, proposal });
+        if let Some(record) = answers.answered_edits.get_mut(&id) {
+            let path = file.display().to_string();
+            if !record.received.contains(&path) {
+                record.received.push(path);
+            }
+        }
     }
-    Ok(if pending {
+    let settled: Vec<_> = answers
+        .answered_edits
+        .iter()
+        .filter(|(id, record)| {
+            matches!(answers.answers.get(*id), Some(Answer::Send { .. }))
+                && record
+                    .edit
+                    .files
+                    .iter()
+                    .filter(|file| waiting_in_file(&record.edit, file, _settings, data, home))
+                    .all(|file| record.received.contains(file))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in settled {
+        answers.answered_edits.remove(&id);
+        answers.answers.remove(&id);
+    }
+    rulesync_shared_answers::save(data, &answers)?;
+    Ok(if needs_confirm {
+        SharedReview::NeedsConfirm
+    } else if pending {
         SharedReview::Pending
     } else {
         SharedReview::Decided { rejected }
@@ -302,7 +494,7 @@ pub(crate) fn report_rejection(result: &mut wenlan_types::rulesync::RulesSyncRep
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use wenlan_core::{shared_space, team};
+    use wenlan_core::{rulesync_team, shared_space, team};
     use wenlan_types::team::{TeamAccess, TeamSpaceAccess};
 
     pub(crate) const PROJECT: &str = "B1 test project";
@@ -369,6 +561,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn rulesync_shared_section_uses_current_precedence() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (settings, _, _) = hosted_fixture(scratch.path());
+        for layer in rulesync_team::load_layers(&settings).unwrap() {
+            let section = render_fixture_section(&layer);
+            assert!(section.contains(RULE_PRECEDENCE));
+            assert!(!section.contains(wenlan_core::rulesync_personal::LEGACY_RULE_PRECEDENCE));
+        }
+    }
+
+    #[test]
     fn isolates_edits_and_can_remove_inaccessible_layers() {
         let key = "a".repeat(64);
         let rev = "b".repeat(64);
@@ -382,5 +585,142 @@ pub(crate) mod tests {
             "Personal.\n"
         );
         assert!(blocks(&after.replace(END, "")).is_err());
+    }
+
+    #[test]
+    fn rulesync_declined_shared_edit_restores_approved_lines() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (settings, _, _) = hosted_fixture(scratch.path());
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let before = render_fixture_section(&layer);
+        let after = before.replace(APPROVED, "Use the revised checklist.\n");
+        let accessible = BTreeMap::from([(key(&layer).unwrap(), &layer)]);
+        let mut receipts = ProposalReceipts::new();
+        let file = Path::new("AGENTS.md");
+        std::fs::write(scratch.path().join(file), &after).unwrap();
+        let changed = edits(&before, &after).unwrap();
+        assert!(matches!(
+            review_edits(
+                &settings,
+                &accessible,
+                changed,
+                &mut receipts,
+                file,
+                scratch.path(),
+                scratch.path()
+            )
+            .unwrap(),
+            SharedReview::NeedsConfirm
+        ));
+        let mut answers = rulesync_shared_answers::read(scratch.path()).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        let id = answers.waiting.keys().next().unwrap().clone();
+        answers.waiting.remove(&id);
+        answers.answers.insert(id, Answer::Decline);
+        rulesync_shared_answers::save(scratch.path(), &answers).unwrap();
+        let changed = edits(&before, &after).unwrap();
+        assert!(matches!(
+            review_edits(
+                &settings,
+                &accessible,
+                changed,
+                &mut receipts,
+                file,
+                scratch.path(),
+                scratch.path()
+            )
+            .unwrap(),
+            SharedReview::Decided { rejected: true }
+        ));
+        assert!(receipts.is_empty());
+        assert!(rulesync_team::local_proposals(&settings)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn rulesync_waiting_edit_survives_a_new_team_revision() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (settings, _, _) = hosted_fixture(scratch.path());
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let before = render_fixture_section(&layer);
+        let after = before.replace(APPROVED, "Use the revised checklist.\n");
+        let file = Path::new("AGENTS.md");
+        std::fs::write(scratch.path().join(file), &after).unwrap();
+        let mut receipts = ProposalReceipts::new();
+        let accessible = BTreeMap::from([(key(&layer).unwrap(), &layer)]);
+        review_edits(
+            &settings,
+            &accessible,
+            edits(&before, &after).unwrap(),
+            &mut receipts,
+            file,
+            scratch.path(),
+            scratch.path(),
+        )
+        .unwrap();
+        assert_eq!(
+            rulesync_shared_answers::read(scratch.path())
+                .unwrap()
+                .waiting
+                .len(),
+            1
+        );
+        let mut newer = layer.clone();
+        newer.revision = "a".repeat(64);
+        let accessible = BTreeMap::from([(key(&newer).unwrap(), &newer)]);
+        assert!(matches!(
+            review_edits(
+                &settings,
+                &accessible,
+                edits(&before, &after).unwrap(),
+                &mut receipts,
+                file,
+                scratch.path(),
+                scratch.path()
+            )
+            .unwrap(),
+            SharedReview::NeedsConfirm
+        ));
+        let answers = rulesync_shared_answers::read(scratch.path()).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        assert_eq!(
+            answers.waiting.values().next().unwrap().revision,
+            layer.revision
+        );
+    }
+
+    #[test]
+    fn rulesync_shared_edit_list_prunes_a_reverted_file() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (settings, _, _) = hosted_fixture(scratch.path());
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let before = render_fixture_section(&layer);
+        let after = before.replace(APPROVED, "Use the revised checklist.\n");
+        let file = Path::new("AGENTS.md");
+        std::fs::write(scratch.path().join(file), &after).unwrap();
+        let accessible = BTreeMap::from([(key(&layer).unwrap(), &layer)]);
+        review_edits(
+            &settings,
+            &accessible,
+            edits(&before, &after).unwrap(),
+            &mut ProposalReceipts::new(),
+            file,
+            scratch.path(),
+            scratch.path(),
+        )
+        .unwrap();
+        assert_eq!(
+            refresh_answers(&settings, scratch.path(), scratch.path())
+                .unwrap()
+                .waiting
+                .len(),
+            1
+        );
+        std::fs::write(scratch.path().join(file), &before).unwrap();
+        assert!(refresh_answers(&settings, scratch.path(), scratch.path())
+            .unwrap()
+            .waiting
+            .is_empty());
     }
 }

@@ -1063,26 +1063,56 @@ and wait for evidence that people need them.
   renders approved project skills from those Spaces. Shared skills have a
   plain name and description and Markdown or text files. A refused sync
   removes the revoked project's rules and skills from that directory.
-  The text states that project rules come first,
-  followed by team rules and personal rules. An offline member keeps the
+  Rules are listed from broadest to most specific: team, then personal, then
+  project. The text says "Rules are listed from broadest to most specific. When
+  two disagree, follow the later one." An offline member keeps the
   last synced layer and sees its date. A refused sync removes its access and
-  layer. Read holders, AI tools, and tool-file edits can submit proposals.
+  layer. Read holders and AI tools can submit proposals. Tool-file edits can be sent as proposals after the person confirms.
   A person with Write on that Space can decide each proposal once. Shared
   rule text that looks like a credential is refused. A wiki pull request
   carries the bound project's rules and its opted-in team section. Anyone
   with repository read access can read that copy (UX-SKILL-7).
-  A hand edit in a team or project section becomes a proposal to that
-  Space's Write holders. The tool file keeps the edit while it waits for a
-  decision. If the editor holds Write, they can apply it with one
-  confirmation. If a Write holder rejects it, the next sync the person
-  starts restores the approved lines and shows a notice.
+  A team or project edit found in a tool file stays only in that file until
+  the person confirms once with `wenlan rules shared-edits` in their own
+  terminal. An AI tool cannot confirm. A confirmed edit goes to the Space's
+  Write holders as a proposal whose author is recorded as unknown, because
+  Wenlan cannot tell who edited the file. Declining puts the approved lines
+  back at the next sync the person starts, like a rejection.
+  This confirmation stops AI tools that only claim to be the person. Like every
+  person-only action, a program running under the same account that deliberately
+  reads Wenlan's key file can still act as the person; see the person key's limits.
+  - Not yet (`planned`): team rules should apply only in repositories bound to
+    that team's Spaces, not in global tool files. Home sync currently puts team
+    sections in global tool files.
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
   原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
+  決定（2026-11-26，Qi-Xuan 核可的計畫）：順序 團隊→個人→專案；工具檔裡的團隊或專案修改要本人確認一次才送出。英文字句待 Qi-Xuan 確認。
   Tests `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`,
   `rulesync_checkout_recovers_then_prunes_revoked_skill_before_a_render_failure`,
   `rulesync_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection`,
   `rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it`,
-  and `rulesync_write_holder_applies_their_team_hand_edit_with_one_confirmation`.
+  `rulesync_checkout_waiting_edit_survives_new_revision`,
+  `rulesync_write_holder_applies_their_team_hand_edit_after_person_and_write_holder_confirm`,
+  `rulesync_router_rejects_session_on_person_only_routes`,
+  `rulesync_shared_section_uses_current_precedence`,
+  `rulesync_waiting_edit_survives_a_new_team_revision`,
+  `rulesync_new_team_revision_refuses_old_confirmation_and_keeps_edit`,
+  `rulesync_old_host_refusal_returns_edit_to_waiting`,
+  `rulesync_refused_home_edit_can_be_declined_after_receipt`,
+  `rulesync_refused_home_edit_can_be_reconfirmed_then_rejected`,
+  `rulesync_refused_home_edit_can_be_reconfirmed_then_accepted`,
+  `rulesync_changed_home_edit_is_offered_again_after_refusal`,
+  `rulesync_checkout_refused_edit_can_be_declined_after_receipt`,
+  `page_path_rules_proposal_422_does_not_pause_without_a_sent_edit`,
+  `revoked_key_wins_over_a_concurrent_rules_refusal`,
+  `rulesync_shared_edits_continues_after_stale_revision`,
+  `rulesync_shared_edits_get_does_not_write_answers`,
+  `rulesync_declined_shared_edit_restores_approved_lines`,
+  `rulesync_declined_shared_edit_restores_approved_lines_on_person_sync`,
+  `rulesync_ordered_rule_roots_are_team_personal_project`,
+  `repo_wiki_legacy_precedence_is_read_and_team_precedes_project`,
+  `rulesync_shared_edits_answer_requires_yes_or_no`, and
+  `rulesync_shared_edits_refuses_ai_or_pipes_before_request`.
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
   规则; any depth, any app language), each top-level bullet the person wrote is
@@ -1115,7 +1145,9 @@ and wait for evidence that people need them.
   Sharing a matched overlay edit in that review keeps the rest of the
   overlay local. If one save changes a known overlay and other rules, the
   tool file keeps the edits and asks the person to sync each layer separately.
-  Team and project edits follow UX-SKILL-9.
+  Team and project edits stay in the tool file until the person uses
+  `wenlan rules shared-edits` in their own terminal to send or decline them
+  (UX-SKILL-9).
   With personal-rule plans, an AI-proposed personal rule or change
   confirmed for its exact text counts as the person's for that version
   (UX-SKILL-14). After the move, the person's change to an every-Space rule

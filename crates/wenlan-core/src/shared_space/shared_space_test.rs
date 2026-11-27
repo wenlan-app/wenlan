@@ -623,6 +623,30 @@ fn shared_writers_say_who_wrote_and_are_person_or_ai() {
 }
 
 #[test]
+fn shared_unknown_writer_stays_unknown_in_history() {
+    let author = Author {
+        member: "abc123".into(),
+        kind: AuthorKind::Unknown,
+        agent: None,
+    };
+    let shared = shared_edited_by(&author);
+    assert_eq!(shared, "shared_unknown:abc123");
+    assert_eq!(
+        shared_writer(&shared),
+        Some((AuthorKind::Unknown, "abc123"))
+    );
+    assert_eq!(writer_edited_by(&author, "abc123"), OWN_DEVICE_UNKNOWN);
+    assert_eq!(
+        crate::authorship::version_author(&shared, "legacy_authored"),
+        crate::authorship::VersionAuthor::Unknown
+    );
+    assert_eq!(
+        crate::authorship::version_author(OWN_DEVICE_UNKNOWN, "legacy_authored"),
+        crate::authorship::VersionAuthor::Unknown
+    );
+}
+
+#[test]
 fn settings_keep_the_member_id_and_space_file_adds_members() {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("data/shared-spaces.json");

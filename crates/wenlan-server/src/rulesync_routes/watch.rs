@@ -178,7 +178,7 @@ impl RulesWatch {
         for path in changed {
             let current = self.rules[path].content.clone();
             if let Some(draft) =
-                inspect_rule(path, &manifest.delivered[path], current, &mut blocked)
+                inspect_rule(data, path, &manifest.delivered[path], current, &mut blocked)
                     .context("inspect delivered rule edit")?
             {
                 drafts.push(draft);

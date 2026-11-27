@@ -354,6 +354,7 @@ async fn shared_sync(
             knowledge_path: page_root.as_deref(),
             member_id,
             host: None,
+            rules_edit_proposals: &[],
         },
     )
     .await?;
@@ -445,6 +446,16 @@ async fn host_sync(
         }
     };
     let folder = remote::mirror_folder(settings, &url, &remote_space);
+    let rules_edit_proposals = if rulesync {
+        crate::rulesync_routes::sent_edit_proposal_ids().unwrap_or_else(|error| {
+            tracing::warn!(
+                "[rulesync] could not inspect confirmed edits for manual Space sync: {error:#}"
+            );
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
     let scope = Scope::Space(space);
     let counts = wenlan_core::shared_space::sync_space(
         db,
@@ -458,16 +469,44 @@ async fn host_sync(
             host: Some(HostLink {
                 url,
                 key,
-                space: remote_space,
+                space: remote_space.clone(),
                 space_id,
             }),
+            rules_edit_proposals: &rules_edit_proposals,
         },
     )
     .await;
-    if rulesync {
-        crate::skill_grow::sync_rules_files_quietly(db, page_root).await;
-    }
+    finish_host_rule_sync(
+        &counts,
+        rulesync,
+        |proposal_ids| {
+            crate::rulesync_routes::reopen_edits_after_old_host_refusal(proposal_ids)
+                .map_err(|error| ServerError::Internal(error.to_string()))
+        },
+        || crate::skill_grow::sync_rules_files_quietly(db, page_root),
+    )
+    .await?;
     Ok(Json(counts?))
+}
+
+pub(crate) async fn finish_host_rule_sync<R, S, F>(
+    counts: &Result<wenlan_types::shared_space::SharedSyncCounts, wenlan_core::WenlanError>,
+    rulesync: bool,
+    reopen: R,
+    sync_rules: S,
+) -> Result<(), ServerError>
+where
+    R: FnOnce(&[String]) -> Result<(), ServerError>,
+    S: FnOnce() -> F,
+    F: std::future::Future<Output = ()>,
+{
+    if rulesync {
+        if let Err(wenlan_core::WenlanError::TeamRulesProposalRefused { proposal_ids }) = counts {
+            reopen(proposal_ids)?;
+        }
+        sync_rules().await;
+    }
+    Ok(())
 }
 
 async fn space_scope(
@@ -734,6 +773,61 @@ pub async fn handle_set_document_space(
 
 #[cfg(test)]
 mod not_found_mapping_tests {
+    #[tokio::test]
+    async fn spaces_manual_sync_preflight_works_with_isolated_data_and_no_dev_state() {
+        // No process-wide env change: other tests read WENLAN_DATA_DIR in parallel.
+        let scratch = tempfile::tempdir().unwrap();
+        let ids = |root: &std::path::Path| crate::rulesync_routes::sent_edit_proposal_ids_at(root);
+        assert!(ids(scratch.path()).unwrap().is_empty());
+        // A sent record saved where confirmation writes it must be found.
+        let mut answers = crate::rulesync_shared_answers::Answers::default();
+        answers.sent_edits.insert(
+            "edit".into(),
+            crate::rulesync_shared_answers::SentEdit {
+                edit: crate::rulesync_shared_answers::Waiting {
+                    layer_id: "layer".into(),
+                    layer_name: "Team".into(),
+                    revision: "rev".into(),
+                    markdown: "rule".into(),
+                    files: vec!["CLAUDE.md".into()],
+                    first_seen: "2026-11-26T00:00:00Z".into(),
+                },
+                proposal: "proposal-1".into(),
+                proposal_path: scratch.path().join("proposal-1"),
+            },
+        );
+        std::fs::create_dir_all(scratch.path().join("rulesync")).unwrap();
+        crate::rulesync_shared_answers::save(&scratch.path().join("rulesync"), &answers).unwrap();
+        assert_eq!(ids(scratch.path()).unwrap(), vec!["proposal-1".to_owned()]);
+        let counts = Ok(wenlan_types::shared_space::SharedSyncCounts::default());
+        super::finish_host_rule_sync(&counts, true, |_| Ok(()), || async {})
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn spaces_manual_old_host_reopens_before_rules_file_sync() {
+        use std::{cell::RefCell, rc::Rc};
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let reopened = order.clone();
+        let synced = order.clone();
+        let ids = vec!["a".repeat(64)];
+        let counts = Err(wenlan_core::WenlanError::TeamRulesProposalRefused {
+            proposal_ids: ids.clone(),
+        });
+        super::finish_host_rule_sync(
+            &counts,
+            true,
+            move |proposal_ids| {
+                assert_eq!(proposal_ids, ids);
+                reopened.borrow_mut().push("reopen");
+                Ok(())
+            },
+            move || async move { synced.borrow_mut().push("sync rules") },
+        )
+        .await
+        .unwrap();
+        assert_eq!(*order.borrow(), ["reopen", "sync rules"]);
+    }
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;

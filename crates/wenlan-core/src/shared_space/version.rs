@@ -83,6 +83,7 @@ pub struct Decides {
 pub enum AuthorKind {
     Person,
     Ai,
+    Unknown,
 }
 
 impl AuthorKind {
@@ -90,6 +91,7 @@ impl AuthorKind {
         match self {
             AuthorKind::Person => "person",
             AuthorKind::Ai => "ai",
+            AuthorKind::Unknown => "unknown",
         }
     }
 
@@ -97,6 +99,7 @@ impl AuthorKind {
         match text {
             "person" => Some(AuthorKind::Person),
             "ai" => Some(AuthorKind::Ai),
+            "unknown" => Some(AuthorKind::Unknown),
             _ => None,
         }
     }
@@ -343,7 +346,11 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
         kind: scalar(author, "kind")
             .as_deref()
             .and_then(AuthorKind::parse)
-            .ok_or_else(|| invalid(format!("{name}: author kind is not person or ai")))?,
+            .ok_or_else(|| {
+                invalid(format!(
+                    "{name}: author kind must be person, ai, or unknown"
+                ))
+            })?,
         agent: scalar(author, "agent"),
     };
     let merged = match shared.get("merged") {

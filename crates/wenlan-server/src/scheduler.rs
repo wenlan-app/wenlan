@@ -1853,13 +1853,33 @@ pub fn spawn_scheduler(
                 let person_name = wenlan_core::shared_space::person_name(&db)
                     .await
                     .unwrap_or_default();
+                let rules_edit_proposals = if wenlan_core::rulesync_personal::enabled() {
+                    crate::rulesync_routes::sent_edit_proposal_ids().unwrap_or_else(|error| {
+                        tracing::warn!("[rulesync] could not inspect confirmed edits: {error:#}");
+                        Vec::new()
+                    })
+                } else {
+                    Vec::new()
+                };
                 let runs = wenlan_core::shared_space::sync_shared_spaces(
                     &db,
                     &wenlan_core::shared_space::settings_path(),
                     Some(knowledge_path.as_path()),
                     person_name.as_deref(),
+                    &rules_edit_proposals,
                 )
                 .await;
+                for (_, run) in &runs {
+                    if !run.refused_proposals.is_empty() {
+                        if let Err(error) =
+                            crate::rulesync_routes::reopen_edits_after_old_host_refusal(
+                                &run.refused_proposals,
+                            )
+                        {
+                            tracing::warn!("[rulesync] could not keep the refused shared edit waiting: {error:#}");
+                        }
+                    }
+                }
                 // Memories taken from another computer wait for a vector.
                 crate::spaces_routes::wake_embedding_for_memories(
                     runs.iter()

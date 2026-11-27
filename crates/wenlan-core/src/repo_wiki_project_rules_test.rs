@@ -5,6 +5,17 @@ const COPILOT: &str = ".github/copilot-instructions.md";
 const SPACE: &str = "private fixture Space";
 const PUBLISHER: &str = "fixture-keeper";
 
+#[test]
+fn repo_wiki_legacy_precedence_is_read_and_team_precedes_project() {
+    let rendered = format!("{TEAM_HEADING}\n\n{LEGACY_RULE_PRECEDENCE}\n\n- Team line\n{RULES_HEADING}\n\n- Project line\n");
+    let result = block(Some(&rendered), "", None, true, PUBLISHER)
+        .unwrap()
+        .unwrap();
+    assert!(result.contains(RULE_PRECEDENCE));
+    assert!(!result.contains(LEGACY_RULE_PRECEDENCE));
+    assert!(result.find(TEAM_HEADING).unwrap() < result.find(RULES_HEADING).unwrap());
+}
+
 struct Scratch {
     _root: tempfile::TempDir,
     repo: PathBuf,

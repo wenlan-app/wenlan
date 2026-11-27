@@ -17,6 +17,7 @@ pub enum TeamItemKind {
 pub enum TeamAuthorship {
     Human,
     Ai,
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

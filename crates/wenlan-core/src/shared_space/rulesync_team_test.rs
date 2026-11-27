@@ -5,6 +5,7 @@ use std::{fs, sync::Arc};
 use wenlan_types::team::{TeamAccess, TeamSpaceAccess};
 
 use crate::rulesync_team::{self, ReviewError};
+use crate::shared_space::version;
 use crate::skill_registry::{project_sync::store_test_skill, Scope as SkillScope, SkillFile};
 use crate::team::{self, CredentialKind, Member};
 use crate::{db::MemoryDB, events::NoopEmitter};
@@ -146,8 +147,14 @@ impl Fixture {
         let layer = rulesync_team::load_project_layers(settings)
             .unwrap()
             .remove(0);
-        let sha =
-            rulesync_team::queue_proposal(settings, &layer.id, &layer.revision, markdown).unwrap();
+        let sha = rulesync_team::queue_proposal(
+            settings,
+            &layer.id,
+            &layer.revision,
+            markdown,
+            version::AuthorKind::Ai,
+        )
+        .unwrap();
         let name = version::version_file_name(&sha);
         let path = mirror
             .join(version::MEMBERS_DIR)
@@ -396,8 +403,14 @@ async fn rulesync_team_rejects_credentials_before_shipping_a_proposal() {
         .unwrap()
         .remove(0);
     let credential = team::new_key();
-    let error = rulesync_team::queue_proposal(&settings, &layer.id, &layer.revision, &credential)
-        .unwrap_err();
+    let error = rulesync_team::queue_proposal(
+        &settings,
+        &layer.id,
+        &layer.revision,
+        &credential,
+        version::AuthorKind::Ai,
+    )
+    .unwrap_err();
     assert_eq!(
         error.to_string(),
         "Validation error: possible credential on line 1"
