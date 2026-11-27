@@ -378,11 +378,12 @@ gets a new invite link to send them, so they can start again.
 ## Join
 
 - **Desktop app**: in Settings › Team, choose "Join with an invite link" and paste it:
-  one "Join Acme" joins every Space opened to you, and Spaces opened to you
-  later follow by themselves. From a terminal,
-  `wenlan team join <invite link>` does the same: every Space open to you is
-  synced to this computer. A Space of your own with the same name is left
-  alone, and the team's copy goes beside it as `Product (Acme)`.
+  one "Join Acme" joins every legacy shared Space opened to you, and Spaces
+  opened to you later follow by themselves. Team-library pages are read live
+  in the app right after joining; they are not copied here. From a terminal,
+  `wenlan team join <invite link>` likewise syncs only legacy shared Spaces.
+  A Space of your own with the same name is left alone, and the team's copy
+  goes beside it as `Product (Acme)`.
   `wenlan team join <invite link> --list` only shows what the link opens,
   `--server-space Product --as <name>` takes one Space under another name,
   `wenlan team status` shows the teams this computer joined, and

@@ -23,6 +23,8 @@ import {
   teamNewMemberKey,
   teamRename,
   teamStatus,
+  teamMemberships,
+  teamForgetMembership,
   teamJoinedLibrary,
   type SharedStatus,
   type TeamMember,
@@ -48,6 +50,8 @@ vi.mock("../../../lib/tauri", async () => {
     teamUpdateMember: vi.fn(),
     teamSetEveryone: vi.fn(),
     teamRename: vi.fn(),
+    teamMemberships: vi.fn(),
+    teamForgetMembership: vi.fn(),
     teamHostSpace: vi.fn(),
     stopSharingSpace: vi.fn(),
     teamJoinedLibrary: vi.fn(),
@@ -85,6 +89,8 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   vi.mocked(listSpaces).mockResolvedValue([]);
   vi.mocked(teamStatus).mockRejectedValue(new Error("off"));
+  vi.mocked(teamMemberships).mockResolvedValue([]);
+  vi.mocked(teamForgetMembership).mockResolvedValue();
   vi.mocked(teamJoinedLibrary).mockResolvedValue({ teams: [] });
   localStorage.clear();
 });
@@ -106,6 +112,13 @@ describe("teamGroups", () => {
       hostedStatus,
     );
     expect(groups.map((group) => [group.hosted, group.team?.name ?? null, group.shares.length])).toEqual([[true, null, 1], [false, "Acme", 2]]);
+  });
+
+  it("includes a library-only remembered membership once", () => {
+    const groups = teamGroups([], undefined, [{ url: "https://team.example.com", team: { id: "t1", name: "Acme" }, owner: false }]);
+    expect(groups.map((group) => [group.key, group.team?.id, group.host, group.shares.length])).toEqual([
+      ["team:t1", "t1", "https://team.example.com", 0],
+    ]);
   });
 });
 
@@ -220,15 +233,53 @@ describe("the team's own things on a member's computer", () => {
     await waitFor(() => expect(screen.getByTestId("side")).toHaveTextContent("private"));
   });
 
-  it("removes the departed team's live library without refetching it", async () => {
+  it("removes the departed team's live library and refreshes membership", async () => {
     vi.mocked(confirmAction).mockResolvedValue(true);
     vi.mocked(stopSharingSpace).mockResolvedValue();
-    vi.mocked(teamJoinedLibrary).mockResolvedValue({ teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [{ space: { id: "s1", name: "Roadmap", restricted: false }, pages: [] }] } }] });
+    vi.mocked(teamJoinedLibrary).mockResolvedValueOnce({ teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [{ space: { id: "s1", name: "Roadmap", restricted: false }, pages: [] }] } }] });
     wrap(<Shell />);
     expect(await screen.findByTestId("team-joined-library")).toBeInTheDocument();
     await userEvent.click(within(await openMenu("Acme")).getByRole("menuitem", { name: "Leave Acme…" }));
     await waitFor(() => expect(screen.queryByTestId("team-joined-library")).not.toBeInTheDocument());
-    expect(teamJoinedLibrary).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(teamJoinedLibrary).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows and leaves a library-only remembered membership", async () => {
+    vi.mocked(listShares).mockResolvedValue([]);
+    vi.mocked(teamMemberships)
+      .mockResolvedValueOnce([{ url: "https://team.example.com", team: { id: "t1", name: "Acme" }, owner: false }])
+      .mockResolvedValueOnce([]);
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    vi.mocked(teamJoinedLibrary)
+      .mockResolvedValueOnce({ teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [] } }] })
+      .mockResolvedValue({ teams: [] });
+    localStorage.removeItem("wenlan-scope");
+    wrap(<Shell />);
+    const menu = await openMenu("Private");
+    expect(within(menu).getByRole("menuitemradio", { name: "Acme" })).toBeInTheDocument();
+    await userEvent.click(within(menu).getByRole("menuitemradio", { name: "Acme" }));
+    await userEvent.click(within(await openMenu("Acme")).getByRole("menuitem", { name: "Leave Acme…" }));
+    await waitFor(() => expect(teamForgetMembership).toHaveBeenCalledWith("https://team.example.com"));
+    await waitFor(() => expect(screen.queryByTestId("team-joined-library")).not.toBeInTheDocument());
+  });
+
+  it("does not restore a departed team when the old library response resolves after leave", async () => {
+    let resolveOld: (value: Awaited<ReturnType<typeof teamJoinedLibrary>>) => void = () => undefined;
+    const oldResponse = new Promise<Awaited<ReturnType<typeof teamJoinedLibrary>>>((resolve) => { resolveOld = resolve; });
+    vi.mocked(listShares).mockResolvedValue([]);
+    vi.mocked(teamMemberships)
+      .mockResolvedValueOnce([{ url: "https://team.example.com", team: { id: "t1", name: "Acme" }, owner: false }])
+      .mockResolvedValueOnce([]);
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    vi.mocked(teamJoinedLibrary).mockReturnValueOnce(oldResponse);
+    localStorage.removeItem("wenlan-scope");
+    wrap(<Shell />);
+    const menu = await openMenu("Private");
+    await userEvent.click(within(menu).getByRole("menuitemradio", { name: "Acme" }));
+    await userEvent.click(within(await openMenu("Acme")).getByRole("menuitem", { name: "Leave Acme…" }));
+    await waitFor(() => expect(teamForgetMembership).toHaveBeenCalledWith("https://team.example.com"));
+    resolveOld({ teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [] } }] });
+    await waitFor(() => expect(screen.queryByTestId("team-joined-library")).not.toBeInTheDocument());
   });
 
   it("stays on the team when leaving is cancelled", async () => {

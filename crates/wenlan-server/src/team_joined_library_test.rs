@@ -380,6 +380,7 @@ async fn joined_team_page_reads_shared_source_and_redacts_private_source_text() 
     };
     assert!(page.read_only);
     assert_eq!(page.body, "The launch is Friday.");
+    assert_eq!(page.published_at.as_deref(), Some("2026-11-26T12:00:00Z"));
     assert_eq!(sources.sources.len(), 2);
     let json = serde_json::to_value(sources).unwrap();
     assert_eq!(json["sources"][0]["memory"]["body"], "Shared source text.");

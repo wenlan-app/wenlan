@@ -8,7 +8,7 @@
 // own setting; it never follows the last side someone clicked.
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useShares } from "../sharing/sharing";
-import { useTeamStatus } from "../sharing/team";
+import { useTeamMemberships, useTeamStatus } from "../sharing/team";
 import { spacesOfTeam, teamGroups, type TeamGroup } from "./TeamPage";
 import { isWebBuild } from "../../../web/runtime";
 
@@ -53,7 +53,8 @@ export function useScopeState(): ScopeState {
   // server and its command contract refuses `team_status`, so it never asks:
   // with no shares there, it is on no team.
   const status = useTeamStatus({ enabled: !__WENLAN_REVIEW__ });
-  const teams = useMemo(() => teamGroups(shares.data, status.data), [shares.data, status.data]);
+  const memberships = useTeamMemberships({ enabled: !__WENLAN_REVIEW__ });
+  const teams = useMemo(() => teamGroups(shares.data, status.data, memberships.data), [shares.data, status.data, memberships.data]);
   const [chosen, setChosen] = useState(readStored);
   const team = teams.find((group) => group.key === chosen) ?? null;
   const setScope = useCallback((key: string) => {

@@ -3756,6 +3756,16 @@ pub async fn team_status(state: tauri::State<'_, State>) -> Result<team::TeamSta
     client.get_json("/api/team").await
 }
 
+/// The teams this computer has joined, including memberships with no legacy
+/// shared Space.
+#[tauri::command]
+pub async fn team_memberships(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<team::TeamMembershipInfo>, String> {
+    let client = daemon_client(&state).await;
+    client.get_json("/api/team/membership").await
+}
+
 /// Names the team; every member sees the name.
 #[tauri::command]
 pub async fn team_rename(

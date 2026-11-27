@@ -355,7 +355,7 @@ fn join_keeps_the_membership_and_syncs_every_open_space() {
         stdout.contains("Notes (read only): 2 pages taken"),
         "{stdout}"
     );
-    assert!(stdout.contains("Roadmap: 1 pages"), "{stdout}");
+    assert!(stdout.contains("Roadmap: 1 page"), "{stdout}");
     assert!(
         stdout.contains("Connect your AI tool too: `wenlan login"),
         "{stdout}"
@@ -448,6 +448,38 @@ fn team_join_library_failure_still_sends_the_scratch_person_key() {
             .any(|(path, _)| path == "GET /api/team/joined/library"),
         "{sent:?}"
     );
+}
+
+#[test]
+fn team_join_summary_includes_whole_team_library_pages() {
+    let data = scratch_person_key();
+    let library = json!({
+        "teams": [{
+            "team": { "id": "t1", "name": "Acme" },
+            "library": {
+                "state": "ready",
+                "team_pages": [{ "id": "p1", "title": "Announcement", "space": null, "published_by": null, "published_at": null }],
+                "spaces": []
+            }
+        }]
+    });
+    let (host, _requests) = common::spawn_stub(vec![
+        (
+            "POST /api/team/join",
+            json!({ "url": SERVER, "me": me(json!([])) }).to_string(),
+        ),
+        ("POST /api/team/membership", me(json!([])).to_string()),
+        ("GET /api/spaces", json!([]).to_string()),
+        ("GET /api/shared", json!({ "shares": [] }).to_string()),
+        (
+            "GET /api/health",
+            json!({ "status": "ok", "data_root": data.path() }).to_string(),
+        ),
+        ("GET /api/team/joined/library", library.to_string()),
+    ]);
+    let (ok, stdout, stderr) = run_with_data(&host, data.path(), &["team", "join", LINK]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("Whole team: 1 page"), "{stdout}");
 }
 
 #[test]

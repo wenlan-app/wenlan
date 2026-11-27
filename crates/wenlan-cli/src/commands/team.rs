@@ -933,10 +933,10 @@ fn print_joined_library_summary(
                 println!("  No published pages are open yet.");
             } else {
                 if !team_pages.is_empty() {
-                    println!("  Whole team: {} pages", team_pages.len());
+                    println!("  Whole team: {}", page_count(team_pages.len()));
                 }
                 for space in spaces {
-                    println!("  {}: {} pages", space.space.name, space.pages.len());
+                    println!("  {}: {}", space.space.name, page_count(space.pages.len()));
                 }
             }
         }
@@ -1069,6 +1069,14 @@ async fn leave(
             );
         }
     })
+}
+
+fn page_count(count: usize) -> String {
+    if count == 1 {
+        "1 page".to_string()
+    } else {
+        format!("{count} pages")
+    }
 }
 
 #[cfg(test)]

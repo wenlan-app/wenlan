@@ -151,7 +151,14 @@ export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinS
       const teamId = checked.response.me.team?.id;
       const joinedTeam = liveLibrary?.teams.find((entry) => entry.team?.id === teamId);
       const summary = joinedTeam?.library.state === "ready"
-        ? joinedTeam.library.spaces.map((space) => t("team.join.pagesInSpace", { space: space.space.name, count: space.pages.length })).join(", ") || t("team.join.noPublishedPages")
+        ? [
+            joinedTeam.library.team_pages?.length
+              ? t("team.join.wholeTeamPages", { count: joinedTeam.library.team_pages.length })
+              : null,
+            ...joinedTeam.library.spaces
+              .filter((space) => space.pages.length > 0)
+              .map((space) => t("team.join.pagesInSpace", { space: space.space.name, count: space.pages.length })),
+          ].filter((part) => Boolean(part)).join(", ") || t("team.join.noPublishedPages")
         : null;
       toast(summary
         ? t("team.join.success", { team: joiningTeam, spaces: summary })

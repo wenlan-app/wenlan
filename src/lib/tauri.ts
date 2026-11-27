@@ -1561,6 +1561,14 @@ export interface TeamStatus {
   sign_in?: boolean;
 }
 
+/** One team this computer has joined, even when no legacy Space is synced. */
+export interface TeamMembershipInfo {
+  url: string;
+  team?: TeamInfo | null;
+  owner?: boolean;
+  library_spaces?: TeamSpaceAccess[];
+}
+
 /** A member and the key shown this once: show only `join_code`. */
 export interface TeamMemberKey {
   member: TeamMember;
@@ -1678,6 +1686,11 @@ export async function teamJoinedPage(teamId: string, pageId: string): Promise<Jo
 
 export async function teamStatus(): Promise<TeamStatus> {
   return invoke("team_status");
+}
+
+/** Lists the team memberships remembered on this computer. */
+export async function teamMemberships(): Promise<TeamMembershipInfo[]> {
+  return invoke("team_memberships");
 }
 
 export async function teamRename(name: string): Promise<TeamInfo> {

@@ -26,11 +26,12 @@ import {
   type TeamInfo,
   type TeamMember,
   type TeamStatus,
+  type TeamMembershipInfo,
 } from "../../../lib/tauri";
 import { confirmAction } from "../../../lib/confirmAction";
 import { SpaceRecentChanges } from "../space-detail/SpaceRecentChanges";
 import { SHARES_KEY, sharedWriter, teamKeyOf, teamLabel, useShares } from "../sharing/sharing";
-import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
+import { TEAM_KEY, TEAM_MEMBERSHIPS_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamMemberships, useTeamStatus } from "../sharing/team";
 import { IssuedCode, MemberMenu, codeOf, errorText, memberTag, usesSignIn } from "../sharing/TeamMembers";
 import { shortDate } from "../../../web/TeamOwnDialogs";
 import { JOINED_TEAM_LIBRARY_QUERY_KEY } from "./joinedLibrary";
@@ -60,9 +61,14 @@ export type TeamGroup = {
  *  and so does one just started here. A team whose server is elsewhere and
  *  that this person owns (`status.remote`) is theirs to manage from here,
  *  even before it has a Space. */
-export function teamGroups(shares: readonly SharedStatus[] | undefined, status: TeamStatus | undefined): TeamGroup[] {
+export function teamGroups(
+  shares: readonly SharedStatus[] | undefined,
+  status: TeamStatus | undefined,
+  memberships?: readonly TeamMembershipInfo[],
+): TeamGroup[] {
   const hosted: SharedStatus[] = [];
-  const joined = new Map<string, { team: TeamInfo | null; host: string; shares: SharedStatus[] }>();
+  const joined = new Map<string, { team: TeamInfo | null; host: string; shares: SharedStatus[]; owner: boolean }>();
+  const hostKey = (host: string) => `host:${host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/+$/, "")}`;
   for (const share of shares ?? []) {
     if (share.kind !== "space") continue;
     if (share.hosted) {
@@ -71,8 +77,25 @@ export function teamGroups(shares: readonly SharedStatus[] | undefined, status: 
     }
     const key = teamKeyOf(share);
     if (!key || !share.host) continue;
-    const group = joined.get(key) ?? { team: share.team ?? null, host: share.host, shares: [] };
+    const group = joined.get(key) ?? { team: share.team ?? null, host: share.host, shares: [], owner: false };
+    if (!group.team && share.team) group.team = share.team;
     group.shares.push(share);
+    joined.set(key, group);
+  }
+  for (const membership of memberships ?? []) {
+    const membershipKey = membership.team?.id ? `team:${membership.team.id}` : hostKey(membership.url);
+    const key = membershipKey;
+    if (!joined.has(key)) {
+      const sameHost = [...joined.entries()].find(([, group]) => hostKey(group.host) === hostKey(membership.url));
+      if (sameHost) {
+        joined.delete(sameHost[0]);
+        joined.set(key, sameHost[1]);
+      }
+    }
+    const group = joined.get(key) ?? { team: membership.team ?? null, host: membership.url, shares: [], owner: false };
+    group.team = membership.team ?? group.team;
+    group.host = membership.url;
+    if (membership.owner) group.owner = true;
     joined.set(key, group);
   }
   const groups: TeamGroup[] = [];
@@ -81,7 +104,7 @@ export function teamGroups(shares: readonly SharedStatus[] | undefined, status: 
     groups.push({ key: "hosted", team: here?.team ?? hosted[0]?.team ?? null, hosted: true, owner: true, host: null, shares: hosted });
   }
   const owned = status?.remote && status.team?.id ? `team:${status.team.id}` : null;
-  for (const [key, group] of joined) groups.push({ key, team: group.team, hosted: false, owner: key === owned, host: group.host, shares: group.shares });
+  for (const [key, group] of joined) groups.push({ key, team: group.team, hosted: false, owner: group.owner || key === owned, host: group.host, shares: group.shares });
   if (owned && status?.remote && !joined.has(owned)) {
     groups.push({ key: owned, team: status.team ?? null, hosted: false, owner: true, host: status.remote, shares: [] });
   }
@@ -93,7 +116,8 @@ export function teamGroups(shares: readonly SharedStatus[] | undefined, status: 
  *  own status is asked only on the Team page. */
 export function useTeams(): TeamGroup[] {
   const shares = useShares();
-  return teamGroups(shares.data, undefined);
+  const memberships = useTeamMemberships();
+  return teamGroups(shares.data, undefined, memberships.data);
 }
 
 /** What waits for this person in the shown team: teammates' AI changes on
@@ -226,6 +250,7 @@ export function useLeaveTeam(group: TeamGroup | null): () => Promise<boolean> {
     for (const share of group.shares) await stopSharingSpace(share.target);
     if (group.host) await teamForgetMembership(group.host);
     if (group.team?.id) {
+      await queryClient.cancelQueries({ queryKey: JOINED_TEAM_LIBRARY_QUERY_KEY });
       queryClient.setQueryData<{ teams: Array<{ team: TeamInfo | null }> }>(JOINED_TEAM_LIBRARY_QUERY_KEY, (current) =>
         current ? { ...current, teams: current.teams.filter((entry) => entry.team?.id !== group.team?.id) } : current,
       );
@@ -234,7 +259,8 @@ export function useLeaveTeam(group: TeamGroup | null): () => Promise<boolean> {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
       queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
-      queryClient.invalidateQueries({ queryKey: JOINED_TEAM_LIBRARY_QUERY_KEY, refetchType: "none" }),
+      queryClient.invalidateQueries({ queryKey: TEAM_MEMBERSHIPS_KEY }),
+      queryClient.invalidateQueries({ queryKey: JOINED_TEAM_LIBRARY_QUERY_KEY, refetchType: "active" }),
     ]);
     return true;
   };

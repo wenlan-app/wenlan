@@ -51,6 +51,9 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "share_space",
   // Team server commands need a real team server; the fixture has none.
   "team_status",
+  "team_memberships",
+  "team_joined_library",
+  "team_joined_page",
   // Personal tool setup requires a local daemon. Review has its own fixtures.
   "rules_setup_status",
   "rules_setup_adopt_preview",

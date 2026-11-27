@@ -1773,6 +1773,7 @@ pub fn run() {
             search::share_space,
             search::share_page,
             search::team_status,
+            search::team_memberships,
             search::team_rename,
             search::team_add_member,
             search::team_update_member,

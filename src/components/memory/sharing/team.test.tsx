@@ -154,6 +154,32 @@ describe("JoinSharedDialog code mode", () => {
     expect(lastToast).toContain("Connect your AI tool from its setup screen too.");
   });
 
+  it("counts whole-team library pages in the success toast", async () => {
+    vi.mocked(teamJoin).mockResolvedValue({
+      url: "https://team.example.com",
+      me: { member_id: "me", name: "Bo", team: { id: "t1", name: "Acme" }, spaces: [] },
+    });
+    vi.mocked(teamJoinedLibrary).mockResolvedValue({
+      teams: [{
+        team: { id: "t1", name: "Acme" },
+        library: {
+          state: "ready",
+          team_pages: [{ id: "p1", title: "Announcement", space: null, published_by: null, published_at: null }],
+          spaces: [],
+        },
+      }],
+    });
+    wrap(<JoinSharedDialog onClose={() => undefined} />);
+    await userEvent.click(screen.getByLabelText("Invite link"));
+    await userEvent.paste("https://team.example.com/join#wlt_whole");
+    await screen.findByRole("heading", { name: "Join Acme" });
+    await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const lastToast = toast.mock.calls[toast.mock.calls.length - 1]?.[0] as string;
+    expect(lastToast).toContain("Whole team · 1 page");
+    expect(lastToast).not.toContain("no published pages yet");
+  });
+
   it("UX-TEAM-MEMBER-4: invalidates the joined-library query after a successful join", async () => {
     vi.mocked(teamJoin).mockResolvedValue({
       url: "https://team.example.com",
