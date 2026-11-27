@@ -368,10 +368,11 @@ fn manifest_counts_match_the_spec() {
     // POST `/api/pages/{id}/code-basis/lines` (the cited code lines then and
     // now, no note prose) brings it to 424.
     // Personal-rule plans and history add seven local routes, and moving
-    // existing page rules adds a preview and a dismissal.
+    // existing page rules adds a preview and a dismissal. Listing and
+    // deciding tool-file team edits add two more.
     assert_eq!(
         HTTP_READERS.len(),
-        433,
+        435,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -385,7 +386,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        445,
+        447,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -393,7 +394,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        428,
+        430,
         "main builder entries"
     );
     assert_eq!(
@@ -602,7 +603,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        423 // The two page rule move routes also have no page markers.
+        425 // The two page rule move routes and the two shared-edit routes also have no page markers.
     );
 }
 
