@@ -331,7 +331,8 @@ pub(crate) fn waiting_in_file(
     } else {
         source
     };
-    let Ok(blocks) = blocks(source) else {
+    let source = source.replace("\r\n", "\n");
+    let Ok(blocks) = blocks(&source) else {
         return false;
     };
     let Ok(key) = fingerprint(&waiting.layer_id) else {
@@ -371,10 +372,11 @@ pub(crate) fn refresh_answers(settings: &Path, data: &Path, home: &Path) -> Resu
         }
     }
     answers.waiting.retain(|_, waiting| {
-        waiting
-            .files
-            .iter()
-            .any(|file| waiting_in_file(waiting, file, settings, data, home))
+        (waiting.files.len() == 1 && waiting.files[0].starts_with("preference:"))
+            || waiting
+                .files
+                .iter()
+                .any(|file| waiting_in_file(waiting, file, settings, data, home))
     });
     let settled: Vec<_> = answers
         .answered_edits

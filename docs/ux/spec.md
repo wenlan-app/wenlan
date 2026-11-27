@@ -963,8 +963,9 @@ and wait for evidence that people need them.
   covered by another file only while that file holds the part. It
   says what is in the file, not that the AI followed it.
   Team rules no longer go in these global tool files. On the first person-run
-  sync after this change, Wenlan removes their old team sections once, keeps
-  every other line, records the move in rule history, and says so once. A
+  sync after this change, including a background sync, Wenlan removes old team
+  sections once, keeps every other line, records the move in rule history, and
+  says so once. A
   section whose markers were changed stays in place with a reason.
   A rule is written into these files, and into the files of UX-SKILL-6, as
   words to read and nothing else: a word starting with `@` is written with
@@ -1020,10 +1021,13 @@ and wait for evidence that people need them.
   This confirmation stops AI tools that only claim to be the person. Like every
   person-only action, a program running under the same account that deliberately
   reads Wenlan's key file can still act as the person; see the person key's limits.
-  A confirmed preference about a repository's Space is proposed as one line
-  in that repository's project rules. A preference with no Space still goes
-  into the person's own rules; a Space without bound project rules is left
-  alone. Claude Code reads `CLAUDE.local.md` after the personal file, so its
+  A confirmed preference that names a repository in its Space waits for the
+  person's `shared-edits` confirmation before it is proposed to that
+  repository's project rules. A preference that does not name the repository
+  stays in the person's own rules. A local repository path is changed to the
+  repository name in the proposed rule. A preference with no Space still goes
+  into the person's own rules; a Space without bound project rules also uses
+  personal rules. Claude Code reads `CLAUDE.local.md` after the personal file, so its
   team rules come after personal rules across those files.
   原文：「決定（2026-11-26，Qi-Xuan 核可的計畫）：團隊規則只放進團隊的倉庫，不再放進全域工具檔。」
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
@@ -1087,7 +1091,24 @@ and wait for evidence that people need them.
   `checkout_local_files_without_a_receipt_are_left_for_review`,
   `checkout_local_exclude_uses_the_linked_worktree_common_dir`,
   `rulesync_checkout_does_not_load_team_for_an_unmatched_origin`,
+  `rulesync_checkout_team_rules_are_scoped_to_matching_server`,
+  `checkout_local_tracked_files_are_refused_without_changes`,
+  `checkout_local_negated_ignore_refuses_both_files`,
+  `checkout_local_written_files_are_not_staged_by_git_add_all`,
+  `checkout_codex_special_rule_text_round_trips_and_revokes`,
+  `codex_trust_reader_round_trips_windows_style_project_paths`,
+  `rulesync_home_sync_with_real_team_layers_never_writes_a_team_block`,
+  `checkout_local_deleted_claude_rules_are_restored_without_a_shared_edit_notice`,
+  `checkout_local_deleted_codex_file_is_restored_without_a_shared_edit_notice`,
+  `checkout_local_crlf_claude_file_keeps_line_endings_and_one_block`,
+  `rulesync_home_global_crlf_survives_team_block_cleanup`,
+  `rulesync_home_edited_legacy_block_is_left_without_shared_edit_notice`,
+  `checkout_codex_trust_on_main_checkout_applies_to_linked_worktree`,
+  `checkout_codex_global_instructions_prevent_project_instructions`,
+  `history_list_uses_plain_label_for_team_rules_move`,
   `repo_preference_goes_to_that_repos_project_rules`,
+  `repo_preference_duplicate_project_bullet_creates_no_waiting_edit`,
+  `preference_in_a_team_repo_that_does_not_name_the_repo_stays_personal`,
   `repo_preference_with_an_absolute_path_is_refused`,
   `preference_without_a_space_still_goes_to_personal_rules`,
   `preference_in_a_space_without_project_rules_is_unchanged`,

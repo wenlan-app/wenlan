@@ -1516,10 +1516,9 @@ fn preference_names_absolute_path(text: &str) -> bool {
     })
 }
 
-/// A confirmed preference for a repository-bound Space proposes a project
-/// rule. After the personal-page move, a preference with no Space becomes a
-/// personal shared rule; a tool asking to confirm one gets a plan instead.
-/// The memory itself is not changed here.
+/// A person-confirmed preference is either offered for an explicitly named
+/// repository or added to personal rules. Team proposals still need a second
+/// confirmation through shared-edits.
 pub(crate) async fn preference_rule_on_confirm(
     db: &MemoryDB,
     headers: &HeaderMap,
@@ -1541,63 +1540,127 @@ pub(crate) async fn preference_rule_on_confirm(
             if content.contains(['\n', '\r']) {
                 return Err(ServerError::Conflict("A repository preference must be one line. Edit the preference and confirm it again.".into()));
             }
-            if preference_names_absolute_path(&content) {
-                return Err(ServerError::Conflict("A repository preference cannot contain an absolute path. Edit the preference and confirm it again.".into()));
-            }
-            tokio::task::spawn_blocking(move || -> Result<(), ServerError> {
+            let preference_id = source_id.to_owned();
+            let offered = tokio::task::spawn_blocking(move || -> Result<bool, ServerError> {
                 let settings = wenlan_core::shared_space::settings_path();
                 let binding = wenlan_core::repo_wiki::binding_at(
                     &settings.with_file_name("repo-wiki.json"),
                     &space.name,
                 )?;
+                let Some(binding) = binding else {
+                    return Ok(false);
+                };
                 let Some(repo_id) = binding
-                    .and_then(|binding| binding.remote_url)
+                    .remote_url
                     .as_deref()
                     .and_then(wenlan_core::rulesync_team::repo_identity)
                 else {
-                    return Ok(());
+                    return Ok(false);
                 };
+                let repo_name = binding
+                    .remote_url
+                    .as_deref()
+                    .map(|remote| {
+                        Path::new(&remote.replace('\\', "/"))
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_lowercase()
+                    })
+                    .unwrap_or_default();
+                let local_path = binding.repo_root.to_lowercase();
+                let remote = binding
+                    .remote_url
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase();
+                let lowered = content.to_lowercase();
+                // A short repository name such as "api" is also part of
+                // ordinary words, so it only counts as a whole word.
+                let names_repo = (!repo_name.is_empty()
+                    && lowered.match_indices(repo_name.as_str()).any(|(at, name)| {
+                        let joins = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+                        !lowered[..at].chars().next_back().is_some_and(joins)
+                            && !lowered[at + name.len()..].chars().next().is_some_and(joins)
+                    }))
+                    || [&local_path, &remote]
+                        .into_iter()
+                        .filter(|name| !name.is_empty())
+                        .any(|name| lowered.contains(name.as_str()));
+                if !names_repo {
+                    if preference_names_absolute_path(&content) {
+                        return Err(ServerError::Conflict("A repository preference cannot contain an unrelated absolute path. Edit the preference and confirm it again.".into()));
+                    }
+                    return Ok(false);
+                }
+                // A local checkout path can identify the repository, but a
+                // shared rule must use its portable repository name.
+                let rule_content = content.replace(&binding.repo_root, &repo_name);
+                if preference_names_absolute_path(&rule_content) {
+                    return Err(ServerError::Conflict("A repository preference cannot contain an absolute path other than this repository. Edit the preference and confirm it again.".into()));
+                }
                 let Some(layer) = wenlan_core::rulesync_team::project_layer_for_local_space(
                     &settings,
                     &space.name,
                 )?
                 else {
-                    return Ok(());
+                    return Ok(false);
                 };
                 if !layer.project.as_ref().is_some_and(|project| {
                     project.space == space.name && project.repo_id.as_ref() == Some(&repo_id)
                 }) {
-                    return Ok(());
+                    return Ok(false);
                 }
-                let bullet = format!("- {content}");
-                if layer.markdown.lines().any(|line| line.trim() == bullet) {
-                    return Ok(());
+                let bullet = format!("- {rule_content}");
+                if layer.markdown.lines().any(|line| line == bullet) {
+                    return Ok(true);
                 }
-                let mut markdown = layer.markdown;
+                let mut markdown = layer.markdown.clone();
                 if !markdown.is_empty() && !markdown.ends_with('\n') {
                     markdown.push('\n');
                 }
                 markdown.push_str(&bullet);
                 markdown.push('\n');
-                wenlan_core::rulesync_team::queue_proposal(
-                    &settings,
+                let id = wenlan_core::rulesync_personal::fingerprint(&(
+                    "preference",
+                    &preference_id,
                     &layer.id,
                     &layer.revision,
                     &markdown,
-                    wenlan_core::shared_space::version::AuthorKind::Person,
-                )?;
-                Ok(())
+                ))
+                .map_err(|error| ServerError::Internal(error.to_string()))?;
+                let data = wenlan_core::config::data_root().join("rulesync");
+                let mut answers = crate::rulesync_shared_answers::read(&data)
+                    .map_err(|error| ServerError::Internal(error.to_string()))?;
+                if answers.waiting.contains_key(&id) {
+                    return Ok(true);
+                }
+                answers.waiting.insert(
+                    id,
+                    crate::rulesync_shared_answers::Waiting {
+                        layer_id: layer.id,
+                        layer_name: layer.name,
+                        revision: layer.revision,
+                        markdown,
+                        files: vec![format!("preference:{preference_id}")],
+                        first_seen: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
+                crate::rulesync_shared_answers::save(&data, &answers)
+                    .map_err(|error| ServerError::Internal(error.to_string()))?;
+                Ok(true)
             })
             .await
             .map_err(|error| ServerError::Internal(error.to_string()))??;
-            return Ok(None);
+            if offered {
+                return Ok(None);
+            }
         }
     }
     if !crate::rulesync_routes::personal_rules::page_rules_merged()? {
         return Ok(None);
     }
     let eligible = memory.memory_type.as_deref() == Some("preference")
-        && memory.space.as_deref().is_none_or(str::is_empty)
         && !memory.content.trim().is_empty()
         && (!person || memory.confirmed);
     if !eligible {

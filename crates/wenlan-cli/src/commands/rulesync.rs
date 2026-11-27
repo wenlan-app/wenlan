@@ -186,7 +186,7 @@ async fn run_personal_history(
                         item.id,
                         item.time
                             .map_or_else(|| "time unknown".into(), |t| format!("{t}")),
-                        item.cause,
+                        personal_history_cause(&item.cause),
                         item.layers
                             .iter()
                             .map(personal_layer_label)
@@ -213,6 +213,13 @@ async fn run_personal_history(
             print!("{}", personal_rule_plan(&plan));
             confirm_and_apply_personal_plan(client, &plan).await
         }
+    }
+}
+
+fn personal_history_cause(cause: &str) -> &str {
+    match cause {
+        "team-rules-moved" => "Team rules moved",
+        other => other,
     }
 }
 
@@ -2060,6 +2067,15 @@ mod tests {
     use wenlan_types::rulesync::{
         AdoptionChange, SharingRule, SharingRuleStay, SharingStay, SharingTool,
     };
+
+    #[test]
+    fn history_list_uses_plain_label_for_team_rules_move() {
+        assert_eq!(
+            personal_history_cause("team-rules-moved"),
+            "Team rules moved"
+        );
+        assert_eq!(personal_history_cause("sync"), "sync");
+    }
 
     #[test]
     fn personal_rule_proposal_reads_multiple_explicit_layers_as_one_edit_set() {

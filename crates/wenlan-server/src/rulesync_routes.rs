@@ -320,7 +320,7 @@ async fn skill_updates(headers: HeaderMap) -> Result<Json<Vec<AdoptedSkillUpdate
     Ok(Json(review_list::existing_update_check().await?))
 }
 
-async fn shared_edits(
+pub(crate) async fn shared_edits(
     headers: HeaderMap,
 ) -> Result<Json<Vec<wenlan_types::rulesync::SharedEditWaiting>>, ServerError> {
     require_local_rules_access(&headers)?;
@@ -359,7 +359,7 @@ pub(crate) fn decide_shared_edit_at(
     if answers.answers.contains_key(&request.id) {
         return Err(ServerError::Conflict("shared edit already answered".into()));
     }
-    let waiting = answers.waiting.get(&request.id).ok_or_else(|| {
+    let mut waiting = answers.waiting.get(&request.id).cloned().ok_or_else(|| {
         ServerError::Conflict(
             if request.send {
                 "This edit is no longer in the file, so nothing was sent."
@@ -369,6 +369,7 @@ pub(crate) fn decide_shared_edit_at(
             .into(),
         )
     })?;
+    let preference_edit = waiting.files.len() == 1 && waiting.files[0].starts_with("preference:");
     if request.send {
         let current = rulesync_team::load_layers(settings)
             .and_then(|mut layers| {
@@ -376,22 +377,51 @@ pub(crate) fn decide_shared_edit_at(
                 Ok(layers)
             })
             .map_err(|error| ServerError::Conflict(error.to_string()))?;
-        if current
+        if let Some(layer) = current
             .iter()
-            .any(|layer| layer.id == waiting.layer_id && layer.revision != waiting.revision)
+            .find(|layer| layer.id == waiting.layer_id && layer.revision != waiting.revision)
         {
-            return Err(ServerError::Structured {
-                status: axum::http::StatusCode::CONFLICT,
-                body: serde_json::json!({
-                    "error": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE,
-                    "code": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE,
-                }),
-            });
+            if !preference_edit {
+                return Err(ServerError::Structured {
+                    status: axum::http::StatusCode::CONFLICT,
+                    body: serde_json::json!({
+                        "error": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE,
+                        "code": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE,
+                    }),
+                });
+            }
+            // A preference edit is one added bullet, so it can be carried onto
+            // the current approved rules instead of waiting on a sync that
+            // never rebases it.
+            let bullet = waiting
+                .markdown
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or_default()
+                .to_owned();
+            if layer.markdown.lines().any(|line| line == bullet) {
+                answers.waiting.remove(&request.id);
+                rulesync_shared_answers::save(&setup.data, &answers)
+                    .map_err(|error| ServerError::Conflict(format!("{error:#}")))?;
+                return Err(ServerError::Conflict(
+                    "This rule is already in the team rules, so nothing was sent.".into(),
+                ));
+            }
+            let mut markdown = layer.markdown.clone();
+            if !markdown.is_empty() && !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            markdown.push_str(&bullet);
+            markdown.push('\n');
+            waiting.markdown = markdown;
+            waiting.revision.clone_from(&layer.revision);
         }
     }
     if request.send
+        && !preference_edit
         && !waiting.files.iter().all(|file| {
-            rulesync_layers::waiting_in_file(waiting, file, settings, &setup.data, &setup.home)
+            rulesync_layers::waiting_in_file(&waiting, file, settings, &setup.data, &setup.home)
         })
     {
         answers.waiting.remove(&request.id);
@@ -407,7 +437,11 @@ pub(crate) fn decide_shared_edit_at(
             &waiting.layer_id,
             &waiting.revision,
             &waiting.markdown,
-            wenlan_core::shared_space::version::AuthorKind::Unknown,
+            if preference_edit {
+                wenlan_core::shared_space::version::AuthorKind::Person
+            } else {
+                wenlan_core::shared_space::version::AuthorKind::Unknown
+            },
         )
         .map_err(|error| ServerError::Conflict(error.to_string()))?;
         Answer::Send { proposal }
@@ -420,7 +454,7 @@ pub(crate) fn decide_shared_edit_at(
         },
         Answer::Decline => wenlan_types::rulesync::SharedEditDecision::Decline,
     };
-    let waiting = answers
+    answers
         .waiting
         .remove(&request.id)
         .expect("checked waiting edit");
@@ -3614,6 +3648,24 @@ impl Setup {
             result,
             if can_restore { &held } else { &rejected },
         )?;
+        for path in &had_team_blocks {
+            if let Some((line, notice)) =
+                result
+                    .blocked
+                    .iter_mut()
+                    .zip(&result.blocked_codes)
+                    .find(|(line, notice)| {
+                        line.starts_with(&format!("{}:", path.display()))
+                            && notice.code == Code::SharedRulePending
+                    })
+            {
+                *line = format!(
+                    "{}: The team rules block was left in place because it was edited.",
+                    path.display()
+                );
+                let _ = notice;
+            }
+        }
         if result
             .written
             .iter()
@@ -3970,11 +4022,17 @@ impl Setup {
             let Kind::Rule { target, .. } = &delivery.kind else {
                 continue;
             };
-            let seen = delivery
+            let mut seen = delivery
                 .observed
                 .as_ref()
                 .unwrap_or(&delivery.delivered)
                 .clone();
+            let actual = root.read(&path, false)?;
+            if let (Ok(expected), Ok(current)) = (text(&seen), text(&actual)) {
+                if expected.replace("\r\n", "\n") == current.replace("\r\n", "\n") {
+                    seen = actual;
+                }
+            }
             let source = match manifest.master.rule_text(target, generated) {
                 Ok(text) => text,
                 Err(error) => {
@@ -4024,7 +4082,17 @@ impl Setup {
                 // receipt until shared, team, or generated content renders.
                 continue;
             }
-            let desired = with_bytes(&seen, bytes.clone());
+            let rendered = std::str::from_utf8(bytes)
+                .ok()
+                .map(|rendered| match text(&seen) {
+                    Ok(existing) if existing.contains("\r\n") => rendered
+                        .replace("\r\n", "\n")
+                        .replace('\n', "\r\n")
+                        .into_bytes(),
+                    _ => bytes.clone(),
+                })
+                .unwrap_or_else(|| bytes.clone());
+            let desired = with_bytes(&seen, rendered);
             if desired == seen && delivery.observed.is_none() {
                 continue;
             }
@@ -6345,7 +6413,12 @@ fn inspect_rule(
         blocked.insert(path.to_owned(), (Code::RuleEncoding, "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into()));
         return Ok(None);
     };
-    match rulesync_layers::edits(before, after) {
+    if before.replace("\r\n", "\n") == after.replace("\r\n", "\n") {
+        return Ok(None);
+    }
+    let before_normalized = before.replace("\r\n", "\n");
+    let after_normalized = after.replace("\r\n", "\n");
+    match rulesync_layers::edits(&before_normalized, &after_normalized) {
         Ok(edits) if edits.is_empty() => (),
         Ok(_) => {
             let answers = crate::rulesync_shared_answers::read(data)?;
@@ -13297,6 +13370,98 @@ mod tests {
             };
             assert!(content.contains(personal), "{content}");
         }
+    }
+
+    #[test]
+    fn rulesync_home_sync_with_real_team_layers_never_writes_a_team_block() {
+        use crate::rulesync_layers::tests::hosted_fixture;
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layers = rulesync_team::load_layers(&settings).unwrap();
+        assert!(!layers.is_empty());
+        let _lock = f.setup.lock().unwrap();
+        let root = f.setup.home_files().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let mut result = report("home sync");
+        f.setup
+            .sync_member_files(
+                &root,
+                &mut manifest,
+                (&[], SyncCaller::Person),
+                (&settings, &layers),
+                (&fixture_rule_renderer, &fixture_skill_renderer),
+                &mut result,
+            )
+            .unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        for path in [CLAUDE, CODEX] {
+            let content = f.text(path);
+            assert!(
+                !content.contains("WENLAN SHARED RULES"),
+                "{path}: {content}"
+            );
+            assert!(!content.contains(&layers[0].markdown), "{path}: {content}");
+        }
+    }
+
+    #[test]
+    fn rulesync_home_global_crlf_survives_team_block_cleanup() {
+        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section};
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let block = render_fixture_section(&layer);
+        let block_crlf = block.replace('\n', "\r\n");
+        f.sync_with(&block);
+        let mut expected = BTreeMap::new();
+        for path in [CLAUDE, CODEX] {
+            let current = f.text(path);
+            let with_own = current.replace('\n', "\r\n").replace(&block, &block_crlf);
+            expected.insert(path, with_own.replace(&block_crlf, ""));
+            f.write(path, &with_own);
+        }
+        let first = sync_home_for_migration(&f);
+        assert!(first.blocked.is_empty(), "{first:?}");
+        for path in [CLAUDE, CODEX] {
+            assert_eq!(f.text(path), expected[path]);
+        }
+        let second = sync_home_for_migration(&f);
+        assert!(second.blocked.is_empty(), "{second:?}");
+        for path in [CLAUDE, CODEX] {
+            assert_eq!(f.text(path), expected[path]);
+        }
+    }
+
+    #[test]
+    fn rulesync_home_edited_legacy_block_is_left_without_shared_edit_notice() {
+        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section};
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let block = render_fixture_section(&layer);
+        f.sync_with(&block);
+        let edited = f
+            .text(CODEX)
+            .replace(&layer.markdown, "My edited advice.\n");
+        f.write(CODEX, &edited);
+        let result = sync_home_for_migration(&f);
+        assert_eq!(f.text(CODEX), edited);
+        let notice = result
+            .blocked
+            .iter()
+            .find(|line| line.contains(CODEX))
+            .unwrap();
+        assert!(
+            notice.contains("edited") && notice.contains("left in place"),
+            "{notice}"
+        );
+        assert!(
+            !notice.contains("proposal") && !notice.contains("shared-edits"),
+            "{notice}"
+        );
     }
 
     #[test]

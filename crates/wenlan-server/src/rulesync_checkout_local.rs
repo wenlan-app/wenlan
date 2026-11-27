@@ -37,23 +37,32 @@ fn command(repo: &Path, args: &[&str]) -> Result<std::process::Output> {
 }
 
 fn managed_span(source: &str) -> Result<Option<std::ops::Range<usize>>> {
-    let Some(start) = source.find(START) else {
+    let crlf_start = START.replace('\n', "\r\n");
+    let crlf_end = END.replace('\n', "\r\n");
+    let (start_marker, end_marker) = if source.contains(&crlf_start) {
+        (crlf_start.as_str(), crlf_end.as_str())
+    } else {
+        (START, END)
+    };
+    let Some(start) = source.find(start_marker) else {
         ensure!(
-            !source.contains("<!-- WENLAN CHECKOUT RULES") && !source.contains(END),
+            !source.contains("<!-- WENLAN CHECKOUT RULES")
+                && !source.contains(END)
+                && !source.contains(&crlf_end),
             "checkout rule markers changed"
         );
         return Ok(None);
     };
     ensure!(
-        source.matches(START).count() == 1,
+        source.matches(start_marker).count() == 1,
         "checkout rule markers changed"
     );
-    let end = source[start + START.len()..]
-        .find(END)
-        .map(|offset| start + START.len() + offset + END.len())
+    let end = source[start + start_marker.len()..]
+        .find(end_marker)
+        .map(|offset| start + start_marker.len() + offset + end_marker.len())
         .context("checkout rule markers changed")?;
     ensure!(
-        !source[end..].contains(END),
+        !source[end..].contains(end_marker),
         "checkout rule markers changed"
     );
     Ok(Some(start..end))
@@ -77,6 +86,24 @@ fn codex_instructions(source: &str) -> Result<String> {
         .and_then(toml::Value::as_str)
         .context("Codex checkout instructions changed")?
         .to_owned())
+}
+
+// Use one TOML basic-string form so the managed value always has a known span.
+fn codex_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn codex_unmanaged_changed(current: &str, recorded: &str) -> bool {
@@ -170,10 +197,7 @@ fn remove_codex_instructions(source: &str) -> Result<String> {
 fn replace_codex_instructions(source: &str, replacement: &str) -> Result<String> {
     let range = codex_value_range(source)?;
     let mut next = source.to_owned();
-    next.replace_range(
-        range,
-        &toml::Value::String(replacement.to_owned()).to_string(),
-    );
+    next.replace_range(range, &codex_string(replacement));
     Ok(next)
 }
 
@@ -209,6 +233,10 @@ pub(super) fn prune_inaccessible(
         };
         let old_blocks = rulesync_layers::blocks(&old_rules)?;
         if old_blocks.keys().all(|key| keys.contains(*key)) {
+            continue;
+        }
+        if tracked(repo, name)? {
+            result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{} because Git tracks that file; untrack it and sync again.", repo.display(), name));
             continue;
         }
         let path = Path::new(name);
@@ -375,7 +403,9 @@ fn revoke(
                     }
                 };
                 if let Some(span) = span {
-                    if let Some(prior) = claude_record.as_deref() {
+                    if tracked(repo, "CLAUDE.local.md")? {
+                        result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/CLAUDE.local.md because Git tracks that file; untrack it and sync again.", repo.display()));
+                    } else if let Some(prior) = claude_record.as_deref() {
                         if &content[span.clone()] != prior {
                             let copy = keep_revoked_copy(setup, key, "CLAUDE.local.md", content)?;
                             removed.push(copy);
@@ -461,6 +491,8 @@ fn rebase_waiting_local(
     authorized: &BTreeMap<String, &TeamRuleLayer>,
     claude_record: &mut Option<String>,
     codex_record: &mut Option<String>,
+    claude_safe: bool,
+    codex_safe: bool,
 ) -> Result<()> {
     let mut answers = rulesync_shared_answers::read(&setup.data)?;
     for (id, edit) in answers.waiting.clone() {
@@ -473,6 +505,11 @@ fn rebase_waiting_local(
             ("CLAUDE.local.md", claude_record.as_deref()),
             (".codex/config.toml", codex_record.as_deref()),
         ] {
+            if (name == "CLAUDE.local.md" && !claude_safe)
+                || (name == ".codex/config.toml" && !codex_safe)
+            {
+                continue;
+            }
             let file = alias(key, name).display().to_string();
             if !edit.files.contains(&file)
                 || !rulesync_layers::waiting_in_file(
@@ -499,51 +536,60 @@ fn rebase_waiting_local(
             if name == ".codex/config.toml" && codex_unmanaged_changed(local, baseline) {
                 continue;
             }
-            let (old_rules, local_rules) = if name == "CLAUDE.local.md" {
-                let Ok(Some(old_span)) = managed_span(baseline) else {
-                    continue;
-                };
-                let Ok(Some(local_span)) = managed_span(local) else {
-                    continue;
-                };
-                (&baseline[old_span], &local[local_span])
-            } else {
-                // Owned strings are needed because TOML unescapes the value.
-                let old = codex_instructions(baseline)?;
-                let mine = codex_instructions(local)?;
-                if old == expected {
-                    continue;
-                }
-                let Ok((rebased, new_id, markdown)) =
-                    rebase_rules(&old, &mine, expected, layer, &block_key)
+            if name == "CLAUDE.local.md" {
+                // Merge in LF, then write back with the file's own line endings.
+                let newline = if local.contains("\r\n") { "\r\n" } else { "\n" };
+                let (baseline, local) =
+                    (baseline.replace("\r\n", "\n"), local.replace("\r\n", "\n"));
+                let (Ok(Some(old_span)), Ok(Some(local_span))) =
+                    (managed_span(&baseline), managed_span(&local))
                 else {
                     continue;
                 };
-                let next = format!(
-                    "{CODEX_HEADER}developer_instructions = {}\n",
-                    toml::Value::String(rebased)
-                );
-                let approved = format!(
-                    "{CODEX_HEADER}developer_instructions = {}\n",
-                    toml::Value::String(expected.to_owned())
-                );
-                updates.push((name, current, next, approved, new_id, markdown));
+                let approved = format!("{START}{expected}{END}");
+                if baseline[old_span.clone()] == approved {
+                    continue;
+                }
+                let Ok((rebased, new_id, markdown)) = rebase_rules(
+                    &baseline[old_span],
+                    &local[local_span.clone()],
+                    &approved,
+                    layer,
+                    &block_key,
+                ) else {
+                    continue;
+                };
+                let mut next = local;
+                next.replace_range(local_span, &rebased);
+                updates.push((
+                    name,
+                    current,
+                    next.replace('\n', newline),
+                    approved.replace('\n', newline),
+                    new_id,
+                    markdown,
+                ));
                 continue;
-            };
-            let approved = format!("{START}{expected}{END}");
-            if old_rules == approved {
+            }
+            // Owned strings are needed because TOML unescapes the value.
+            let old = codex_instructions(baseline)?;
+            let mine = codex_instructions(local)?;
+            if old == expected {
                 continue;
             }
             let Ok((rebased, new_id, markdown)) =
-                rebase_rules(old_rules, local_rules, &approved, layer, &block_key)
+                rebase_rules(&old, &mine, expected, layer, &block_key)
             else {
                 continue;
             };
-            let Ok(Some(span)) = managed_span(local) else {
-                continue;
-            };
-            let mut next = local.to_owned();
-            next.replace_range(span, &rebased);
+            let next = format!(
+                "{CODEX_HEADER}developer_instructions = {}\n",
+                codex_string(&rebased)
+            );
+            let approved = format!(
+                "{CODEX_HEADER}developer_instructions = {}\n",
+                codex_string(expected)
+            );
             updates.push((name, current, next, approved, new_id, markdown));
         }
         if updates.is_empty() {
@@ -707,6 +753,23 @@ fn tracked(repo: &Path, path: &str) -> Result<bool> {
     Ok(out.status.success())
 }
 
+fn safe_local_write(repo: &Path, path: &str, result: &mut RulesSyncReport) -> Result<bool> {
+    let reason = if tracked(repo, path)? {
+        Some("Git tracks that file in this repository; untrack it to get them")
+    } else if !excluded(repo, path)? {
+        Some("Git would not ignore that file; fix its ignore rules to get them")
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        result.block(
+            Code::CheckoutNeedsReview,
+            format!("Wenlan didn't put team rules in {path} because {reason}."),
+        );
+    }
+    Ok(reason.is_none())
+}
+
 fn update_exclude(repo: &Path, claude: bool, codex: bool) -> Result<()> {
     let root = FileRoot::open(&git_common_dir(repo)?)?;
     let path = Path::new("info/exclude");
@@ -760,25 +823,75 @@ pub(super) fn codex_home(home: &Path) -> PathBuf {
     home.join(".codex")
 }
 
-fn codex_trusted(codex_home: &Path, repo: &Path) -> Result<bool> {
+/// The person's Codex config, or `None` when they have none.
+fn codex_config(codex_home: &Path) -> Result<Option<toml::Value>> {
     let source = match fs::read_to_string(codex_home.join("config.toml")) {
         Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let parsed: toml::Value = toml::from_str(&source).context("invalid Codex config")?;
+    Ok(Some(
+        toml::from_str(&source).context("invalid Codex config")?,
+    ))
+}
+
+fn codex_trusted(codex_home: &Path, repo: &Path) -> Result<bool> {
+    let Some(parsed) = codex_config(codex_home)? else {
+        return Ok(false);
+    };
     let canonical = repo.canonicalize()?;
-    Ok(parsed
+    let common = command(repo, &["rev-parse", "--git-common-dir"])?;
+    let common = String::from_utf8(common.stdout)?;
+    let common = PathBuf::from(common.trim());
+    let common = if common.is_absolute() {
+        common
+    } else {
+        repo.join(common)
+    };
+    let main_checkout = common.parent().unwrap_or(&common).canonicalize().ok();
+    Ok(config_trusts_path(
+        &parsed,
+        repo,
+        &canonical,
+        main_checkout.as_deref(),
+    ))
+}
+
+fn config_trusts_path(
+    parsed: &toml::Value,
+    repo: &Path,
+    canonical: &Path,
+    main_checkout: Option<&Path>,
+) -> bool {
+    parsed
         .get("projects")
         .and_then(toml::Value::as_table)
         .is_some_and(|projects| {
             projects.iter().any(|(path, value)| {
                 value.get("trust_level").and_then(toml::Value::as_str) == Some("trusted")
                     && (Path::new(path) == repo
-                        || Path::new(path).canonicalize().ok().as_deref()
-                            == Some(canonical.as_path()))
+                        || Path::new(path).canonicalize().ok().as_deref() == Some(canonical)
+                        || main_checkout.is_some_and(|main| {
+                            Path::new(path).canonicalize().ok().as_deref() == Some(main)
+                        }))
             })
-        }))
+        })
+}
+
+fn codex_has_global_instructions(codex_home: &Path) -> Result<bool> {
+    Ok(codex_config(codex_home)?
+        .is_some_and(|parsed| parsed.get("developer_instructions").is_some()))
+}
+
+#[cfg(test)]
+fn trust_config(path: &str) -> String {
+    let mut project = toml::map::Map::new();
+    project.insert("trust_level".into(), toml::Value::String("trusted".into()));
+    let mut projects = toml::map::Map::new();
+    projects.insert(path.into(), toml::Value::Table(project));
+    let mut root = toml::map::Map::new();
+    root.insert("projects".into(), toml::Value::Table(projects));
+    toml::to_string(&toml::Value::Table(root)).unwrap()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -813,6 +926,14 @@ pub(super) fn sync(
             result,
         );
     }
+    // A broken personal Codex config must not keep the team rules out of
+    // CLAUDE.local.md; this sync then leaves .codex/config.toml as it is.
+    let codex_readable = codex_config(codex_home).is_ok();
+    let trusted = codex_readable && codex_trusted(codex_home, repo)?;
+    update_exclude(repo, true, trusted)?;
+    let claude_safe = safe_local_write(repo, "CLAUDE.local.md", result)?;
+    let codex_safe =
+        codex_readable && (!trusted || safe_local_write(repo, ".codex/config.toml", result)?);
     if person && wanted {
         rebase_waiting_local(
             setup,
@@ -824,28 +945,34 @@ pub(super) fn sync(
             authorized,
             claude_record,
             codex_record,
+            claude_safe,
+            codex_safe,
         )?;
     }
-    let claude_path = Path::new("CLAUDE.local.md");
-    let current = root.read(claude_path, false)?;
-    let content = match &current {
-        Snapshot::File { .. } => Some(text(&current)?),
-        Snapshot::Absent => None,
-        _ => bail!("CLAUDE.local.md is not a regular file"),
-    };
-    let prior = claude_record.as_deref();
-    let span = content.map(managed_span).transpose().map(Option::flatten);
-    match span {
+    if claude_safe {
+        let claude_path = Path::new("CLAUDE.local.md");
+        let current = root.read(claude_path, false)?;
+        let content = match &current {
+            Snapshot::File { .. } => Some(text(&current)?),
+            Snapshot::Absent => None,
+            _ => bail!("CLAUDE.local.md is not a regular file"),
+        };
+        let prior = claude_record.as_deref();
+        let span = content.map(managed_span).transpose().map(Option::flatten);
+        match span {
         Err(_) => result.block(Code::CheckoutNeedsReview, format!("Your edits to the team rules in {}/CLAUDE.local.md were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display())),
         Ok(span) => {
             let existing = content.and_then(|content| span.as_ref().map(|range| &content[range.clone()]));
-            let changed = existing != prior;
-            let mut replace = !changed;
+            let missing_block = span.is_none() && prior.is_some();
+            let changed = existing.map(|text| text.replace("\r\n", "\n"))
+                != prior.map(|text| text.replace("\r\n", "\n"));
+            let mut replace = !changed || missing_block;
             let mut rejected = false;
-            if changed && person && wanted {
-                let before = prior.unwrap_or_default();
-                let after = existing.unwrap_or_default();
-                match review(settings, setup, key, "CLAUDE.local.md", before, after, authorized, receipts) {
+            if changed && !missing_block && person && wanted {
+                // A CRLF file gets a CRLF block; review the LF text the rules were rendered from.
+                let before = prior.unwrap_or_default().replace("\r\n", "\n");
+                let after = existing.unwrap_or_default().replace("\r\n", "\n");
+                match review(settings, setup, key, "CLAUDE.local.md", &before, &after, authorized, receipts) {
                     Ok(SharedReview::Decided { rejected: true }) => { replace = true; rejected = true; },
                     Ok(SharedReview::Decided { rejected: false }) => replace = true,
                     Ok(_) | Err(_) => (),
@@ -855,24 +982,45 @@ pub(super) fn sync(
                 result.block(Code::SharedRuleNeedsConfirm, format!("Your edits to the team rules in {}/CLAUDE.local.md were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display()));
             } else {
                 let mut next = content.unwrap_or_default().to_owned();
-                let block = wanted.then(|| format!("{START}{expected}{END}"));
+                let newline = if next.contains("\r\n") { "\r\n" } else { "\n" };
+                let block = wanted.then(|| format!("{START}{expected}{END}").replace('\n', newline));
                 if let Some(range) = span {
                     next.replace_range(range, block.as_deref().unwrap_or(""));
                 } else if let Some(block) = &block {
-                    if !next.is_empty() && !next.ends_with('\n') { next.push('\n'); }
-                    if !next.is_empty() && !next.ends_with("\n\n") { next.push('\n'); }
+                    if !next.is_empty() && !next.ends_with('\n') { next.push_str(newline); }
+                    if !next.is_empty() && !next.ends_with(&format!("{newline}{newline}")) { next.push_str(newline); }
                     next.push_str(block);
                 }
                 let desired = if next.is_empty() { None } else { Some(next.as_str()) };
                 if write(&root, claude_path, &current, desired)? { result.written.push(repo.join(claude_path).display().to_string()); }
                 *claude_record = block;
                 receipts.remove(&alias(key, "CLAUDE.local.md"));
+                if missing_block { result.block(Code::CheckoutNeedsReview, format!("Wenlan put the team rules back in {}/CLAUDE.local.md.", repo.display())); }
                 if rejected { rulesync_layers::report_rejection(result); }
             }
         }
     }
+    }
     let codex_path = Path::new(".codex/config.toml");
-    let trusted = codex_trusted(codex_home, repo)?;
+    if !codex_readable {
+        result.block(
+            Code::CheckoutNeedsReview,
+            format!(
+                "Wenlan couldn't read your Codex settings in ~/.codex/config.toml, so Codex won't get team rules in {} until that file is fixed.",
+                repo.file_name().unwrap_or_default().to_string_lossy()
+            ),
+        );
+    }
+    if !codex_safe {
+        return Ok(());
+    }
+    if codex_has_global_instructions(codex_home)? {
+        result.block(
+            Code::CheckoutNeedsReview,
+            "Wenlan didn't put team rules in .codex/config.toml because your personal Codex config already sets developer_instructions; remove that setting before syncing repository rules.",
+        );
+        return Ok(());
+    }
     let current = root.read(codex_path, false)?;
     let current_text = match &current {
         Snapshot::File { .. } => Some(text(&current)?),
@@ -883,8 +1031,9 @@ pub(super) fn sync(
         result.block(
             Code::CheckoutNeedsReview,
             format!(
-                "Codex won't get the team rules in {} until you trust this repository in Codex.",
-                repo.file_name().unwrap_or_default().to_string_lossy()
+                "Codex won't get the team rules in {} until you trust this repository in Codex: set [projects.{}] trust_level = \"trusted\" in ~/.codex/config.toml.",
+                repo.file_name().unwrap_or_default().to_string_lossy(),
+                codex_string(&repo.display().to_string())
             ),
         );
     }
@@ -904,7 +1053,8 @@ pub(super) fn sync(
     {
         result.block(Code::CheckoutNeedsReview, format!("Wenlan didn't change {}/.codex/config.toml because it has your own settings. Move those settings to your personal Codex config, then sync again.", repo.display()));
     } else {
-        let mut held = codex_record.is_some() && current_text.is_none() && wanted && trusted;
+        let missing_codex = codex_record.is_some() && current_text.is_none() && wanted && trusted;
+        let mut held = missing_codex && !person;
         if let Some(after) = current_text {
             if codex_record.as_deref() != Some(after) {
                 if let Some(before) = codex_record.as_deref() {
@@ -932,12 +1082,16 @@ pub(super) fn sync(
             }
         }
         if held {
-            result.block(Code::SharedRuleNeedsConfirm, format!("Your edits to the team rules in {}/.codex/config.toml were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display()));
+            if codex_record.is_some() && current_text.is_none() {
+                result.block(Code::CheckoutNeedsReview, format!("Wenlan will put the team rules back in {}/.codex/config.toml on the next sync.", repo.display()));
+            } else {
+                result.block(Code::SharedRuleNeedsConfirm, format!("Your edits to the team rules in {}/.codex/config.toml were kept; run `wenlan rules shared-edits` to send or discard them.", repo.display()));
+            }
         } else {
             let next = if wanted && trusted {
                 Some(format!(
                     "{CODEX_HEADER}developer_instructions = {}\n",
-                    toml::Value::String(expected)
+                    codex_string(&expected)
                 ))
             } else {
                 None
@@ -950,6 +1104,15 @@ pub(super) fn sync(
                 result
                     .written
                     .push(repo.join(codex_path).display().to_string());
+                if missing_codex {
+                    result.block(
+                        Code::CheckoutNeedsReview,
+                        format!(
+                            "Wenlan put the team rules back in {}/.codex/config.toml.",
+                            repo.display()
+                        ),
+                    );
+                }
             }
             *codex_record = next;
             if !wanted || !trusted {
@@ -1153,10 +1316,7 @@ mod tests {
         fn trust(&self) {
             fs::write(
                 self.setup.home.join(".codex/config.toml"),
-                format!(
-                    "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                    self.repo.display()
-                ),
+                trust_config(&self.repo.display().to_string()),
             )
             .unwrap();
         }
@@ -1270,7 +1430,12 @@ mod tests {
         assert!(report
             .blocked
             .iter()
-            .any(|line| line.contains("until you trust")));
+            .any(|line| line.contains("until you trust")
+                && line.contains(&format!(
+                    "[projects.{}]",
+                    codex_string(&f.repo.display().to_string())
+                ))
+                && line.contains("~/.codex/config.toml")));
         assert!(!f.repo.join(".codex/config.toml").exists());
         f.trust();
         f.run();
@@ -1290,6 +1455,83 @@ mod tests {
             .iter()
             .any(|line| line.contains("until you trust")));
         assert!(!f.repo.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn codex_trust_reader_round_trips_windows_style_project_paths() {
+        let path = r"C:\Users\me\repo";
+        let encoded = trust_config(path);
+        let parsed: toml::Value = toml::from_str(&encoded).unwrap();
+        assert_eq!(
+            parsed["projects"][path]["trust_level"].as_str(),
+            Some("trusted")
+        );
+        assert!(config_trusts_path(
+            &parsed,
+            Path::new(path),
+            Path::new(path),
+            None
+        ));
+    }
+
+    #[test]
+    fn checkout_codex_trust_on_main_checkout_applies_to_linked_worktree() {
+        let f = Fixture::new();
+        let main = f._temp.path().join("main");
+        fs::create_dir(&main).unwrap();
+        assert!(command(&main, &["init", "--quiet"])
+            .unwrap()
+            .status
+            .success());
+        assert!(command(
+            &main,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init"
+            ]
+        )
+        .unwrap()
+        .status
+        .success());
+        let linked = f._temp.path().join("linked");
+        assert!(command(
+            &main,
+            &["worktree", "add", "--detach", linked.to_str().unwrap()]
+        )
+        .unwrap()
+        .status
+        .success());
+        fs::write(
+            f.setup.home.join(".codex/config.toml"),
+            trust_config(&main.display().to_string()),
+        )
+        .unwrap();
+        assert!(codex_trusted(&f.setup.home.join(".codex"), &linked).unwrap());
+    }
+
+    #[test]
+    fn checkout_codex_global_instructions_prevent_project_instructions() {
+        let mut f = Fixture::new();
+        fs::write(
+            f.setup.home.join(".codex/config.toml"),
+            format!(
+                "developer_instructions = 'personal instructions'\n{}",
+                trust_config(&f.repo.display().to_string())
+            ),
+        )
+        .unwrap();
+        assert!(codex_trusted(&f.setup.home.join(".codex"), &f.repo).unwrap());
+        let report = f.run();
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        assert!(report.blocked.iter().any(|line| {
+            line.contains("personal Codex config") && line.contains("developer_instructions")
+        }));
     }
 
     #[test]
@@ -1362,11 +1604,119 @@ mod tests {
         assert!(report
             .blocked
             .iter()
-            .any(|line| line.contains("isn't Wenlan's file")));
+            .any(|line| line.contains("Git tracks that file")));
         assert_eq!(
             fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
             existing
         );
+    }
+
+    #[test]
+    fn checkout_local_tracked_files_are_refused_without_changes() {
+        let mut f = Fixture::new();
+        f.trust();
+        fs::write(f.repo.join("CLAUDE.local.md"), "My tracked Claude text.\n").unwrap();
+        fs::create_dir(f.repo.join(".codex")).unwrap();
+        fs::write(f.repo.join(".codex/config.toml"), "model = 'mine'\n").unwrap();
+        assert!(command(
+            &f.repo,
+            &["add", "-f", "CLAUDE.local.md", ".codex/config.toml"]
+        )
+        .unwrap()
+        .status
+        .success());
+        let report = f.run();
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            "My tracked Claude text.\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            "model = 'mine'\n"
+        );
+        assert_eq!(
+            report
+                .blocked
+                .iter()
+                .filter(|line| line.contains("Git tracks"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn checkout_local_negated_ignore_refuses_both_files() {
+        let mut f = Fixture::new();
+        f.trust();
+        fs::write(
+            f.repo.join(".gitignore"),
+            "!CLAUDE.local.md\n!.codex/config.toml\n",
+        )
+        .unwrap();
+        let report = f.run();
+        assert!(!f.repo.join("CLAUDE.local.md").exists());
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        assert_eq!(
+            report
+                .blocked
+                .iter()
+                .filter(|line| line.contains("Git would not ignore"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn checkout_local_written_files_are_not_staged_by_git_add_all() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        assert!(command(&f.repo, &["add", "-A"]).unwrap().status.success());
+        let staged = command(&f.repo, &["diff", "--cached", "--name-only"]).unwrap();
+        let staged = String::from_utf8(staged.stdout).unwrap();
+        assert!(!staged.contains("CLAUDE.local.md"));
+        assert!(!staged.contains(".codex/config.toml"));
+    }
+
+    #[test]
+    fn checkout_codex_special_rule_text_round_trips_and_revokes() {
+        for rule in [
+            r"Use \\d+ here.",
+            "Use \"\"\" here.",
+            "Use ''' here.",
+            "Use \\d+, \"\"\", and ''' here.",
+        ] {
+            let mut f = Fixture::new();
+            f.trust();
+            f.approve_rules(rulesync_team::SPACE, rule);
+            let first = f.run();
+            assert!(
+                !first
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains("your own settings")),
+                "{first:?}"
+            );
+            let before = fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap();
+            assert!(codex_instructions(&before).unwrap().contains(rule));
+            let second = f.run();
+            assert!(
+                !second
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains("shared-edits")),
+                "{second:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+                before
+            );
+            f.project.clear();
+            f.team.clear();
+            f.run();
+            assert!(!f.repo.join("CLAUDE.local.md").exists());
+            assert!(!f.repo.join(".codex/config.toml").exists());
+        }
     }
 
     #[test]
@@ -1377,6 +1727,211 @@ mod tests {
         f.run();
         let content = fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap();
         assert!(content.starts_with("Own first.\nOwn last.\n\n"));
+    }
+
+    #[test]
+    fn checkout_local_deleted_claude_rules_are_restored_without_a_shared_edit_notice() {
+        for remove_file in [false, true] {
+            let mut f = Fixture::new();
+            f.run();
+            let path = f.repo.join("CLAUDE.local.md");
+            if remove_file {
+                fs::remove_file(&path).unwrap();
+            } else {
+                fs::write(&path, "My own line.\n").unwrap();
+            }
+            let report = f.run();
+            assert!(
+                report
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains("put the team rules back in")
+                        && line.contains("CLAUDE.local.md")),
+                "{report:?}"
+            );
+            assert!(
+                !report
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains("shared-edits")),
+                "{report:?}"
+            );
+            let restored = fs::read_to_string(&path).unwrap();
+            assert!(restored.contains("Use the approved checklist."));
+            if !remove_file {
+                assert!(restored.starts_with("My own line.\n"));
+            }
+        }
+    }
+
+    #[test]
+    fn checkout_local_deleted_codex_file_is_restored_without_a_shared_edit_notice() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join(".codex/config.toml");
+        fs::remove_file(&path).unwrap();
+        let report = f.run();
+        assert!(
+            report
+                .blocked
+                .iter()
+                .any(|line| line.contains("put the team rules back in")
+                    && line.contains(".codex/config.toml")),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .blocked
+                .iter()
+                .any(|line| line.contains("shared-edits")),
+            "{report:?}"
+        );
+        assert!(codex_instructions(&fs::read_to_string(path).unwrap())
+            .unwrap()
+            .contains("Use the approved checklist."));
+    }
+
+    #[test]
+    fn checkout_local_crlf_claude_file_keeps_line_endings_and_one_block() {
+        let mut f = Fixture::new();
+        let path = f.repo.join("CLAUDE.local.md");
+        fs::write(&path, "My own line.\r\n").unwrap();
+        f.run();
+        let first = fs::read_to_string(&path).unwrap();
+        assert_eq!(first.matches(START.trim_end()).count(), 1);
+        assert!(first.contains("My own line.\r\n"));
+        assert!(!first.replace("\r\n", "").contains('\n'));
+        let report = f.run();
+        assert!(
+            !report
+                .blocked
+                .iter()
+                .any(|line| line.contains("shared-edits")),
+            "{report:?}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+    }
+
+    #[test]
+    fn checkout_local_crlf_claude_file_team_rule_edit_can_be_sent() {
+        let mut f = Fixture::new();
+        let path = f.repo.join("CLAUDE.local.md");
+        fs::write(&path, "My own line.\r\n").unwrap();
+        f.run();
+        let delivered = fs::read_to_string(&path).unwrap();
+        assert!(!delivered.replace("\r\n", "").contains('\n'));
+        let edited = delivered.replacen(
+            "Use the approved checklist.",
+            "Use the revised checklist.",
+            1,
+        );
+        fs::write(&path, &edited).unwrap();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("shared-edits")));
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        let (id, edit) = answers.waiting.iter().next().unwrap();
+        assert_eq!(edit.markdown, "Use the revised checklist.\n");
+        assert_eq!(edit.files.len(), 1);
+        assert!(rulesync_layers::waiting_in_file(
+            edit,
+            &edit.files[0],
+            &f.settings,
+            &f.setup.data,
+            &f.setup.home
+        ));
+        let pending = f.pending_team_count();
+        f.decide_edit(id.clone());
+        assert_eq!(f.pending_team_count(), pending + 1);
+        f.run();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert!(answers.waiting.is_empty(), "{:?}", answers.waiting);
+        assert_eq!(fs::read_to_string(&path).unwrap(), edited);
+    }
+
+    #[test]
+    fn checkout_local_crlf_claude_edit_moves_to_a_new_team_revision() {
+        let mut f = Fixture::new();
+        let path = f.repo.join("CLAUDE.local.md");
+        fs::write(&path, "My own line.\r\n").unwrap();
+        f.run();
+        let delivered = fs::read_to_string(&path).unwrap();
+        fs::write(
+            &path,
+            delivered.replacen(
+                "Use the approved checklist.",
+                "Use the revised checklist.",
+                1,
+            ),
+        )
+        .unwrap();
+        f.run();
+        let old = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        let (old_id, old_edit) = old.waiting.iter().next().unwrap();
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        f.run();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(!content.replace("\r\n", "").contains('\n'), "{content:?}");
+        assert!(
+            content.contains("Use the revised checklist.\r\nNew approved line."),
+            "{content:?}"
+        );
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1, "{:?}", answers.waiting);
+        let (id, edit) = answers.waiting.iter().next().unwrap();
+        assert_ne!(id, old_id);
+        assert_ne!(edit.revision, old_edit.revision);
+        assert_eq!(
+            edit.markdown,
+            "Use the revised checklist.\nNew approved line.\n"
+        );
+        let (id, revision) = (id.clone(), edit.revision.clone());
+        f.run();
+        let again = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(again.waiting.len(), 1, "{:?}", again.waiting);
+        assert_eq!(again.waiting[&id].revision, revision);
+        let pending = f.pending_team_count();
+        f.decide_edit(id.clone());
+        assert_eq!(f.pending_team_count(), pending + 1);
+    }
+
+    #[test]
+    fn checkout_malformed_personal_codex_config_still_delivers_claude_rules() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let codex = f.repo.join(".codex/config.toml");
+        let codex_before = fs::read(&codex).unwrap();
+        fs::write(f.setup.home.join(".codex/config.toml"), "[projects\nbroken").unwrap();
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        let report = f.run();
+        assert!(fs::read_to_string(f.repo.join("CLAUDE.local.md"))
+            .unwrap()
+            .contains("New approved line."));
+        let notice = format!(
+            "Wenlan couldn't read your Codex settings in ~/.codex/config.toml, so Codex won't get team rules in {} until that file is fixed.",
+            f.repo.file_name().unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            report
+                .blocked
+                .iter()
+                .filter(|line| **line == notice)
+                .count(),
+            1,
+            "{report:?}"
+        );
+        assert_eq!(fs::read(&codex).unwrap(), codex_before);
     }
 
     #[test]
@@ -1612,8 +2167,7 @@ mod tests {
             let path = f.repo.join(".codex/config.toml");
             let original = fs::read_to_string(&path).unwrap();
             let key = "developer_instructions = ";
-            let start = original.find(key).unwrap() + key.len();
-            let value = &original[start..original.rfind("\"\"\"").unwrap() + 3];
+            let value = &original[codex_value_range(&original).unwrap()];
             let hidden = if exact_copy {
                 format!("'''{key}{value}'''")
             } else {

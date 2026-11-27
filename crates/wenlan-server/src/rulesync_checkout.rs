@@ -428,6 +428,20 @@ pub(crate) fn refresh(
     }
 }
 
+fn team_layers_for_projects(
+    teams: Vec<TeamRuleLayer>,
+    projects: &[TeamRuleLayer],
+) -> Vec<TeamRuleLayer> {
+    teams
+        .into_iter()
+        .filter(|team| {
+            projects
+                .iter()
+                .any(|project| rulesync_team::project_layer_belongs_to_team(team, project))
+        })
+        .collect()
+}
+
 fn refresh_entries(
     setup: &Setup,
     session: &rulesync_renderer::RenderSession<'_>,
@@ -571,7 +585,9 @@ impl Job<'_> {
             _ => Vec::new(),
         };
         let teams = match master {
-            Some(_) if !project.is_empty() => rulesync_team::load_layers(&self.settings)?,
+            Some(_) if !project.is_empty() => {
+                team_layers_for_projects(rulesync_team::load_layers(&self.settings)?, &project)
+            }
             _ => Vec::new(),
         };
         let skills = ProjectSkills::from_layers(&project)?;
@@ -1246,6 +1262,110 @@ mod tests {
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
 
     #[test]
+    fn rulesync_checkout_team_rules_are_scoped_to_matching_server() {
+        use std::{fs, process::Command};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        fs::create_dir_all(setup.home.join(".codex")).unwrap();
+        fs::create_dir_all(&setup.data).unwrap();
+        let repo = scratch.path().join("checkout");
+        fs::create_dir(&repo).unwrap();
+        assert!(Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "init", "--quiet"])
+            .status()
+            .unwrap()
+            .success());
+        fs::write(
+            setup.home.join(".codex/config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        let make_team = |id: &str, markdown: &str| TeamRuleLayer {
+            id: id.into(),
+            name: id.into(),
+            markdown: markdown.into(),
+            revision: "a".repeat(64),
+            synced_at: String::new(),
+            project: None,
+            skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
+        };
+        let make_project = |team_id: &str, space_id: &str, repo_id: &str| TeamRuleLayer {
+            id: format!(
+                "{}{}",
+                "team-rules-",
+                wenlan_core::shared_space::version::sha256_hex(
+                    format!("{team_id}\n{space_id}").as_bytes()
+                )
+            ),
+            name: format!("{team_id} project"),
+            markdown: "Project rules".into(),
+            revision: "b".repeat(64),
+            synced_at: String::new(),
+            project: Some(wenlan_types::team::TeamRulesProject {
+                space: space_id.into(),
+                space_id: space_id.into(),
+                repo_id: Some(repo_id.into()),
+            }),
+            skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
+        };
+        let first = make_team("first-server", "FIRST_TEAM_RULE");
+        let second = make_team("second-server", "SECOND_TEAM_RULE");
+        let matching = make_project("first-server", "first-space", "repo-identity");
+        let matching_projects = vec![matching];
+        let selected = team_layers_for_projects(vec![first, second], &matching_projects);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].markdown, "FIRST_TEAM_RULE");
+        assert!(!selected
+            .iter()
+            .any(|layer| layer.markdown.contains("SECOND_TEAM_RULE")));
+
+        let authorized: BTreeMap<_, _> = selected
+            .iter()
+            .chain(&matching_projects)
+            .map(|layer| (rulesync_layers::key(layer).unwrap(), layer))
+            .collect();
+        let mut claude = None;
+        let mut codex = None;
+        let mut codex_dir_created = false;
+        let mut receipts = BTreeMap::new();
+        let key = fingerprint(&repo).unwrap();
+        let mut result = report("checkout");
+        crate::rulesync_checkout_local::sync(
+            &setup,
+            &setup.home.join(".codex"),
+            &scratch.path().join("settings.json"),
+            &repo,
+            &matching_projects,
+            &selected,
+            &authorized,
+            &mut claude,
+            &mut codex,
+            &mut codex_dir_created,
+            &mut receipts,
+            &mut result,
+            true,
+            &key,
+        )
+        .unwrap();
+        let claude = fs::read_to_string(repo.join("CLAUDE.local.md")).unwrap();
+        let codex = fs::read_to_string(repo.join(".codex/config.toml")).unwrap();
+        for content in [&claude, &codex] {
+            assert!(content.contains("FIRST_TEAM_RULE"), "{content}");
+            assert!(!content.contains("SECOND_TEAM_RULE"), "{content}");
+        }
+    }
+
+    #[test]
     fn rulesync_checkout_does_not_load_team_for_an_unmatched_origin() {
         use crate::rulesync_layers::tests::hosted_fixture;
         use std::{fs, process::Command};
@@ -1395,7 +1515,13 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(
+            report
+                .blocked
+                .iter()
+                .all(|line| line.contains("until you trust this repository in Codex")),
+            "{report:?}"
+        );
         for file in ["CLAUDE.md", "AGENTS.md"] {
             let output = fs::read_to_string(setup.data.join(directory).join(file)).unwrap();
             println!("----- rendered {file} -----\n{output}----- end {file} -----");
