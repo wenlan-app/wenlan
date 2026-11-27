@@ -283,6 +283,7 @@ export class TauriMockRuntime {
       }
       case "list_spaces": return this.spaces.map((space) => ({ ...space }));
       case "list_shares": return { shares: [] };
+      case "team_joined_library": return { teams: [] };
       case "get_space_folders": return false;
       case "get_space": return this.spaces.find((space) => space.name === requiredString(command, args, "name")) ?? null;
       case "create_space": return this.createSpace(args);
