@@ -46,7 +46,6 @@ vi.mock("../../../lib/tauri", async () => {
     teamUpdateMember: vi.fn(),
     teamSetEveryone: vi.fn(),
     teamRename: vi.fn(),
-    teamHostSpace: vi.fn(),
     stopSharingSpace: vi.fn(),
   };
 });

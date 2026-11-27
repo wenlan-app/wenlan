@@ -13,7 +13,6 @@ import {
   shareSpace,
   stopSharingPage,
   stopSharingSpace,
-  teamHostSpace,
   type SharedKind,
   type SharedStatus,
 } from "../../../lib/tauri";
@@ -23,10 +22,12 @@ import { TEAM_KEY, useTeamStatus } from "./team";
 import { TeamSpaceAccess } from "./TeamMembers";
 import { relativeMs } from "../page/format";
 import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, teamLabel, teamPausedText, useShares } from "./sharing";
+import { TeamReviewWindow, TeamSpaceShareFlow } from "./TeamReviewWindow";
+import { isWebBuild } from "../../../web/runtime";
 import "./sharing.css";
 
 export type ShareTarget = {
-  readonly kind: SharedKind;
+  readonly kind: Exclude<SharedKind, "library">;
   /** The Space's name, or the page's id. */
   readonly target: string;
   /** What the box calls it: the Space's name or the page's title. */
@@ -46,6 +47,7 @@ export function ShareDialog({ kind, target, title, onClose, onOpenSettings }: Sh
   const { t } = useTranslation();
   const shares = useShares();
   const share = kind === "space" ? spaceShare(shares.data, target) : pageShare(shares.data, target);
+  const [teamFlow, setTeamFlow] = useState<"page" | "space" | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -66,25 +68,29 @@ export function ShareDialog({ kind, target, title, onClose, onOpenSettings }: Sh
       ) : share ? (
         <MembersBox share={share} onClose={onClose} onOpenSettings={onOpenSettings} />
       ) : (
-        <ShareBox kind={kind} target={target} title={title} onClose={onClose} />
+        teamFlow === "page" ? <TeamReviewWindow pageId={target} team={undefined} onClose={onClose} />
+          : teamFlow === "space" ? <TeamSpaceShareFlow spaceName={target} onClose={onClose} />
+            : <ShareBox kind={kind} target={target} title={title} onClose={onClose} onTeam={() => setTeamFlow(kind)} />
       )}
     </dialog>
   );
 }
 
-function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onClose: () => void }) {
+function ShareBox({ kind, target, title, onClose, onTeam }: ShareTarget & { readonly onClose: () => void; readonly onTeam: () => void }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [folder, setFolder] = useState<string | null>(null);
   const [taken, setTaken] = useState(false);
   const [pending, setPending] = useState<"team" | "folder" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Only a computer that runs a team server can host a Space for a team; it
-  // is asked first how to share, and goes straight on with the answer.
+  // Only a computer that runs a team server can publish from the app. On the
+  // web build, this is the only available sharing path.
   const teamStatus = useTeamStatus();
-  const canHost = kind === "space" && Boolean(teamStatus.data?.listening);
+  const web = isWebBuild();
+  const allowFolder = !web;
+  const canHost = Boolean(teamStatus.data?.listening);
   const [step, setStep] = useState<"choose" | "folder">("choose");
-  const choosing = canHost && step === "choose";
+  const choosing = (canHost || !allowFolder) && step === "choose";
   const choose = async () => {
     const chosen = await openDialog({ directory: true, multiple: false });
     if (typeof chosen !== "string") return;
@@ -95,22 +101,6 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
       setTaken((await lookInSharedFolder(chosen)) !== null);
     } catch {
       // A folder that cannot be read is reported when sharing.
-    }
-  };
-  const hostForTeam = async () => {
-    if (pending) return;
-    setPending("team");
-    setError(null);
-    try {
-      await teamHostSpace(target);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
-        queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
-      ]);
-    } catch (caught) {
-      setError(errorText(caught));
-    } finally {
-      setPending(null);
     }
   };
   const share = async (event: React.FormEvent) => {
@@ -135,16 +125,16 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
       {choosing ? (
         <>
           <ul className="share-ways">
-            <li>
-              <button type="button" className="share-way" disabled={pending !== null} onClick={() => void hostForTeam()}>
+            {canHost && <li>
+              <button type="button" className="share-way" disabled={pending !== null} onClick={onTeam}>
                 <span className="share-way-text">
                   <span className="share-way-title">{t("team.shareChoiceTeam", { team: teamLabel(t, teamStatus.data?.team) })}</span>
-                  <span className="share-way-hint">{t(pending === "team" ? "sharing.sharing" : "team.shareTeamHint")}</span>
+                  <span className="share-way-hint">{t("team.shareTeamHint")}</span>
                 </span>
                 <span aria-hidden="true" className="share-way-chevron">›</span>
               </button>
-            </li>
-            <li>
+            </li>}
+            {allowFolder && <li>
               <button type="button" className="share-way" disabled={pending !== null} onClick={() => { setStep("folder"); setError(null); }}>
                 <span className="share-way-text">
                   <span className="share-way-title">{t("team.shareChoiceFolder")}</span>
@@ -152,7 +142,7 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
                 </span>
                 <span aria-hidden="true" className="share-way-chevron">›</span>
               </button>
-            </li>
+            </li>}
           </ul>
           {error && <p className="share-warning" role="alert">{t("sharing.failed", { message: error })}</p>}
           <div className="share-actions">
@@ -161,7 +151,7 @@ function ShareBox({ kind, target, title, onClose }: ShareTarget & { readonly onC
         </>
       ) : (
         <>
-          {canHost && <button type="button" className="share-link share-back" onClick={() => { setStep("choose"); setError(null); }}>{t("team.shareBack")}</button>}
+          {canHost && allowFolder && <button type="button" className="share-link share-back" onClick={() => { setStep("choose"); setError(null); }}>{t("team.shareBack")}</button>}
           <div className="share-field">
             <span className="share-label">{t("sharing.folder")}</span>
             <div className="share-folder-row">

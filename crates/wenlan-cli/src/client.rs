@@ -882,6 +882,27 @@ impl WenlanClient {
             .await
     }
 
+    pub async fn team_library_draft(
+        &self,
+        kind: wenlan_types::team_library::TeamItemKind,
+        id: &str,
+    ) -> Result<wenlan_types::team_library::TeamDraft> {
+        anyhow::ensure!(
+            self.is_local() && !self.names_an_agent() && self.session().is_none(),
+            "The host's person must prepare this from their own terminal."
+        );
+        anyhow::ensure!(
+            wenlan_core::shared_space::version::is_safe_id(id),
+            "Use a Wenlan item ID."
+        );
+        let kind = match kind {
+            wenlan_types::team_library::TeamItemKind::Page => "page",
+            wenlan_types::team_library::TeamItemKind::Memory => "memory",
+        };
+        self.get_local_as_person(&format!("/api/team/library/draft?kind={kind}&id={id}"))
+            .await
+    }
+
     /// GET /api/skills/rules — read approved rules for the resolved Space.
     pub async fn read_space_rules(&self) -> Result<wenlan_types::SpaceRulesResponse> {
         self.get_json("/api/skills/rules", true).await

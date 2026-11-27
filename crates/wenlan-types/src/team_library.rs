@@ -192,6 +192,26 @@ pub struct TeamOriginal {
     pub revision: i64,
 }
 
+/// One personal original and the text shown in a publication review.
+/// These IDs are checked against the personal library again at confirmation;
+/// they are not stored in team records.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamDraftOriginal {
+    pub original: TeamOriginal,
+    pub text: TeamText,
+}
+
+/// The server-built publication draft shared by the CLI and desktop app.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamDraft {
+    pub item: TeamDraftOriginal,
+    pub sources: Vec<TeamDraftOriginal>,
+    pub omitted_sources: bool,
+    pub authorship: Option<TeamAuthorship>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TeamTerminalAction {

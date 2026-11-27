@@ -87,6 +87,8 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Post,"/api/rules/setup/review/preview","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/settings/preview","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/team/library/terminal","team_library_review",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
+    row!(Get,"/api/team/library/draft","team_library_draft",NoSelector,AuthenticatedPerson,Global,SingleId404,NotApplicable,GlobalRead),
+    row!(Get,"/api/team/library/spaces","team_library_spaces",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/settings/apply","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/rules/setup/checkout","personal_tool_setup",NoSelector,AuthenticatedPerson,Global,NoGate,NotApplicable,GlobalRead),
     row!(Post,"/api/skills/registry/save","personal_skill_save",NoSelector,CallerAssertedAgentTrust,Global,NoGate,NotApplicable,GlobalRead),

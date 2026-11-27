@@ -100,6 +100,21 @@ fn marker_only() -> reqwest::header::HeaderMap {
     headers
 }
 
+/// Keep daemon details in the native log, but give the sharing UI a stable
+/// error category that it can localize without exposing routes or IDs.
+fn team_user_error(operation: &str, error: String) -> String {
+    log::warn!("[team] {operation} failed: {error}");
+    if error.contains(" 403") {
+        "team_not_allowed".into()
+    } else if operation == "create space" && error.contains(" 409") {
+        "team_space_taken".into()
+    } else if error.contains(" 404") || error.contains(" 409") {
+        "team_page_changed".into()
+    } else {
+        "team_unavailable".into()
+    }
+}
+
 pub(crate) fn person_headers_from(data_root: &std::path::Path) -> reqwest::header::HeaderMap {
     let mut headers = marker_only();
     if let Some(key) = wenlan_types::person_key::read(data_root)
@@ -1070,6 +1085,45 @@ impl WenlanClient {
         resp.json()
             .await
             .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    pub async fn team_library_draft(
+        &self,
+        kind: wenlan_types::team_library::TeamItemKind,
+        id: &str,
+    ) -> Result<wenlan_types::team_library::TeamDraft, String> {
+        let kind = match kind {
+            wenlan_types::team_library::TeamItemKind::Page => "page",
+            wenlan_types::team_library::TeamItemKind::Memory => "memory",
+        };
+        let path = format!(
+            "/api/team/library/draft?kind={kind}&id={}",
+            percent_encode_path_segment(id)
+        );
+        self.get_json_as_person(&path)
+            .await
+            .map_err(|error| team_user_error("draft", error))
+    }
+
+    pub async fn team_library_spaces(
+        &self,
+    ) -> Result<Vec<wenlan_types::team_library::TeamGroup>, String> {
+        self.get_json_as_person("/api/team/library/spaces")
+            .await
+            .map_err(|error| team_user_error("spaces", error))
+    }
+
+    pub async fn team_library_terminal(
+        &self,
+        action: &wenlan_types::team_library::TeamTerminalAction,
+    ) -> Result<wenlan_types::team_library::TeamTerminalReply, String> {
+        let operation = match action {
+            wenlan_types::team_library::TeamTerminalAction::CreateSpace { .. } => "create space",
+            _ => "terminal",
+        };
+        self.post_json_as_person("/api/team/library/terminal", action)
+            .await
+            .map_err(|error| team_user_error(operation, error))
     }
 
     // ── Health ──────────────────────────────────────────────────────
@@ -3189,6 +3243,27 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn team_errors_keep_routes_out_and_name_space_conflicts() {
+        let raw = "HTTP POST /api/team/library/terminal returned 409 Conflict".to_string();
+        assert_eq!(
+            team_user_error("create space", raw.clone()),
+            "team_space_taken"
+        );
+        assert_eq!(team_user_error("terminal", raw), "team_page_changed");
+        assert_eq!(
+            team_user_error(
+                "draft",
+                "HTTP GET /api/team/library/draft?id=x returned 403 Forbidden".into()
+            ),
+            "team_not_allowed"
+        );
+        assert_eq!(
+            team_user_error("spaces", "connection refused".into()),
+            "team_unavailable"
+        );
+    }
 
     /// UX-SKILL-13: the app's gestures carry the person key from the data
     /// root it gives the daemon; without a readable key, the marker alone.

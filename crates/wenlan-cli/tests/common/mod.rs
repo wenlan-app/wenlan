@@ -39,11 +39,18 @@ pub fn spawn_stub(routes: Vec<(&'static str, String)>) -> (String, Receiver<(Str
                 .strip_suffix(" HTTP/1.1")
                 .unwrap_or(&request_line);
             let (status, payload) = match routes.iter().find(|(r, _)| *r == route) {
-                // A payload starting with `409:` is answered as a refusal.
-                Some((_, payload)) => match payload.strip_prefix("409:") {
-                    Some(refusal) => ("409 Conflict", refusal.to_string()),
-                    None => ("200 OK", payload.clone()),
-                },
+                // A payload starting with `404:`, `409:` or `422:` is answered as a refusal.
+                Some((_, payload)) => {
+                    if let Some(refusal) = payload.strip_prefix("404:") {
+                        ("404 Not Found", refusal.to_string())
+                    } else if let Some(refusal) = payload.strip_prefix("409:") {
+                        ("409 Conflict", refusal.to_string())
+                    } else if let Some(refusal) = payload.strip_prefix("422:") {
+                        ("422 Unprocessable Entity", refusal.to_string())
+                    } else {
+                        ("200 OK", payload.clone())
+                    }
+                }
                 None => ("404 Not Found", "{\"error\":\"no such route\"}".to_string()),
             };
             let response = format!(
