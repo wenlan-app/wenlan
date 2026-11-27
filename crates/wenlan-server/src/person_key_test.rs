@@ -729,6 +729,56 @@ async fn rulesync_router_rejects_session_on_person_only_routes() {
     }
 }
 
+/// PR5 design test 5 (server half): the team host's Rules review answers
+/// only the person, never an AI session or a named agent.
+#[tokio::test]
+async fn team_rules_routes_refuse_an_ai_tool() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::team_rules_routes_refuse_an_ai_tool",
+        &[("WENLAN_RULESYNC", "1")],
+        scratch.path(),
+    ) {
+        return;
+    }
+    let app = crate::router::build_router(state());
+    for (path, body) in [
+        ("/api/team/rules/proposals", "{}"),
+        (
+            "/api/team/rules/propose",
+            r#"{"space":"Roadmap","markdown":"- A rule"}"#,
+        ),
+        (
+            "/api/team/rules/proposals/abc/decision",
+            r#"{"accept":true}"#,
+        ),
+    ] {
+        for identity in ["session", "agent"] {
+            let mut request = HttpRequest::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(PERSON_KEY_HEADER, test_key());
+            if identity == "agent" {
+                request = request.header("x-agent-name", "codex");
+            } else {
+                request = request.header(wenlan_types::SESSION_HEADER, "codex:fixture");
+            }
+            let request = request.body(Body::from(body)).unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), 65536)
+                .await
+                .unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                refusal(&answer).contains("only the person using the daemon"),
+                "{path} {identity}: {answer}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn rulesync_shared_edits_get_does_not_write_answers() {
     let scratch = tempfile::tempdir().unwrap();
@@ -781,7 +831,11 @@ async fn rulesync_shared_edits_get_does_not_write_answers() {
 /// tool-state folder are scratch, so the tool-sync switch never comes from
 /// the machine's real data root. Returns false in the parent after the child
 /// passed; true means "this is the child, run the body".
-fn in_isolated_child(test: &str, envs: &[(&str, &str)], scratch: &std::path::Path) -> bool {
+pub(crate) fn in_isolated_child(
+    test: &str,
+    envs: &[(&str, &str)],
+    scratch: &std::path::Path,
+) -> bool {
     if std::env::var_os("WENLAN_RULESYNC_ISOLATED_CHILD").is_some() {
         return true;
     }

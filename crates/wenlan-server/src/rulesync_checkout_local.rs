@@ -1153,7 +1153,7 @@ pub(super) fn sync(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::rulesync_routes::report;
     use wenlan_core::rulesync_team;
@@ -1258,15 +1258,17 @@ mod tests {
         assert!(!untrusted.join(".codex/config.toml").exists());
     }
 
-    struct Fixture {
+    /// A person's home, data root and one checkout whose origin is
+    /// `rulesync_layers::tests::REMOTE`, synced with the layers of `settings`.
+    pub(crate) struct Fixture {
         _temp: tempfile::TempDir,
-        setup: Setup,
-        repo: PathBuf,
+        pub(crate) setup: Setup,
+        pub(crate) repo: PathBuf,
         key: String,
-        settings: PathBuf,
+        pub(crate) settings: PathBuf,
         writer: wenlan_core::team::Member,
-        team: Vec<TeamRuleLayer>,
-        project: Vec<TeamRuleLayer>,
+        pub(crate) team: Vec<TeamRuleLayer>,
+        pub(crate) project: Vec<TeamRuleLayer>,
         claude: Option<String>,
         codex: Option<String>,
         codex_dir_created: bool,
@@ -1275,6 +1277,33 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            let mut fixture = Self::build(|data| {
+                let (settings, _, writer) = crate::rulesync_layers::tests::hosted_fixture(data);
+                (settings, writer)
+            });
+            fixture.team = rulesync_team::load_layers(&fixture.settings).unwrap();
+            fixture.project = rulesync_team::load_project_layers(&fixture.settings).unwrap();
+            assert!(!fixture.team.is_empty() && !fixture.project.is_empty());
+            fixture
+        }
+
+        /// A checkout of a team kept elsewhere (`settings`), with the
+        /// layers the checkout sync itself selects for this repository.
+        pub(crate) fn for_settings(settings: &Path, writer: wenlan_core::team::Member) -> Self {
+            let mut fixture = Self::build(|_| (settings.to_path_buf(), writer));
+            fixture.reload();
+            fixture
+        }
+
+        /// Selects the layers again, as the checkout sync does.
+        pub(crate) fn reload(&mut self) {
+            let repo_id = rulesync_team::repo_identity(crate::rulesync_layers::tests::REMOTE);
+            (self.project, self.team) =
+                crate::rulesync_checkout::layers_for_repo(&self.settings, repo_id.as_deref())
+                    .unwrap();
+        }
+
+        fn build(team: impl FnOnce(&Path) -> (PathBuf, wenlan_core::team::Member)) -> Self {
             let temp = tempfile::tempdir().unwrap();
             let setup = Setup {
                 home: temp.path().join("home"),
@@ -1301,7 +1330,7 @@ mod tests {
             .unwrap()
             .status
             .success());
-            let (settings, _, writer) = crate::rulesync_layers::tests::hosted_fixture(&setup.data);
+            let (settings, writer) = team(&setup.data);
             fs::create_dir(setup.data.join("checkouts")).unwrap();
             let key = wenlan_core::rulesync_personal::fingerprint(&repo).unwrap();
             fs::write(
@@ -1312,9 +1341,6 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-            let team = rulesync_team::load_layers(&settings).unwrap();
-            let project = rulesync_team::load_project_layers(&settings).unwrap();
-            assert!(!team.is_empty() && !project.is_empty());
             Self {
                 _temp: temp,
                 setup,
@@ -1322,8 +1348,8 @@ mod tests {
                 key,
                 settings,
                 writer,
-                team,
-                project,
+                team: Vec::new(),
+                project: Vec::new(),
                 claude: None,
                 codex: None,
                 codex_dir_created: false,
@@ -1331,7 +1357,7 @@ mod tests {
             }
         }
 
-        fn trust(&self) {
+        pub(crate) fn trust(&self) {
             fs::write(
                 self.setup.home.join(".codex/config.toml"),
                 trust_config(&self.repo.display().to_string()),
@@ -1339,7 +1365,7 @@ mod tests {
             .unwrap();
         }
 
-        fn run(&mut self) -> RulesSyncReport {
+        pub(crate) fn run(&mut self) -> RulesSyncReport {
             self.run_as(true)
         }
 

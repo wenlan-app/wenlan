@@ -455,6 +455,37 @@ pub struct TeamRulesDecisionRequest {
     pub accept: bool,
 }
 
+/// A pending change to one of the Rules pages kept on the team host:
+/// the team-wide page (`space` is `everyone`) or a Space's page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRulesHostProposal {
+    pub space: String,
+    /// The proposer's recorded member name. None when no person is
+    /// recorded, as for an edit made in a tool's rules file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    #[serde(flatten)]
+    pub proposal: TeamRulesProposal,
+}
+
+/// Body of `POST /api/team/rules/propose` on the team host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamRulesHostProposeRequest {
+    pub space: String,
+    pub markdown: String,
+}
+
+/// Answer to `POST /api/team/rules/proposals/{id}/decision`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRulesHostDecision {
+    pub space: String,
+    pub accepted: bool,
+    /// Set when an accepted change reaches no repository's tool files yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// Body of `POST /api/team/join` on a member's computer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamJoinRequest {

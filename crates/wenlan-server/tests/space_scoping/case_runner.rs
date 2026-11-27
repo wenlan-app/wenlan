@@ -434,13 +434,14 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // Previewing and declining the one-time page-rule move add two more.
     // Listing and deciding tool-file team edits add two more Global routes;
     // the person-key-gated team-library draft and Spaces reads add two more;
-    // a member's person-only joined-team library and page reads add two more.
-    assert_eq!(rows.len(), 191);
+    // a member's person-only joined-team library and page reads add two more;
+    // the team host's own Rules review (list, propose, decide) adds three more.
+    assert_eq!(rows.len(), 194);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        68
+        71
     );
     assert_eq!(
         rows.iter()
@@ -484,7 +485,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 68, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 71, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

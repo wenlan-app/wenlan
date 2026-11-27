@@ -8,6 +8,8 @@ use axum::http::Method;
 use wenlan_core::shared_space::{version, SpaceMember};
 use wenlan_types::team::{TeamFileList, TeamSpaceAccess};
 
+#[path = "team_library_rules_test.rs"]
+mod library_rules;
 #[path = "team_member_view_test.rs"]
 mod member_view;
 #[path = "team_legacy_deletion_test.rs"]
@@ -297,10 +299,10 @@ async fn team_library_create_space_is_idempotent_for_the_same_group() {
     )
     .await
     .unwrap();
-    let wenlan_types::team_library::TeamTerminalReply::Space { space: first } = first else {
+    let wenlan_types::team_library::TeamTerminalReply::Space { space: first, .. } = first else {
         panic!("expected first Space");
     };
-    let wenlan_types::team_library::TeamTerminalReply::Space { space: second } = second else {
+    let wenlan_types::team_library::TeamTerminalReply::Space { space: second, .. } = second else {
         panic!("expected retry Space");
     };
     assert_eq!(first, second);

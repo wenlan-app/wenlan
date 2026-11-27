@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use wenlan_types::team::{
-    TeamAccess, TeamFileList, TeamInfo, TeamProjectSkill, TeamRole, TeamRulesManifest,
-    TeamRulesProject, TeamRulesProposal,
+    TeamAccess, TeamFileList, TeamInfo, TeamProjectSkill, TeamRole, TeamRulesHostDecision,
+    TeamRulesHostProposal, TeamRulesManifest, TeamRulesProject, TeamRulesProposal,
 };
 
 use crate::error::WenlanError;
@@ -17,6 +17,7 @@ use crate::shared_space::{self, remote, version};
 use crate::skill_registry::{self, project_sync};
 use crate::store::format::page::PageFile;
 use crate::team::{self, CredentialKind, Member, TeamFile};
+use crate::team_library;
 
 pub const SPACE: &str = "everyone";
 const TITLE: &str = "Rules";
@@ -127,20 +128,24 @@ fn load_scope_layers(
     }
     let file = team::read_team(&team_path(settings_path))?;
     let spaces = if projects {
-        team::hosted_spaces(settings_path)?
+        readable_scope_names(&file, settings_path)?
             .into_iter()
-            .map(|(space, _)| space)
             .filter(|space| space != SPACE)
             .collect()
     } else {
         vec![SPACE.to_string()]
     };
     for space in spaces {
-        if let Some(hosted) = hosted_rules_in(&file, settings_path, &space)? {
+        if let Some(hosted) = scope_rules_in(&file, settings_path, &space)? {
             let history = hosted.history();
             let Some(rules) = approved_head(&history, &hosted.page_id)? else {
                 continue;
             };
+            if is_empty_seed(&hosted, rules) {
+                // A library Space's empty seed must not clear a checkout's
+                // existing rules before its first change is accepted.
+                continue;
+            }
             let mut local = hosted.layer(settings_path, rules)?;
             if let Some(owner) = file
                 .members
@@ -292,6 +297,8 @@ struct HostedRules {
     page_id: String,
     folder: PathBuf,
     project: Option<TeamRulesProject>,
+    /// Kept in the team library on the host, not in a hosted Space folder.
+    library: bool,
 }
 
 fn hosted_rules(
@@ -343,7 +350,127 @@ fn hosted_rules_in(
         info,
         folder,
         project,
+        library: false,
     }))
+}
+
+/// The Rules master the team host itself reads and changes for `space`.
+/// A name with a hosted Space folder keeps that folder's master, even while
+/// it is not usable yet (no repository bound, no team-wide grant): the
+/// library fallback never takes over a hosted name, so binding it later
+/// cannot move its Rules. Only a name without a hosted folder is looked up
+/// in the team library: `everyone` is the team-wide page, any other name is
+/// the library Space of exactly that name.
+fn scope_rules_in(
+    file: &TeamFile,
+    settings_path: &Path,
+    space: &str,
+) -> Result<Option<HostedRules>, WenlanError> {
+    if team::hosted_folder(settings_path, space)?.is_some() {
+        return hosted_rules_in(file, settings_path, space);
+    }
+    let Some(info) = file.info().filter(|info| version::is_safe_id(&info.id)) else {
+        return Ok(None);
+    };
+    let team_path = team_path(settings_path);
+    let Some(rules) = team_library::team_dir(&team_path, &info.id).map(|dir| dir.join("rules"))
+    else {
+        return Ok(None);
+    };
+    let (folder, project) = if space == SPACE {
+        let folder = rules.join(SPACE);
+        if !folder.is_dir() {
+            return Ok(None);
+        }
+        (folder, None)
+    } else {
+        let Some(group) = team_library::groups_in(&team_path, file)?
+            .into_iter()
+            .find(|group| group.name == space && version::is_safe_id(&group.id))
+        else {
+            return Ok(None);
+        };
+        check_markdown(space)?;
+        // The repository comes from a binding of the same-named local Space.
+        let repo_id =
+            repo_wiki::binding_at(&settings_path.with_file_name("repo-wiki.json"), space)?
+                .and_then(|binding| binding.remote_url.as_deref().and_then(repo_identity));
+        (
+            rules.join(&group.id),
+            Some(TeamRulesProject {
+                space: space.to_string(),
+                space_id: group.id,
+                repo_id,
+            }),
+        )
+    };
+    Ok(Some(HostedRules {
+        page_id: page_id(&info.id, project.as_ref()),
+        info,
+        folder,
+        project,
+        library: true,
+    }))
+}
+
+/// Every name the team host may keep Rules for: the team-wide page, its
+/// hosted Spaces and its library Spaces.
+/// Refuses when the team library cannot be read: the host's own review
+/// must not silently miss a library Space.
+fn host_scope_names(file: &TeamFile, settings_path: &Path) -> Result<Vec<String>, WenlanError> {
+    scope_names(
+        settings_path,
+        team_library::groups_in(&team_path(settings_path), file)?,
+    )
+}
+
+/// The same names for rendering and for routing a tool-file proposal: an
+/// unreadable team library counts as having no Spaces, so hosted Spaces and
+/// joined teams' cached layers keep working.
+fn readable_scope_names(file: &TeamFile, settings_path: &Path) -> Result<Vec<String>, WenlanError> {
+    let groups = team_library::groups_in(&team_path(settings_path), file).unwrap_or_else(|error| {
+        log::warn!(
+            "[rulesync-team] team library unreadable; its Spaces' Rules are skipped: {error}"
+        );
+        Vec::new()
+    });
+    scope_names(settings_path, groups)
+}
+
+fn scope_names(
+    settings_path: &Path,
+    groups: Vec<wenlan_types::team_library::TeamGroup>,
+) -> Result<Vec<String>, WenlanError> {
+    let mut names = BTreeSet::from([SPACE.to_string()]);
+    names.extend(
+        team::hosted_spaces(settings_path)?
+            .into_iter()
+            .map(|(space, _)| space),
+    );
+    names.extend(groups.into_iter().map(|group| group.name));
+    Ok(names.into_iter().collect())
+}
+
+/// A library page's first, still-empty version, which renders nothing.
+fn is_empty_seed(hosted: &HostedRules, rules: &version::PageVersion) -> bool {
+    hosted.library && rules.meta.parent.is_none() && rules.page.body.is_empty()
+}
+
+/// Whether `hosted`'s approved Rules reach a bound checkout: a Space bound to
+/// a repository whose approved page is more than an empty seed.
+fn renders_in_a_checkout(hosted: &HostedRules) -> Result<bool, WenlanError> {
+    if hosted
+        .project
+        .as_ref()
+        .is_none_or(|project| project.repo_id.is_none())
+    {
+        return Ok(false);
+    }
+    let history = hosted.history();
+    Ok(
+        approved_head(&history, &hosted.page_id)?
+            .is_some_and(|rules| !is_empty_seed(hosted, rules)),
+    )
 }
 
 impl HostedRules {
@@ -367,7 +494,7 @@ impl HostedRules {
     }
 
     fn skills(&self, settings_path: &Path) -> Result<Vec<TeamProjectSkill>, WenlanError> {
-        let Some(project) = &self.project else {
+        let Some(project) = self.project.as_ref().filter(|_| !self.library) else {
             return Ok(Vec::new());
         };
         let registry = if settings_path == shared_space::settings_path() {
@@ -462,7 +589,7 @@ pub(crate) fn ensure_hosted_master(settings_path: &Path, space: &str) -> Result<
     }
     let _authority = authority_lock(&team_path)?;
     let file = team::read_team(&team_path)?;
-    let Some(hosted) = hosted_rules_in(&file, settings_path, space)? else {
+    let Some(hosted) = scope_rules_in(&file, settings_path, space)? else {
         return Ok(());
     };
     let Some(owner) = file
@@ -728,8 +855,8 @@ fn proposal_target(
     revision: &str,
 ) -> Result<(PathBuf, String, String), WenlanError> {
     let file = team::read_team(&team_path(settings_path))?;
-    for (space, _) in team::hosted_spaces(settings_path)? {
-        if let Some(hosted) = hosted_rules_in(&file, settings_path, &space)?.filter(|hosted| {
+    for space in readable_scope_names(&file, settings_path)? {
+        if let Some(hosted) = scope_rules_in(&file, settings_path, &space)?.filter(|hosted| {
             if hosted.project.is_some() {
                 hosted.page_id == layer_id
             } else {
@@ -996,6 +1123,13 @@ fn already_decided(history: &version::FolderRead, page: &str, proposal: &str) ->
 }
 
 fn proposals(hosted: &HostedRules) -> Vec<TeamRulesProposal> {
+    pending_with_kind(hosted)
+        .into_iter()
+        .map(|(proposal, _)| proposal)
+        .collect()
+}
+
+fn pending_with_kind(hosted: &HostedRules) -> Vec<(TeamRulesProposal, version::AuthorKind)> {
     let history = hosted.history();
     let mut pending: Vec<_> = history
         .proposals
@@ -1005,16 +1139,19 @@ fn proposals(hosted: &HostedRules) -> Vec<TeamRulesProposal> {
         .filter(|proposal| !already_decided(&history, &hosted.page_id, &proposal.sha))
         .filter_map(|proposal| {
             check_markdown(&proposal.page.body).ok()?;
-            Some(TeamRulesProposal {
-                id: proposal.sha.clone(),
-                author: proposal.meta.author.member.clone(),
-                markdown: proposal.page.body.clone(),
-                base: proposal.meta.parent.clone()?,
-                proposed_at: proposal.meta.ts.clone(),
-            })
+            Some((
+                TeamRulesProposal {
+                    id: proposal.sha.clone(),
+                    author: proposal.meta.author.member.clone(),
+                    markdown: proposal.page.body.clone(),
+                    base: proposal.meta.parent.clone()?,
+                    proposed_at: proposal.meta.ts.clone(),
+                },
+                proposal.meta.author.kind,
+            ))
         })
         .collect();
-    pending.sort_by(|a, b| (&a.proposed_at, &a.id).cmp(&(&b.proposed_at, &b.id)));
+    pending.sort_by(|(a, _), (b, _)| (&a.proposed_at, &a.id).cmp(&(&b.proposed_at, &b.id)));
     pending
 }
 
@@ -1038,8 +1175,14 @@ fn review_authority(
     if member.access(space) != Some(TeamAccess::Write) {
         return Err(ReviewError::Forbidden);
     }
-    let hosted = hosted_rules_in(&file, settings_path, space)?.ok_or(ReviewError::NotConfigured)?;
-    Ok((hosted, member))
+    // The team listener serves hosted Spaces only; library Rules stay on
+    // the host's own loopback daemon.
+    let hosted = if person.is_some() {
+        hosted_rules_in(&file, settings_path, space)?
+    } else {
+        scope_rules_in(&file, settings_path, space)?
+    };
+    Ok((hosted.ok_or(ReviewError::NotConfigured)?, member))
 }
 
 /// Lists proposals for a person signed in to the team listener.
@@ -1136,6 +1279,156 @@ pub fn decide_local_space_proposal(
     let _authority = authority_lock(&team_path)?;
     let (hosted, owner) = review_authority(&team_path, settings_path, space, None)?;
     decide(&hosted, &owner.id, proposal, accept)
+}
+
+/// Makes the empty team-wide and Space Rules pages of a library Space on
+/// the team host. Each page is seeded only while it has no version, so a
+/// repeat changes nothing. A name with a hosted Space folder is left to
+/// its folder's own master.
+pub fn ensure_library_masters(settings_path: &Path, space: &str) -> Result<(), WenlanError> {
+    let team_path = team_path(settings_path);
+    if !team_path.is_file() || team::hosted_folder(settings_path, space)?.is_some() {
+        return Ok(());
+    }
+    let file = team::read_team(&team_path)?;
+    let Some(info) = file.info().filter(|info| version::is_safe_id(&info.id)) else {
+        return Ok(());
+    };
+    if space != SPACE
+        && !team_library::groups_in(&team_path, &file)?
+            .iter()
+            .any(|group| group.name == space)
+    {
+        return Ok(());
+    }
+    if team::hosted_folder(settings_path, SPACE)?.is_none() {
+        if let Some(dir) = team_library::team_dir(&team_path, &info.id) {
+            fs::create_dir_all(dir.join("rules").join(SPACE))?;
+        }
+    }
+    ensure_hosted_master(settings_path, SPACE)?;
+    if space != SPACE {
+        ensure_hosted_master(settings_path, space)?;
+    }
+    Ok(())
+}
+
+/// Call only after authenticating the person on the team host's loopback daemon.
+/// Proposes new text for the team-wide (`everyone`) or a Space's Rules page.
+pub fn host_propose(
+    settings_path: &Path,
+    space: &str,
+    markdown: &str,
+) -> Result<String, ReviewError> {
+    check_markdown(markdown)?;
+    ensure_library_masters(settings_path, space)?;
+    update_hosted_rules(settings_path, space, markdown)
+}
+
+/// Call only after authenticating the person on the team host's loopback daemon.
+/// Every pending change to a Rules page this host keeps, oldest first.
+pub fn host_proposals(settings_path: &Path) -> Result<Vec<TeamRulesHostProposal>, ReviewError> {
+    let team_path = team_path(settings_path);
+    let _authority = authority_lock(&team_path)?;
+    let file = team::read_team(&team_path)?;
+    host_owner(&file)?;
+    let mut all = Vec::new();
+    for space in host_scope_names(&file, settings_path)? {
+        let Some(hosted) = scope_rules_in(&file, settings_path, &space)? else {
+            continue;
+        };
+        for (proposal, kind) in pending_with_kind(&hosted) {
+            let author_name = (kind == version::AuthorKind::Person)
+                .then(|| {
+                    file.members
+                        .iter()
+                        .find(|member| member.id == proposal.author)
+                        .map(|member| member.name.clone())
+                })
+                .flatten();
+            all.push(TeamRulesHostProposal {
+                space: space.clone(),
+                author_name,
+                proposal,
+            });
+        }
+    }
+    all.sort_by(|a, b| {
+        (&a.proposal.proposed_at, &a.proposal.id).cmp(&(&b.proposal.proposed_at, &b.proposal.id))
+    });
+    Ok(all)
+}
+
+pub const UNBOUND_SPACE_NOTE: &str =
+    "accepted; not in any repository's tool files yet — bind a repository to this Space";
+pub const UNBOUND_TEAM_NOTE: &str = "accepted; not in any repository's tool files yet — the team-wide Rules reach a repository together with a Space bound to it";
+
+/// Call only after authenticating the person on the team host's loopback daemon.
+/// Decides the pending change `proposal`, wherever on this host it waits.
+pub fn host_decide(
+    settings_path: &Path,
+    proposal: &str,
+    accept: bool,
+) -> Result<TeamRulesHostDecision, ReviewError> {
+    let team_path = team_path(settings_path);
+    let _authority = authority_lock(&team_path)?;
+    let file = team::read_team(&team_path)?;
+    let owner = host_owner(&file)?;
+    let mut target = None;
+    let mut spaces = Vec::new();
+    for space in host_scope_names(&file, settings_path)? {
+        let Some(hosted) = scope_rules_in(&file, settings_path, &space)? else {
+            continue;
+        };
+        let holds = hosted
+            .history()
+            .proposals
+            .get(&hosted.page_id)
+            .is_some_and(|versions| versions.iter().any(|version| version.sha == proposal));
+        if holds && target.is_none() {
+            target = Some((space, hosted));
+        } else if space != SPACE {
+            spaces.push(hosted);
+        }
+    }
+    let (space, hosted) =
+        target.ok_or_else(|| WenlanError::NotFound("team Rules proposal".into()))?;
+    decide(&hosted, &owner.id, proposal, accept)?;
+    // The team-wide page renders only beside a Space's own Rules, so it is
+    // delivered when some bound Space has more than its empty seed.
+    let delivered = if hosted.project.is_some() {
+        renders_in_a_checkout(&hosted)
+    } else {
+        spaces.iter().try_fold(false, |found, other| {
+            Ok(found || renders_in_a_checkout(other)?)
+        })
+    }
+    .unwrap_or_else(|error: WenlanError| {
+        // The decision is recorded; only the note about it is unknown.
+        log::warn!("[rulesync-team] could not tell where accepted Rules go: {error}");
+        true
+    });
+    let note = (accept && !delivered).then(|| {
+        if hosted.project.is_some() {
+            UNBOUND_SPACE_NOTE
+        } else {
+            UNBOUND_TEAM_NOTE
+        }
+        .to_string()
+    });
+    Ok(TeamRulesHostDecision {
+        space,
+        accepted: accept,
+        note,
+    })
+}
+
+fn host_owner(file: &TeamFile) -> Result<Member, ReviewError> {
+    file.members
+        .iter()
+        .find(|member| member.role == TeamRole::Owner && member.is_active())
+        .cloned()
+        .ok_or(ReviewError::Forbidden)
 }
 
 fn decide(hosted: &HostedRules, member: &str, id: &str, accept: bool) -> Result<(), ReviewError> {

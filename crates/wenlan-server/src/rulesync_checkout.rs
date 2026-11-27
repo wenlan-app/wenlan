@@ -428,6 +428,34 @@ pub(crate) fn refresh(
     }
 }
 
+/// The project layers whose repository is `repo_id`, and the team-wide
+/// layers that go with them: a team's section only alongside a matching
+/// project layer of that team.
+pub(crate) fn layers_for_repo(
+    settings: &Path,
+    repo_id: Option<&str>,
+) -> Result<(Vec<TeamRuleLayer>, Vec<TeamRuleLayer>)> {
+    let Some(id) = repo_id else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let project = rulesync_team::load_project_layers(settings)?
+        .into_iter()
+        .filter(|layer| {
+            layer
+                .project
+                .as_ref()
+                .and_then(|project| project.repo_id.as_deref())
+                == Some(id)
+        })
+        .collect::<Vec<_>>();
+    let teams = if project.is_empty() {
+        Vec::new()
+    } else {
+        team_layers_for_projects(rulesync_team::load_layers(settings)?, &project)
+    };
+    Ok((project, teams))
+}
+
 fn team_layers_for_projects(
     teams: Vec<TeamRuleLayer>,
     projects: &[TeamRuleLayer],
@@ -571,25 +599,7 @@ impl Job<'_> {
             .and_then(|_| repo_wiki::origin_url(&checkout.repo))
             .as_deref()
             .and_then(rulesync_team::repo_identity);
-        let project = match repo_id {
-            Some(id) => rulesync_team::load_project_layers(&self.settings)?
-                .into_iter()
-                .filter(|layer| {
-                    layer
-                        .project
-                        .as_ref()
-                        .and_then(|project| project.repo_id.as_ref())
-                        == Some(&id)
-                })
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
-        let teams = match master {
-            Some(_) if !project.is_empty() => {
-                team_layers_for_projects(rulesync_team::load_layers(&self.settings)?, &project)
-            }
-            _ => Vec::new(),
-        };
+        let (project, teams) = layers_for_repo(&self.settings, repo_id.as_deref())?;
         let skills = ProjectSkills::from_layers(&project)?;
         let authorized: BTreeMap<_, _> = project
             .iter()

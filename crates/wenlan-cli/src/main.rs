@@ -585,6 +585,24 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         }
         command.require_project_rules_caller(agent_name.is_some() || session.is_some())?;
         client::WenlanClient::for_local_rules()?
+    } else if let Commands::Team {
+        cmd: commands::team::TeamCmd::Rules { command },
+    } = &cli.command
+    {
+        // `propose --space` names the Rules page itself; no other team
+        // Rules command reads or writes one Space.
+        if cli.all_spaces || (cli.space.is_some() && !command.names_a_space()) {
+            anyhow::bail!("--space/--all-spaces are not supported by this command");
+        }
+        if std::env::var_os("WENLAN_SPACE")
+            .is_some_and(|space| !space.to_string_lossy().trim().is_empty())
+        {
+            anyhow::bail!(
+                "The team's Rules are reviewed outside one Space. Run without WENLAN_SPACE."
+            );
+        }
+        command.require_person(agent_name.is_some() || session.is_some())?;
+        client::WenlanClient::for_local_rules()?
     } else {
         client::WenlanClient::from_env_with_context(agent_name.as_deref(), None)?
             .with_session(session.clone())?
@@ -774,7 +792,13 @@ async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         )?;
         base_client
     } else {
-        if cli.space.is_some() || cli.all_spaces {
+        let team_rules = matches!(
+            &cli.command,
+            Commands::Team {
+                cmd: commands::team::TeamCmd::Rules { .. }
+            }
+        );
+        if !team_rules && (cli.space.is_some() || cli.all_spaces) {
             anyhow::bail!("--space/--all-spaces are not supported by this command");
         }
         base_client

@@ -1140,6 +1140,52 @@ and wait for evidence that people need them.
   into the person's own rules; a Space without bound project rules also uses
   personal rules. Claude Code reads `CLAUDE.local.md` after the personal file, so its
   team rules come after personal rules across those files.
+  A team-library Space (one the team host makes with `wenlan team
+  create-space` or from the app's share window) is different for now.
+  Making it also makes its empty Rules page, and the team-wide page if there
+  is none; making it again changes neither
+  (`team_library_create_space_twice_keeps_the_rules_bytes`). If the Rules page
+  cannot be made, the Space is still made and the reply says the page will be
+  made with the first proposed change
+  (`team_library_space_is_created_when_its_rules_cannot_be`). The name
+  `everyone` belongs to the team-wide Rules and cannot name a Space
+  (`team_library_everyone_is_never_a_space`). Only the person at the team host
+  proposes and decides changes to these pages, in their own terminal.
+  `wenlan team rules proposals` lists each change with its Space, its text,
+  who proposed it ("unknown" when no member is recorded) and when, and
+  `wenlan team rules propose --space NAME FILE` proposes the whole new text
+  (`team_rules_list_and_propose_use_the_host_routes`).
+  `wenlan team rules proposals decide ID --accept` or `--reject` shows the
+  change and acts only after they type yes at a terminal
+  (`team_rules_decide_needs_a_terminal`). An AI tool is refused before the
+  daemon is asked (`team_rules_refuse_an_ai_tool_before_the_daemon`), and the
+  daemon refuses it too (`team_rules_routes_refuse_an_ai_tool`). These
+  commands also refuse to run under `WENLAN_SPACE`
+  (`team_rules_refuse_a_wenlan_space_pin`).
+  A team-library Space has no repository binding of its own: its repository
+  is the one bound to the local Space of the same name. Accepted Rules reach
+  only the host's own checkouts of that repository, after the team-wide
+  section (`team_library_space_rules_reach_a_bound_checkout`); a checkout of
+  another repository gets neither
+  (`team_library_rules_skip_a_checkout_of_another_repository`). Accepting for
+  a Space no repository is bound to says the Rules are not in any
+  repository's tool files yet
+  (`team_library_unbound_space_accept_says_it_is_not_delivered`). The
+  team-wide Rules reach a checkout only beside a bound Space's own accepted
+  Rules, so accepting them while every bound Space still has its empty page
+  says the same, and no tool file changes
+  (`team_library_team_wide_accept_beside_an_empty_space_is_not_delivered`).
+  A rejection is recorded and the tool file keeps its text
+  (`team_library_reject_keeps_the_tool_file`). A Rules page that is still
+  empty adds no section (`team_library_empty_seed_adds_no_section`). A Space
+  this team already hosted keeps its own Rules page, even when a
+  team-library Space has the same id
+  (`team_library_hosted_space_never_falls_back_to_the_library`). When the
+  team library cannot be read, its Spaces' Rules are skipped and the hosted
+  Spaces' Rules still reach their checkouts; only the host's review refuses
+  (`team_library_unreadable_library_keeps_hosted_rules_rendering`). Members do
+  not yet propose to or receive a team-library Space's Rules; the team
+  listener does not serve them (`team_library_rules_are_not_on_the_listener`).
   原文：「決定（2026-11-26，Qi-Xuan 核可的計畫）：團隊規則只放進團隊的倉庫，不再放進全域工具檔。」
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
   原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
@@ -1227,8 +1273,25 @@ and wait for evidence that people need them.
   `rulesync_ordered_rule_roots_are_team_personal_project`,
   `rulesync_checkout_claude_and_codex_roots_follow_team_personal_project_order` (ignored unless explicitly run),
   `repo_wiki_legacy_precedence_is_read_and_team_precedes_project`,
-  `rulesync_shared_edits_answer_requires_yes_or_no`, and
-  `rulesync_shared_edits_refuses_ai_or_pipes_before_request`.
+  `rulesync_shared_edits_answer_requires_yes_or_no`,
+  `rulesync_shared_edits_refuses_ai_or_pipes_before_request`,
+  `team_library_space_rules_reach_a_bound_checkout`,
+  `team_library_unbound_space_accept_says_it_is_not_delivered`,
+  `team_library_create_space_twice_keeps_the_rules_bytes`,
+  `team_library_reject_keeps_the_tool_file`,
+  `team_library_hosted_space_never_falls_back_to_the_library`,
+  `team_library_everyone_is_never_a_space`,
+  `team_library_space_is_created_when_its_rules_cannot_be`,
+  `team_library_rules_are_not_on_the_listener`,
+  `team_library_empty_seed_adds_no_section`,
+  `team_library_team_wide_accept_beside_an_empty_space_is_not_delivered`,
+  `team_library_unreadable_library_keeps_hosted_rules_rendering`,
+  `team_library_rules_skip_a_checkout_of_another_repository`,
+  `team_rules_refuse_a_wenlan_space_pin`,
+  `team_rules_routes_refuse_an_ai_tool`,
+  `team_rules_refuse_an_ai_tool_before_the_daemon`,
+  `team_rules_list_and_propose_use_the_host_routes`, and
+  `team_rules_decide_needs_a_terminal`.
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
   规则; any depth, any app language), each top-level bullet the person wrote is

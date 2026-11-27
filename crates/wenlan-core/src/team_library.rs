@@ -519,6 +519,43 @@ fn fresh_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+/// The host folder for one team's library records, beside `library.json`.
+pub(crate) fn team_dir(team_path: &std::path::Path, team_id: &str) -> Option<PathBuf> {
+    Some(team_path.parent()?.join("teams").join(team_id))
+}
+
+fn read_manifest(path: &std::path::Path) -> Result<Manifest> {
+    let manifest: Manifest = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(WenlanError::from)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Manifest::default(),
+        Err(e) => return Err(e.into()),
+    };
+    if manifest.format != 1 {
+        return Err(LibraryError::Invalid("Unsupported team library format."));
+    }
+    Ok(manifest)
+}
+
+/// The library's Spaces, read without the team lock. The manifest is replaced
+/// atomically, and callers that already hold the shared grant lock would
+/// deadlock on `team::lock_team`.
+pub(crate) fn groups_in(
+    team_path: &std::path::Path,
+    file: &TeamFile,
+) -> std::result::Result<Vec<TeamGroup>, WenlanError> {
+    let Some(info) = file.info().filter(|info| version::is_safe_id(&info.id)) else {
+        return Ok(Vec::new());
+    };
+    let Some(dir) = team_dir(team_path, &info.id) else {
+        return Ok(Vec::new());
+    };
+    match read_manifest(&dir.join("library.json")) {
+        Ok(manifest) => Ok(manifest.groups.into_values().collect()),
+        Err(LibraryError::Storage(error)) => Err(error),
+        Err(error) => Err(WenlanError::Validation(error.to_string())),
+    }
+}
+
 impl Library {
     pub fn new(team_path: PathBuf, memories: bool) -> Self {
         Self {
@@ -532,19 +569,13 @@ impl Library {
             .info()
             .filter(|info| version::is_safe_id(&info.id))
             .ok_or(LibraryError::Absent)?;
-        let parent = self.team_path.parent().ok_or(LibraryError::Absent)?;
-        let path = parent.join("teams").join(&info.id).join("library.json");
-        let mut manifest: Manifest = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(WenlanError::from)?,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Manifest::default(),
-            Err(e) => return Err(e.into()),
-        };
+        let path = team_dir(&self.team_path, &info.id)
+            .ok_or(LibraryError::Absent)?
+            .join("library.json");
+        let mut manifest = read_manifest(&path)?;
         let publication_times = manifest.published_at.clone();
         for record in manifest.records.values_mut().flatten() {
             record.item.published_at = publication_times.get(&record.item.item_id).cloned();
-        }
-        if manifest.format != 1 {
-            return Err(LibraryError::Invalid("Unsupported team library format."));
         }
         Ok(Data {
             file,
@@ -788,6 +819,12 @@ impl Library {
         let name = name.trim();
         if name.is_empty() || name.len() > 128 || name.contains(['\r', '\n', '\0', '/']) {
             return Err(LibraryError::Invalid("Invalid Space name."));
+        }
+        if name.eq_ignore_ascii_case(crate::rulesync_team::SPACE) {
+            // The team-wide Rules page already uses this name.
+            return Err(LibraryError::Invalid(
+                "The name everyone is used by the team-wide Rules; choose another Space name.",
+            ));
         }
         let _lock = team::lock_team(&self.team_path)?;
         let mut data = self.open(team::read_team(&self.team_path)?)?;

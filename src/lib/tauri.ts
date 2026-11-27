@@ -1664,7 +1664,7 @@ export interface TeamPublicationReceipt {
 export type TeamTerminalReply =
   | { result: "preview"; preview: TeamPublicationPreview }
   | { result: "published"; receipt: TeamPublicationReceipt }
-  | { result: "space"; space: TeamGroup }
+  | { result: "space"; space: TeamGroup; rules_note?: string }
   | { result: "done" };
 
 export async function teamLibraryDraft(kind: TeamItemKind, id: string): Promise<TeamDraft> {

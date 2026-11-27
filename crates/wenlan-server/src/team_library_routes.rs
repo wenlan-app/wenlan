@@ -1133,6 +1133,10 @@ fn draft_memory(memory: wenlan_types::memory::MemoryItem) -> TeamDraftOriginal {
     }
 }
 
+/// The CreateSpace reply when the Space's Rules pages could not be made.
+pub(super) const RULES_LATER: &str =
+    "The Space was created. Its Rules page will be made when the first change to it is proposed.";
+
 pub(super) async fn terminal_action(
     host: &Host,
     state: &TeamState,
@@ -1189,7 +1193,21 @@ pub(super) async fn terminal_action(
         }
         TeamTerminalAction::CreateSpace { name, restricted } => {
             let space = host.library.create_group(&owner, &name, restricted)?;
-            Ok(TeamTerminalReply::Space { space })
+            // After create_group has released the team lock: seeding takes
+            // the shared grant lock on the same file.
+            let settings = state.settings_path.clone();
+            let group = space.name.clone();
+            let made = tokio::task::spawn_blocking(move || {
+                wenlan_core::rulesync_team::ensure_library_masters(&settings, &group)
+            })
+            .await
+            .map_err(|error| wenlan_core::error::WenlanError::Generic(error.to_string()))
+            .and_then(|made| made);
+            let rules_note = made.err().map(|error| {
+                tracing::warn!(%error, "[team] the new Space's Rules pages were not made");
+                RULES_LATER.to_string()
+            });
+            Ok(TeamTerminalReply::Space { space, rules_note })
         }
         TeamTerminalAction::SetGrant { member_id, access } => {
             team::set_library_access(&state.team_path, &owner, &member_id, access)?;

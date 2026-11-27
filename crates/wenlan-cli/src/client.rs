@@ -1882,6 +1882,53 @@ impl WenlanClient {
         .await
     }
 
+    /// `/api/team/rules/{tail}`: the team host's own Rules review.
+    fn team_rules_url(&self, tail: &[&str]) -> Result<String> {
+        let mut url = reqwest::Url::parse(&self.base_url).context("parsing the daemon URL")?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("the daemon URL cannot take a path"))?
+            .pop_if_empty()
+            .extend(["api", "team", "rules"])
+            .extend(tail.iter().copied());
+        Ok(url.into())
+    }
+
+    pub(crate) async fn team_rules_proposals(
+        &self,
+    ) -> Result<Vec<wenlan_types::team::TeamRulesHostProposal>> {
+        let url = self.team_rules_url(&["proposals"])?;
+        self.post_url_as_person(&url, &(), None, true).await
+    }
+
+    pub(crate) async fn team_rules_propose(&self, space: &str, markdown: String) -> Result<String> {
+        let url = self.team_rules_url(&["propose"])?;
+        self.post_url_as_person(
+            &url,
+            &wenlan_types::team::TeamRulesHostProposeRequest {
+                space: space.to_string(),
+                markdown,
+            },
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub(crate) async fn team_rules_decide(
+        &self,
+        id: &str,
+        accept: bool,
+    ) -> Result<wenlan_types::team::TeamRulesHostDecision> {
+        let url = self.team_rules_url(&["proposals", id, "decision"])?;
+        self.post_url_as_person(
+            &url,
+            &wenlan_types::team::TeamRulesDecisionRequest { accept },
+            None,
+            true,
+        )
+        .await
+    }
+
     /// POST /api/pages/export with `format: "okf"` — write a pure OKF v0.2
     /// bundle of every exportable page into `dir`. Used by
     /// `wenlan export okf`. The daemon owns the safety checks (absolute
