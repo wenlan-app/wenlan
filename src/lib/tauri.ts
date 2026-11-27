@@ -1561,6 +1561,14 @@ export interface TeamStatus {
   sign_in?: boolean;
 }
 
+/** One team this computer has joined, even when no legacy Space is synced. */
+export interface TeamMembershipInfo {
+  url: string;
+  team?: TeamInfo | null;
+  owner?: boolean;
+  library_spaces?: TeamSpaceAccess[];
+}
+
 /** A member and the key shown this once: show only `join_code`. */
 export interface TeamMemberKey {
   member: TeamMember;
@@ -1679,8 +1687,93 @@ export async function teamLibraryCreateSpace(name: string, restricted: boolean):
   return invoke("team_library_create_space", { name, restricted });
 }
 
+export interface TeamItem {
+  team_id: string;
+  item_id: string;
+  kind: TeamItemKind;
+  revision: number;
+  space_id: string | null;
+  title: string;
+  body: string;
+  contributor: TeamPerson | null;
+  authorship: "human" | "ai" | null;
+  publisher: TeamPerson | null;
+  last_editor: TeamPerson | null;
+  published_at: string | null;
+}
+
+export interface TeamPageSummary {
+  id: string;
+  title: string;
+  space: string | null;
+  published_by: TeamPerson | null;
+  published_at: string | null;
+}
+
+export interface TeamPageRead {
+  id: string;
+  title: string;
+  body: string;
+  space: string | null;
+  published_by: TeamPerson | null;
+  published_at: string | null;
+  read_only: boolean;
+}
+
+export interface TeamLibrarySpace {
+  space: TeamGroup;
+  pages: TeamPageSummary[];
+}
+
+export type JoinedTeamLibraryState =
+  | { state: "ready"; spaces: TeamLibrarySpace[]; team_pages?: TeamPageSummary[]; truncated?: boolean }
+  | { state: "unreachable"; reason: string };
+
+export interface JoinedTeamLibrary {
+  team: TeamInfo | null;
+  library: JoinedTeamLibraryState;
+}
+
+export interface JoinedTeamLibraries {
+  teams: JoinedTeamLibrary[];
+}
+
+export interface TeamPageMemoryCitation {
+  kind: "memory";
+  memory: TeamItem;
+}
+
+export interface TeamPrivateCitation {
+  kind: "private_source";
+  label: string;
+}
+
+export interface TeamPageSources {
+  page_id: string;
+  sources: Array<TeamPageMemoryCitation | TeamPrivateCitation>;
+}
+
+export type JoinedTeamPage =
+  | { state: "ready"; page: TeamPageRead; sources: TeamPageSources }
+  | { state: "unreachable"; reason: string };
+
+/** Lists every joined team's read-only library for the member app. */
+export async function teamJoinedLibrary(): Promise<JoinedTeamLibraries> {
+  return invoke("team_joined_library");
+}
+
+/** Reads one joined team page and its privacy-filtered citations. */
+export async function teamJoinedPage(teamId: string, pageId: string): Promise<JoinedTeamPage> {
+  return invoke("team_joined_page", { teamId, pageId });
+}
+
 export async function teamStatus(): Promise<TeamStatus> {
   return invoke("team_status");
+}
+
+/** Lists the team memberships remembered on this computer. */
+export async function teamMemberships(): Promise<TeamMembershipInfo[]> {
+  return invoke("team_memberships");
 }
 
 export async function teamRename(name: string): Promise<TeamInfo> {

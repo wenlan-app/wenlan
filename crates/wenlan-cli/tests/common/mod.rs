@@ -23,6 +23,7 @@ pub fn spawn_stub(routes: Vec<(&'static str, String)>) -> (String, Receiver<(Str
                 .expect("read request line");
             let request_line = request_line.trim_end().to_string();
             let mut content_length = 0usize;
+            let mut headers = std::collections::HashMap::new();
             loop {
                 let mut line = String::new();
                 reader.read_line(&mut line).expect("read header");
@@ -32,13 +33,16 @@ pub fn spawn_stub(routes: Vec<(&'static str, String)>) -> (String, Receiver<(Str
                 if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
                     content_length = value.trim().parse().unwrap_or(0);
                 }
+                if let Some((name, value)) = line.trim_end().split_once(':') {
+                    headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+                }
             }
             let mut body = vec![0u8; content_length];
             reader.read_exact(&mut body).expect("read request body");
             let route = request_line
                 .strip_suffix(" HTTP/1.1")
                 .unwrap_or(&request_line);
-            let (status, payload) = match routes.iter().find(|(r, _)| *r == route) {
+            let (mut status, mut payload) = match routes.iter().find(|(r, _)| *r == route) {
                 // A payload starting with `404:`, `409:` or `422:` is answered as a refusal.
                 Some((_, payload)) => {
                     if let Some(refusal) = payload.strip_prefix("404:") {
@@ -53,6 +57,29 @@ pub fn spawn_stub(routes: Vec<(&'static str, String)>) -> (String, Receiver<(Str
                 }
                 None => ("404 Not Found", "{\"error\":\"no such route\"}".to_string()),
             };
+            if let Some(requirement) = payload.strip_prefix("AUTH403 ") {
+                let mut parts = requirement.splitn(3, ' ');
+                let header = parts.next().unwrap_or_default().to_ascii_lowercase();
+                let expected = parts.next().unwrap_or_default();
+                let success_payload = parts.next().unwrap_or_default();
+                if headers.get(&header).map(String::as_str) != Some(expected) {
+                    status = "403 Forbidden";
+                    payload = "{\"error\":\"auth required\"}".to_string();
+                } else {
+                    payload = success_payload.to_string();
+                }
+            }
+            if let Some(requirement) = payload.strip_prefix("AUTHFAIL ") {
+                let mut parts = requirement.splitn(2, ' ');
+                let header = parts.next().unwrap_or_default().to_ascii_lowercase();
+                let expected = parts.next().unwrap_or_default();
+                status = if headers.get(&header).map(String::as_str) == Some(expected) {
+                    "403 Forbidden"
+                } else {
+                    "400 Bad Request"
+                };
+                payload = "{\"error\":\"auth required\"}".to_string();
+            }
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
                 payload.len()

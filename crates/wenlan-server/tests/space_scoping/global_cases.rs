@@ -335,6 +335,7 @@ pub async fn global_routes_enforce_scope_contracts() {
         (Method::Post, "/api/rules/setup/review/preview"),
         (Method::Post, "/api/rules/setup/settings/preview"),
         (Method::Post, "/api/team/library/terminal"),
+        (Method::Get, "/api/team/joined/library"),
         (Method::Get, "/api/team/library/draft"),
         (Method::Get, "/api/team/library/spaces"),
         (Method::Post, "/api/rules/setup/settings/apply"),
@@ -374,6 +375,25 @@ pub async fn global_routes_enforce_scope_contracts() {
         .await;
         assert_eq!(selected, baseline, "Global route honored Space: {uri}");
         executed.push((method, uri));
+    }
+    // A member's joined-team page read is person-only too: without the local
+    // person key it refuses before contacting any team, whatever Space is sent.
+    {
+        let uri = "/api/team/joined/missing-team/pages/missing-page";
+        let baseline = response_parts(fixture.send(HttpMethod::GET, uri, None, None).await).await;
+        assert!(
+            baseline.0.is_client_error(),
+            "joined team page ran without the person's key: {}",
+            baseline.0
+        );
+        let selected = response_parts(
+            fixture
+                .send(HttpMethod::GET, uri, None, Some("missing-space"))
+                .await,
+        )
+        .await;
+        assert_eq!(selected, baseline, "Global route honored Space: {uri}");
+        executed.push((Method::Get, "/api/team/joined/{team_id}/pages/{page_id}"));
     }
     // Local personal-rule reads and proposals do not pick a Space. Use an
     // empty proposal and missing ids so these probes never change any rules.

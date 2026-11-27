@@ -86,6 +86,7 @@ vi.mock("../../lib/tauri", () => ({
   // "Team" in the navigation: this computer is part of no team.
   listShares: vi.fn().mockResolvedValue([]),
   teamStatus: vi.fn().mockRejectedValue(new Error("off")),
+  teamMemberships: vi.fn().mockResolvedValue([]),
   listMemoriesRich: vi.fn().mockResolvedValue([]),
   getMemoryStats: vi.fn().mockResolvedValue({ total: 0, new_today: 0, confirmed: 0, domains: [] }),
   searchEntities: vi.fn().mockResolvedValue([]),

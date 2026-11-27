@@ -91,6 +91,7 @@ async function http(
   // in this browser the cookie is all there is.
   const key = team && teamCredential() !== "browser" ? readTeamKey() : null;
   const base = team ? TEAM_GATE_PREFIX : isWebBuild() ? "" : "/daemon";
+  const noStore = team || path === "/api/team/joined/library" || path.startsWith("/api/team/joined/");
   const res = await fetch(`${base}${path}`, {
     method,
     headers: {
@@ -100,7 +101,8 @@ async function http(
       ...(team ? (key ? { Authorization: `Bearer ${key}` } : undefined) : extraHeaders),
       ...(personKey ? { [PERSON_KEY_HEADER]: personKey } : undefined),
     },
-    ...(team ? { credentials: key ? ("omit" as const) : ("same-origin" as const), cache: "no-store" as const } : undefined),
+    ...(team ? { credentials: key ? ("omit" as const) : ("same-origin" as const) } : undefined),
+    ...(noStore ? { cache: "no-store" as const } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -694,6 +696,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_shares: () => get("/api/shared"),
   share_space: (a) => post(`/api/spaces/${enc(String(a.space))}/shared/sync`, { folder: String(a.folder) }),
   team_status: () => get("/api/team"),
+  team_memberships: () => get("/api/team/membership", AS_PERSON),
   team_library_spaces: () => teamRequest("spaces", get("/api/team/library/spaces", AS_PERSON)),
   team_library_draft: (a) => teamRequest(
     "draft",
@@ -723,6 +726,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   team_member_tools: (a) => get(`/api/team/members/${enc(String(a.id))}/keys`),
   team_remove_member_tool: (a) => del(`/api/team/members/${enc(String(a.id))}/keys/${enc(String(a.key))}`),
   team_host_space: (a) => post("/api/team/spaces", { space: String(a.space), ...(a.everyone ? { everyone: a.everyone } : {}) }),
+  team_joined_library: () => get("/api/team/joined/library", AS_PERSON),
+  team_joined_page: (a) => get(`/api/team/joined/${enc(String(a.teamId))}/pages/${enc(String(a.pageId))}`, AS_PERSON),
   team_join: (a) => post("/api/team/join", { code: String(a.code), key: a.key ?? undefined }),
   team_start: (a) => post("/api/team/start", { name: String(a.name), person: String(a.person), url: a.url ?? undefined }),
   team_stop: () => post("/api/team/stop", {}),

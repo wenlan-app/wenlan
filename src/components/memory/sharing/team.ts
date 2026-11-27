@@ -2,7 +2,7 @@
 // Team server helpers shared by the members dialog, the share box, the join
 // box and Settings › Team.
 import { useQuery } from "@tanstack/react-query";
-import { teamFirewall, teamLibrarySpaces, teamStatus, type TeamGroup, type TeamMember } from "../../../lib/tauri";
+import { teamFirewall, teamLibrarySpaces, teamMemberships, teamStatus, type TeamGroup, type TeamMember } from "../../../lib/tauri";
 
 export const TEAM_DOCS_URL = "https://github.com/wenlan-app/wenlan/blob/main/docs/team-server.md";
 const TEAM_URL_KEY = "wenlan-team-url";
@@ -47,10 +47,17 @@ export function activeMembers(members: readonly TeamMember[]): TeamMember[] {
 
 export const TEAM_KEY = ["team"] as const;
 
+export const TEAM_MEMBERSHIPS_KEY = ["team-memberships"] as const;
+
 /** The team server's people and hosted Spaces. Only a computer that runs a
  *  team server answers; elsewhere it reads as "off". */
 export function useTeamStatus({ enabled = true }: { readonly enabled?: boolean } = {}) {
   return useQuery({ queryKey: TEAM_KEY, queryFn: teamStatus, retry: false, enabled });
+}
+
+/** Teams remembered here, including teams with no legacy shared Space. */
+export function useTeamMemberships({ enabled = true }: { readonly enabled?: boolean } = {}) {
+  return useQuery({ queryKey: TEAM_MEMBERSHIPS_KEY, queryFn: teamMemberships, retry: false, enabled, staleTime: 5_000 });
 }
 
 export const TEAM_LIBRARY_SPACES_KEY = ["team-library-spaces"] as const;

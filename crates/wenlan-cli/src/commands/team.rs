@@ -131,8 +131,9 @@ pub enum TeamCmd {
         #[arg(long, value_name = "ACCESS", num_args = 0..=1, default_missing_value = "write", value_parser = parse_everyone)]
         everyone: Option<TeamEveryone>,
     },
-    /// Join a team with an invite link: every Space open to you is synced
-    /// to this computer, and Spaces opened to you later follow.
+    /// Join a team with an invite link: its published pages show in the
+    /// Wenlan app right away, read live from the team. Older shared Spaces
+    /// open to you are synced to this computer.
     Join {
         /// The invite link you were sent (`https://…/join#wlt_…`).
         #[arg(value_name = "INVITE LINK")]
@@ -626,7 +627,7 @@ async fn status(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> R
         println!("Joined: {}", team_label(team));
         let spaces = team_shares(&shares, &team.url);
         if spaces.is_empty() && team.library_spaces.is_empty() {
-            println!("  No Spaces are open to you yet. They sync here when the team opens one.");
+            println!("  No legacy Spaces are open to you yet. Published pages are read-only in the team library and appear in the app when the server is reachable.");
         }
         for share in spaces {
             let access = if share.read_only { " (read)" } else { "" };
@@ -777,7 +778,7 @@ fn print_library_spaces(spaces: &[TeamSpaceAccess], indent: &str) {
     if spaces.is_empty() {
         return;
     }
-    println!("{indent}In the team library (your AI tools read these from the team server; they are not copied to this computer):");
+    println!("{indent}In the team library (shown in the Wenlan app under the team's name and read from the team server):");
     for s in spaces {
         println!("{indent}  {} ({})", s.space, access_words(s.access));
     }
@@ -878,10 +879,15 @@ async fn join_all(
         me,
         spaces,
     };
+    let library = if quiet || format == ResolvedFormat::Json {
+        None
+    } else {
+        client.team_joined_library().await.ok()
+    };
     output(format, quiet, &joined, || {
         println!("Joined {team} as {}.", joined.me.name);
         if joined.spaces.is_empty() && joined.me.library_spaces.is_empty() {
-            println!("No Spaces are open to you yet. They sync here when the team opens one.");
+            println!("No legacy Spaces are open to you yet. Published pages are read-only in the team library and appear here when the server is reachable.");
         }
         for space in &joined.spaces {
             let access = match space.access {
@@ -902,7 +908,46 @@ async fn join_all(
             }
         }
         print_library_spaces(&joined.me.library_spaces, "");
+        print_joined_library_summary(&joined, library.as_ref());
     })
+}
+
+fn print_joined_library_summary(
+    joined: &JoinedTeam,
+    library: Option<&wenlan_types::team_library::JoinedTeamLibraries>,
+) {
+    let team_id = joined.me.team.as_ref().map(|team| team.id.as_str());
+    let entry = library.and_then(|all| {
+        all.teams
+            .iter()
+            .find(|candidate| candidate.team.as_ref().map(|team| team.id.as_str()) == team_id)
+    });
+    match entry.map(|entry| &entry.library) {
+        Some(wenlan_types::team_library::JoinedTeamLibraryState::Ready {
+            spaces,
+            team_pages,
+            ..
+        }) => {
+            println!("Published pages open in the team library:");
+            if spaces.is_empty() && team_pages.is_empty() {
+                println!("  No published pages are open yet.");
+            } else {
+                if !team_pages.is_empty() {
+                    println!("  Whole team: {}", page_count(team_pages.len()));
+                }
+                for space in spaces {
+                    println!("  {}: {}", space.space.name, page_count(space.pages.len()));
+                }
+            }
+        }
+        _ => println!(
+            "Published pages will show in the Wenlan app when the team server is reachable."
+        ),
+    }
+    println!(
+        "Connect your AI tool too: `wenlan login {} --tool <TOOL>`.",
+        joined.url
+    );
 }
 
 fn host_request(code: &str, server_space: &str) -> SharedSyncRequest {
@@ -1024,6 +1069,14 @@ async fn leave(
             );
         }
     })
+}
+
+fn page_count(count: usize) -> String {
+    if count == 1 {
+        "1 page".to_string()
+    } else {
+        format!("{count} pages")
+    }
 }
 
 #[cfg(test)]

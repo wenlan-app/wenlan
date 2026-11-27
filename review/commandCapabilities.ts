@@ -59,6 +59,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "skills_remove",
     // What this Wenlan shares with people; the fixture shares nothing.
     "list_shares",
+    // Spaces lists the pages of teams this person joined; the fixture joined none.
+    "team_joined_library",
     // Home asks once about AI changes to a newly linked Obsidian vault; the
     // fixture links none, so no question shows.
     "list_linked_vaults",

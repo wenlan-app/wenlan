@@ -70,6 +70,18 @@ describe("person key (UX-SKILL-13)", () => {
     const [gesture] = fetch.mock.calls as unknown as [string, RequestInit][];
     expect(gesture[1].headers ?? {}).not.toHaveProperty(PERSON_KEY_HEADER);
   });
+
+  it("does not cache joined team library reads", async () => {
+    const { liveInvoke } = await import("./live-invoke");
+    vi.stubGlobal("__WENLAN_WEB__", true);
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ teams: [] })));
+    vi.stubGlobal("fetch", fetch);
+    await liveInvoke("team_joined_library");
+    await liveInvoke("team_joined_page", { teamId: "t1", pageId: "p1" });
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+    expect(calls[1]?.[1]).toMatchObject({ cache: "no-store" });
+  });
 });
 
 describe("pageFromWire", () => {

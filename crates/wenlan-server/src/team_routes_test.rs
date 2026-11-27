@@ -17,6 +17,8 @@ mod team_library_acceptance;
 
 #[path = "team_device_test.rs"]
 mod device_flow;
+#[path = "team_joined_library_test.rs"]
+mod joined_library;
 
 struct Fixture {
     _dir: tempfile::TempDir,

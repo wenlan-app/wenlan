@@ -61,6 +61,7 @@ import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { ScopeProvider, useShownScope } from "./team/scope";
 import { ScopeSwitcher } from "./team/ScopeSwitcher";
+import { TeamJoinedPage } from "./team/TeamJoinedPage";
 import { PagesOverview } from "./pages/PagesOverview";
 import { SectionListPage } from "./pages/SectionListPage";
 import { pageSection, spaceLayout, type PageSection } from "./pages/pageSections";
@@ -137,6 +138,8 @@ function scrollDestinationKey(view: View): string {
       return `memory:${view.sourceId}`;
     case "page":
       return `page:${view.pageId}`;
+    case "team-page":
+      return `team-page:${view.teamId}:${view.pageId}`;
     case "page-draft":
       return noteReadingKey(view);
     case "settings":
@@ -161,6 +164,7 @@ function sameDestination(current: View, next: View): boolean {
   switch (current.kind) {
     case "page": return next.kind === "page" && current.pageId === next.pageId
       && (current.mode ?? "edit") === (next.mode ?? "edit");
+    case "team-page": return next.kind === "team-page" && current.teamId === next.teamId && current.pageId === next.pageId;
     case "graph": return next.kind === "graph" && current.focusPageId === next.focusPageId && current.focusThingId === next.focusThingId && current.focusSpace === next.focusSpace && current.replay === next.replay;
     case "source-document": return next.kind === "source-document" && current.file.source === next.file.source && current.file.source_id === next.file.source_id && (current.file.space ?? null) === (next.file.space ?? null);
     case "memory": return next.kind === "memory" && current.sourceId === next.sourceId;
@@ -1407,7 +1411,7 @@ export default function Main({
         } else if (view.kind === "page-draft") {
           // PageDraftEditor owns Escape so it can await the same flush gate as Back.
           return;
-        } else if (view.kind === "source-document" || view.kind === "entity" || view.kind === "memory" || view.kind === "settings" || view.kind === "import" || view.kind === "graph" || view.kind === "page" || view.kind === "space" || view.kind === "thing" || view.kind === "distill-review") {
+        } else if (view.kind === "source-document" || view.kind === "entity" || view.kind === "memory" || view.kind === "settings" || view.kind === "import" || view.kind === "graph" || view.kind === "page" || view.kind === "team-page" || view.kind === "space" || view.kind === "thing" || view.kind === "distill-review") {
           navigateBack();
         }
       }
@@ -1762,6 +1766,7 @@ export default function Main({
                 : kind === "space"
                 ? { kind: "space", spaceId: null, spaceName: target }
                 : { kind: "page", pageId: target })}
+              onOpenTeamPage={(teamId, pageId) => navigateTo({ kind: "team-page", teamId, pageId })}
               onSpaceDeleted={handleSpaceDeleted}
               onSpaceRenamed={handleSpaceRenamed}
             />
@@ -1783,6 +1788,8 @@ export default function Main({
               onRegisterFlush={registerSpaceIdentityFlush}
               onOpenSettings={(section) => navigateTo({ kind: "settings", section: section ?? "general" })}
             />
+          ) : view.kind === "team-page" ? (
+            <TeamJoinedPage teamId={view.teamId} pageId={view.pageId} onBack={navigateBack} />
           ) : view.kind === "memory" ? (
             <MemoryDetail
               key={view.sourceId}

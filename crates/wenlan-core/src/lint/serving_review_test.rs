@@ -113,6 +113,8 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/rules/setup/review/preview"),
         (Method::Post, "/api/rules/setup/settings/preview"),
         (Method::Post, "/api/team/library/terminal"),
+        (Method::Get, "/api/team/joined/library"),
+        (Method::Get, "/api/team/joined/{team_id}/pages/{page_id}"),
         (Method::Get, "/api/team/library/draft"),
         (Method::Get, "/api/team/library/spaces"),
         (Method::Post, "/api/rules/setup/settings/apply"),

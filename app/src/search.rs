@@ -3756,6 +3756,16 @@ pub async fn team_status(state: tauri::State<'_, State>) -> Result<team::TeamSta
     client.get_json("/api/team").await
 }
 
+/// The teams this computer has joined, including memberships with no legacy
+/// shared Space.
+#[tauri::command]
+pub async fn team_memberships(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<team::TeamMembershipInfo>, String> {
+    let client = daemon_client(&state).await;
+    client.get_json("/api/team/membership").await
+}
+
 /// Names the team; every member sees the name.
 #[tauri::command]
 pub async fn team_rename(
@@ -3953,6 +3963,28 @@ pub async fn team_host_space(
                 rename_to: None,
             },
         )
+        .await
+}
+
+/// Reads every joined team's library for the member app. The daemon keeps the
+/// member keys and proxies them only to their matching team servers.
+#[tauri::command]
+pub async fn team_joined_library(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::team_library::JoinedTeamLibraries, String> {
+    daemon_client(&state).await.team_joined_library().await
+}
+
+/// Reads one joined team page, including its server-filtered sources.
+#[tauri::command]
+pub async fn team_joined_page(
+    state: tauri::State<'_, State>,
+    team_id: String,
+    page_id: String,
+) -> Result<wenlan_types::team_library::JoinedTeamPage, String> {
+    daemon_client(&state)
+        .await
+        .team_joined_page(&team_id, &page_id)
         .await
 }
 

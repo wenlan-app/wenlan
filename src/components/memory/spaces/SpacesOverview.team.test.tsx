@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import { makeSpace, renderOverview, labels, createQueryClient } from "./SpacesOverview.testUtils";
@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   createSpace: vi.fn(),
   teamLibraryCreateSpace: vi.fn(),
   teamLibrarySpaces: vi.fn(),
+  teamJoinedLibrary: vi.fn(),
 }));
 vi.mock("../../../lib/tauri", () => api);
 
@@ -26,6 +27,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await i18n.changeLanguage("en");
   api.listPages.mockResolvedValue([]);
+  api.teamJoinedLibrary.mockResolvedValue({ teams: [] });
   api.teamLibraryCreateSpace.mockResolvedValue({ result: "space", space: { id: "team-space", name: "Docs", restricted: false } });
   api.teamLibrarySpaces.mockResolvedValue([]);
   api.listSpaces.mockResolvedValue([
@@ -68,6 +70,59 @@ describe("SpacesOverview team groups", () => {
     renderOverview();
     await screen.findByText("Reading");
     expect(screen.queryByRole("heading", { name: "Private" })).not.toBeInTheDocument();
+  });
+
+  it("UX-TEAM-MEMBER-1: renders live team Spaces and published pages without Space actions", async () => {
+    const open = vi.fn();
+    api.listShares.mockResolvedValue([share("Product", { host: "https://team.example.com", team: { id: "t1", name: "Acme" } })]);
+    api.teamJoinedLibrary.mockResolvedValue({
+      teams: [{
+        team: { id: "t1", name: "Acme" },
+        library: {
+          state: "ready",
+          spaces: [{
+            space: { id: "library-roadmap", name: "Roadmap", restricted: false },
+            pages: [{ id: "page-1", title: "Launch plan", space: "Roadmap", published_by: null, published_at: null }],
+          }],
+        },
+      }],
+    });
+    renderOverview({ onOpenTeamPage: open });
+    const group = await screen.findByTestId("team-joined-library");
+    expect(within(group).getByRole("heading", { name: "Team · Acme" })).toBeInTheDocument();
+    expect(within(group).getByRole("heading", { name: "Roadmap" })).toBeInTheDocument();
+    fireEvent.click(within(group).getByRole("button", { name: "Launch plan" }));
+    expect(open).toHaveBeenCalledWith("t1", "page-1");
+    expect(within(group).queryByRole("button", { name: /Actions for|Rename|Delete|New/ })).not.toBeInTheDocument();
+  });
+
+  it("UX-TEAM-MEMBER-1: renders whole-team pages above team Spaces", async () => {
+    const open = vi.fn();
+    api.listShares.mockResolvedValue([]);
+    api.teamJoinedLibrary.mockResolvedValue({
+      teams: [{
+        team: { id: "t1", name: "Acme" },
+        library: {
+          state: "ready",
+          team_pages: [{ id: "team-page", title: "Team announcement", space: null, published_by: null, published_at: null }],
+          spaces: [],
+        },
+      }],
+    });
+    renderOverview({ onOpenTeamPage: open });
+    const group = await screen.findByTestId("team-joined-library");
+    expect(within(group).getByRole("heading", { name: "Whole team" })).toBeInTheDocument();
+    fireEvent.click(within(group).getByRole("button", { name: "Team announcement" }));
+    expect(open).toHaveBeenCalledWith("t1", "team-page");
+  });
+
+  it("shows Private when a joined team exists without legacy shares", async () => {
+    api.listShares.mockResolvedValue([]);
+    api.teamJoinedLibrary.mockResolvedValue({
+      teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [] } }],
+    });
+    renderOverview();
+    expect(await screen.findByRole("heading", { name: "Private" })).toBeInTheDocument();
   });
 
   it("UX-SHARE-4 creates a team-side Space with CreateSpace and does not create a private one", async () => {

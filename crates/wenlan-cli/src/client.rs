@@ -1794,6 +1794,15 @@ impl WenlanClient {
             .await
     }
 
+    /// `GET /api/team/joined/library`: best-effort live page counts after a
+    /// join. The app remains the authoritative read-through surface if this
+    /// optional follow-up cannot reach the team server.
+    pub async fn team_joined_library(
+        &self,
+    ) -> Result<wenlan_types::team_library::JoinedTeamLibraries> {
+        self.get_local_as_person("/api/team/joined/library").await
+    }
+
     pub(crate) async fn decide_project_rule_proposal(
         &self,
         space: &str,

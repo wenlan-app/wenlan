@@ -732,6 +732,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/team/my-tools/{id}` | main | no | not_applicable | `none` | — | receipt only: the AI tools left on that team, names and dates; never a key, no page text |
 | `POST` | `/api/team/spaces` | main | no | not_applicable | `none` | — | receipt only: counts of the first sync pass of the Space hosted for the team; page files go to the folder, not the response |
 | `POST` | `/api/team/library/terminal` | main | yes | automatic | `none` | `terminal` | The person-key-gated review echoes the caller's exact supplied draft and verifies original revisions without returning their stored content. |
+| `GET` | `/api/team/joined/library` | main | yes | automatic | `none` | `handle_joined_library` | JoinedTeamLibraries contains remote team page titles and publisher metadata; unreachable teams carry only a typed reason. |
+| `GET` | `/api/team/joined/{team_id}/pages/{page_id}` | main | yes | automatic | `none` | `handle_joined_page` | JoinedTeamPage contains the selected team page body and server-filtered sources; private citations carry no source text. |
 | `GET` | `/api/team/library/draft` | main | yes | automatic | `none` | `draft` | The person-key-gated draft contains the selected personal page or memory text and its reviewable cited personal sources. |
 | `GET` | `/api/team/library/spaces` | main | no | not_applicable | `none` | `spaces` | The person-key-gated read lists hosted team-library Spaces by their public names and group settings, without page text. |
 | `POST` | `/api/team/join` | main | no | not_applicable | `none` | — | status only: the team server's address, this member's id and name and the Space names they may use; no page text |

@@ -370,10 +370,11 @@ fn manifest_counts_match_the_spec() {
     // Personal-rule plans and history add seven local routes, and moving
     // existing page rules adds a preview and a dismissal. Listing and
     // deciding tool-file team edits add two more. The person-key-gated
-    // team-library draft and Spaces reads (host shares from the app) bring it to 437.
+    // team-library draft and Spaces reads (host shares from the app) bring it to 437;
+    // a member's joined-team library and page reads bring it to 439.
     assert_eq!(
         HTTP_READERS.len(),
-        437,
+        439,
         "registered (method, path, handler) triples"
     );
     // 61 tools with the read-only `list_skills` and `search_skills`; 63
@@ -387,7 +388,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        449, // +2: team-library draft and Spaces reads
+        451, // +2: team-library draft and Spaces reads; +2: joined-team library and page reads
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -395,7 +396,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        432, // +2: team-library draft and Spaces reads
+        434, // +2: team-library draft and Spaces reads; +2: joined-team library and page reads
         "main builder entries"
     );
     assert_eq!(
@@ -421,7 +422,8 @@ fn manifest_counts_match_the_spec() {
     // +1: POST `/api/team/library/terminal`. +3: the page rule preview, the
     // plan lookup and the review queue that can carry that preview.
     // +1: GET `/api/team/library/draft` (the personal page text under review).
-    assert_eq!(bearing, 114, "page-bearing HTTP routes");
+    // +2: a member's joined-team library (page titles) and page reads.
+    assert_eq!(bearing, 116, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -605,7 +607,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        427 // The two page rule move routes and the two shared-edit routes also have no page markers; +2 team-library draft and Spaces reads.
+        429 // The two page rule move routes and the two shared-edit routes also have no page markers; +2 team-library draft and Spaces reads; +2 joined-team reads.
     );
 }
 

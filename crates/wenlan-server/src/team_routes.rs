@@ -63,6 +63,9 @@ pub const OWNER_SHA256_ENV: &str = "WENLAN_TEAM_OWNER_SHA256";
 /// The name a server nobody sits at gives its owner until the owner's own
 /// Wenlan takes the owner link and says who they are.
 const OWNER_STAND_IN: &str = "Owner";
+const JOINED_ROUTE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(6);
+const JOINED_PAGE_BATCH_LIMIT: usize = 200;
+const JOINED_PAGE_HARD_LIMIT: usize = 10_000;
 
 fn env_value(name: &str) -> Option<String> {
     std::env::var(name)
@@ -122,6 +125,11 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/team/library/draft", get(library::draft))
         .route("/api/team/library/spaces", get(library::spaces))
         .route("/api/team/library/terminal", post(library::terminal))
+        .route("/api/team/joined/library", get(handle_joined_library))
+        .route(
+            "/api/team/joined/{team_id}/pages/{page_id}",
+            get(handle_joined_page),
+        )
         .route("/api/team/join", post(handle_join))
         .route("/api/team/start", post(handle_start_team))
         .route("/api/team/stop", post(handle_stop_team))
@@ -836,6 +844,285 @@ pub async fn handle_list_memberships(
     Ok(Json(
         blocking(|| shared_space::membership_infos_at(&shared_space::settings_path())).await?,
     ))
+}
+
+/// GET /api/team/joined/library — the member app's read-only view of every
+/// joined team's team library. Each team is isolated: the member key stays in
+/// the request to that team's own URL and never enters the returned payload.
+pub(crate) async fn handle_joined_library(
+    headers: HeaderMap,
+) -> crate::member_view::MemberResponse {
+    if crate::rulesync_routes::require_local_person(&headers).is_err() {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Only the person can read joined team pages.",
+        );
+    }
+    let teams = match joined(None).await {
+        Ok(teams) => teams,
+        Err(ServerError::ValidationError(_)) => Vec::new(),
+        Err(error) => return crate::member_view::MemberResponse::from_error(error),
+    };
+    let result =
+        futures::future::join_all(teams.into_iter().map(|(url, key, cached_team)| async move {
+            joined_library_for_team(url, key, cached_team).await
+        }))
+        .await;
+    crate::member_view::MemberResponse::json(
+        StatusCode::OK,
+        wenlan_types::team_library::JoinedTeamLibraries { teams: result },
+    )
+}
+
+/// GET /api/team/joined/{team_id}/pages/{page_id} — one read-only team page
+/// and the server-filtered citations that accompany it.
+pub(crate) async fn handle_joined_page(
+    headers: HeaderMap,
+    Path((team_id, page_id)): Path<(String, String)>,
+) -> crate::member_view::MemberResponse {
+    if crate::rulesync_routes::require_local_person(&headers).is_err() {
+        return crate::member_view::MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Only the person can read joined team pages.",
+        );
+    }
+    let teams = match joined(None).await {
+        Ok(teams) => teams,
+        Err(ServerError::ValidationError(_)) => Vec::new(),
+        Err(error) => return crate::member_view::MemberResponse::from_error(error),
+    };
+    let cached_team_matches = teams
+        .iter()
+        .any(|(_, _, team)| team.as_ref().is_some_and(|team| team.id == team_id));
+    let page = tokio::time::timeout(JOINED_ROUTE_DEADLINE, async {
+        futures::future::join_all(teams.into_iter().map(|(url, key, cached_team)| {
+            joined_page_for_team(url, key, cached_team, &team_id, &page_id)
+        }))
+        .await
+        .into_iter()
+        .flatten()
+        .next()
+    })
+    .await;
+    let page = match page {
+        Ok(page) => page,
+        Err(_) if cached_team_matches => {
+            Some(wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                reason: unreachable_library_reason("the request deadline expired"),
+            })
+        }
+        Err(_) => None,
+    };
+    match page {
+        Some(page) => crate::member_view::MemberResponse::json(StatusCode::OK, page),
+        None => crate::member_view::MemberResponse::problem(
+            StatusCode::NOT_FOUND,
+            "The team was not found.",
+        ),
+    }
+}
+
+async fn joined_library_for_team(
+    url: String,
+    key: String,
+    cached_team: Option<wenlan_types::team::TeamInfo>,
+) -> wenlan_types::team_library::JoinedTeamLibrary {
+    let fallback_team = cached_team.clone();
+    let state = tokio::time::timeout(JOINED_ROUTE_DEADLINE, async {
+        let (info, pages) = tokio::join!(
+            remote::library::<wenlan_types::team_library::TeamLibraryInfo>(&url, &key, ""),
+            joined_team_pages(&url, &key),
+        );
+        match (info, pages) {
+            (Ok(info), Ok((pages, truncated))) => (
+                Some(info.team.clone()),
+                team_joined_library_ready(&info, &pages, truncated),
+            ),
+            (Ok(info), Err(error)) => (
+                Some(info.team),
+                wenlan_types::team_library::JoinedTeamLibraryState::Unreachable {
+                    reason: unreachable_library_reason(&error),
+                },
+            ),
+            (Err(error), _) => (
+                fallback_team.clone(),
+                wenlan_types::team_library::JoinedTeamLibraryState::Unreachable {
+                    reason: unreachable_library_reason(&error),
+                },
+            ),
+        }
+    })
+    .await;
+    let (team, library) = match state {
+        Ok(result) => result,
+        Err(_) => (
+            fallback_team,
+            wenlan_types::team_library::JoinedTeamLibraryState::Unreachable {
+                reason: unreachable_library_reason("the request deadline expired"),
+            },
+        ),
+    };
+    wenlan_types::team_library::JoinedTeamLibrary { team, library }
+}
+
+async fn joined_team_pages(
+    url: &str,
+    key: &str,
+) -> Result<(Vec<wenlan_types::team_library::TeamItem>, bool), String> {
+    let mut pages = Vec::new();
+    let mut offset = 0;
+    loop {
+        let batch = remote::library::<wenlan_types::team_library::TeamPages>(
+            url,
+            key,
+            &format!("/pages?limit={JOINED_PAGE_BATCH_LIMIT}&offset={offset}"),
+        )
+        .await?;
+        let count = batch.pages.len();
+        let remaining = JOINED_PAGE_HARD_LIMIT.saturating_sub(pages.len());
+        pages.extend(batch.pages.into_iter().take(remaining));
+        if pages.len() >= JOINED_PAGE_HARD_LIMIT {
+            return Ok((pages, count >= JOINED_PAGE_BATCH_LIMIT));
+        }
+        if count < JOINED_PAGE_BATCH_LIMIT {
+            return Ok((pages, false));
+        }
+        offset += count;
+    }
+}
+
+async fn joined_page_for_team(
+    url: String,
+    key: String,
+    cached_team: Option<wenlan_types::team::TeamInfo>,
+    team_id: &str,
+    page_id: &str,
+) -> Option<wenlan_types::team_library::JoinedTeamPage> {
+    if cached_team.as_ref().is_some_and(|team| team.id != team_id) {
+        return None;
+    }
+    let info = match remote::library::<wenlan_types::team_library::TeamLibraryInfo>(&url, &key, "")
+        .await
+    {
+        Ok(info) if info.team.id == team_id => info,
+        Ok(_) => return None,
+        Err(error) if cached_team.as_ref().is_some_and(|team| team.id == team_id) => {
+            return Some(wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                reason: unreachable_library_reason(&error),
+            });
+        }
+        Err(_) => return None,
+    };
+    let encoded_page = remote::urlencoding_component(page_id).ok()?;
+    let page_path = format!("/pages/{encoded_page}");
+    let sources_path = format!("/pages/{encoded_page}/sources");
+    let (page, sources) = tokio::join!(
+        remote::library::<wenlan_types::team_library::TeamItem>(&url, &key, &page_path,),
+        remote::library::<wenlan_types::team_library::TeamPageSources>(&url, &key, &sources_path,),
+    );
+    let page = match page {
+        Ok(page) => page,
+        Err(error) => {
+            return Some(wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                reason: unreachable_library_reason(&error),
+            })
+        }
+    };
+    let mut sources = match sources {
+        Ok(sources) => sources,
+        Err(error) => {
+            return Some(wenlan_types::team_library::JoinedTeamPage::Unreachable {
+                reason: unreachable_library_reason(&error),
+            })
+        }
+    };
+    sources.sources = sources
+        .sources
+        .into_iter()
+        .map(|source| match source {
+            wenlan_types::team_library::TeamCitation::PrivateSource { .. } => {
+                wenlan_types::team_library::TeamCitation::PrivateSource {
+                    label: "private source".into(),
+                }
+            }
+            source => source,
+        })
+        .collect();
+    Some(wenlan_types::team_library::JoinedTeamPage::Ready {
+        page: Box::new(team_joined_page_read(&info, page)),
+        sources,
+    })
+}
+
+fn unreachable_library_reason(error: &str) -> String {
+    format!("can't reach the team server: {error}")
+}
+
+fn team_joined_library_ready(
+    info: &wenlan_types::team_library::TeamLibraryInfo,
+    pages: &[wenlan_types::team_library::TeamItem],
+    truncated: bool,
+) -> wenlan_types::team_library::JoinedTeamLibraryState {
+    let spaces = info
+        .spaces
+        .iter()
+        .map(|space| wenlan_types::team_library::TeamLibrarySpace {
+            space: space.clone(),
+            pages: pages
+                .iter()
+                .filter(|page| page.space_id.as_ref() == Some(&space.id))
+                .map(|page| team_page_summary(info, page))
+                .collect(),
+        })
+        .collect();
+    let team_pages = pages
+        .iter()
+        .filter(|page| page.space_id.is_none())
+        .map(|page| team_page_summary(info, page))
+        .collect();
+    wenlan_types::team_library::JoinedTeamLibraryState::Ready {
+        spaces,
+        team_pages,
+        truncated,
+    }
+}
+
+fn team_page_summary(
+    info: &wenlan_types::team_library::TeamLibraryInfo,
+    page: &wenlan_types::team_library::TeamItem,
+) -> wenlan_types::team_library::TeamPageSummary {
+    wenlan_types::team_library::TeamPageSummary {
+        id: page.item_id.clone(),
+        title: page.title.clone(),
+        space: page.space_id.as_ref().and_then(|id| {
+            info.spaces
+                .iter()
+                .find(|space| &space.id == id)
+                .map(|space| space.name.clone())
+        }),
+        published_by: page.publisher.clone(),
+        published_at: page.published_at.clone(),
+    }
+}
+
+fn team_joined_page_read(
+    info: &wenlan_types::team_library::TeamLibraryInfo,
+    page: wenlan_types::team_library::TeamItem,
+) -> wenlan_types::team_library::TeamPageRead {
+    wenlan_types::team_library::TeamPageRead {
+        id: page.item_id,
+        title: page.title,
+        body: page.body,
+        space: page.space_id.as_ref().and_then(|id| {
+            info.spaces
+                .iter()
+                .find(|space| &space.id == id)
+                .map(|space| space.name.clone())
+        }),
+        published_by: page.publisher,
+        published_at: page.published_at,
+        read_only: true,
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

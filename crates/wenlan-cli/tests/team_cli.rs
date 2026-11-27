@@ -13,9 +13,11 @@ const LINK: &str = "http://team.test:7879/join#wlt_abc";
 
 fn cli() -> Command {
     let mut command = Command::cargo_bin("wenlan").expect("wenlan binary built");
-    command.env("WENLAN_NO_AUTOSTART", "1");
-    command.env_remove("WENLAN_SESSION");
-    command.env_remove("CODEX_THREAD_ID");
+    command
+        .env("WENLAN_NO_AUTOSTART", "1")
+        .env_remove("WENLAN_AGENT_NAME")
+        .env_remove("WENLAN_SESSION")
+        .env_remove("CODEX_THREAD_ID");
     command
 }
 
@@ -139,6 +141,28 @@ fn me(spaces: serde_json::Value) -> serde_json::Value {
     })
 }
 
+fn joined_library() -> String {
+    json!({
+        "teams": [{
+            "team": { "id": "t1", "name": "Acme" },
+            "library": {
+                "state": "ready",
+                "spaces": [{
+                    "space": { "id": "roadmap", "name": "Roadmap", "restricted": false },
+                    "pages": [{
+                        "id": "page-1",
+                        "title": "Launch plan",
+                        "space": "Roadmap",
+                        "published_by": null,
+                        "published_at": null
+                    }]
+                }]
+            }
+        }]
+    })
+    .to_string()
+}
+
 fn space(name: &str) -> serde_json::Value {
     json!({
         "id": name, "name": name, "description": null, "suggested": false,
@@ -160,6 +184,31 @@ const COUNTS: &str = r#"{"exported":0,"applied":2,"conflicts":0,"skipped":0}"#;
 fn run(host: &str, args: &[&str]) -> (bool, String, String) {
     let output = cli()
         .env("WENLAN_HOST", host)
+        .args(["--format", "table"])
+        .args(args)
+        .output()
+        .expect("run wenlan");
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+fn scratch_person_key() -> tempfile::TempDir {
+    let data = tempfile::tempdir().expect("scratch data dir");
+    std::fs::write(
+        wenlan_types::person_key::path_in(data.path()),
+        "ab".repeat(32),
+    )
+    .expect("person key");
+    data
+}
+
+fn run_with_data(host: &str, data: &std::path::Path, args: &[&str]) -> (bool, String, String) {
+    let output = cli()
+        .env("WENLAN_HOST", host)
+        .env("WENLAN_DATA_DIR", data)
         .args(["--format", "table"])
         .args(args)
         .output()
@@ -415,6 +464,7 @@ fn remove_never_picks_between_two_people_with_one_name() {
 
 #[test]
 fn join_keeps_the_membership_and_syncs_every_open_space() {
+    let data = scratch_person_key();
     let spaces = json!([
         { "space": "Product", "access": "write" },
         { "space": "Notes", "access": "read" },
@@ -433,8 +483,13 @@ fn join_keeps_the_membership_and_syncs_every_open_space() {
             COUNTS.to_string(),
         ),
         ("POST /api/spaces/Notes/shared/sync", COUNTS.to_string()),
+        (
+            "GET /api/health",
+            json!({ "status": "ok", "data_root": data.path() }).to_string(),
+        ),
+        ("GET /api/team/joined/library", joined_library()),
     ]);
-    let (ok, stdout, stderr) = run(&host, &["team", "join", LINK]);
+    let (ok, stdout, stderr) = run_with_data(&host, data.path(), &["team", "join", LINK]);
     assert!(ok, "{stderr}");
     assert!(stdout.contains("Joined Acme as Amy."), "{stdout}");
     // The team's copy goes beside the person's own Space, never into it.
@@ -443,8 +498,13 @@ fn join_keeps_the_membership_and_syncs_every_open_space() {
         stdout.contains("Notes (read only): 2 pages taken"),
         "{stdout}"
     );
+    assert!(stdout.contains("Roadmap: 1 page"), "{stdout}");
+    assert!(
+        stdout.contains("Connect your AI tool too: `wenlan login"),
+        "{stdout}"
+    );
     let sent = served(&requests);
-    assert_eq!(sent.len(), 6, "{sent:?}");
+    assert_eq!(sent.len(), 8, "{sent:?}");
     assert_eq!(sent[1].0, "POST /api/team/membership");
     let sync: serde_json::Value = serde_json::from_str(&sent[4].1).unwrap();
     assert_eq!(sync["host"]["space"], "Product");
@@ -453,6 +513,7 @@ fn join_keeps_the_membership_and_syncs_every_open_space() {
 
 #[test]
 fn joining_again_reuses_the_space_that_already_syncs_with_the_team() {
+    let data = scratch_person_key();
     let spaces = json!([{ "space": "Product", "access": "write" }]);
     let (host, requests) = common::spawn_stub(vec![
         (
@@ -466,11 +527,102 @@ fn joining_again_reuses_the_space_that_already_syncs_with_the_team() {
             json!({ "shares": [share("Product")] }).to_string(),
         ),
         ("POST /api/spaces/Product/shared/sync", COUNTS.to_string()),
+        (
+            "GET /api/health",
+            json!({ "status": "ok", "data_root": data.path() }).to_string(),
+        ),
+        ("GET /api/team/joined/library", joined_library()),
     ]);
-    let (ok, stdout, stderr) = run(&host, &["team", "join", LINK]);
+    let (ok, stdout, stderr) = run_with_data(&host, data.path(), &["team", "join", LINK]);
     assert!(ok, "{stderr}");
     assert!(!stdout.contains("here as"), "{stdout}");
-    assert_eq!(served(&requests).len(), 5);
+    let sent = served(&requests);
+    assert_eq!(sent.len(), 7, "{sent:?}");
+}
+
+#[test]
+fn team_join_library_failure_still_sends_the_scratch_person_key() {
+    let data = tempfile::tempdir().expect("scratch data dir");
+    let key = "ab".repeat(32);
+    std::fs::write(wenlan_types::person_key::path_in(data.path()), &key).expect("person key");
+    let (host, requests) = common::spawn_stub(vec![
+        (
+            "POST /api/team/join",
+            json!({ "url": SERVER, "me": me(json!([])) }).to_string(),
+        ),
+        ("POST /api/team/membership", me(json!([])).to_string()),
+        ("GET /api/spaces", json!([]).to_string()),
+        ("GET /api/shared", json!({ "shares": [] }).to_string()),
+        (
+            "GET /api/health",
+            json!({ "data_root": data.path() }).to_string(),
+        ),
+        (
+            "GET /api/team/joined/library",
+            format!("AUTHFAIL x-wenlan-person-key {key}"),
+        ),
+    ]);
+    let output = cli()
+        .env("WENLAN_HOST", host)
+        .env("WENLAN_DATA_DIR", data.path())
+        .args(["--format", "table", "team", "join", LINK])
+        .output()
+        .expect("run wenlan");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "Published pages will show in the Wenlan app when the team server is reachable."
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Connect your AI tool too"), "{stdout}");
+    let sent = served(&requests);
+    assert!(
+        sent.iter().any(|(path, _)| path == "GET /api/health"),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter()
+            .any(|(path, _)| path == "GET /api/team/joined/library"),
+        "{sent:?}"
+    );
+}
+
+#[test]
+fn team_join_summary_includes_whole_team_library_pages() {
+    let data = scratch_person_key();
+    let library = json!({
+        "teams": [{
+            "team": { "id": "t1", "name": "Acme" },
+            "library": {
+                "state": "ready",
+                "team_pages": [{ "id": "p1", "title": "Announcement", "space": null, "published_by": null, "published_at": null }],
+                "spaces": []
+            }
+        }]
+    });
+    let (host, _requests) = common::spawn_stub(vec![
+        (
+            "POST /api/team/join",
+            json!({ "url": SERVER, "me": me(json!([])) }).to_string(),
+        ),
+        ("POST /api/team/membership", me(json!([])).to_string()),
+        ("GET /api/spaces", json!([]).to_string()),
+        ("GET /api/shared", json!({ "shares": [] }).to_string()),
+        (
+            "GET /api/health",
+            json!({ "status": "ok", "data_root": data.path() }).to_string(),
+        ),
+        ("GET /api/team/joined/library", library.to_string()),
+    ]);
+    let (ok, stdout, stderr) = run_with_data(&host, data.path(), &["team", "join", LINK]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("Whole team: 1 page"), "{stdout}");
 }
 
 #[test]

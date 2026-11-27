@@ -4,11 +4,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
+
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast }));
 import { JoinSharedDialog } from "./JoinSharedDialog";
 import { ShareDialog } from "./ShareDialog";
 import { groupTeamSpaces } from "./sharing";
 import { teamGroups } from "../team/TeamPage";
 import { StartTeamDialog } from "../team/StartTeamDialog";
+import { JOINED_TEAM_LIBRARY_QUERY_KEY, JoinedTeamLibraryGroups } from "../team/joinedLibrary";
 import {
   joinTeamSpace,
   listPages,
@@ -17,6 +21,7 @@ import {
   teamAddMember,
   teamLibraryCreateSpace,
   teamJoin,
+  teamJoinedLibrary,
   teamRememberMembership,
   teamSetEveryone,
   teamStart,
@@ -36,6 +41,7 @@ vi.mock("../../../lib/tauri", async () => {
     listPages: vi.fn(),
     listSpaces: vi.fn(),
     teamJoin: vi.fn(),
+    teamJoinedLibrary: vi.fn(),
     teamRememberMembership: vi.fn(),
     teamStart: vi.fn(),
     getProfile: vi.fn(),
@@ -97,6 +103,7 @@ beforeEach(async () => {
   vi.mocked(listPages).mockResolvedValue([]);
   vi.mocked(listSpaces).mockResolvedValue([]);
   vi.mocked(teamStatus).mockResolvedValue({ members: [], spaces: [], listening: null });
+  vi.mocked(teamJoinedLibrary).mockResolvedValue({ teams: [] });
   localStorage.clear();
 });
 afterEach(() => vi.clearAllMocks());
@@ -140,10 +147,67 @@ describe("JoinSharedDialog code mode", () => {
     expect(screen.queryByText(/Nothing is open to you yet/)).not.toBeInTheDocument();
     expect(screen.getByText("Roadmap")).toBeInTheDocument();
     expect(screen.getByText("Notes · Read only")).toBeInTheDocument();
-    expect(screen.getByText("Your AI tools read these from the team server. They don't show in this app yet.")).toBeInTheDocument();
+    expect(screen.getByText("Your AI tools read these from the team server. Pages show in this app right after you join.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
     await waitFor(() => expect(teamRememberMembership).toHaveBeenCalledWith(link));
     expect(joinTeamSpace).not.toHaveBeenCalled();
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const lastToast = toast.mock.calls[toast.mock.calls.length - 1]?.[0] as string;
+    expect(lastToast).not.toContain("team.example.com");
+    expect(lastToast).toContain("Connect your AI tool from its setup screen too.");
+  });
+
+  it("counts whole-team library pages in the success toast", async () => {
+    vi.mocked(teamJoin).mockResolvedValue({
+      url: "https://team.example.com",
+      me: { member_id: "me", name: "Bo", team: { id: "t1", name: "Acme" }, spaces: [] },
+    });
+    vi.mocked(teamJoinedLibrary).mockResolvedValue({
+      teams: [{
+        team: { id: "t1", name: "Acme" },
+        library: {
+          state: "ready",
+          team_pages: [{ id: "p1", title: "Announcement", space: null, published_by: null, published_at: null }],
+          spaces: [],
+        },
+      }],
+    });
+    wrap(<JoinSharedDialog onClose={() => undefined} />);
+    await userEvent.click(screen.getByLabelText("Invite link"));
+    await userEvent.paste("https://team.example.com/join#wlt_whole");
+    await screen.findByRole("heading", { name: "Join Acme" });
+    await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const lastToast = toast.mock.calls[toast.mock.calls.length - 1]?.[0] as string;
+    expect(lastToast).toContain("Whole team · 1 page");
+    expect(lastToast).not.toContain("no published pages yet");
+  });
+
+  it("UX-TEAM-MEMBER-4: invalidates the joined-library query after a successful join", async () => {
+    vi.mocked(teamJoin).mockResolvedValue({
+      url: "https://team.example.com",
+      me: { member_id: "me", name: "Dee", team: { id: "t1", name: "Acme" }, spaces: [] },
+    });
+    let libraryReads = 0;
+    vi.mocked(teamJoinedLibrary).mockImplementation(async () => {
+      libraryReads += 1;
+      return libraryReads === 1
+        ? { teams: [] }
+        : { teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", spaces: [{ space: { id: "roadmap", name: "Roadmap", restricted: false }, pages: [{ id: "p1", title: "Launch plan", space: "Roadmap", published_by: null, published_at: null }] }] } }] };
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    render(<QueryClientProvider client={client}>
+      <JoinSharedDialog onClose={() => undefined} />
+      <JoinedTeamLibraryGroups />
+    </QueryClientProvider>);
+    const link = "https://team.example.com/join#wlt_refetch";
+    await userEvent.click(screen.getByLabelText("Invite link"));
+    await userEvent.paste(link);
+    await screen.findByRole("heading", { name: "Join Acme" });
+    await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: JOINED_TEAM_LIBRARY_QUERY_KEY }));
+    expect(await screen.findByRole("button", { name: "Launch plan" })).toBeInTheDocument();
   });
 
   it("puts a team Space beside a personal one of the same name, never into it", async () => {

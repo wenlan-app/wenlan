@@ -10,9 +10,13 @@ Bo's Wenlan app  ──┼── team listener ──┤   (its own routes stay 
 Cy's AI tool     ──┘   /team/v1, /mcp  └── team-spaces/<Space>/
 ```
 
-- **Desktop app members** keep their own copy of the Space. Every ~30 seconds
-  their Wenlan takes the team's new page versions from the server and sends
-  their own. It works offline and catches up later.
+- **Legacy shared-Space members** keep a local copy. Every ~30 seconds their
+  Wenlan exchanges page versions with the server; it works offline and catches
+  up later. This is the old writable-copy workflow.
+- **Team-library members** read published pages live from the team server. They
+  see those pages in their app right after joining; they do not wait for a sync
+  loop or keep a writable copy locally. The library is read-only for pages;
+  Rules proposals still go through their separate route.
 - **AI-tool-only members** (no Wenlan installed) open their invite link in a
   browser. It shows the server address and setup for Claude Code, Codex and
   Cursor. What their AI tool changes is recorded as theirs ("Cy's AI tool").
@@ -36,16 +40,17 @@ It serves only:
 | `GET /team/v1/me` | who the key belongs to and their Spaces |
 | `/team/v1/admin…` | the owner only (403 for anyone else): the team's people, name, invites and new Spaces, for an owner who manages a server nobody sits at from their own computer |
 | `GET /team/v1/spaces/{space}/files`, `…/file?path=` | the Space's page versions |
-| `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | the member's own new version |
+| `PUT /team/v1/spaces/{space}/versions/{page}/{sha}.wlv` | refused for members once the team library is on; Rules proposals still go through |
 | `/mcp`, `/mcp/{space}` | MCP for AI tools, pinned to that Space |
 | `/app`, `/auth/…`, `/team/v1/account/…` | with sign-in on (see *Sign in with Google or GitHub*): the team's pages in a browser, signing in, a member's own AI tools |
 
 Every request except `/health`, `/join` and signing in needs a member key
 (`Authorization: Bearer <key>`) or, in a browser, a signed-in session.
-A member can only see the Spaces given to them, can only send versions
-written as themselves, and cannot send anything to a Space they may only
-read. The daemon's own routes (settings, other Spaces, memories, shutdown)
-are never served on the team listener.
+A member can only see the Spaces given to them and can read the published pages
+the team library opens to them. Page uploads through the legacy versions route
+are refused once the team library is on; Rules proposals still go through.
+The daemon's own routes (settings, other Spaces, memories, shutdown) are never
+served on the team listener.
 
 **Removing a member** stops their key at once. Copies of pages already on
 their computer stay there; no sync system can take those back.
@@ -180,8 +185,8 @@ need a person:
   With the compose file: `docker compose pull && docker compose up -d`.
   The team, its people and pages live in the `wenlan-data` volume and stay.
 - **Backups.** Everything is in the `wenlan-data` volume on that box. Back it
-  up with the host's own snapshots, or copy the volume. Each member's
-  computer also keeps a full copy of the Spaces open to them.
+  up with the host's own snapshots, or copy the volume. Legacy shared
+  Spaces may also have local member copies; live team-library pages do not.
 
 ### Going back to an older Wenlan
 
@@ -377,11 +382,12 @@ gets a new invite link to send them, so they can start again.
 ## Join
 
 - **Desktop app**: in Settings › Team, choose "Join with an invite link" and paste it:
-  one "Join Acme" joins every Space opened to you, and Spaces opened to you
-  later follow by themselves. From a terminal,
-  `wenlan team join <invite link>` does the same: every Space open to you is
-  synced to this computer. A Space of your own with the same name is left
-  alone, and the team's copy goes beside it as `Product (Acme)`.
+  one "Join Acme" joins every legacy shared Space opened to you, and Spaces
+  opened to you later follow by themselves. Team-library pages are read live
+  in the app right after joining; they are not copied here. From a terminal,
+  `wenlan team join <invite link>` likewise syncs only legacy shared Spaces.
+  A Space of your own with the same name is left alone, and the team's copy
+  goes beside it as `Product (Acme)`.
   `wenlan team join <invite link> --list` only shows what the link opens,
   `--server-space Product --as <name>` takes one Space under another name,
   `wenlan team status` shows the teams this computer joined, and

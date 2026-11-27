@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   confirmSpace: vi.fn(),
   reorderSpace: vi.fn(),
   toggleSpaceStarred: vi.fn(),
+  teamJoinedLibrary: vi.fn(),
 }));
 
 vi.mock("../../../lib/tauri", () => api);

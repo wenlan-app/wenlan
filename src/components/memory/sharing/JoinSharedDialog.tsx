@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   createSpace,
@@ -13,6 +14,7 @@ import {
   sharePage,
   shareSpace,
   teamJoin,
+  teamJoinedLibrary,
   teamRememberMembership,
   type SharedFolder,
   type SharedKind,
@@ -21,6 +23,7 @@ import {
 import { FolderIcon } from "./ShareDialog";
 import { SHARES_KEY, shortFolder, teamLabel, useShares } from "./sharing";
 import { TEAM_KEY, hostName } from "./team";
+import { JOINED_TEAM_LIBRARY_QUERY_KEY } from "../team/joinedLibrary";
 import "./sharing.css";
 
 type JoinSharedDialogProps = {
@@ -142,7 +145,24 @@ export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinS
         await joinTeamSpace(local, checked.code, entry.space);
         joined.push(local);
       }
+      const liveLibrary = await teamJoinedLibrary().catch(() => null);
       await refreshAfterJoin();
+      await queryClient.invalidateQueries({ queryKey: JOINED_TEAM_LIBRARY_QUERY_KEY });
+      const teamId = checked.response.me.team?.id;
+      const joinedTeam = liveLibrary?.teams.find((entry) => entry.team?.id === teamId);
+      const summary = joinedTeam?.library.state === "ready"
+        ? [
+            joinedTeam.library.team_pages?.length
+              ? t("team.join.wholeTeamPages", { count: joinedTeam.library.team_pages.length })
+              : null,
+            ...joinedTeam.library.spaces
+              .filter((space) => space.pages.length > 0)
+              .map((space) => t("team.join.pagesInSpace", { space: space.space.name, count: space.pages.length })),
+          ].filter((part) => Boolean(part)).join(", ") || t("team.join.noPublishedPages")
+        : null;
+      toast(summary
+        ? t("team.join.success", { team: joiningTeam, spaces: summary })
+        : t("team.join.successUnavailable", { team: joiningTeam }));
       onClose();
       onJoined?.("team", checked.response.me.team?.id ?? checked.response.url);
     } catch (caught) {

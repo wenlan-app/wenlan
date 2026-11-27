@@ -3,7 +3,7 @@
 
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::handler::Handler;
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::MethodRouter;
 use axum::Json;
@@ -24,6 +24,10 @@ struct Typed;
 
 impl MemberResponse {
     fn new(response: Response) -> Self {
+        let mut response = response;
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         Self(response)
     }
 
@@ -337,6 +341,12 @@ member_bodies!(
     wenlan_types::team_library::TeamBrief,
     wenlan_types::team_library::TeamLibraryInfo,
     wenlan_types::team_library::TeamGroup,
+    wenlan_types::team_library::JoinedTeamLibraries,
+    wenlan_types::team_library::JoinedTeamPage,
+    wenlan_types::team_library::TeamPageRead,
+    wenlan_types::team_library::TeamPageSummary,
+    wenlan_types::team_library::TeamLibrarySpace,
+    wenlan_types::team_library::JoinedTeamLibraryState,
     wenlan_types::team_library::TeamPublicationPreview,
     wenlan_types::team_library::TeamPublicationReceipt,
     wenlan_types::team_library::TeamToolKeyReceipt,

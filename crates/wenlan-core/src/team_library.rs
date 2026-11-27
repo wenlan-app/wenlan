@@ -65,6 +65,11 @@ struct Manifest {
     records: BTreeMap<String, Vec<Record>>,
     retired: BTreeMap<String, Tombstone>,
     receipts: BTreeMap<String, Receipt>,
+    /// Publication timestamps are wire metadata, kept outside persisted
+    /// TeamItem records so older readers with deny_unknown_fields remain able
+    /// to open this manifest.
+    #[serde(default)]
+    published_at: BTreeMap<String, String>,
 }
 
 impl Default for Manifest {
@@ -77,12 +82,14 @@ impl Default for Manifest {
             records: BTreeMap::new(),
             retired: BTreeMap::new(),
             receipts: BTreeMap::new(),
+            published_at: BTreeMap::new(),
         }
     }
 }
 
 #[derive(Deserialize, Serialize)]
 struct Record {
+    #[serde(with = "persisted_team_item")]
     item: TeamItem,
     brief: bool,
     private_source: bool,
@@ -92,6 +99,78 @@ struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     legacy_origin: Option<team::LegacyHeadProof>,
     legacy_file: Option<LegacyFile>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedTeamItem {
+    team_id: String,
+    item_id: String,
+    kind: TeamItemKind,
+    revision: i64,
+    space_id: Option<String>,
+    title: String,
+    body: String,
+    contributor: Option<TeamPerson>,
+    authorship: Option<TeamAuthorship>,
+    publisher: Option<TeamPerson>,
+    last_editor: Option<TeamPerson>,
+}
+
+impl From<&TeamItem> for PersistedTeamItem {
+    fn from(item: &TeamItem) -> Self {
+        Self {
+            team_id: item.team_id.clone(),
+            item_id: item.item_id.clone(),
+            kind: item.kind,
+            revision: item.revision,
+            space_id: item.space_id.clone(),
+            title: item.title.clone(),
+            body: item.body.clone(),
+            contributor: item.contributor.clone(),
+            authorship: item.authorship,
+            publisher: item.publisher.clone(),
+            last_editor: item.last_editor.clone(),
+        }
+    }
+}
+
+impl From<PersistedTeamItem> for TeamItem {
+    fn from(item: PersistedTeamItem) -> Self {
+        Self {
+            team_id: item.team_id,
+            item_id: item.item_id,
+            kind: item.kind,
+            revision: item.revision,
+            space_id: item.space_id,
+            title: item.title,
+            body: item.body,
+            contributor: item.contributor,
+            authorship: item.authorship,
+            publisher: item.publisher,
+            last_editor: item.last_editor,
+            published_at: None,
+        }
+    }
+}
+
+mod persisted_team_item {
+    use super::{PersistedTeamItem, TeamItem};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(item: &TeamItem, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        PersistedTeamItem::from(item).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<TeamItem, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        PersistedTeamItem::deserialize(deserializer).map(Into::into)
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -285,7 +364,20 @@ impl Data {
         }
     }
 
-    fn save(&self) -> Result<()> {
+    fn save(&mut self) -> Result<()> {
+        self.manifest.published_at = self
+            .manifest
+            .records
+            .values()
+            .flatten()
+            .filter_map(|record| {
+                record
+                    .item
+                    .published_at
+                    .as_ref()
+                    .map(|published_at| (record.item.item_id.clone(), published_at.clone()))
+            })
+            .collect();
         let dir = self
             .path
             .parent()
@@ -442,11 +534,15 @@ impl Library {
             .ok_or(LibraryError::Absent)?;
         let parent = self.team_path.parent().ok_or(LibraryError::Absent)?;
         let path = parent.join("teams").join(&info.id).join("library.json");
-        let manifest: Manifest = match std::fs::read(&path) {
+        let mut manifest: Manifest = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(WenlanError::from)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => Manifest::default(),
             Err(e) => return Err(e.into()),
         };
+        let publication_times = manifest.published_at.clone();
+        for record in manifest.records.values_mut().flatten() {
+            record.item.published_at = publication_times.get(&record.item.item_id).cloned();
+        }
         if manifest.format != 1 {
             return Err(LibraryError::Invalid("Unsupported team library format."));
         }
@@ -605,6 +701,10 @@ impl Library {
                 .clone_from(&previous.item.contributor);
             record.item.publisher.clone_from(&previous.item.publisher);
             record.citations.clone_from(&previous.citations);
+            record
+                .item
+                .published_at
+                .clone_from(&previous.item.published_at);
             record.private_source |= previous.private_source;
             record.migrated_page = previous.migrated_page;
             record.legacy_origin.clone_from(&previous.legacy_origin);
@@ -801,6 +901,7 @@ fn new_item(
         authorship: Some(TeamAuthorship::Human),
         publisher: Some(actor.clone()),
         last_editor: Some(actor.clone()),
+        published_at: Some(chrono::Utc::now().to_rfc3339()),
     }
 }
 
@@ -1114,6 +1215,124 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    struct BaseManifest {
+        format: u32,
+        groups: BTreeMap<String, serde_json::Value>,
+        migrated: BTreeSet<String>,
+        #[serde(default)]
+        legacy_pages: BTreeMap<String, BTreeSet<String>>,
+        records: BTreeMap<String, Vec<BaseRecord>>,
+        retired: BTreeMap<String, serde_json::Value>,
+        receipts: BTreeMap<String, serde_json::Value>,
+    }
+
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    struct BaseRecord {
+        item: BaseTeamItem,
+        brief: bool,
+        private_source: bool,
+        citations: Vec<BaseCitationRef>,
+        #[serde(default)]
+        migrated_page: bool,
+        #[serde(default)]
+        legacy_origin: Option<serde_json::Value>,
+        legacy_file: Option<serde_json::Value>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct BaseTeamItem {
+        team_id: String,
+        item_id: String,
+        kind: TeamItemKind,
+        revision: i64,
+        space_id: Option<String>,
+        title: String,
+        body: String,
+        contributor: Option<TeamPerson>,
+        authorship: Option<TeamAuthorship>,
+        publisher: Option<TeamPerson>,
+        last_editor: Option<TeamPerson>,
+    }
+
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    struct BaseCitationRef {
+        id: String,
+        revision: i64,
+    }
+
+    #[test]
+    fn published_at_is_stored_outside_items_for_base_manifest_readers() {
+        let item = TeamItem {
+            team_id: "team".into(),
+            item_id: "page".into(),
+            kind: TeamItemKind::Page,
+            revision: 1,
+            space_id: None,
+            title: "Launch".into(),
+            body: "Friday".into(),
+            contributor: None,
+            authorship: Some(TeamAuthorship::Human),
+            publisher: None,
+            last_editor: None,
+            published_at: Some("2026-11-26T12:00:00Z".into()),
+        };
+        let manifest = Manifest {
+            format: 1,
+            groups: BTreeMap::new(),
+            migrated: BTreeSet::new(),
+            legacy_pages: BTreeMap::new(),
+            records: BTreeMap::from([(
+                "page".into(),
+                vec![Record {
+                    item,
+                    brief: false,
+                    private_source: false,
+                    citations: Vec::new(),
+                    migrated_page: false,
+                    legacy_origin: None,
+                    legacy_file: None,
+                }],
+            )]),
+            retired: BTreeMap::new(),
+            receipts: BTreeMap::new(),
+            published_at: BTreeMap::new(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let mut data = Data {
+            file: TeamFile::default(),
+            info: TeamInfo {
+                id: "team".into(),
+                name: Some("Acme".into()),
+            },
+            path,
+            manifest,
+        };
+        data.save().unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&data.path).unwrap()).unwrap();
+        assert!(json["records"]["page"][0]["item"]
+            .get("published_at")
+            .is_none());
+        assert_eq!(json["published_at"]["page"], "2026-11-26T12:00:00Z");
+        let base: BaseManifest = serde_json::from_value(json).unwrap();
+        assert_eq!(base.format, 1);
+        assert!(base.groups.is_empty());
+        assert!(base.migrated.is_empty());
+        assert!(base.legacy_pages.is_empty());
+        assert!(base.retired.is_empty());
+        assert!(base.receipts.is_empty());
+        assert_eq!(base.records["page"].len(), 1);
+        assert_eq!(base.records["page"][0].item.item_id, "page");
+    }
 
     #[test]
     fn create_group_reuses_the_same_library_space_but_rejects_collisions() {
