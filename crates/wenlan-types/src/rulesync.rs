@@ -602,3 +602,6 @@ pub struct ProjectTeamRulesRequest {
 pub struct SharedRulesProposalRequest {
     pub markdown: String,
 }
+/// A confirmed shared edit is based on a superseded approved revision.
+pub const SHARED_EDIT_STALE_REVISION_CODE: &str = "shared_edit_stale_revision";
+pub const SHARED_EDIT_STALE_REVISION_MESSAGE: &str = "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.";

@@ -104,7 +104,13 @@ pub(crate) fn clear_refused_receipts(data: &Path, proposal_ids: &[String]) -> Re
             continue;
         }
         let path = Path::new("checkouts").join(entry.file_name());
-        let seen = root.read(&path, false)?;
+        let seen = match root.read(&path, false) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("[rulesync] skipping unreadable checkout receipt during proposal refusal: {}: {error:#}", path.display());
+                continue;
+            }
+        };
         let mut checkout = match text(&seen).and_then(|source| read_checkout(source.as_bytes())) {
             Ok(checkout) => checkout,
             Err(error) => {
@@ -751,7 +757,7 @@ impl Job<'_> {
                         ) {
                             Ok(rulesync_layers::SharedReview::NeedsConfirm) => {
                                 pending_review.insert(path.clone());
-                                result.block(Code::SharedRuleNeedsConfirm, format!("{}: A team or project rule edit stays only in this file until you send it. Run `wenlan rules shared-edits` in your own terminal to send or decline it.", path.display()));
+                                result.block(Code::SharedRuleNeedsConfirm, format!("{}: This edit is waiting for you to confirm it. Run `wenlan rules shared-edits` in your own terminal to send or decline it.", path.display()));
                             }
                             Ok(rulesync_layers::SharedReview::Pending) => {
                                 pending_review.insert(path.clone());
@@ -849,7 +855,7 @@ impl Job<'_> {
                         mine.body,
                         theirs.body,
                     )
-                    .context("The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.")?;
+                    .context(wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE)?;
                     let rebased = rulesync_layers::replace_block_body(new_text, key, &merged)?;
                     let updated = with_bytes(current, rebased.into_bytes());
                     ensure!(
@@ -1591,17 +1597,22 @@ mod tests {
 
     #[test]
     fn rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it() {
-        checkout_hand_edit(false, false);
+        checkout_hand_edit(false, false, false);
     }
 
     #[test]
     fn rulesync_checkout_waiting_edit_survives_new_revision() {
-        checkout_hand_edit(true, false);
+        checkout_hand_edit(true, false, false);
     }
 
     #[test]
     fn rulesync_checkout_local_revocation_survives_a_render_failure() {
-        checkout_hand_edit(false, true);
+        checkout_hand_edit(false, true, false);
+    }
+
+    #[test]
+    fn rulesync_checkout_refused_edit_can_be_declined_after_receipt() {
+        checkout_hand_edit(false, false, true);
     }
 
     #[test]
@@ -1723,7 +1734,7 @@ mod tests {
         }
     }
 
-    fn checkout_hand_edit(new_revision: bool, fail_revoked_render: bool) {
+    fn checkout_hand_edit(new_revision: bool, fail_revoked_render: bool, refusal: bool) {
         use crate::rulesync_layers::tests::{
             hosted_fixture, render_fixture_section, APPROVED, PROJECT, REMOTE,
         };
@@ -1833,6 +1844,13 @@ mod tests {
             assert_eq!(fs::read_to_string(&file).unwrap(), edited);
             assert!(report.proposals.is_empty());
             assert_eq!(report.blocked_codes, [Code::SharedRuleNeedsConfirm.into()]);
+            assert!(
+                report
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains("This edit is waiting for you to confirm it.")),
+                "{report:?}"
+            );
             assert!(pending().is_empty());
         }
         let answers = crate::rulesync_shared_answers::read(&setup.data).unwrap();
@@ -1859,7 +1877,7 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.")
+                matches!(error, crate::error::ServerError::Structured { status, body } if status == axum::http::StatusCode::CONFLICT && body["code"] == wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE)
             );
             assert_eq!(fs::read_to_string(&file).unwrap(), edited);
             let background = sync(false);
@@ -1889,10 +1907,65 @@ mod tests {
         crate::rulesync_routes::decide_shared_edit_at(
             &setup,
             &settings,
-            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
+            wenlan_types::rulesync::SharedEditDecisionRequest {
+                id: id.clone(),
+                send: true,
+            },
         )
         .unwrap();
         let [proposal]: [_; 1] = pending().try_into().unwrap();
+        if refusal {
+            let background = sync(false);
+            assert!(background
+                .blocked_codes
+                .contains(&Code::SharedRulePending.into()));
+            let malformed = setup
+                .data
+                .join("checkouts")
+                .join(format!("{}.json", "0".repeat(64)));
+            fs::write(&malformed, b"{}").unwrap();
+            let queued = crate::rulesync_shared_answers::read(&setup.data)
+                .unwrap()
+                .sent_edits[&id]
+                .proposal_path
+                .clone();
+            let state = root.read(state_path, false).unwrap();
+            let receipt = read_checkout(text(&state).unwrap().as_bytes()).unwrap();
+            assert!(receipt
+                .shared_rule_proposals
+                .values()
+                .any(|items| !items.is_empty()));
+            crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
+                &setup,
+                &settings,
+                std::slice::from_ref(&proposal.id),
+            )
+            .unwrap();
+            assert_eq!(fs::read(&malformed).unwrap(), b"{}");
+            assert!(!queued.exists());
+            assert!(crate::rulesync_shared_answers::read(&setup.data)
+                .unwrap()
+                .waiting
+                .contains_key(&id));
+            let state = root.read(state_path, false).unwrap();
+            assert!(read_checkout(text(&state).unwrap().as_bytes())
+                .unwrap()
+                .shared_rule_proposals
+                .is_empty());
+            crate::rulesync_routes::decide_shared_edit_at(
+                &setup,
+                &settings,
+                wenlan_types::rulesync::SharedEditDecisionRequest { id, send: false },
+            )
+            .unwrap();
+            let report = sync(true);
+            assert_eq!(
+                fs::read_to_string(&file).unwrap(),
+                final_approved,
+                "{report:?}"
+            );
+            return;
+        }
         assert_eq!(
             proposal.markdown,
             if new_revision {

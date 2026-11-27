@@ -412,7 +412,16 @@ pub(crate) fn review_edits(
     home: &Path,
 ) -> Result<SharedReview> {
     let mut answers = refresh_answers(_settings, data, home)?;
-    receipts.retain(|key, _| edits.iter().any(|(changed, _)| *changed == key));
+    receipts.retain(|key, receipt| {
+        edits.iter().any(|(changed, _)| *changed == key)
+            && (answers
+                .sent_edits
+                .values()
+                .any(|sent| sent.proposal == receipt.proposal)
+                || accessible
+                    .get(key)
+                    .is_some_and(|layer| layer.proposal_decisions.contains_key(&receipt.proposal)))
+    });
     let mut pending = false;
     let mut rejected = false;
     let mut needs_confirm = false;

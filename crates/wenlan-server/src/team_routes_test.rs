@@ -232,6 +232,7 @@ async fn sync_hosted_test_folder(
             knowledge_path: None,
             member_id: None,
             host: None,
+            rules_edit_proposals: &[],
         },
     )
     .await

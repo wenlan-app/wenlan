@@ -424,6 +424,7 @@ pub(super) async fn push(
     folder: &Path,
     member: &str,
     listed: &TeamFileList,
+    rules_edit_proposals: &[String],
 ) -> Result<u32, SyncError> {
     if listed.access == TeamAccess::Read && listed.rules.is_none() {
         return Ok(0);
@@ -477,11 +478,14 @@ pub(super) async fn push(
         })
         .collect();
     let rules_page = listed.rules.as_ref().map(|rules| rules.page_id.clone());
+    let rules_edit_proposals: HashSet<&str> =
+        rules_edit_proposals.iter().map(String::as_str).collect();
     let sent: Vec<Result<(), SyncError>> = futures::stream::iter(missing)
         .map(|(path, page, local)| {
             let client = client.clone();
             let url = url.clone();
             let rules_page = rules_page.clone();
+            let rules_edit_proposals = &rules_edit_proposals;
             async move {
                 let bytes = std::fs::read(&local).map_err(|error| error.to_string())?;
                 if bytes.len() > MAX_VERSION_BYTES {
@@ -512,7 +516,9 @@ pub(super) async fn push(
                     if proposal_response_error(
                         path.split('/').nth(2) == Some(version::PROPOSALS_DIR)
                             && rulesync_team::is_master_page(&page)
-                            && rules_page.as_deref() == Some(page.as_str()),
+                            && rules_page.as_deref() == Some(page.as_str())
+                            && version::version_sha(&name)
+                                .is_some_and(|id| rules_edit_proposals.contains(id)),
                         status,
                         &body,
                     ) {
@@ -535,6 +541,13 @@ pub(super) async fn push(
         .collect()
         .await;
     let count = sent.len() as u32;
+    if let Some(error) = upload_failure(sent) {
+        return Err(error);
+    }
+    Ok(count)
+}
+
+fn upload_failure(sent: Vec<Result<(), SyncError>>) -> Option<SyncError> {
     let mut refused = Vec::new();
     let mut other = Vec::new();
     for error in sent.into_iter().filter_map(Result::err) {
@@ -543,15 +556,18 @@ pub(super) async fn push(
             error => other.push(error),
         }
     }
+    if let Some(index) = other
+        .iter()
+        .position(|error| matches!(error, SyncError::Revoked(_)))
+    {
+        return Some(other.swap_remove(index));
+    }
     if !refused.is_empty() {
         refused.sort();
         refused.dedup();
-        return Err(SyncError::OutdatedHost(refused));
+        return Some(SyncError::OutdatedHost(refused));
     }
-    if let Some(error) = other.into_iter().max_by_key(SyncError::priority) {
-        return Err(error);
-    }
-    Ok(count)
+    other.into_iter().max_by_key(SyncError::priority)
 }
 
 /// This member's version files in the copy: (path as the server lists it,
@@ -676,10 +692,79 @@ mod tests {
             folder,
             member,
             &listed,
+            &[],
         )
         .await;
         host.await.unwrap();
         assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn page_path_rules_proposal_422_does_not_pause_without_a_sent_edit() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use wenlan_types::team::{TeamInfo, TeamRulesManifest};
+        let scratch = tempfile::tempdir().unwrap();
+        let page = format!("team-rules-{}", "a".repeat(64));
+        let (id, _) = version::write_file(
+            scratch.path(),
+            "member",
+            version::PROPOSALS_DIR,
+            &page,
+            "page path proposal",
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requested_page = page.clone();
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            let bytes = stream.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..bytes])
+                .contains(&format!("/versions/{requested_page}/{id}.wlv")));
+            stream.write_all(b"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let listed = TeamFileList {
+            access: TeamAccess::Read,
+            files: Vec::new(),
+            deleted_pages: Vec::new(),
+            refused_changes: Vec::new(),
+            rules: Some(TeamRulesManifest {
+                team: TeamInfo {
+                    id: "team".into(),
+                    name: None,
+                },
+                page_id: page,
+                file: String::new(),
+                project: None,
+                skills: Vec::new(),
+                proposal_decisions: Default::default(),
+            }),
+        };
+        let result = push(
+            &HostLink {
+                key: "fake-key".into(),
+                url,
+                space: "Team".into(),
+                space_id: None,
+            },
+            scratch.path(),
+            "member",
+            &listed,
+            &[],
+        )
+        .await;
+        host.await.unwrap();
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[test]
+    fn revoked_key_wins_over_a_concurrent_rules_refusal() {
+        let sent = vec![
+            Err(SyncError::OutdatedHost(vec!["a".repeat(64)])),
+            Err(SyncError::Revoked("the key no longer works".into())),
+        ];
+        assert!(matches!(upload_failure(sent), Some(SyncError::Revoked(_))));
     }
 
     #[test]
