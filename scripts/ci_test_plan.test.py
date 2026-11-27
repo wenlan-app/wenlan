@@ -1048,6 +1048,24 @@ class NarrowOwnerTests(unittest.TestCase):
         self.assertTrue(outputs["rust-ci-required"])
         self.assertFalse(outputs["canonical-acceptance-required"])
 
+    def test_rulesync_real_renderer_script_selects_only_its_list_guard(self) -> None:
+        plan = plan_for("scripts/rulesync-real-renderer-tests.sh")
+
+        self.assertEqual(plan["mode"], "differential")
+        self.assertEqual(
+            plan["workspace_lib"],
+            {
+                "mode": "filterset",
+                "packages": ["wenlan-core"],
+                "filterset": (
+                    "package(wenlan-core) & test(/^drift_guard::rulesync_real_renderer_test::"
+                    "ci_runs_every_portable_real_renderer_test$/)"
+                ),
+            },
+        )
+        self.assertEqual(plan["cli_server_integration"], {"mode": "skip"})
+        self.assertFalse(required_suite_outputs(plan)["canonical-acceptance-required"])
+
     def test_removed_m5_reader_sweep_fails_closed_to_every_suite(self) -> None:
         plan = plan_for(M5_READER_PATHS[0], existing_paths=set())
 

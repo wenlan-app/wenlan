@@ -66,6 +66,7 @@ jobs:
       workspace-platform: ${{ steps.filter.outputs.workspace-platform }}
       macos-archive-contract: ${{ steps.filter.outputs.macos-archive-contract }}
       runtime-image: ${{ steps.filter.outputs.runtime-image }}
+      rulesync-real: ${{ steps.filter.outputs.rulesync-real }}
       trusted-release-candidate: ${{ steps.release-candidate-trust.outputs.trusted-release-candidate }}
       # Compatibility routing output: both proofs bind the immutable release
       # tree. Only release-proof may produce a main promotion receipt below.
@@ -991,6 +992,17 @@ jobs:
               - 'scripts/verify-release-runtime-image.py'
               - 'scripts/verify-release-runtime-image.test.py'
               - 'scripts/release_archive.py'
+
+            rulesync-real:
+              # The ordinary suites render rules with a fixture renderer. These
+              # files decide what the pinned rulesync binary is fed and what is
+              # kept from its output, so run the real-renderer tests on them.
+              - 'crates/wenlan-core/src/rulesync_*.rs'
+              - 'crates/wenlan-core/src/rulesync_*/**'
+              - 'crates/wenlan-server/src/rulesync_*.rs'
+              - 'crates/wenlan-server/src/rulesync_*/**'
+              - 'scripts/rulesync-real-renderer-tests.sh'
+              - 'crates/wenlan-core/src/drift_guard/rulesync_real_renderer_test.rs'
 
       - name: Test release merge proof
         run: |
@@ -2839,6 +2851,51 @@ jobs:
           CI_TEST_PLAN: ${{ needs.detect-changes.outputs.test-plan }}
         run: python3 scripts/ci_test_plan.py run --suite contract-integration --plan-json "$CI_TEST_PLAN"
 
+  # Runs the #[ignore]d tests that call the real pinned rulesync binary,
+  # which ordinary lanes replace with a fixture renderer. The script reads the
+  # pin from rulesync_renderer.rs, downloads that exact release asset, refuses
+  # it unless its sha256 matches, and fails unless every listed test passed.
+  rulesync-real-renderer:
+    name: rulesync real renderer
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rulesync-real == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_RW_MODE: READ_ONLY
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
+        with:
+          toolchain: 1.95.0
+      - name: Set up sccache
+        id: sccache
+        continue-on-error: true
+        uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e # v0.0.10
+      # A failed sccache download only costs the compiler cache: build
+      # uncached instead of failing the run (an empty RUSTC_WRAPPER turns
+      # Cargo's wrapper off).
+      - name: Build without sccache if it could not be set up
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: test
+          cache-all-crates: "true"
+          cache-targets: "false"
+          save-if: "false"
+      - name: Real-renderer rulesync tests
+        run: bash scripts/rulesync-real-renderer-tests.sh
+
   # Plugin artifacts have Rust-side consumers that are invisible to Cargo path
   # ownership. Keep their exact contract tests required without routing a
   # plugin-only PR through the full Rust workspace and canonical smokes.
@@ -3108,7 +3165,7 @@ jobs:
 
   conclusion:
     name: conclusion
-    needs: [detect-changes, release-base-proof, fmt, lint, linux-nextest-build, linux-nextest, macos-nextest-build, macos-nextest, test, mcp-platform, canonical-acceptance, contract-integration, release-preflight, docs, windows-release-contract, plugin, plugin-rust-contract, npm, relay-check, runtime-image, app-check, app-frontend, app-e2e, native-platform-contracts]
+    needs: [detect-changes, release-base-proof, fmt, lint, linux-nextest-build, linux-nextest, macos-nextest-build, macos-nextest, test, mcp-platform, canonical-acceptance, contract-integration, rulesync-real-renderer, release-preflight, docs, windows-release-contract, plugin, plugin-rust-contract, npm, relay-check, runtime-image, app-check, app-frontend, app-e2e, native-platform-contracts]
     # merge_group: still run after fail-fast cancels the run so the queue gets the failure; a PR run superseded by a newer push stays cancelled.
     if: always() && (github.event_name == 'merge_group' || !cancelled())
     runs-on: ubuntu-24.04
@@ -3157,6 +3214,7 @@ jobs:
           expect_job mcp-platform '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.mcp-platform-os != '[]' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.mcp-platform == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}' '${{ needs.mcp-platform.result }}'
           expect_job canonical-acceptance "$run_canonical" '${{ needs.canonical-acceptance.result }}'
           expect_job contract-integration "$run_contract" '${{ needs.contract-integration.result }}'
+          expect_job rulesync-real-renderer '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rulesync-real == 'true' }}' '${{ needs.rulesync-real-renderer.result }}'
           expect_job release-preflight '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.release-preflight == 'true') }}' '${{ needs.release-preflight.result }}'
           expect_job docs '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.docs == 'true' }}' '${{ needs.docs.result }}'
           expect_job windows-release-contract '${{ needs.detect-changes.outputs.windows-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.release-contract == 'true' }}' '${{ needs.windows-release-contract.result }}'

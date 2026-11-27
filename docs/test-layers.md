@@ -27,6 +27,8 @@ Wenlan runs across several layers. The split is driven by three questions: **(1)
 
 Windows release preflight treats cache availability as an optimization: a measured host+target cold miss waits 25 seconds and makes one pinned restore-only retry before Cargo. The final probe fails on partial or exact-but-empty state, records exact/fallback/cold plus the selected Cargo job bound, and continues a coherent cold build with two jobs.
 
+The ignored tests that call the real pinned rulesync binary run in the `rulesync real renderer` job whenever a `rulesync_*` source file in `wenlan-core` or `wenlan-server`, or `scripts/rulesync-real-renderer-tests.sh`, changes. The script downloads the pinned Linux release asset, checks its SHA-256 against `rulesync_renderer.rs`, and fails unless every listed test ran and passed; `drift_guard` keeps that list equal to the ignored tests that read `WENLAN_TEST_RULESYNC_BINARY`. The macOS Seatbelt variants and the copied-real-home and manual Codex checks stay local.
+
 A required CI check failed intermittently? Follow [`ci-flake-policy.md`](ci-flake-policy.md) before rerunning, quarantining, rerouting, or reverting.
 
 ### What does NOT run in CI and why
