@@ -1381,8 +1381,9 @@ and wait for evidence that people need them.
   `add_rule`) or type `wenlan rules add "<rule>"`; both do the same thing.
   Either way it is the person's own rule. `add_rule` says that a rule saved
   for a Space also goes into `AGENTS.md`, as a project rule, in each
-  repository connected to that Space (UX-SKILL-7), and that rules a team
-  approves come only from the Space's Rules page or a proposal approved
+  repository connected to that Space (UX-SKILL-7), unless the Space shares
+  its rules with a team, when the team's approved rules go there instead,
+  and that rules a team approves come only from the Space's Rules page or a proposal approved
   there.
   The rule is kept as one line on a page named "Rules I saved", one per
   Space and one for every Space, and the person's AI tools are told it from

@@ -1091,7 +1091,7 @@ fn block(
                 block.push_str(heading);
                 block.push_str("\n\n");
                 if let Some(source) = source {
-                    block.push_str(&tool_file_text(&source));
+                    block.push_str(&tool_file_text(source));
                     block.push_str("\n\n");
                 }
                 block.push_str(&section);

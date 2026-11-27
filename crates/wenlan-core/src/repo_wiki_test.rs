@@ -2280,6 +2280,7 @@ fn ux_skill_7_pull_request_description_names_no_space() {
             kept: 0,
             rules,
             rules_removed,
+            agents_linked: false,
             project_paths: &[],
             project_adoptions: &[],
             team_rules: false,
@@ -2294,6 +2295,7 @@ fn ux_skill_7_pull_request_description_names_no_space() {
         );
         if rules > 0 {
             assert!(body.contains("from notes approved in Wenlan"), "{body}");
+            assert!(body.contains("under \"Project rules\""), "{body}");
             assert!(
                 body.contains("Check their wording before merging"),
                 "{body}"
@@ -2571,4 +2573,45 @@ fn ux_skill_7_linked_agents_md_is_left_alone() {
         .unwrap()
         .file_type()
         .is_symlink());
+}
+
+#[test]
+fn ux_skill_7_pull_request_description_says_a_linked_agents_md_was_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let binding = RepoWikiBinding {
+        space: "Space".into(),
+        repo_root: dir.path().to_string_lossy().into_owned(),
+        folder: "wiki".into(),
+        remote_url: None,
+        daily: None,
+        last_publish: None,
+        last_daily_run: None,
+        doc_fixes: Vec::new(),
+        doc_check: None,
+        kept_edits: Vec::new(),
+        follows: Vec::new(),
+        take_over: false,
+    };
+    let body = pr_body(PrBody {
+        binding: &binding,
+        pages: 2,
+        left_out: 0,
+        waiting: 0,
+        kept: 0,
+        rules: 0,
+        rules_removed: false,
+        agents_linked: true,
+        project_paths: &[],
+        project_adoptions: &[],
+        team_rules: false,
+        fixes: Vec::new(),
+        slug: None,
+        base: "main",
+    });
+    assert!(
+        body.contains("`AGENTS.md` is a link, so Wenlan left it and `CLAUDE.md` unchanged."),
+        "{body}"
+    );
+    assert!(!body.contains("points coding agents at it"), "{body}");
+    assert!(!body.contains("project rule"), "{body}");
 }

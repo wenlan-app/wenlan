@@ -261,6 +261,7 @@ fn ux_skill_14_add_rule_says_where_a_saved_rule_goes() {
     for said in [
         "Save one of the user's own working rules",
         "goes into AGENTS.md, as a project rule, in each repository connected to that Space",
+        "unless the Space shares its rules with a team: then the team's approved rules go there instead",
         "Rules a team approves come only from the Space's Rules page",
         "from a proposal approved there",
     ] {

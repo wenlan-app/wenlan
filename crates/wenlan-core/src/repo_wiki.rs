@@ -2016,6 +2016,8 @@ struct PrBody<'a> {
     rules: usize,
     /// Every project rule was removed in Wenlan, and this takes them out.
     rules_removed: bool,
+    /// `AGENTS.md` is a link, so Wenlan left it and `CLAUDE.md` unchanged.
+    agents_linked: bool,
     project_paths: &'a [String],
     project_adoptions: &'a [String],
     team_rules: bool,
@@ -2035,6 +2037,7 @@ fn pr_body_for_test(binding: &RepoWikiBinding, fixes: Vec<&RepoDocFix>) -> Strin
         kept: 0,
         rules: 0,
         rules_removed: false,
+        agents_linked: false,
         project_paths: &[],
         project_adoptions: &[],
         team_rules: false,
@@ -2053,6 +2056,7 @@ fn pr_body(body: PrBody<'_>) -> String {
         kept,
         rules,
         rules_removed,
+        agents_linked,
         project_paths,
         project_adoptions,
         team_rules,
@@ -2065,15 +2069,22 @@ fn pr_body(body: PrBody<'_>) -> String {
     let mut out = String::from("Written by [Wenlan](https://wenlan.app).");
     if pages > 0 {
         out.push_str(&format!(
-            " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on. \
-             `AGENTS.md` points coding agents at it.",
+            " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on.{}",
             plural(pages),
-            binding.folder
+            binding.folder,
+            if agents_linked {
+                ""
+            } else {
+                " `AGENTS.md` points coding agents at it."
+            }
         ));
+    }
+    if agents_linked {
+        out.push_str(" `AGENTS.md` is a link, so Wenlan left it and `CLAUDE.md` unchanged.");
     }
     if rules > 0 {
         out.push_str(&format!(
-            "{}`AGENTS.md` {} {rules} project rule{} under \"Rules for this project\", from \
+            "{}`AGENTS.md` {} {rules} project rule{} under \"Project rules\", from \
              notes approved in Wenlan. Check their wording before merging: they come from notes, \
              not from the code.",
             if pages > 0 { "\n\n" } else { " " },
@@ -2782,6 +2793,7 @@ fn publish_inner(
             .join(crate::repo_wiki_ci::CODE_FILE)
             .is_file();
     let writes_block = export || rules_given || rules_to_take_out;
+    let agents_linked = project.is_none() && is_link(&input.worktree.join("AGENTS.md"));
     if writes_block && project.is_none() {
         maintain_agent_files(
             &input.worktree,
@@ -2949,12 +2961,13 @@ fn publish_inner(
         left_out: input.left_out,
         waiting: waiting.get(),
         kept: kept.get(),
-        rules: if writes_block {
+        rules: if writes_block && !agents_linked {
             rules.len().min(AGENTS_BLOCK_MAX_RULES)
         } else {
             0
         },
-        rules_removed: rules_to_take_out && !unchanged,
+        rules_removed: rules_to_take_out && !unchanged && !agents_linked,
+        agents_linked: agents_linked && writes_block,
         project_paths: &project_paths,
         project_adoptions: project_plan
             .as_ref()
