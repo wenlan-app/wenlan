@@ -909,7 +909,14 @@ Arguments:
 
 ### `wenlan team`
 
-Work with a team: start one here, invite people, or join with an invite link (start, share, invite, join, status, leave, update, remove, new-key, stop).
+Work with a team: start one here, invite people, or join with an invite link.
+
+Publication commands:
+  draft         Prepare a private publication draft.
+  publish       Review and publish a personal item.
+  withdraw      Withdraw a team item and its revisions.
+  create-space  Create a team Space for published pages.
+  grant         Set a member's team-library access.
 
 ```text
 wenlan team [OPTIONS] <COMMAND>

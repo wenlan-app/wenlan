@@ -879,6 +879,33 @@ and wait for evidence that people need them.
 
 ## AI tools follow how you work
 
+## Sharing pages with a team
+
+- **UX-SHARE-1** `shipped` On the computer running a team's server, Share on a
+  page offers 「和團隊共用」 ("With the team"). On the web it offers only the
+  team path; a folder share stays desktop-only. The dialog names the page and
+  team in the person's language and never shows an internal id or path.
+- **UX-SHARE-2** `shipped` Before a page goes to a team, the person sees the
+  server's preview text, can choose the whole team or one team Space, and sees
+  every cited personal memory unchecked. Unticked memories are sent as private
+  sources. The page is not published while the preview is loading or stale.
+- **UX-SHARE-3** `shipped` Sharing a Space first creates a team Space with the
+  same name, then lets the person tick pages and sends each selected page
+  through the same review window. Next opens one page, Skip leaves it alone,
+  and each Publish is a separate person action; the flow ends with a short done
+  line.
+- **UX-SHARE-4** `shipped` Creating a Space from the team side creates it in
+  the team library with the person-only CreateSpace action; it does not first
+  create or host a private Space.
+- **UX-SHARE-5** `shipped` Each page in a Space share has its own review state:
+  cited memories start unchecked, the destination picker lists the current
+  team-library Spaces, and a retry of the same CreateSpace action resumes the
+  existing group instead of creating a collision. A completed walk reports
+  published and skipped page counts.
+- **UX-SHARE-6** `shipped` Team-sharing failures are short, localized messages
+  about reachability, permission or a changed page. They never show daemon
+  routes, filesystem paths or internal IDs.
+
 - **UX-SKILL-1** `shipped` When library-derived skills are on, the ask comes
   once for the whole library: the first non-private Space with grounded
   candidates shows it at the top of its page above the Brief. The flat,

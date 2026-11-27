@@ -432,13 +432,14 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // routes. A code basis' lines then and now add one PageWorkspace-scoped
     // single-id route. Personal-rule plans and history add seven Global routes.
     // Previewing and declining the one-time page-rule move add two more.
-    // Listing and deciding tool-file team edits add two more Global routes.
-    assert_eq!(rows.len(), 187);
+    // Listing and deciding tool-file team edits add two more Global routes;
+    // the person-key-gated team-library draft and Spaces reads add two more.
+    assert_eq!(rows.len(), 189);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        64
+        66
     );
     assert_eq!(
         rows.iter()
@@ -482,7 +483,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 64, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 66, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

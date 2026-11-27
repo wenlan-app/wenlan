@@ -2,7 +2,7 @@
    under a shared title. No divider lines, restrained radii. */
 .share-dialog { margin:auto;inset:0;background:var(--mem-bg);color:var(--mem-text);border:1px solid var(--mem-border);border-radius:var(--mem-r-10);padding:24px;width:min(460px,calc(100vw - 32px));font:14px/1.55 var(--mem-font-body); }
 .share-dialog::backdrop { background:rgba(0,0,0,.35); }
-.share-dialog h2 { margin:0 0 16px;font-size:18px;font-weight:500;overflow-wrap:anywhere; }
+.share-dialog h2 { margin:0 0 16px;font-size:18px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .share-dialog form, .share-members { display:flex;flex-direction:column;gap:14px; }
 .share-field { display:flex;flex-direction:column;gap:6px; }
 .share-label { color:var(--mem-text-secondary);font-size:13px; }
@@ -71,7 +71,6 @@
 .team-menu-sub { color:var(--mem-text-secondary);font-size:12.5px;line-height:1.35; }
 .team-menu .team-menu-list li.team-menu-separator { height:1px;margin:4px;background:var(--mem-border);list-style:none; }
 .share-ways, .share-rows { list-style:none;margin:0;padding:0;display:flex;flex-direction:column; }
-.share-ways li + li { border-top:1px solid var(--mem-border); }
 .share-way { display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;border:0;background:transparent;color:var(--mem-text);padding:12px 8px;margin:0 -8px;width:calc(100% + 16px);border-radius:var(--mem-r-5);text-align:left; }
 .share-way:hover:not(:disabled) { background:var(--mem-hover); }
 .share-way:focus-visible, .share-dialog .share-link:focus-visible { outline:2px solid var(--mem-focus-ring);outline-offset:2px; }
@@ -85,3 +84,14 @@
 .share-row-line { display:flex;gap:12px;align-items:center;justify-content:space-between; }
 .share-row-name { min-width:0;overflow-wrap:anywhere; }
 .team-join-actions { display:flex;gap:8px; }
+.team-review-window { display:flex;flex-direction:column;gap:14px;min-width:0; }
+.team-review-title { margin-bottom:2px !important; }
+.team-review-content { max-height:220px;overflow:auto;background:var(--mem-surface);border-radius:var(--mem-r-5);padding:12px 14px; }
+.team-review-content h3 { margin:0 0 8px;font-size:15px;font-weight:500;white-space:pre-wrap; }
+.team-review-body { overflow-wrap:anywhere;color:var(--mem-text);font-size:14px; }
+.team-review-body > :first-child { margin-top:0; }
+.team-review-sources { display:flex;flex-direction:column;gap:8px;border:0;padding:0;margin:0;min-width:0; }
+.team-review-sources legend { color:var(--mem-text-secondary);font-size:13px;padding:0; }
+.team-review-source-list { display:flex;flex-direction:column;gap:8px;max-height:150px;overflow:auto; }
+.team-review-source { display:flex;gap:8px;align-items:baseline;min-width:0; }
+.team-review-source span { overflow-wrap:anywhere; }

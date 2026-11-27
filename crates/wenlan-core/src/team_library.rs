@@ -694,12 +694,21 @@ impl Library {
         if data.member(actor)?.role != TeamRole::Owner {
             return Err(LibraryError::Denied);
         }
-        if data
+        if let Some(group) = data
             .manifest
             .groups
             .values()
-            .any(|group| group.name.eq_ignore_ascii_case(name))
-            || data.file.everyone.contains_key(name)
+            .find(|group| group.name.eq_ignore_ascii_case(name))
+        {
+            return if group.restricted == restricted {
+                Ok(group.clone())
+            } else {
+                Err(LibraryError::Conflict(
+                    "A Space or grant with this name already exists.",
+                ))
+            };
+        }
+        if data.file.everyone.contains_key(name)
             || data
                 .file
                 .members
@@ -1099,5 +1108,32 @@ impl Reader {
             .filter_map(|record| record.legacy_file.as_ref())
             .find(|file| file.path == path)
             .map(|file| file.bytes.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_group_reuses_the_same_library_space_but_rejects_collisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let team_path = dir.path().join(crate::team::TEAM_FILE);
+        let owner = crate::team::ensure_owner(&team_path, "Owner").unwrap();
+        let library = Library::new(team_path.clone(), false);
+
+        let first = library.create_group(&owner.id, "Product", false).unwrap();
+        let retry = library.create_group(&owner.id, " Product ", false).unwrap();
+        assert_eq!(retry, first);
+        assert!(matches!(
+            library.create_group(&owner.id, "Product", true),
+            Err(LibraryError::Conflict(_))
+        ));
+
+        crate::team::set_everyone(&team_path, "Legacy", Some(TeamAccess::Write)).unwrap();
+        assert!(matches!(
+            library.create_group(&owner.id, "Legacy", false),
+            Err(LibraryError::Conflict(_))
+        ));
     }
 }

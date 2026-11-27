@@ -335,6 +335,8 @@ pub async fn global_routes_enforce_scope_contracts() {
         (Method::Post, "/api/rules/setup/review/preview"),
         (Method::Post, "/api/rules/setup/settings/preview"),
         (Method::Post, "/api/team/library/terminal"),
+        (Method::Get, "/api/team/library/draft"),
+        (Method::Get, "/api/team/library/spaces"),
         (Method::Post, "/api/rules/setup/settings/apply"),
         (Method::Post, "/api/rules/setup/checkout"),
         (Method::Post, "/api/skills/registry/save"),

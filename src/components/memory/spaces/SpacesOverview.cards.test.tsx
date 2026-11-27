@@ -7,6 +7,7 @@ import { createQueryClient, labels, makeSpace, renderOverview } from "./SpacesOv
 const api = vi.hoisted(() => ({
   listSpaces: vi.fn(),
   listPages: vi.fn(),
+  teamLibrarySpaces: vi.fn(),
   createSpace: vi.fn(),
   updateSpace: vi.fn(),
   deleteSpace: vi.fn(),
