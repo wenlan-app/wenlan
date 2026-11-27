@@ -208,8 +208,8 @@ export function PagesOverview({
         <div className="wiki-reading-start-panel">
           <PageIcon className="wiki-reading-start-icon" size={32} />
           <h1>{t("pages.overview.readingStartTitle")}</h1>
-          {/* A team side where you write in no Space has no "+" to point at. */}
-          <p>{t(team && scope.teamWritable.length === 0 ? "pages.overview.readingStartReadOnlyDescription" : "pages.overview.readingStartDescription")}</p>
+          {/* A member who writes in no Space of the team has no "+" to point at; the owner writes in all of them. */}
+          <p>{t(team && !team.hosted && scope.teamWritable.length === 0 ? "pages.overview.readingStartReadOnlyDescription" : "pages.overview.readingStartDescription")}</p>
         </div>
       )}
       {daemonPhase === "failed" && (
