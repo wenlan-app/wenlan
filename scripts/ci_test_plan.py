@@ -39,6 +39,10 @@ ISOLATED_UNIT_MODULES = {
 }
 
 ISOLATED_UNIT_TESTS = {
+    "scripts/rulesync-real-renderer-tests.sh": (
+        "wenlan-core",
+        "drift_guard::rulesync_real_renderer_test::ci_runs_every_portable_real_renderer_test",
+    ),
     "scripts/m5-reader-sweep.py": (
         "wenlan-core",
         "drift_guard::m5_reader_inventory_matches_current_tree",

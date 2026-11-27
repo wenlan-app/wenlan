@@ -13541,6 +13541,73 @@ mod tests {
         }
     }
 
+    /// The same check through the pinned renderer and the production render
+    /// path (`render_member_rule`), so a renderer that carried team text
+    /// into the global Claude and Codex files would be seen here. The files
+    /// start with a team block an older release wrote, so the real sync must
+    /// also take it out.
+    #[test]
+    #[ignore = "requires WENLAN_TEST_RULESYNC_BINARY pointing to the pinned renderer"]
+    fn rulesync_home_sync_with_team_layers_and_the_pinned_renderer_writes_no_team_block() {
+        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section};
+        assert_eq!(std::env::var("WENLAN_NO_AUTOSTART").as_deref(), Ok("1"));
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let f = Fixture::new();
+        let session = RenderSession::new(&binary);
+        let render_rule =
+            |target: &str, source: &str| f.setup.render_member_rule(&session, target, source);
+        let render_skills = |renderer: &str, skills: &SkillPackages| {
+            f.setup.render_skills(&session, renderer, skills)
+        };
+        let plan = f
+            .setup
+            .preview_adoption_using(render_rule, render_skills)
+            .unwrap();
+        f.setup
+            .adopt_using(&plan.token, render_rule, render_skills)
+            .unwrap();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layers = rulesync_team::load_layers(&settings).unwrap();
+        assert!(!layers.is_empty());
+        let legacy = render_fixture_section(&layers[0]);
+        f.sync_with(&legacy);
+        for path in [CLAUDE, CODEX] {
+            assert!(f.text(path).contains(&legacy), "{path}: {}", f.text(path));
+        }
+        let _lock = f.setup.lock().unwrap();
+        let root = f.setup.home_files().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let mut result = report("home sync");
+        f.setup
+            .sync_member_files(
+                &root,
+                &mut manifest,
+                (&[], SyncCaller::Person),
+                (&settings, &layers),
+                (&render_rule, &render_skills),
+                &mut result,
+            )
+            .unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        for (path, own) in [(CLAUDE, "Claude only.\n"), (CODEX, "Codex only.\n")] {
+            let content = f.text(path);
+            println!("----- {path} -----\n{content}----- end {path} -----");
+            assert!(content.contains(own), "{path}: {content}");
+            assert!(
+                !content.contains("WENLAN SHARED RULES"),
+                "{path}: {content}"
+            );
+            assert!(!content.contains("Team rules"), "{path}: {content}");
+            for layer in &layers {
+                assert!(
+                    !content.contains(layer.markdown.trim()),
+                    "{path}: {content}"
+                );
+            }
+        }
+        assert!(f.text(CODEX).contains("One rule."), "{}", f.text(CODEX));
+    }
+
     #[test]
     fn rulesync_home_global_crlf_survives_team_block_cleanup() {
         use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section};

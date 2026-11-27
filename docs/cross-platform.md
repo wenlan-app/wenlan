@@ -198,6 +198,13 @@ On macOS, run `macos_sandbox_allows_staged_reads_and_denies_unrelated_reads` wit
 requires `WENLAN_TEST_RULESYNC_BINARY` to point to the release executable for the
 test host. Run it on each supported platform to verify native launch and output.
 
+`bash scripts/rulesync-real-renderer-tests.sh` runs every portable real-renderer
+test in both crates: it downloads the pinned asset for the host, refuses it unless
+its SHA-256 matches `rulesync_renderer.rs`, and runs the tests with a scratch
+`HOME`, `CODEX_HOME` and `WENLAN_DATA_DIR`. CI runs it on Linux x86_64 when rulesync
+sources change. Point `WENLAN_TEST_RULESYNC_BINARY` at a downloaded copy to skip the
+download.
+
 In a macOS session that permits `sandbox-exec`, run the personal rules fixture
 with the pinned rulesync executable for your architecture. The test uses the
 same renderer and staging layout as adoption and checks the staged root rule

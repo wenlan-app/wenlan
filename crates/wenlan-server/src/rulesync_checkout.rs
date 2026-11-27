@@ -1527,6 +1527,16 @@ mod tests {
             let project = output.find("Project rules for").unwrap();
             assert!(team < personal && personal < project, "{file}: {output}");
             assert!(output.contains("Rules are listed from broadest to most specific. When two disagree, follow the later one."));
+            // The pinned renderer keeps Wenlan's markers, so the next sync
+            // can still find and replace each layer's block.
+            let blocks = crate::rulesync_layers::blocks(&output).unwrap();
+            assert_eq!(blocks.len(), 2, "{file}: {output}");
+            assert!(
+                blocks
+                    .values()
+                    .all(|block| block.body.contains("Use the approved checklist.")),
+                "{file}: {output}"
+            );
         }
         assert!(setup
             .data

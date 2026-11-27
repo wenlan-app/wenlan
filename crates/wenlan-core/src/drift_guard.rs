@@ -23,6 +23,10 @@ mod r4_test_support_test;
 #[path = "drift_guard/post_write_structure_test.rs"]
 mod post_write_structure_test;
 
+#[cfg(test)]
+#[path = "drift_guard/rulesync_real_renderer_test.rs"]
+mod rulesync_real_renderer_test;
+
 /// Repo root, resolved at compile time from this crate's manifest dir
 /// (crates/wenlan-core -> ../.. == repo root).
 fn repo_root() -> PathBuf {
