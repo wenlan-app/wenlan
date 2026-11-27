@@ -736,7 +736,10 @@ impl Job<'_> {
         };
         for (path, bytes) in rendered.rules {
             let current = observed.get(&path).unwrap_or(&Snapshot::Absent);
-            if pending_review.contains(&path) && !blocked.contains_key(&path) {
+            if self.can_restore_rejection
+                && pending_review.contains(&path)
+                && !blocked.contains_key(&path)
+            {
                 let mut answers = crate::rulesync_shared_answers::read(&self.setup.data)?;
                 let full_path = self.directory.join(&path);
                 let old = checkout
@@ -784,7 +787,7 @@ impl Job<'_> {
                         mine.body,
                         theirs.body,
                     )
-                    .context("The team's rules changed since this edit; check it again.")?;
+                    .context("The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.")?;
                     let rebased = rulesync_layers::replace_block_body(new_text, key, &merged)?;
                     let updated = with_bytes(current, rebased.into_bytes());
                     ensure!(
@@ -1675,9 +1678,14 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit; check it again.")
+                matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.")
             );
             assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+            let background = sync(false);
+            assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+            assert!(background
+                .blocked_codes
+                .contains(&Code::SharedRuleNeedsConfirm.into()));
             let report = sync(true);
             assert_eq!(report.blocked_codes, [Code::SharedRuleNeedsConfirm.into()]);
             let project = rulesync_team::load_project_layers(&settings)

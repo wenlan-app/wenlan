@@ -91,6 +91,9 @@ mod member_import;
 mod memories;
 mod merge;
 pub mod remote;
+
+pub const OUTDATED_HOST_EDIT_MESSAGE: &str =
+    "The team's Wenlan couldn't take this edit; it may need updating.";
 mod review;
 pub mod rewrite;
 pub mod version;
@@ -1320,8 +1323,36 @@ fn space_run(settings_path: &Path, key: &str) -> Arc<SpaceRun> {
 /// How a pass ended.
 enum Outcome {
     Done(SharedSyncCounts),
-    Paused(String),
+    Paused(SyncPause),
     Failed(String),
+}
+
+#[derive(Clone)]
+struct SyncPause {
+    reason: String,
+    refused_proposals: Vec<String>,
+}
+
+impl From<String> for SyncPause {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            refused_proposals: Vec::new(),
+        }
+    }
+}
+
+impl From<remote::SyncError> for SyncPause {
+    fn from(error: remote::SyncError) -> Self {
+        let refused_proposals = match &error {
+            remote::SyncError::OutdatedHost(ids) => ids.clone(),
+            _ => Vec::new(),
+        };
+        Self {
+            reason: error.to_string(),
+            refused_proposals,
+        }
+    }
 }
 
 /// Keeps `outcome` as the Space's last pass. A pause or a failure is logged
@@ -1356,18 +1387,20 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 at,
                 counts,
                 paused: None,
+                refused_proposals: Vec::new(),
                 error: None,
                 held_back,
             }
         }
-        Outcome::Paused(reason) => {
-            if before.as_ref().and_then(|run| run.paused.as_ref()) != Some(&reason) {
-                log::warn!("[shared_space] {space} paused: {reason}");
+        Outcome::Paused(pause) => {
+            if before.as_ref().and_then(|run| run.paused.as_ref()) != Some(&pause.reason) {
+                log::warn!("[shared_space] {space} paused: {}", pause.reason);
             }
             SharedSyncRun {
                 at,
                 counts: SharedSyncCounts::default(),
-                paused: Some(reason),
+                paused: Some(pause.reason),
+                refused_proposals: pause.refused_proposals,
                 error: None,
                 held_back: None,
             }
@@ -1380,6 +1413,7 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 at,
                 counts: SharedSyncCounts::default(),
                 paused: None,
+                refused_proposals: Vec::new(),
                 error: Some(error),
                 held_back: None,
             }
@@ -1715,9 +1749,16 @@ pub async fn sync_space(
             finish(&run, &key, Outcome::Done(counts));
             Ok(counts)
         }
-        Ok(Err(reason)) => {
-            finish(&run, &key, Outcome::Paused(reason.clone()));
-            Err(WenlanError::Validation(reason))
+        Ok(Err(pause)) => {
+            let error = if pause.refused_proposals.is_empty() {
+                WenlanError::Validation(pause.reason.clone())
+            } else {
+                WenlanError::TeamRulesProposalRefused {
+                    proposal_ids: pause.refused_proposals.clone(),
+                }
+            };
+            finish(&run, &key, Outcome::Paused(pause));
+            Err(error)
         }
         Err(error) => {
             finish(&run, &key, Outcome::Failed(error.to_string()));
@@ -1738,7 +1779,7 @@ async fn run_pass(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
     automatic: bool,
-) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
+) -> Result<Result<SharedSyncCounts, SyncPause>, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
     if matches!(scope, Scope::Library) {
         // Two computers that each started a library in the same folder
@@ -1772,7 +1813,7 @@ async fn run_pass(
         Some(host) => match remote::pull(&host, &folder).await {
             Err(reason) => {
                 clear_rule_layer_if_refused(settings_path, &host, &reason)?;
-                return Ok(Err(reason.to_string()));
+                return Ok(Err(reason.into()));
             }
             Ok((listed, layer)) => {
                 remember_team_rule_pull(settings_path, scope, &host, layer)?;
@@ -1790,7 +1831,7 @@ async fn run_pass(
     };
     if automatic {
         if let Err(reason) = ready(db, scope, &settings).await {
-            return Ok(Err(reason));
+            return Ok(Err(reason.into()));
         }
     }
     if settings.hosted {
@@ -1828,7 +1869,7 @@ async fn run_pass(
     if let Some((host, listed)) = listed {
         if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
             clear_rule_layer_if_refused(settings_path, &host, &reason)?;
-            return Ok(Err(reason.to_string()));
+            return Ok(Err(reason.into()));
         }
     }
     Ok(Ok(counts))
@@ -1846,7 +1887,7 @@ fn clear_rule_layer_if_refused(
         remote::SyncError::Refused(_) => {
             clear_team_rule_layer(settings_path, &host.url, &host.key, Some(&host.space))
         }
-        remote::SyncError::Unavailable(_) | remote::SyncError::OutdatedHost => Ok(()),
+        remote::SyncError::Unavailable(_) | remote::SyncError::OutdatedHost(_) => Ok(()),
     }
 }
 

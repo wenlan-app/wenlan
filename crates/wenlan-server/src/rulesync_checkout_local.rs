@@ -337,7 +337,7 @@ fn rebase_rules(
     );
     let merged =
         wenlan_core::rulesync_personal::merge_rule_text(base.body, changed.body, fresh.body)
-            .context("The team's rules changed since this edit; check it again.")?;
+            .context("The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.")?;
     let rebased = rulesync_layers::replace_block_body(approved, key, &merged)?;
     let blocks = rulesync_layers::blocks(&rebased)?;
     let changed = blocks.get(key).context("rebased section is missing")?;
@@ -866,6 +866,10 @@ mod tests {
         }
 
         fn run(&mut self) -> RulesSyncReport {
+            self.run_as(true)
+        }
+
+        fn run_as(&mut self, person: bool) -> RulesSyncReport {
             let mut result = report("checkout");
             let authorized = self
                 .team
@@ -886,7 +890,7 @@ mod tests {
                 &mut self.codex_dir_created,
                 &mut self.receipts,
                 &mut result,
-                true,
+                person,
                 &self.key,
             )
             .unwrap();
@@ -1429,10 +1433,15 @@ mod tests {
         let id = pending_id(&f);
         f.decide_edit(id.clone());
         assert_eq!(f.pending_team_count(), 1);
+        let refused = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .sent_edits[&id]
+            .proposal
+            .clone();
         crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
             &f.setup,
             &f.settings,
-            rulesync_team::SPACE,
+            &[refused],
         )
         .unwrap();
         let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
@@ -1459,6 +1468,123 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_checkout_changed_sent_edit_blocks_only_its_file() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join("CLAUDE.local.md");
+        let first = fs::read_to_string(&path).unwrap().replacen(
+            "Use the approved checklist.",
+            "First edit.",
+            1,
+        );
+        fs::write(&path, first).unwrap();
+        f.run();
+        let id = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .waiting
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        f.decide_edit(id);
+        f.run();
+        let latest = fs::read_to_string(&path)
+            .unwrap()
+            .replace("First edit.", "Second edit.");
+        fs::write(&path, &latest).unwrap();
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("CLAUDE.local.md") && line.contains("shared-edits")));
+        assert_eq!(fs::read_to_string(&path).unwrap(), latest);
+        assert!(codex_instructions(
+            &fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap()
+        )
+        .unwrap()
+        .contains("New approved line."));
+    }
+
+    #[test]
+    fn rulesync_checkout_sent_edit_survives_changed_or_missing_file() {
+        let mut f = Fixture::new();
+        f.run();
+        let path = f.repo.join("CLAUDE.local.md");
+        let edited = fs::read_to_string(&path).unwrap().replacen(
+            "Use the approved checklist.",
+            "Use my checklist.",
+            1,
+        );
+        fs::write(&path, edited).unwrap();
+        f.run();
+        let id = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .waiting
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        f.decide_edit(id.clone());
+        let proposal_path = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .sent_edits[&id]
+            .proposal_path
+            .clone();
+        fs::write(
+            &path,
+            fs::read_to_string(&path)
+                .unwrap()
+                .replace("my checklist", "another checklist"),
+        )
+        .unwrap();
+        rulesync_layers::refresh_answers(&f.settings, &f.setup.data, &f.setup.home).unwrap();
+        assert!(rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .sent_edits
+            .contains_key(&id));
+        assert!(proposal_path.exists());
+        fs::remove_file(path).unwrap();
+        rulesync_layers::refresh_answers(&f.settings, &f.setup.data, &f.setup.home).unwrap();
+        assert!(rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .sent_edits
+            .contains_key(&id));
+        assert!(proposal_path.exists());
+    }
+
+    #[test]
+    fn rulesync_checkout_waiting_edit_rebases_only_on_person_sync() {
+        let mut f = Fixture::new();
+        let (claude, codex) = edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        f.run_as(false);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        assert_eq!(pending_id(&f), id);
+        f.run();
+        assert_ne!(pending_id(&f), id);
+        assert!(fs::read_to_string(f.repo.join("CLAUDE.local.md"))
+            .unwrap()
+            .contains("New approved line."));
+    }
+
+    #[test]
     fn rulesync_checkout_new_team_revision_refuses_old_confirmation_and_keeps_edit() {
         let mut f = Fixture::new();
         let (claude, codex) = edit_both(&mut f);
@@ -1478,7 +1604,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit; check it again.")
+            matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.")
         );
         assert!(rulesync_shared_answers::read(&f.setup.data)
             .unwrap()

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use wenlan_core::rulesync_personal::{
     fingerprint, line_changes, write_named_root_rule, RULE_PRECEDENCE,
 };
-use wenlan_core::rulesync_team::TeamRuleLayer;
+use wenlan_core::rulesync_team::{self, TeamRuleLayer};
 use wenlan_core::skill_grow::tool_file_text;
 
 const START: &str = "<!-- WENLAN SHARED RULES ";
@@ -344,6 +344,30 @@ pub(crate) fn waiting_in_file(
 
 pub(crate) fn refresh_answers(settings: &Path, data: &Path, home: &Path) -> Result<Answers> {
     let mut answers = rulesync_shared_answers::read(data)?;
+    if !answers.sent_edits.is_empty() {
+        let layers: Vec<_> = rulesync_team::load_layers(settings)?
+            .into_iter()
+            .chain(rulesync_team::load_project_layers(settings)?)
+            .collect();
+        let sent: Vec<_> = answers.sent_edits.keys().cloned().collect();
+        for id in sent {
+            let record = &answers.sent_edits[&id];
+            let layer = layers.iter().find(|layer| layer.id == record.edit.layer_id);
+            let decided =
+                layer.is_some_and(|layer| layer.proposal_decisions.contains_key(&record.proposal));
+            let queued = record.proposal_path.try_exists()?;
+            if decided || layer.is_none() || !queued {
+                if !decided && queued {
+                    rulesync_team::retire_queued_proposal_at(
+                        &record.proposal_path,
+                        &record.edit.revision,
+                        &record.proposal,
+                    )?;
+                }
+                answers.sent_edits.remove(&id);
+            }
+        }
+    }
     answers.waiting.retain(|_, waiting| {
         waiting
             .files

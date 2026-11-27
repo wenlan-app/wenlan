@@ -467,9 +467,8 @@ async fn host_sync(
     finish_host_rule_sync(
         &counts,
         rulesync,
-        &remote_space,
-        |space| {
-            crate::rulesync_routes::reopen_edits_after_old_host_refusal(space)
+        |proposal_ids| {
+            crate::rulesync_routes::reopen_edits_after_old_host_refusal(proposal_ids)
                 .map_err(|error| ServerError::Internal(error.to_string()))
         },
         || crate::skill_grow::sync_rules_files_quietly(db, page_root),
@@ -478,22 +477,20 @@ async fn host_sync(
     Ok(Json(counts?))
 }
 
-async fn finish_host_rule_sync<R, S, F>(
+pub(crate) async fn finish_host_rule_sync<R, S, F>(
     counts: &Result<wenlan_types::shared_space::SharedSyncCounts, wenlan_core::WenlanError>,
     rulesync: bool,
-    space: &str,
     reopen: R,
     sync_rules: S,
 ) -> Result<(), ServerError>
 where
-    R: FnOnce(&str) -> Result<(), ServerError>,
+    R: FnOnce(&[String]) -> Result<(), ServerError>,
     S: FnOnce() -> F,
     F: std::future::Future<Output = ()>,
 {
     if rulesync {
-        if matches!(counts, Err(wenlan_core::WenlanError::Validation(reason)) if reason == "Your team's Wenlan needs an update before this edit can be sent.")
-        {
-            reopen(space)?;
+        if let Err(wenlan_core::WenlanError::TeamRulesProposalRefused { proposal_ids }) = counts {
+            reopen(proposal_ids)?;
         }
         sync_rules().await;
     }
@@ -770,15 +767,15 @@ mod not_found_mapping_tests {
         let order = Rc::new(RefCell::new(Vec::new()));
         let reopened = order.clone();
         let synced = order.clone();
-        let counts = Err(wenlan_core::WenlanError::Validation(
-            "Your team's Wenlan needs an update before this edit can be sent.".into(),
-        ));
+        let ids = vec!["a".repeat(64)];
+        let counts = Err(wenlan_core::WenlanError::TeamRulesProposalRefused {
+            proposal_ids: ids.clone(),
+        });
         super::finish_host_rule_sync(
             &counts,
             true,
-            "Team",
-            move |space| {
-                assert_eq!(space, "Team");
+            move |proposal_ids| {
+                assert_eq!(proposal_ids, ids);
                 reopened.borrow_mut().push("reopen");
                 Ok(())
             },
