@@ -530,6 +530,8 @@ jobs:
               - 'crates/wenlan-core/src/person_key.rs'
               # The shared-edits answers test sets the data folder to `0700` on Unix (`cfg(unix)`).
               - 'crates/wenlan-server/src/person_key_test.rs'
+              # The real-renderer guard parses `#[cfg(target_os = "macos")]` test attributes.
+              - 'crates/wenlan-core/src/drift_guard/rulesync_real_renderer_test.rs'
               - 'crates/wenlan-core/src/repo_wiki_test.rs'
               - 'crates/wenlan-core/src/community_grouping.rs'
               - 'crates/wenlan-core/src/community_partition.rs'
