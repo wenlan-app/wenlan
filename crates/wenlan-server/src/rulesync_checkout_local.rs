@@ -79,6 +79,125 @@ fn codex_instructions(source: &str) -> Result<String> {
         .to_owned())
 }
 
+fn codex_unmanaged_changed(current: &str, recorded: &str) -> bool {
+    let outside = |source: &str| -> Option<String> {
+        let value = codex_instructions(source).ok()?;
+        let encoded = toml::Value::String(value).to_string();
+        let prefix = "developer_instructions = ";
+        let start = source.find(prefix)? + prefix.len();
+        source[start..].starts_with(&encoded).then(|| {
+            let mut outside = source.to_owned();
+            outside.replace_range(start..start + encoded.len(), "<Wenlan instructions>");
+            outside
+        })
+    };
+    outside(current).is_none_or(|value| Some(value) != outside(recorded))
+}
+
+fn keep_revoked_copy(setup: &Setup, key: &str, name: &str, content: &str) -> Result<PathBuf> {
+    let digest = wenlan_core::rulesync_personal::fingerprint(&(key, name, content))?;
+    let safe_name = name.replace('/', "-");
+    let relative = PathBuf::from(format!(
+        "checkouts/revoked-local-{key}-{safe_name}-{digest}.txt"
+    ));
+    let root = setup.data_files()?;
+    let seen = root.read(&relative, false)?;
+    let desired = Snapshot::file(content.as_bytes().to_vec());
+    ensure!(
+        seen == Snapshot::Absent || seen == desired,
+        "revoked rule copy changed"
+    );
+    if seen == Snapshot::Absent {
+        ensure!(
+            root.apply(&relative, &seen, &desired, false)? == ApplyOutcome::Applied,
+            "revoked rule copy changed during save"
+        );
+    }
+    Ok(setup.data.join(relative))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn revoke(
+    setup: &Setup,
+    repo: &Path,
+    key: &str,
+    claude_record: &mut Option<String>,
+    codex_record: &mut Option<String>,
+    codex_dir_created: &mut bool,
+    receipts: &mut BTreeMap<PathBuf, ProposalReceipts>,
+    result: &mut RulesSyncReport,
+) -> Result<()> {
+    let root = FileRoot::open(repo)?;
+    let mut removed = Vec::new();
+    let claude_path = Path::new("CLAUDE.local.md");
+    let current = root.read(claude_path, false)?;
+    if let Snapshot::File { .. } = current {
+        let content = text(&current)?;
+        if let Some(span) = managed_span(content)? {
+            if let Some(prior) = claude_record.as_deref() {
+                if &content[span.clone()] != prior {
+                    let copy = keep_revoked_copy(setup, key, "CLAUDE.local.md", content)?;
+                    removed.push(copy);
+                }
+                let mut next = content.to_owned();
+                next.replace_range(span, "");
+                write(
+                    &root,
+                    claude_path,
+                    &current,
+                    (!next.is_empty()).then_some(&next),
+                )?;
+                *claude_record = None;
+                receipts.remove(&alias(key, "CLAUDE.local.md"));
+            }
+        }
+    } else if current == Snapshot::Absent {
+        *claude_record = None;
+    }
+    let codex_path = Path::new(".codex/config.toml");
+    let current = root.read(codex_path, false)?;
+    if let Snapshot::File { .. } = current {
+        let content = text(&current)?;
+        if let Some(prior) = codex_record.as_deref() {
+            if content.starts_with(CODEX_HEADER)
+                && !tracked(repo, ".codex/config.toml")?
+                && !codex_unmanaged_changed(content, prior)
+            {
+                if content != prior {
+                    let copy = keep_revoked_copy(setup, key, ".codex/config.toml", content)?;
+                    removed.push(copy);
+                }
+                write(&root, codex_path, &current, None)?;
+                *codex_record = None;
+                receipts.remove(&alias(key, ".codex/config.toml"));
+                let directory = repo.join(".codex");
+                if *codex_dir_created && fs::read_dir(&directory)?.next().is_none() {
+                    fs::remove_dir(directory)?;
+                    *codex_dir_created = false;
+                }
+            } else {
+                result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/.codex/config.toml because it has your own settings; remove the team rules there after saving your settings.", repo.display()));
+            }
+        }
+    } else if current == Snapshot::Absent {
+        *codex_record = None;
+    }
+    let mut answers = rulesync_shared_answers::read(&setup.data)?;
+    answers.waiting.retain(|_, edit| {
+        edit.files.retain(|file| {
+            file != &alias(key, "CLAUDE.local.md").display().to_string()
+                && file != &alias(key, ".codex/config.toml").display().to_string()
+        });
+        !edit.files.is_empty()
+    });
+    rulesync_shared_answers::save(&setup.data, &answers)?;
+    if !removed.is_empty() {
+        result.block(Code::CheckoutNeedsReview, format!("Team rules were removed from {} because access ended. A copy of your edits is in {}.", repo.display(), removed.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(" and ")));
+    }
+    update_exclude(repo, claude_record.is_some(), codex_record.is_some())?;
+    Ok(())
+}
+
 /// Carry a pending edit onto the current approved rendering, including newly
 /// approved sections in the same file. The approved rendering stays the
 /// baseline; the person's changed body remains a waiting edit.
@@ -119,6 +238,9 @@ fn rebase_waiting_local(
             let path = Path::new(name);
             let current = root.read(path, false)?;
             let local = text(&current)?;
+            if name == ".codex/config.toml" && codex_unmanaged_changed(local, baseline) {
+                continue;
+            }
             let (old_rules, local_rules) = if name == "CLAUDE.local.md" {
                 let old_span = managed_span(baseline)?.context("missing checkout baseline")?;
                 let local_span = managed_span(local)?.context("missing checkout rules")?;
@@ -391,6 +513,18 @@ pub(super) fn sync(
     let root = FileRoot::open(repo)?;
     let expected = local_text(teams, project)?;
     let wanted = !project.is_empty();
+    if !wanted {
+        return revoke(
+            setup,
+            repo,
+            key,
+            claude_record,
+            codex_record,
+            codex_dir_created,
+            receipts,
+            result,
+        );
+    }
     if person && wanted {
         rebase_waiting_local(
             setup,
@@ -472,6 +606,11 @@ pub(super) fn sync(
                 repo.display()
             ),
         );
+    } else if current_text
+        .zip(codex_record.as_deref())
+        .is_some_and(|(current, prior)| codex_unmanaged_changed(current, prior))
+    {
+        result.block(Code::CheckoutNeedsReview, format!("Wenlan didn't change {}/.codex/config.toml because it has your own settings. Move those settings to your personal Codex config, then sync again.", repo.display()));
     } else {
         let mut held = codex_record.is_some() && current_text.is_none() && wanted && trusted;
         if let Some(after) = current_text {
@@ -922,6 +1061,101 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_checkout_revocation_saves_hand_edits_and_removes_local_rules() {
+        let mut f = Fixture::new();
+        fs::write(f.repo.join("CLAUDE.local.md"), "My own line.\n\n").unwrap();
+        edit_both(&mut f);
+        f.run();
+        assert_eq!(pending_id(&f).len(), 64);
+        f.project.clear();
+        f.team.clear();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("access ended") && line.contains("revoked-local-")));
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            "My own line.\n\n"
+        );
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        let copies = fs::read_dir(f.setup.data.join("checkouts"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("revoked-local-")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 2);
+        for copy in copies {
+            assert!(fs::read_to_string(copy.path())
+                .unwrap()
+                .contains("Use the revised checklist."));
+        }
+        assert!(rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .waiting
+            .is_empty());
+    }
+
+    #[test]
+    fn rulesync_checkout_codex_own_settings_survive_a_settled_team_edit() {
+        use wenlan_core::team::{self, CredentialKind};
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        let path = f.repo.join(".codex/config.toml");
+        let own = format!("{}model = \"custom\"\n", fs::read_to_string(&path).unwrap());
+        fs::write(&path, &own).unwrap();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("your own settings")));
+        assert_eq!(fs::read_to_string(&path).unwrap(), own);
+        f.decide_edit(id);
+        let team_path = f.settings.with_file_name(team::TEAM_FILE);
+        let proposals = rulesync_team::pending_proposals(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            CredentialKind::BrowserSession,
+        )
+        .unwrap();
+        rulesync_team::decide_proposal(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            CredentialKind::BrowserSession,
+            &proposals[0].id,
+            true,
+        )
+        .unwrap();
+        f.team = rulesync_team::load_layers(&f.settings).unwrap();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("your own settings")));
+        assert_eq!(fs::read_to_string(&path).unwrap(), own);
+        f.project.clear();
+        f.team.clear();
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("team rules are still")
+                && line.contains("remove the team rules")));
+        assert_eq!(fs::read_to_string(&path).unwrap(), own);
+    }
+
+    #[test]
     fn checkout_local_block_hand_edit_is_kept_and_reported() {
         let mut f = Fixture::new();
         f.run();
@@ -1036,6 +1270,10 @@ mod tests {
         );
         fs::write(claude, &claude_edited).unwrap();
         fs::write(codex, &codex_edited).unwrap();
+        assert!(!codex_unmanaged_changed(
+            &codex_edited,
+            f.codex.as_deref().unwrap()
+        ));
         (claude_edited, codex_edited)
     }
 

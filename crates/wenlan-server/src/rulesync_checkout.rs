@@ -615,6 +615,36 @@ impl Job<'_> {
                 result.written.push(path.display().to_string());
             }
         }
+        let local_key = state_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .context("invalid checkout key")?;
+        let local_revoked = project.is_empty() && !checkout.repo.as_os_str().is_empty();
+        if local_revoked {
+            let cleanup = crate::rulesync_checkout_local::sync(
+                self.setup,
+                &crate::rulesync_checkout_local::codex_home(&self.setup.home),
+                &self.settings,
+                &checkout.repo,
+                &project,
+                &teams,
+                &authorized,
+                &mut checkout.local_claude,
+                &mut checkout.local_codex,
+                &mut checkout.local_codex_dir_created,
+                &mut checkout.shared_rule_proposals,
+                &mut result,
+                self.can_restore_rejection,
+                local_key,
+            );
+            record = self.save(state_path, &record, &checkout)?;
+            if let Err(error) = cleanup {
+                result.block(
+                    Code::CheckoutNeedsReview,
+                    format!("Checkout local revocation: {error:#}"),
+                );
+            }
+        }
         let Some(master) = master else {
             report_blocks(&mut result, blocked);
             return Ok(result);
@@ -852,29 +882,26 @@ impl Job<'_> {
                 result.written.push(path.display().to_string());
             }
         }
-        let local = crate::rulesync_checkout_local::sync(
-            self.setup,
-            &crate::rulesync_checkout_local::codex_home(&self.setup.home),
-            &self.settings,
-            &checkout.repo,
-            &project,
-            &teams,
-            &authorized,
-            &mut checkout.local_claude,
-            &mut checkout.local_codex,
-            &mut checkout.local_codex_dir_created,
-            &mut checkout.shared_rule_proposals,
-            &mut result,
-            self.can_restore_rejection,
-            state_path
-                .parent()
-                .and_then(Path::file_name)
-                .and_then(|_| state_path.file_stem())
-                .and_then(|s| s.to_str())
-                .context("invalid checkout key")?,
-        );
+        let local = (!local_revoked).then(|| {
+            crate::rulesync_checkout_local::sync(
+                self.setup,
+                &crate::rulesync_checkout_local::codex_home(&self.setup.home),
+                &self.settings,
+                &checkout.repo,
+                &project,
+                &teams,
+                &authorized,
+                &mut checkout.local_claude,
+                &mut checkout.local_codex,
+                &mut checkout.local_codex_dir_created,
+                &mut checkout.shared_rule_proposals,
+                &mut result,
+                self.can_restore_rejection,
+                local_key,
+            )
+        });
         self.save(state_path, &record, &checkout)?;
-        if let Err(error) = local {
+        if let Some(Err(error)) = local {
             result.block(
                 Code::CheckoutNeedsReview,
                 format!("Checkout local files: {error:#}"),
@@ -1499,15 +1526,20 @@ mod tests {
 
     #[test]
     fn rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it() {
-        checkout_hand_edit(false);
+        checkout_hand_edit(false, false);
     }
 
     #[test]
     fn rulesync_checkout_waiting_edit_survives_new_revision() {
-        checkout_hand_edit(true);
+        checkout_hand_edit(true, false);
     }
 
-    fn checkout_hand_edit(new_revision: bool) {
+    #[test]
+    fn rulesync_checkout_local_revocation_survives_a_render_failure() {
+        checkout_hand_edit(false, true);
+    }
+
+    fn checkout_hand_edit(new_revision: bool, fail_revoked_render: bool) {
         use crate::rulesync_layers::tests::{
             hosted_fixture, render_fixture_section, APPROVED, PROJECT, REMOTE,
         };
@@ -1560,6 +1592,7 @@ mod tests {
         let rule = Path::new("AGENTS.md");
         let master =
             PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let fail_render = std::cell::Cell::new(false);
         let sync = |can_restore_rejection| {
             let state = root.read(state_path, false).unwrap();
             let checkout = if state == Snapshot::Absent {
@@ -1577,6 +1610,9 @@ mod tests {
                     checkout,
                     Some(&master),
                     |projects, teams, _, _| {
+                        if fail_render.get() {
+                            anyhow::bail!("deliberate render failure");
+                        }
                         assert_eq!(projects.len(), 1);
                         let body = format!(
                             "{}{}Personal advice.\n",
@@ -1699,6 +1735,29 @@ mod tests {
         );
         assert_eq!(report.notice_codes, [Code::SharedRuleRejected.into()]);
         assert!(sync(true).notice_codes.is_empty());
+        if fail_revoked_render {
+            assert!(repo.join("CLAUDE.local.md").exists());
+            assert!(repo.join(".codex/config.toml").exists());
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args([
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "https://github.com/fixture/other.git"
+                ])
+                .status()
+                .unwrap()
+                .success());
+            fail_render.set(true);
+            let report = sync(true);
+            assert!(report
+                .blocked
+                .iter()
+                .any(|line| line.contains("deliberate render failure")));
+            assert!(!repo.join("CLAUDE.local.md").exists());
+            assert!(!repo.join(".codex/config.toml").exists());
+        }
     }
 
     #[test]
