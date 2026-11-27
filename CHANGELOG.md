@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.22.9](https://github.com/wenlan-app/wenlan/compare/v0.22.8...v0.22.9) (2026-11-27)
+
+
+### Features
+
+* **rules:** move every-Space page rules into shared rules once, with one confirm ([#1401](https://github.com/wenlan-app/wenlan/issues/1401)) ([3cf7e64](https://github.com/wenlan-app/wenlan/commit/3cf7e64259fe139f81c4fb069b8133478396b68e))
+* **rules:** order rule layers team, personal, project and ask before sending tool-file team edits ([#1407](https://github.com/wenlan-app/wenlan/issues/1407)) ([e6e7b9c](https://github.com/wenlan-app/wenlan/commit/e6e7b9cb502008ebbe906c9b7f144f914eef2af6))
+* **rules:** put team rules only in that team's repositories, through git-ignored local files ([#1411](https://github.com/wenlan-app/wenlan/issues/1411)) ([cfe70b2](https://github.com/wenlan-app/wenlan/commit/cfe70b25689f65b7ad1be2237a4e17cf46e3beff))
+* **team:** members see team pages in their own app ([#1409](https://github.com/wenlan-app/wenlan/issues/1409)) ([2f8eaf5](https://github.com/wenlan-app/wenlan/commit/2f8eaf5b0355e7c328e40de783f5183d73c5d4a5))
+* **team:** share pages and Spaces to the team from the app ([#1405](https://github.com/wenlan-app/wenlan/issues/1405)) ([4045b1c](https://github.com/wenlan-app/wenlan/commit/4045b1cbb9bdba1f47b355aa18267b473dc40b22))
+
+
+### Bug Fixes
+
+* **copy:** call a Wenlan page a page everywhere; mark unconfirmed citations with a visible ? ([#1408](https://github.com/wenlan-app/wenlan/issues/1408)) ([f199ea7](https://github.com/wenlan-app/wenlan/commit/f199ea7abddd09b800e60e6fd05b7112809fa541))
+* **rules:** drop only key-looking skills from an older saved setup instead of refusing it ([#1403](https://github.com/wenlan-app/wenlan/issues/1403)) ([906f01b](https://github.com/wenlan-app/wenlan/commit/906f01bc1fa7a83b27885c4bbc2e75438d918655))
+* **rules:** drop saved skills that look like they hold a key instead of refusing the setup ([906f01b](https://github.com/wenlan-app/wenlan/commit/906f01bc1fa7a83b27885c4bbc2e75438d918655))
+* **rules:** keep rules readable after the first confirmed preference; docs say what really happens ([#1404](https://github.com/wenlan-app/wenlan/issues/1404)) ([2f5bbdb](https://github.com/wenlan-app/wenlan/commit/2f5bbdb52ff51993c6fa310bf4153c236eb6a1da))
+* **ux:** AI tools follow saved rules without a rule file; plugin tool list; visible "yes" step; clearer texts ([#1406](https://github.com/wenlan-app/wenlan/issues/1406)) ([c76ab4b](https://github.com/wenlan-app/wenlan/commit/c76ab4b724c166170e5583583640695fd2ef53fb))
+
 ## [0.22.8](https://github.com/wenlan-app/wenlan/compare/v0.22.7...v0.22.8) (2026-11-26)
 
 

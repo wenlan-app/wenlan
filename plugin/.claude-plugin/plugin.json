@@ -2,7 +2,7 @@
   "name": "wenlan",
   "displayName": "Wenlan",
   "description": "Docs, skills and rules your AI tools keep current and work from. Each page links to its sources. Open source, and works with your existing Obsidian vault.",
-  "version": "0.22.8",
+  "version": "0.22.9",
   "author": {
     "name": "Qi-Xuan Lu",
     "url": "https://github.com/7xuanlu"
