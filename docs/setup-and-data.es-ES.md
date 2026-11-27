@@ -89,7 +89,7 @@ Tus páginas y notas de sesión son archivos Markdown; las memorias y el grafo s
 
 ### Copia de seguridad de tus conocimientos
 
-Cierra la app y detén el servicio en segundo plano antes de copiar estas carpetas. Incluye cualquier carpeta de páginas o datos que hayas configurado aparte. Exportar la wiki no equivale a una copia completa de la base de datos.
+Cierra la app y detén el servicio en segundo plano antes de copiar estas carpetas. Incluye cualquier carpeta de páginas o datos que hayas configurado aparte. Exportar las páginas no equivale a una copia completa de la base de datos.
 
 Si actualizaste desde Origin, comprueba también `~/.origin/` y la carpeta hermana de datos `origin` de tu plataforma. Inclúyelas al respaldar material antiguo o elimínalas solo si quieres borrarlo.
 

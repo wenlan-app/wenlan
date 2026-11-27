@@ -4,11 +4,11 @@ description: >
   The one front door to Wenlan. Takes plain words after `$wenlan` and runs the
   right Wenlan workflow; bare `$wenlan` shows status or starts setup. Use for:
   setting up or fixing Wenlan ("set up wenlan", "is wenlan working", "裝好了嗎"),
-  turning what was imported or saved into notes and bringing out of date
-  notes up to date ("steep", "沉澱", "整理成筆記"), getting to know a code
-  repository ("write the docs for this repo", "幫這個 repo 寫文件", "認識這個倉庫"), opening or listing notes
-  ("open my note on X", "打開筆記"), organizing existing pages and folders
-  ("organize my notes", "整理我的資料"), checking memory quality or cleaning
+  turning what was imported or saved into pages and bringing out of date
+  pages up to date ("steep", "沉澱", "整理成頁面"), getting to know a code
+  repository ("write the docs for this repo", "幫這個 repo 寫文件", "認識這個倉庫"), opening or listing pages
+  ("open my page on X", "打開頁面"), organizing existing pages and folders
+  ("organize my pages", "整理我的資料"), checking memory quality or cleaning
   up ("lint", "檢查重複", "清一清"), reviewing pending items ("review what's
   waiting", "看待確認的"), deleting one memory ("forget <id>", "刪掉這筆"),
   starting, inviting to, joining or leaving a team ("invite Amy", "加入團隊"),
@@ -41,7 +41,7 @@ Match the request to one row. Old command words count as their row.
 | Set up, repair, upgrade, check it works | setup | `$wenlan setup`, `$wenlan 好像壞了` |
 | Prepare new material, update stale pages, make a page follow another page, arrange existing knowledge around a goal, or explicitly rebuild/merge pages | steep | `$wenlan steep`, `$wenlan 整理我的資料`, `$wenlan 沉澱`, `$wenlan 讓這頁跟著定位頁`, `$wenlan steep rebuild <page-id>` |
 | Get to know this repository; write docs about it and keep them current; make its docs follow a page | wiki | `$wenlan docs`, `$wenlan 幫這個 repo 寫文件`, `$wenlan wiki` (earlier name), `$wenlan 認識這個倉庫`, `$wenlan 幫這個倉庫建 wiki`, `$wenlan 讓 README 跟著這頁` |
-| List, find, open or print a note | pages | `$wenlan pages release`, `$wenlan 打開那篇筆記` |
+| List, find, open or print a page | pages | `$wenlan pages release`, `$wenlan 打開那個頁面` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `$wenlan lint`, `$wenlan lint repair`, `$wenlan 檢查重複` |
 | Sync my rules: 同步我的規則, 同步規則, 同步我的规则, 同步规则, sync my rules | rules sync below | `$wenlan sync my rules` |
 | Check personal rules status: 規則狀態, 规则状态, rules status | rules status below | `$wenlan rules status` |
@@ -49,12 +49,12 @@ Match the request to one row. Old command words count as their row.
 | Walk pending captures, revisions or refinements | curate | `$wenlan curate revisions`, `$wenlan 看待確認的` |
 | Delete one memory by id | forget | `$wenlan forget mem_123` |
 | Change how the Wenlan app looks: colors, fonts, images, or back to normal | theme | `$wenlan theme 紫色夜晚風格`, `$wenlan theme reset` |
-| Save one memory, or save this conversation as one note | capture | `$wenlan 記住我們改用 SQLite` |
+| Save one memory, or save this conversation as one page | capture | `$wenlan 記住我們改用 SQLite` |
 | Look something up | recall | `$wenlan 我們上次怎麼決定資料庫` |
 | Catch up on the project | brief | `$wenlan 上次做到哪`, `$wenlan where did I leave off?` |
 | Start a team on this computer, invite someone, join with an invite link, see or leave a team | team: follow [references/team.md](references/team.md) | `$wenlan 邀請 Amy 加入團隊`, `$wenlan join this team: <link>`, `$wenlan team` |
 | End the session | handoff | `$wenlan 收工`, `$wenlan wrap up`, `$wenlan handoff` |
-| What Wenlan can do, where data lives, how to read notes without the app | answer from "Reference" below | `$wenlan help`, `$wenlan 資料存在哪` |
+| What Wenlan can do, where data lives, how to read pages without the app | answer from "Reference" below | `$wenlan help`, `$wenlan 資料存在哪` |
 
 Rules:
 
@@ -111,7 +111,7 @@ For brief, capture, recall and handoff, use that Wenlan skill. Arguments:
   named areas, and approval words. For `$wenlan steep ...`, pass everything
   after `steep` unchanged. Never reduce a knowledge task to keywords.
 - Other plain words: only the mode, scope, target, id or `space:<name>` the user
-  actually said, in their words (`$wenlan 打開發布計畫那篇筆記` gives pages
+  actually said, in their words (`$wenlan 打開發布計畫那個頁面` gives pages
   `發布計畫`). Nothing else from the sentence. When none was said, pass
   nothing.
 - capture, recall and brief take the user's content as written.
@@ -121,11 +121,11 @@ For brief, capture, recall and handoff, use that Wenlan skill. Arguments:
 Answer these from here, without a tool call, and only the part asked:
 
 - Data lives under `~/.wenlan/` (under `$WENLAN_DATA_DIR` when that is set,
-  as it is for a test daemon): `pages/` holds notes as Markdown,
+  as it is for a test daemon): `pages/` holds pages as Markdown,
   `sessions/` holds older session logs by date (no longer written), and
   `sessions/_status/` holds the receipts written from each project's Brief. Memories and links live in a
   local database; `docs/setup-and-data.md` says where.
-- Read notes in a terminal: `wenlan pages` lists recent notes;
+- Read pages in a terminal: `wenlan pages` lists recent pages;
   `wenlan pages "<query>" --print` prints one with its sources. The folder
   also opens in Finder, an editor, or as an Obsidian vault.
 - Steep has two modes. On demand, this AI tool does it: `$wenlan steep`.

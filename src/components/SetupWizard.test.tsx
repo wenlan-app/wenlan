@@ -281,7 +281,7 @@ describe("SetupWizard", () => {
     expect(screen.getByText("Welcome to Wenlan")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Start empty/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /look around an example wiki/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /look around example pages/ })).toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(5);
     expect(screen.queryByTestId("wizard-action-bar")).not.toBeInTheDocument();
     expect(getWireState).not.toHaveBeenCalled();

@@ -3,11 +3,11 @@ import { type Page } from "@playwright/test";
 
 /** Reach a requested view through its context button at every viewport width. */
 export async function openPageTool(page: Page, tool: string, actions = "Page actions"): Promise<void> {
-  const hant = actions === "筆記操作";
-  const hans = actions === "笔记操作";
+  const hant = actions === "頁面操作";
+  const hans = actions === "页面操作";
   const infoLabel = hant ? "資訊" : hans ? "信息" : "Info";
   const mapLabels = ["Mind map", "心智圖", "思维导图"];
-  const info = ["Page info", "筆記資訊", "笔记信息", infoLabel].includes(tool);
+  const info = ["Page info", "頁面資訊", "页面信息", infoLabel].includes(tool);
   const isMap = mapLabels.includes(tool);
   if (info) {
     const button = page.getByRole("button", { name: infoLabel, exact: true });

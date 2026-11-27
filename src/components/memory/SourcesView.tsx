@@ -1054,7 +1054,7 @@ function EmptyShelf({ onAdd }: { onAdd: () => void }) {
             lineHeight: 1.6,
           }}
         >
-          Wenlan builds its wiki from the folders and vaults you add here. Point it at a notes
+          Wenlan builds its pages from the folders and vaults you add here. Point it at a notes
           folder or an Obsidian vault to lay the first stone.
         </p>
         <button

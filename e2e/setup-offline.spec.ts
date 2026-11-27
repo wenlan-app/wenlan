@@ -48,7 +48,7 @@ for (const viewport of [{ width: 1173, height: 672 }, { width: 640, height: 420 
     await open.click();
     await expect(page.getByTestId('setting-up-tasks')).toHaveCount(0);
     await expect(page.getByTestId('wizard-action-bar')).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: '筆記暫時無法載入' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '頁面暫時無法載入' })).toBeVisible();
     expect(controller.calls().filter(call => call.command === 'set_setup_completed')).toEqual([]);
     expect(errors.pageErrors).toEqual([]);
     // The launch pin-fill read also meets the intentionally unavailable

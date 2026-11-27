@@ -133,8 +133,8 @@ describe("ActivityNow", () => {
 
   it.each([
     { language: "en", notes: "Pages", idle: "Idle" },
-    { language: "zh-Hans", notes: "笔记", idle: "待机" },
-    { language: "zh-Hant", notes: "筆記", idle: "待機" },
+    { language: "zh-Hans", notes: "页面", idle: "待机" },
+    { language: "zh-Hant", notes: "頁面", idle: "待機" },
   ])("localizes the always-visible Pages row in $language", async ({ language, notes, idle }) => {
     await i18n.changeLanguage(language);
     renderNow(activity({

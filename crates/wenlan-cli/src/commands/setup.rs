@@ -564,9 +564,9 @@ async fn interactive_setup() -> anyhow::Result<()> {
     println!("1) Local Memory");
     println!("   Store, search, recall, and MCP memory. No local model or API key.");
     println!("2) Local Model");
-    println!("   Download a model for writing notes on this computer.");
+    println!("   Download a model for writing pages on this computer.");
     println!("3) Anthropic Key");
-    println!("   Write notes with your Anthropic key. Memory stays local.");
+    println!("   Write pages with your Anthropic key. Memory stays local.");
     println!();
 
     let choice = prompt_line("Choose 1, 2, or 3 [1]: ")?;
@@ -805,7 +805,7 @@ async fn configure_enrichment(
         everyday.label()
     );
     println!(
-        "  Page synthesis:       {} (draft and update synthesized wiki pages)",
+        "  Page synthesis:       {} (draft and update synthesized pages)",
         synthesis.label()
     );
     if matches!(everyday, EnrichmentSource::OnDevice)

@@ -35,7 +35,7 @@ pub enum SourcesCommand {
         source_type: SourceKind,
     },
     /// Save one document read elsewhere (an email, a Notion or Drive page, a
-    /// Slack thread, an article) with its link, so notes cite the original.
+    /// Slack thread, an article) with its link, so pages cite the original.
     /// Text comes from --file or stdin. Saving the same link again replaces
     /// the saved copy; Wenlan does not re-fetch the original.
     Save {
@@ -141,7 +141,7 @@ pub async fn run_sources(
 }
 
 /// Validate `sources save` input. The link becomes the document's identity,
-/// and only an http(s) link lets a note's citation open the original.
+/// and only an http(s) link lets a page's citation open the original.
 fn save_request(
     url: String,
     title: String,

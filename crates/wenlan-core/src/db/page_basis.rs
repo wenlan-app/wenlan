@@ -70,10 +70,10 @@ pub enum BasisUnavailableReason {
 impl std::fmt::Display for BasisUnavailableReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Deleted => "the basis note was deleted",
-            Self::IncarnationChanged => "the basis note was deleted and its id reused",
-            Self::Archived => "the basis note is archived",
-            Self::HistoryGone => "the version this note relied on is no longer stored",
+            Self::Deleted => "the basis page was deleted",
+            Self::IncarnationChanged => "the basis page was deleted and its id reused",
+            Self::Archived => "the basis page is archived",
+            Self::HistoryGone => "the version this page relied on is no longer stored",
         })
     }
 }
@@ -82,43 +82,43 @@ impl std::fmt::Display for BasisUnavailableReason {
 /// plain-language reason a caller can show; `Db` carries a storage failure.
 #[derive(Debug, thiserror::Error)]
 pub enum BasisError {
-    #[error("a note cannot be its own basis")]
+    #[error("a page cannot be its own basis")]
     SelfReference,
-    #[error("the note that would rely on it was not found")]
+    #[error("the page that would rely on it was not found")]
     CiterNotFound,
-    #[error("only an active note can rely on another note")]
+    #[error("only an active page can rely on another page")]
     CiterNotActive,
-    #[error("a draft cannot rely on another note")]
+    #[error("a draft cannot rely on another page")]
     CiterIsDraft,
-    #[error("an entity page cannot rely on another note")]
+    #[error("an entity page cannot rely on another page")]
     CiterIsEntityPage,
-    #[error("the basis note was not found")]
+    #[error("the basis page was not found")]
     BasisNotFound,
-    #[error("the basis note was deleted")]
+    #[error("the basis page was deleted")]
     BasisDeleted,
-    #[error("the basis note is archived")]
+    #[error("the basis page is archived")]
     BasisArchived,
     #[error("a draft cannot be a basis")]
     BasisIsDraft,
     #[error("an entity page cannot be a basis")]
     BasisIsEntityPage,
-    #[error("version {requested} is not a version of the basis note (current version {current})")]
+    #[error("version {requested} is not a version of the basis page (current version {current})")]
     InvalidVersion { requested: i64, current: i64 },
-    #[error("the basis note moved on: it is now at version {current}")]
+    #[error("the basis page moved on: it is now at version {current}")]
     MovedOn { current: i64 },
-    #[error("this note does not rely on that note")]
+    #[error("this page does not rely on that page")]
     NotABasis,
     /// The note relying on the basis was edited after the write checked it.
-    #[error("the note changed: it is now at version {current}")]
+    #[error("the page changed: it is now at version {current}")]
     CiterMovedOn { current: i64 },
-    #[error("the basis note is not available: {0}")]
+    #[error("the basis page is not available: {0}")]
     BasisUnavailable(BasisUnavailableReason),
     /// A mark recorded on a revision card (an agent's write to a locked note)
     /// could not be applied when the card was accepted. The message starts
     /// with [`wenlan_types::PAGE_REVISION_BASIS_REFUSED`] so the accept path,
     /// the app and the MCP client can recognise it.
     #[error(
-        "{code}: the change relied on note {basis_page_id}, and {reason}",
+        "{code}: the change relied on page {basis_page_id}, and {reason}",
         code = wenlan_types::PAGE_REVISION_BASIS_REFUSED
     )]
     CardMarkRefused {

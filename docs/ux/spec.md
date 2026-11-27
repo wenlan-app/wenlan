@@ -79,6 +79,20 @@ and wait for evidence that people need them.
   make it yours. Only yours counts as decided.
 - **Proposal**: a change the AI suggests to one of your sentences. It lands
   only when you accept it.
+- **UX-WORDS-1** `shipped` A Wenlan page has one name: "page/pages" in
+  English, 頁面 in Traditional Chinese and 页面 in Simplified Chinese. The app
+  never calls it a note, 筆記/笔记, wiki, 文章 or 文檔/文档, and never calls the
+  collection of pages a wiki (the `/wenlan wiki` command keeps its name).
+  Chinese text says 空間/空间, never the English word "Space". "Note" stays
+  only where it means the person's own material or another app's notes (an
+  Obsidian vault, Apple Notes, Zotero, release notes), and 文章/文档 only for
+  Zotero papers and source-library documents; the test lists those keys, each
+  kept only for that one word, with a reason. The sidebar section label
+  ("Docs"/文件/文档) is a separate pending decision. Test:
+  `src/i18n/pageNaming.test.ts`, which covers the app's copy only; the CLI,
+  MCP tool text, plugins and docs follow the same rule and are reviewed by
+  hand.
+  決定（2026-11-26，Qi-Xuan）：Wenlan 的頁一律叫「頁面」，不叫筆記、wiki、文檔；中文裡的 Space 一律寫「空間」。
 
 ## Handoff between AI sessions
 
@@ -352,6 +366,16 @@ and wait for evidence that people need them.
 - **UX-WHO-5** `shipped` An unverified source can't be hidden and can't look
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
+
+- **UX-WHO-11** `shipped` A citation whose source does not clearly support its
+  sentence is still saved, and the page shows it with a visible amber "?"
+  beside its number ([2?]), in reading and editing, and says in words "source
+  doesn't clearly say this" on the sentence (short form "not confirmed by its
+  source" in the popover, Info and the screen-reader name). Not-yet-checked
+  and historical citations get no "?".
+  Public copy never says every sentence has a source. Test
+  `UX-WHO-11 shows a visible question mark on an unconfirmed citation`.
+  原文：UX 稽核 2026-11（第 4 條，全照建議）：無法驗證的引用照存，但頁面上清楚標出；公開文案不說每句都有出處。
 
 - **UX-WHO-6** `shipped` Opening a sentence shows the lines of the
   conversation it came from: who said each one and when, at most three, each

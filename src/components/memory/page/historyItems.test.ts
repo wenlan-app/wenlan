@@ -59,17 +59,17 @@ describe("an archive or a restore says who did it, or reads whole without a name
   it("names a member, you, or an AI tool", () => {
     expect(historyItemLabel(tFor("en"), row("archived", "shared_person:amy"), shares)).toBe("Amy archived this page");
     expect(historyItemLabel(tFor("en"), row("restored", "manual_edit"), shares)).toBe("You restored this page");
-    expect(historyItemLabel(tFor("zh-Hant"), row("archived", "manual_edit"), shares)).toBe("你封存了這篇筆記");
-    expect(historyItemLabel(tFor("zh-Hans"), row("restored", "shared_person:amy"), shares)).toBe("Amy恢复了这篇笔记");
+    expect(historyItemLabel(tFor("zh-Hant"), row("archived", "manual_edit"), shares)).toBe("你封存了這個頁面");
+    expect(historyItemLabel(tFor("zh-Hans"), row("restored", "shared_person:amy"), shares)).toBe("Amy恢复了这个页面");
     expect(historyItemLabel(tFor("en"), row("archived", "ai:claude-code"))).toBe("Claude Code archived this page");
   });
 
   it("an old row with nobody recorded is a full sentence with no blank", () => {
     expect(historyItemLabel(tFor("en"), row("archived", null))).toBe("This page was archived");
     expect(historyItemLabel(tFor("en"), row("restored", null))).toBe("This page was restored");
-    expect(historyItemLabel(tFor("zh-Hant"), row("archived", null))).toBe("這篇筆記已封存");
-    expect(historyItemLabel(tFor("zh-Hant"), row("restored", null))).toBe("這篇筆記已還原");
-    expect(historyItemLabel(tFor("zh-Hans"), row("archived", null))).toBe("这篇笔记已归档");
+    expect(historyItemLabel(tFor("zh-Hant"), row("archived", null))).toBe("這個頁面已封存");
+    expect(historyItemLabel(tFor("zh-Hant"), row("restored", null))).toBe("這個頁面已還原");
+    expect(historyItemLabel(tFor("zh-Hans"), row("archived", null))).toBe("这个页面已归档");
   });
 });
 

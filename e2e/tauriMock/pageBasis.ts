@@ -53,8 +53,8 @@ export class PageBasisStore {
 
   mark(pageId: string, basisPageId: string, pages: readonly KnowledgePage[]): BasisRef {
     const basis = pages.find((page) => page.id === basisPageId);
-    if (!basis) throw new Error("the basis note was not found (404)");
-    if (pageId === basisPageId) throw new Error("a note cannot be its own basis (409)");
+    if (!basis) throw new Error("the basis page was not found (404)");
+    if (pageId === basisPageId) throw new Error("a page cannot be its own basis (409)");
     const row: MockBasisRow = {
       pageId,
       basisPageId,
@@ -83,7 +83,7 @@ export class PageBasisStore {
   ): BasisConfirmResult {
     const row = this.rows.find((entry) => entry.pageId === pageId && entry.basisPageId === basisPageId);
     const basis = pages.find((page) => page.id === basisPageId);
-    if (!row || !basis) return { outcome: "conflict", message: "this note does not rely on that note" };
+    if (!row || !basis) return { outcome: "conflict", message: "this page does not rely on that page" };
     if (basis.version !== version) {
       return { outcome: "conflict", message: `the basis is at version ${basis.version}, not ${version}` };
     }
@@ -105,9 +105,9 @@ export class PageBasisStore {
   diff(pageId: string, basisPageId: string, pages: readonly KnowledgePage[]): BasisDiffResult {
     const row = this.rows.find((entry) => entry.pageId === pageId && entry.basisPageId === basisPageId);
     const basis = pages.find((page) => page.id === basisPageId);
-    if (!row) return { outcome: "unavailable", reason: "not_a_basis", message: "this note does not rely on that note" };
-    if (!basis) return { outcome: "unavailable", reason: "deleted", message: "the basis note was deleted" };
-    if (basis.status !== "active") return { outcome: "unavailable", reason: "archived", message: "the basis note is archived" };
+    if (!row) return { outcome: "unavailable", reason: "not_a_basis", message: "this page does not rely on that page" };
+    if (!basis) return { outcome: "unavailable", reason: "deleted", message: "the basis page was deleted" };
+    if (basis.status !== "active") return { outcome: "unavailable", reason: "archived", message: "the basis page is archived" };
     return {
       outcome: "available",
       diff: {

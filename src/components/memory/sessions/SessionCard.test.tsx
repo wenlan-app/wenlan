@@ -227,7 +227,7 @@ describe("SessionCard", () => {
       expect(await within(dialog).findByRole("heading", { name: "它查了什麼" })).toBeInTheDocument();
       expect(within(dialog).getByText("搜尋了「同步」")).toBeInTheDocument();
       expect(within(dialog).getByText("還有 2 次")).toBeInTheDocument();
-      expect(within(dialog).getByRole("heading", { name: "後來用到這些記憶的筆記" })).toBeInTheDocument();
+      expect(within(dialog).getByRole("heading", { name: "後來用到這些記憶的頁面" })).toBeInTheDocument();
       expect(dialog.textContent).not.toMatch(/[—–]/);
     } finally {
       await i18n.changeLanguage("en");
