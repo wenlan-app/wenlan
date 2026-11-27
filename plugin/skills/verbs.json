@@ -1,7 +1,7 @@
 [
   {"verb": "/wenlan", "args": "[what you want]", "skill": "wenlan", "menu": true, "line": "the front door: say what you want, or type it bare for status and setup"},
   {"verb": "/brief", "args": "[topic]", "skill": "brief", "menu": true, "line": "load the Brief for the current Space (optional; not a boot step)"},
-  {"verb": "/capture", "args": "<x>", "skill": "capture", "menu": true, "line": "save one durable memory in flow, or this conversation as one note on request"},
+  {"verb": "/capture", "args": "<x>", "skill": "capture", "menu": true, "line": "save one durable memory in flow, or this conversation as one page on request"},
   {"verb": "/recall", "args": "<q>", "skill": "recall", "menu": true, "line": "search local memory"},
   {"verb": "/handoff", "skill": "handoff", "menu": true, "line": "end of session: update the Brief"},
   {"verb": "/how-i-work", "skill": "how-i-work", "menu": true, "line": "read this Space's approved rules before choosing an approach"},

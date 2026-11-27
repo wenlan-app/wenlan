@@ -35,7 +35,7 @@ For technical readers: Wenlan follows the **LLM wiki** pattern. See the [impleme
 
 The Agent Loop example connects a retry rule, a lesson from a UI review, and an acceptance checklist you can reuse.
 
-The entity-relation graph is one part of Wenlan's wider connected wiki. **Knowledge Pages** hold maintained synthesis, **Entities** anchor reusable people, projects, and concepts, **Source Pages** make imported or synchronized material inspectable, and atomic **Memories** preserve decisions and changes. They work through separate, explicit links: Page-to-Page wikilinks, Page evidence, Memory-to-Entity links, and directed Entity relations.
+The entity-relation graph is one part of Wenlan's wider set of connected pages. **Knowledge Pages** hold maintained synthesis, **Entities** anchor reusable people, projects, and concepts, **Source Pages** make imported or synchronized material inspectable, and atomic **Memories** preserve decisions and changes. They work through separate, explicit links: Page-to-Page wikilinks, Page evidence, Memory-to-Entity links, and directed Entity relations.
 
 Within the entity graph, a configured enrichment model extracts typed Entities, observations, and directed relations from Memories. Entity linking and resolution reuse existing nodes instead of treating every mention as new; each Memory keeps its Source and can link to multiple Entities. [How the connected model is stored ->](technical-foundations.md#connected-knowledge-model)
 
@@ -64,7 +64,7 @@ Page, episodic, and fact channels are opt-in and degrade to the remaining search
 
 ## Updates and history
 
-A generated wiki can go stale; a memory store can fragment into disconnected facts. Wenlan links two lifecycles without collapsing them into one layer.
+Generated pages can go stale; a memory store can fragment into disconnected facts. Wenlan links two lifecycles without collapsing them into one layer.
 
 ### Atomic Memory
 

@@ -328,7 +328,7 @@ fn rewrite(
 }
 
 fn pr_body(report: &RefreshReport) -> String {
-    let mut body = String::from("Wenlan checked the code each wiki page relies on.\n");
+    let mut body = String::from("Wenlan checked the code each page relies on.\n");
     if !report.rewritten.is_empty() {
         body.push_str("\nRewritten because their code changed:\n");
         for file in &report.rewritten {

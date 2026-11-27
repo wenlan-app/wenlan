@@ -57,7 +57,7 @@ describe("EverydayUse", () => {
     expect(screen.getByTestId("everyday-use-wrapUp")).toHaveTextContent("Ask Wenlan to save where I stopped");
     expect(screen.queryByText(/wenlan wrap up/)).toBeNull();
     expect(screen.queryByText(/handoff/)).toBeNull();
-    expect(screen.getByTestId("everyday-use-repo")).toHaveTextContent("ask Wenlan to write a wiki for it");
+    expect(screen.getByTestId("everyday-use-repo")).toHaveTextContent("ask Wenlan to write pages from it");
   });
 
   it("stays closed once closed", () => {

@@ -101,7 +101,7 @@ describe("ReferencePreview citation targets", () => {
 
     const preview = screen.getByRole("dialog", { name: "Imported meeting notes" });
     expect(preview).toHaveTextContent("File");
-    expect(preview).toHaveTextContent("unverified");
+    expect(preview).toHaveTextContent("not confirmed by its source");
     expect(preview).toHaveTextContent("The source body has a useful plain-text excerpt.");
     expect(preview).toHaveTextContent("/notes/original.md");
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();

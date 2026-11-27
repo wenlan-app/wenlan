@@ -19,7 +19,7 @@ Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claud
 | --- | --- |
 | `/wenlan [what you want]` | the front door: say what you want, or type it bare for status and setup |
 | `/brief [topic]` | load the Brief for the current Space (optional; not a boot step) |
-| `/capture <x>` | save one durable memory in flow, or this conversation as one note on request |
+| `/capture <x>` | save one durable memory in flow, or this conversation as one page on request |
 | `/recall <q>` | search local memory |
 | `/handoff` | end of session: update the Brief |
 | `/how-i-work` | read this Space's approved rules before choosing an approach |

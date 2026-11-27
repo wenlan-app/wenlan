@@ -11,7 +11,7 @@ allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__handoff"]
 
 Close the session with one typed update to the daemon-owned Space Brief.
 
-A handoff changes the Brief only. It writes no wiki pages: pages follow a
+A handoff changes the Brief only. It writes no pages: pages follow a
 memory change by themselves, and Wenlan checks the pages a session read at
 night. It stores no memories: durable decisions, lessons and preferences are
 captured with `/capture` while the work happens, not at handoff. It writes no

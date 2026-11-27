@@ -13,8 +13,8 @@ const recentChanges = [{
 
 const COPY: Record<AppLocale, { actions: string; sidebar: string; lock: string; off: string; on: string }> = {
   en: { actions: "Page actions", sidebar: "Info", lock: "Lock this page", off: "AI keeps the sentences it wrote up to date. Changes to yours wait for you.", on: "Every AI change waits for your OK." },
-  "zh-Hant": { actions: "筆記操作", sidebar: "資訊", lock: "鎖定這篇筆記", off: "AI 會更新它自己寫的句子；要改你的句子，會先問你。", on: "AI 的每個修改都等你點頭。" },
-  "zh-Hans": { actions: "笔记操作", sidebar: "信息", lock: "锁定这篇笔记", off: "AI 会更新它自己写的句子；要改你的句子，会先问你。", on: "AI 的每个修改都等你点头。" },
+  "zh-Hant": { actions: "頁面操作", sidebar: "資訊", lock: "鎖定這個頁面", off: "AI 會更新它自己寫的句子；要改你的句子，會先問你。", on: "AI 的每個修改都等你點頭。" },
+  "zh-Hans": { actions: "页面操作", sidebar: "信息", lock: "锁定这个页面", off: "AI 会更新它自己写的句子；要改你的句子，会先问你。", on: "AI 的每个修改都等你点头。" },
 };
 
 async function openFixturePage(page: Page, actionsLabel: string): Promise<void> {

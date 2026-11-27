@@ -31,8 +31,8 @@ items waiting), and the one next step it names, as the exact thing to type or
 do, in the person's language. Leave out the project sentence and the
 waiting-changes count, and never say "steep", "distill" or other internal
 words: name writing pages in plain words. For example: "Wenlan is connected.
-12 of your notes are waiting to become pages; type `/wenlan write my pages`
-and I'll write them." (Chinese: `/wenlan 整理成筆記`) or "Wenlan is connected
+12 items are waiting to become pages; type `/wenlan write my pages`
+and I'll write them." (Chinese: `/wenlan 整理成頁面`) or "Wenlan is connected
 and you have 8 pages. Ask me anything about them, like `/wenlan what do my
 pages say about the trip?`". Use a real page title only when you already
 know one. Do not ask them to link a project. Then stop; no second list of
@@ -46,8 +46,8 @@ This folder is not linked to a project yet." No label
 lines such as "Runtime:" or "Project:", nothing about a check that was
 skipped or could not run, and no internal words such as runtime, daemon,
 Space, MCP, tool names or HTTP status codes. Then give two concrete examples of what to type
-next, one of them about notes or waiting items, for example
-`/wenlan open my note on the release plan` and `/wenlan curate revisions`. Do not print the Brief body here; that is `/wenlan-brief`.
+next, one of them about pages or waiting items, for example
+`/wenlan open my page on the release plan` and `/wenlan curate revisions`. Do not print the Brief body here; that is `/wenlan-brief`.
 
 Import progress only when the user asks about an import: call
 `list_pending_imports`. Never call it during plain status.

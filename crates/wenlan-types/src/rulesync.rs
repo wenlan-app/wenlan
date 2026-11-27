@@ -481,6 +481,25 @@ pub struct RulesSetupStatus {
     /// Show the one-time notice for setups upgraded from source following.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rule_import_finished: bool,
+    /// Rule plans that wait for the person's yes (`proposals` above is a
+    /// different thing: edits found in a tool's own files).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waiting_plans: Vec<WaitingRulePlan>,
+}
+
+/// One rule plan waiting for the person to confirm it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitingRulePlan {
+    pub id: String,
+    /// Unix time in seconds after which the plan must be made again.
+    pub expires_at: i64,
+    /// The AI tool that proposed it, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposer: Option<String>,
+    /// True for the one-time move of page rules, confirmed with
+    /// `wenlan rules merge-pages`; other plans use `rules shared apply`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page_merge: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

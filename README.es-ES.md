@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=68541013432cdb2f734f25767882905f29693ff410202bdb10dbd4cd5d60f2dd -->
+<!-- README_SYNC: source=README.md sha256=89b9d0ef8c9ef409550cecfadeec07c98a6f3890ceb4fb8f7c4adf0090674787 -->
 
 <p align="center">
   <picture>
@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>Documentos, skills y reglas con los que trabajáis tú y tus herramientas de IA, siempre al día.</strong><br>
-  Trae tus notas y conocimiento. Cada documento cita sus fuentes. Gratis y open source, para ti y tu equipo.
+  Trae tus notas y conocimiento. Cada página cita sus fuentes. Gratis y open source, para ti y tu equipo.
 </p>
 
 <p align="center">
@@ -44,7 +44,7 @@ Cada IA guarda su memoria y sus reglas. Wenlan lleva lo que decides a cada herra
 
 Para quien usa varias herramientas de IA cada día, y equipos pequeños, solo de ingenieros o mixtos.
 
-- **Documentos con fuentes.** Wenlan comprueba que cada fuente citada respalda su frase.
+- **Páginas con fuentes.** Wenlan comprueba que cada fuente citada respalda su frase.
 - **Una sola copia de skills y reglas.** Funciona en cada herramienta y plataforma de IA que conectas.
 - **Memoria ordenada.** Lo que decides pasa a tus documentos, skills y reglas; por eso están al día.
 - **Tú mandas.** Ves cada cambio, lo deshaces y bloqueas una página para que la IA pregunte.
@@ -97,7 +97,7 @@ Más comparaciones, con Obsidian, Notion AI y herramientas de memoria: [wenlan.a
 
    Con el [plugin](docs/setup-with-ai.md) son `/capture` y `/recall`. [Comandos](plugin/skills/README.md).
 
-3. Por la noche, Wenlan ordena lo decidido en documentos y reglas, cada uno con su fuente.
+3. Tu IA ordena lo decidido en documentos y reglas, cada uno con su fuente. Con el [plugin](docs/setup-with-ai.md), Claude Code empieza la próxima vez que lo abres; si no, pídele a tu IA que escriba tus páginas. Con un modelo local o una clave de API, Wenlan puede hacerlo en segundo plano.
 
    La primera vez pregunta una vez. Tras tu sí, las reglas van a los archivos de reglas de tus herramientas.
 
@@ -179,7 +179,7 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 </p>
 <p>Ilustración basada en el comportamiento actual de actualización; no es una captura de la app.</p>
 
-- **Documentos con fuentes:** Wenlan rechaza una página si las citas no coinciden. Pasar no es prueba.
+- **Páginas con fuentes:** Wenlan rechaza una página si las citas no coinciden. Pasar no es prueba.
 - **Al día:** Si cambia una fuente, una memoria o el código citado, se marcan las páginas afectadas.
 - **Tú decides qué cambia la IA:** **Allowed** o **Ask me first** por página, y restauras cualquier versión.
 - **Dos formas:** tu IA mientras trabaja (por defecto) o un modelo en segundo plano. [Guía de Steep](docs/steep.md).
@@ -196,7 +196,7 @@ Tu IA convierte lo que traes en páginas Markdown enlazadas y con citas, y las m
 
 ## Documentación para tu repositorio de código
 
-En un repositorio, tu herramienta de IA lee el código y escribe un resumen y un documento por cada parte.
+En un repositorio, tu herramienta de IA lee el código y escribe un resumen y una página por cada parte.
 
 ```sh
 cd your-repo

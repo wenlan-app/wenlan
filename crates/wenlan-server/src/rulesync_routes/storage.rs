@@ -96,7 +96,7 @@ impl StoredSetup {
 
     pub(super) fn load_contents(&self, root: &FileRoot) -> Result<Manifest> {
         let mut cache = BTreeMap::<String, Vec<u8>>::new();
-        let manifest = map_contents(&self.state, |hash| {
+        let mut manifest = map_contents(&self.state, |hash| {
             if let Some(bytes) = cache.get(&hash.0) {
                 return Ok(bytes.clone());
             }
@@ -111,8 +111,7 @@ impl StoredSetup {
             cache.insert(hash.0.clone(), bytes.clone());
             Ok(bytes)
         })?;
-        // Older builds could already have saved credentials. Leave that
-        // backup intact and refuse to use it for delivery, restore or review.
+        filter_key_skills(&mut manifest, &cache)?;
         check_saved_rules_and_skills(&manifest)?;
         Ok(manifest)
     }
@@ -173,6 +172,176 @@ fn discard_legacy_source_receipts<T>(manifest: &mut Manifest<T>) {
         journal.undo_stages.retain(|path, _| !is_old_source(path));
     }
     manifest.pending.retain(|op| !is_old_source(&op.path));
+}
+
+fn skill_paths(skill: &AdoptedSkill) -> BTreeSet<PathBuf> {
+    let mut paths: BTreeSet<PathBuf> = skill.locations.values().flatten().cloned().collect();
+    for target in PERSONAL_TARGETS {
+        for root in target.skill_roots() {
+            paths.insert(Path::new(root).join(&skill.name));
+        }
+    }
+    paths
+}
+
+fn remove_skill_paths(manifest: &mut Manifest, paths: &BTreeSet<PathBuf>) {
+    let belongs = |path: &Path| paths.iter().any(|folder| path.starts_with(folder));
+    manifest.backup.retain(|path, _| !belongs(path));
+    manifest.delivered.retain(|path, record| {
+        !belongs(path)
+            || matches!(
+                &record.kind,
+                Kind::Rule { .. } | Kind::RuleRevocation { .. }
+            )
+    });
+    if let Some(journal) = &mut manifest.rule_share {
+        journal.attempted -= manifest
+            .pending
+            .iter()
+            .take(journal.attempted)
+            .filter(|op| belongs(&op.path))
+            .count();
+        journal.new_backups.retain(|path| !belongs(path));
+        journal.undo_stages.retain(|path, _| !belongs(path));
+    }
+    manifest.pending.retain(|op| !belongs(&op.path));
+    manifest.stages.retain(|path, _| !belongs(path));
+    manifest.recovery_issues.retain(|path, _| !belongs(path));
+    manifest.extension_paths.retain(|path| !belongs(path));
+}
+
+fn filter_key_skills(manifest: &mut Manifest, cache: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    use wenlan_core::rulesync_personal::credentials::contains_credential_bytes;
+    let all_paths: BTreeSet<_> = manifest
+        .master
+        .skills
+        .iter()
+        .flat_map(skill_paths)
+        .collect();
+    // Rule receipts retain their refusal semantics even if a malformed path
+    // happens to overlap a skill folder.
+    let rule_receipt_key = manifest.delivered.values().any(|record| {
+        matches!(
+            &record.kind,
+            Kind::Rule { .. } | Kind::RuleRevocation { .. }
+        ) && (snapshot_has_credentials(&record.delivered)
+            || record
+                .observed
+                .as_ref()
+                .is_some_and(snapshot_has_credentials))
+    }) || manifest.pending.iter().any(|op| {
+        matches!(
+            &op.kind,
+            Some(Kind::Rule { .. } | Kind::RuleRevocation { .. })
+        ) && (snapshot_has_credentials(&op.seen) || snapshot_has_credentials(&op.desired))
+    });
+    ensure!(!rule_receipt_key, "The saved rules or skills setup holds text that looks like a key. Wenlan is leaving the existing backup and tool files in place.");
+    let mut rules_only = manifest.clone();
+    rules_only.master.skills.clear();
+    remove_skill_paths(&mut rules_only, &all_paths);
+    check_saved_rules_and_skills(&rules_only)?;
+    let mut dropped = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for skill in &manifest.master.skills {
+        let folders = skill_paths(skill);
+        let belongs = |path: &Path| folders.iter().any(|folder| path.starts_with(folder));
+        let found = skill
+            .files
+            .values()
+            .any(|bytes| contains_credential_bytes(bytes))
+            || manifest
+                .backup
+                .iter()
+                .any(|(path, snap)| belongs(path) && snapshot_has_credentials(snap))
+            || manifest.delivered.iter().any(|(path, record)| {
+                belongs(path)
+                    && (snapshot_has_credentials(&record.delivered)
+                        || record
+                            .observed
+                            .as_ref()
+                            .is_some_and(snapshot_has_credentials))
+            })
+            || manifest.pending.iter().any(|op| {
+                belongs(&op.path)
+                    && (snapshot_has_credentials(&op.seen) || snapshot_has_credentials(&op.desired))
+            });
+        if found {
+            dropped.insert(skill.name.clone());
+            paths.extend(folders);
+        }
+    }
+    if !dropped.is_empty() {
+        manifest
+            .master
+            .skills
+            .retain(|skill| !dropped.contains(&skill.name));
+        remove_skill_paths(manifest, &paths);
+        // Their tool folders stay as they are, outside Wenlan's care.
+        manifest.unmanaged_skills.extend(paths);
+        manifest.key_skills_notice.extend(dropped);
+        manifest.key_skills_notice.sort();
+        manifest.key_skills_notice.dedup();
+        manifest.key_blobs_to_remove.extend(
+            cache
+                .iter()
+                .filter(|(_, bytes)| contains_credential_bytes(bytes))
+                .map(|(hash, _)| hash.clone()),
+        );
+        manifest.key_blobs_to_remove.sort();
+        manifest.key_blobs_to_remove.dedup();
+        manifest.key_skills_dropped = true;
+    }
+    Ok(())
+}
+
+pub(super) fn remove_key_blobs(root: &FileRoot, data: &Path, manifest: &Manifest) -> Result<()> {
+    use wenlan_core::rulesync_personal::credentials::contains_credential_bytes;
+    let mut referenced = BTreeSet::new();
+    map_contents(manifest, |bytes| {
+        referenced.insert(BlobHash::of(bytes).0);
+        Ok(())
+    })?;
+    // Older copies of a dropped skill file can sit in unreferenced blobs.
+    // Remove those that hold key-looking text along with the journaled ones.
+    let mut hashes: BTreeSet<String> = manifest.key_blobs_to_remove.iter().cloned().collect();
+    match std::fs::read_dir(data.join(BLOBS)) {
+        Ok(entries) => {
+            for entry in entries {
+                let name = entry?.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if referenced.contains(name) || hashes.contains(name) {
+                    continue;
+                }
+                let Ok(path) = BlobHash(name.to_owned()).path() else {
+                    continue;
+                };
+                // An unreadable stray file is left alone rather than
+                // stopping the cleanup.
+                if let Ok(Snapshot::File { bytes, .. }) = root.read_private(&path, None) {
+                    if contains_credential_bytes(&bytes) {
+                        hashes.insert(name.to_owned());
+                    }
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    for hash in &hashes {
+        if referenced.contains(hash) {
+            continue;
+        }
+        let path = BlobHash(hash.clone()).path()?;
+        let seen = root.read_private(&path, None)?;
+        if seen != Snapshot::Absent {
+            ensure!(
+                root.apply(&path, &seen, &Snapshot::Absent, false)? == ApplyOutcome::Applied,
+                "personal rules blob changed during cleanup"
+            );
+        }
+    }
+    root.sync_directory(Path::new(BLOBS))?;
+    Ok(())
 }
 
 fn check_saved_rules_and_skills(manifest: &Manifest) -> Result<()> {
@@ -362,6 +531,9 @@ fn map_contents<From, To>(
         legacy_source_following: manifest.legacy_source_following,
         rule_import_notice_pending: manifest.rule_import_notice_pending,
         team_rules_moved_notice_pending: manifest.team_rules_moved_notice_pending,
+        key_skills_notice: manifest.key_skills_notice.clone(),
+        key_blobs_to_remove: manifest.key_blobs_to_remove.clone(),
+        key_skills_dropped: false,
         imported_rule_paths: manifest.imported_rule_paths.clone(),
         backup: manifest
             .backup

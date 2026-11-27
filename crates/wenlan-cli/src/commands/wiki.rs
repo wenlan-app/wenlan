@@ -58,7 +58,7 @@ pub enum WikiCommand {
         /// Folder inside the repository for the pages. Default: wiki.
         #[arg(long)]
         folder: Option<String>,
-        /// Bring the wiki up to date by itself every day after this local
+        /// Bring the pages up to date by itself every day after this local
         /// hour (0-23), or `off`.
         #[arg(long, value_name = "HOUR|off")]
         daily: Option<String>,
@@ -102,7 +102,7 @@ pub enum WikiCommand {
         #[arg(long)]
         repo: Option<PathBuf>,
     },
-    /// Include one team Rules layer in future wiki pull requests, or turn it off.
+    /// Include one team Rules layer in future page pull requests, or turn it off.
     RulesTeam {
         /// The team's name or ID, or `off`.
         team: String,
@@ -118,7 +118,7 @@ pub enum WikiCommand {
         action: ProjectRulesAction,
     },
     /// Make docs of the bound repository follow a page of the Space: when
-    /// the page changes, the AI tool suggests fixes to them for the wiki
+    /// the page changes, the AI tool suggests fixes to them for the pages'
     /// pull request. `wenlan follow README.md <page>` is the short way.
     #[command(hide = true)]
     Follow {
@@ -136,7 +136,7 @@ pub enum WikiCommand {
         #[arg(long)]
         page: String,
     },
-    /// Check the wiki folder of this checkout against the code: fix line
+    /// Check the pages folder of this checkout against the code: fix line
     /// numbers that moved and have an AI tool rewrite pages whose code
     /// changed. Works without Wenlan running; the GitHub Actions workflow
     /// runs it.

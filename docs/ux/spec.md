@@ -79,6 +79,21 @@ and wait for evidence that people need them.
   make it yours. Only yours counts as decided.
 - **Proposal**: a change the AI suggests to one of your sentences. It lands
   only when you accept it.
+- **UX-WORDS-1** `shipped` A Wenlan page has one name: "page/pages" in
+  English, 頁面 in Traditional Chinese and 页面 in Simplified Chinese. The app
+  never calls it a note, 筆記/笔记, wiki, 文章 or 文檔/文档, and never calls the
+  collection of pages a wiki (the `/wenlan wiki` command keeps its name).
+  Chinese text says 空間/空间, never the English word "Space". "Note" stays
+  only where it means the person's own material or another app's notes (an
+  Obsidian vault, Apple Notes, Zotero, release notes), and 文章/文档 only for
+  Zotero papers and source-library documents; the test lists those keys, each
+  kept only for that one word, with a reason. "Docs"/文件/文档 stays only as
+  the kind of page next to Skills and Rules (sidebar section, README banner),
+  never as another word for page (decided 2026-11-27). Test:
+  `src/i18n/pageNaming.test.ts`, which covers the app's copy only; the CLI,
+  MCP tool text, plugins and docs follow the same rule and are reviewed by
+  hand.
+  決定（2026-11-26，Qi-Xuan）：Wenlan 的頁一律叫「頁面」，不叫筆記、wiki、文檔；中文裡的 Space 一律寫「空間」。
 
 ## Handoff between AI sessions
 
@@ -353,6 +368,16 @@ and wait for evidence that people need them.
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
 
+- **UX-WHO-11** `shipped` A citation whose source does not clearly support its
+  sentence is still saved, and the page shows it with a visible amber "?"
+  beside its number ([2?]), in reading and editing, and says in words "source
+  doesn't clearly say this" on the sentence (short form "not confirmed by its
+  source" in the popover, Info and the screen-reader name). Not-yet-checked
+  and historical citations get no "?".
+  Public copy never says every sentence has a source. Test
+  `UX-WHO-11 shows a visible question mark on an unconfirmed citation`.
+  原文：UX 稽核 2026-11（第 4 條，全照建議）：無法驗證的引用照存，但頁面上清楚標出；公開文案不說每句都有出處。
+
 - **UX-WHO-6** `shipped` Opening a sentence shows the lines of the
   conversation it came from: who said each one and when, at most three, each
   opening the whole conversation at that line. When no line says the same
@@ -380,6 +405,17 @@ and wait for evidence that people need them.
   a kept name it says only that an AI wrote it; no name is guessed. It never
   claims the sentence is correct.
   原文：「同意」（2026-11-24 23:38 PT，回覆草圖：點 [1] 的小卡最上面多一行「✓ 出處核對過 · Claude Code 寫的」；資訊面板「這一句」的「AI 寫的」改成寫工具名；舊頁面沒記到工具的還是寫「AI 寫的」）
+
+- **UX-WHO-10** `shipped` A team member who can only read is told why a change
+  is refused and what to do: "You can read this team's pages. To edit, sign in
+  with Google or GitHub on the team's web page (needs the team's https
+  address), or ask the team owner." The AI tool's instructions for such a
+  connection, its refusal, and the team server's refusal carry it. In the AI
+  tool, a member who can edit and meets another refusal is not told this. Tests
+  `ux_who_10_a_read_only_team_member_is_told_how_to_get_edit_rights`,
+  `only_a_read_only_member_is_told_how_to_get_edit_rights_on_a_403` and
+  `round6_hosted_mcp_routes_return_the_typed_member_response`.
+  原文：UX 稽核 2026-11（journey 3，已核准）。
 
 ## While you chat (in your own AI tool)
 
@@ -570,6 +606,47 @@ and wait for evidence that people need them.
   tidying in the background stay quiet. A reply has at most one such line;
   several of these join it ("Saved in Wenlan: Kyoto trip · wrote Gion stay").
   原文：「对话里面如果记一个也是可以」（2026-11-01 17:29）「聽起來可以，有辦法直接跳轉到 wenlan app?」（2026-11-01 20:11）「我觉得它其实是感觉是需要的…什么样的情况下…它是需要在 AI 工具那里面跟我们知会一声的」（2026-11-01 21:15）；選擇卡「四种都说」（2026-11-01 21:24）
+
+- **UX-CHAT-8** `shipped` When an AI tool saves a preference that belongs to
+  no Space, its receipt says in one line that the preference reaches other AI
+  tools only after the person says yes, and names the step: in a terminal
+  `wenlan memories confirm <id>`, then `wenlan rules review` and
+  `wenlan rules shared apply <plan id>`; the Wenlan app is named only as
+  another way, never as required. The refusal an AI tool gets from
+  `confirm_memory` and the hint under `wenlan memories pending` say the same.
+  Tests `ux_chat_8_capture_of_a_preference_says_it_waits_for_the_person_and_how` and
+  `confirm_memory_of_a_preference_names_the_terminal_step`.
+  原文：UX 稽核 2026-11（judge-top10 第 1 項）。
+
+- **UX-CHAT-9** `shipped` When a lookup in one Space finds nothing, one more
+  search asks whether other Spaces hold something. If so, the reply says only
+  that other Spaces have possibly related memories, names them, and says how
+  to look (`space` in the lookup; `wenlan --all-spaces recall` in a terminal).
+  It never says the thing was saved or that it exists. A connection limited to
+  one Space does not look. Tests
+  `other_spaces_message_names_the_spaces_and_the_next_step`,
+  `ux_chat_9_a_zero_result_recall_says_when_other_spaces_match` and
+  `zero_results_hint_does_not_claim_the_memory_exists`.
+  原文：UX 稽核 2026-11（judge-top10 第 3 項）。
+
+- **UX-CHAT-10** `shipped` When Wenlan cannot be reached, the AI tool is told
+  the address tried, that the save was NOT done so nothing was saved, to tell
+  the person and retry later, and the first step (`wenlan status`, then
+  `wenlan start`); no install menu. When Wenlan connected but did not answer
+  in time, it says the save may or may not have landed and to check with
+  recall before retrying, and never says it is not running. Tests
+  `ux_chat_10_a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step`
+  and `a_daemon_that_connected_but_did_not_answer_is_not_called_stopped`.
+  原文：UX 稽核 2026-11（judge-top10 第 6 項）。
+- **UX-CHAT-11** `shipped` An AI tool connected to the local Wenlan follows the
+  working rules even with no rule file of its own: at start the connection
+  reads them once (one try each, a few seconds at most) and lists them first in its
+  instructions, as of that start, with each rule and the whole list capped;
+  the instructions also say to call read_space_rules before the first task
+  for the current list. Each rule stays on one line. Team and read-only
+  connections get none. Test
+  `ux_chat_11_startup_rules_reach_the_instructions_first_and_stay_short`.
+  原文：UX 稽核 2026-11（judge-top10 第 2 項；實測只有 Wenlan 連線的 AI 0/3 → 5/5 照規則）。
 
 ## The big map
 
@@ -1309,6 +1386,12 @@ and wait for evidence that people need them.
   confirmed preference (UX-CHAT-5) is part of shared rules after the move in
   the same way: the person's confirm adds it, and an AI tool's confirm
   leaves the memory unconfirmed and proposes the rule as a plan instead.
+  The capture receipt for such a preference, and the refused confirm, say the
+  person's yes is still needed and name the terminal step
+  (`wenlan memories confirm <id>`, then `wenlan rules review` and
+  `wenlan rules shared apply <plan id>`) as well as the Wenlan app, which is
+  never required. `wenlan rules review` shows a plan's expiry as a local time,
+  and `wenlan rules status` lists a waiting plan.
   原文：選擇卡（2026-11-17 08:29Z）：人在 AI 工具或用 `wenlan` 明確說「存成規則」時立即算數；規則清單顯示是從哪個工具存的；一步就能移除；AI 自己整理出來的規則仍要人點頭。App 裡的補充（2026-11-17 交辦）：「a rule saved through an AI tool or the terminal to show where it was saved from and be removable in one click」；這段補充的英文字句待 Qi-Xuan 確認。細節待 Qi-Xuan 確認：每次一條、最多 300 字、純文字句子；每個工具每天十條、全部合計三十條；沒有 Space 也沒說每個 Space 就拒絕；鎖定在一個 Space 的連線只能存在那個 Space；工具名稱是工具自己報的，「終端機」只代表指令沒帶工具名稱；AI 工具只能用 `remove_rule` 移除自己存的；鎖定頁面上的卡片被拒絕就不算；團隊成員暫不開放。
 
 - **UX-SKILL-15** `shipped` `wenlan rules adopt --dry-run` reads the
@@ -1333,7 +1416,15 @@ and wait for evidence that people need them.
   sync, review and restore keep those values out of previews and backups.
   Wenlan also leaves a skill package in place if one of its files holds
   text that looks like a key, and records the tool and affected file paths.
-  Tests `rulesync_leaves_rule_credentials_at_their_original_locations`,
+  If a setup saved by an older version holds such text in a skill's saved
+  copy, backup or delivery record, Wenlan stops keeping that skill instead of
+  refusing the whole setup. It removes every stored copy of that skill, leaves
+  the tool folders untouched and stops syncing them, and tells the person once
+  which skills it stopped keeping. Such text in rule text or in any other saved
+  path still refuses the setup as before.
+  Tests `rulesync_saved_skill_with_a_key_is_dropped_and_the_setup_loads`,
+  `rulesync_legacy_rule_and_skill_credentials_leave_the_saved_setup_in_place`,
+  `rulesync_leaves_rule_credentials_at_their_original_locations`,
   `rulesync_pullback_refuses_a_rule_edit_with_credentials_before_review`,
   `rulesync_keeps_key_shaped_skill_assets_and_accepts_code_references`,
   and `rulesync_skill_sync_keeps_an_asset_that_newly_contains_a_key`.
@@ -1915,9 +2006,13 @@ and wait for evidence that people need them.
   Wenlan answers, setup turns tool sync on, previews the person's AI-tool
   setup, brings it in and syncs once; running setup is the consent, so it asks
   nothing, needs no terminal and works when an AI tool runs it. It ends with
-  a short report: which tools, how many nonempty rule lines and skills,
-  how many are left as they are, and
-  `To undo: wenlan rules restore`. No paths or ids. `--format json` carries
+  a short report: "Rules written for" the tools whose files got them (the
+  line before names the tools that are connected, which can be fewer), how
+  many nonempty rule lines and skills, how many are left as they are, and
+  `To undo: wenlan rules restore`. When no rule and no skill was brought in
+  it says so in one line and shows no undo line, and the share step says
+  nothing; `wenlan rules adopt --dry-run` with nothing to adopt shows no plan
+  id. No paths or ids. `--format json` carries
   the same counts. The shared rules count once, each tool's own overlay counts
   separately, and an absent rule file is not created for empty content. An
   already-adopted setup is skipped silently. After adoption and sync, setup
@@ -1947,10 +2042,22 @@ and wait for evidence that people need them.
   `ux_cli_8_empty_rule_target_is_journaled_without_creating_a_file_then_delivered_and_restored`,
   `ux_cli_8_empty_rule_target_preserves_a_user_created_file_for_review`,
   `ux_cli_8_whitespace_only_shared_rules_leave_missing_files_absent`,
+  `setup_says_nothing_about_undo_or_sharing_when_nothing_changed`,
+  `an_empty_adoption_preview_shows_no_plan_id`,
+  `setup_report_names_only_tools_that_end_up_managed`,
   `setup_json_carries_the_same_counts`, `second_setup_does_not_adopt_again_or_touch_files`,
   `setup_leaves_a_blocked_plan_alone_and_still_succeeds`,
   `rules_switch_persists_and_environment_overrides_it` and
   `rules_switch_survives_a_service_reinstall`.
+
+- **UX-CLI-9** `shipped` `wenlan open` prints the address and returns. With no
+  desktop session to open a browser in (no display and no `BROWSER`; WSL
+  counts as having one) it says so in one line and does not wait; otherwise it
+  waits up to a minute for the browser to read its launcher file, says so if
+  none did, and leaves no folder behind. Tests
+  `ux_cli_9_a_headless_linux_session_opens_no_browser` and
+  `a_launcher_nobody_reads_is_removed_when_the_wait_ends`.
+  原文：UX 稽核 2026-11（journey 1-2 S7）。
 
 ## Adding to Wenlan
 

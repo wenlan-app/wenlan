@@ -416,6 +416,15 @@ describe("canonical references share editor behavior", () => {
     expect(view.state.doc.toString()).toBe(source);
   });
 
+  it("UX-WHO-11 gives no unconfirmed mark to a historical citation", () => {
+    const source = "content [1].";
+    const citations = [{ occurrence: 1, marker: 1, source_kind: "memory" as const, locator: "m-1", score: 0.1, status: "unverified" as const, scope: "sentence" as const, historical: true }];
+    const { view } = make(source, targets, { citations });
+    const link = view.contentDOM.querySelector<HTMLAnchorElement>("a[data-inline-reference-key]");
+    expect(link).not.toBeNull();
+    expect(link).not.toHaveClass("reference-link--unverified");
+  });
+
   it("keeps unchecked citation links actionable and labels them as unchecked", () => {
     const citation = { occurrence: 1, marker: 1, source_kind: "external_file" as const, locator: "folder::/tmp/demo.md", score: 1, status: "unevaluated" as const, scope: "sentence" as const };
     const { view, onReferenceActivate } = make("[1]", targets, { citations: [citation], labels: {

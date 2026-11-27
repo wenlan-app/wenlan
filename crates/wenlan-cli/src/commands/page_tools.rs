@@ -775,7 +775,7 @@ fn pending_as_text(answer: &Value) -> String {
         let line: String = text.lines().next().unwrap_or("").chars().take(90).collect();
         out.push_str(&format!("  {id}  {line}\n"));
     }
-    out.push_str("\nKeep one with: wenlan memories confirm <ID>   Drop one with: wenlan memories forget <ID>\n");
+    out.push_str("\nKeep one with: wenlan memories confirm <ID>   Drop one with: wenlan memories forget <ID>\nA preference then waits for your yes: `wenlan rules review`, then `wenlan rules shared apply <plan id>`.\n");
     out
 }
 

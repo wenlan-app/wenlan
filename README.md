@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Docs, skills and rules you and your AI tools both work from, kept current.</strong><br>
-  Bring your notes and knowledge. Every doc cites its sources. Free, open source, for you and your team.
+  Bring your notes and knowledge. Every page cites its sources. Free, open source, for you and your team.
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ Each AI tool keeps its own memory and rules. Wenlan gives every tool, agent and 
 
 For people who use several AI tools daily, and small teams, all engineers or mixed.
 
-- **Docs with sources.** Wenlan checks that each cited source supports its sentence before saving.
+- **Pages with sources.** Wenlan checks that each cited source supports its sentence before saving.
 - **One copy of skills and rules.** It runs in every AI tool and platform you connect.
 - **Organized memory.** What you settle is sorted into your docs, skills and rules, so they stay current.
 - **You stay in charge.** See every change, undo it, and lock a page so AI asks you first.
@@ -95,7 +95,7 @@ More comparisons, with Obsidian, Notion AI, and memory tools: [wenlan.app/learn]
 
    With the [plugin](docs/setup-with-ai.md) these are `/capture` and `/recall`. [All commands](plugin/skills/README.md).
 
-3. Overnight, Wenlan sorts what you settled into docs and rules, each with its source.
+3. Your AI tool sorts what you settled into docs and rules, each with its source. With the [plugin](docs/setup-with-ai.md), Claude Code starts on it the next time you open it; otherwise, ask your AI tool to write your pages. With a local model or an API key, Wenlan can do it in the background.
 
    The first time, it asks you once. After your yes, the rules go into your AI tools’ own rules files.
 
@@ -166,7 +166,7 @@ Your AI tool turns what you bring in into linked, cited Markdown pages and keeps
 </p>
 <p>Illustration based on current update behavior; not an App screenshot.</p>
 
-- **Docs with sources:** Wenlan refuses a page when most citations don't match. A pass is not proof.
+- **Pages with sources:** Wenlan refuses a page when most citations don't match. A pass is not proof.
 - **Kept current:** When a source, memory, or cited code changes, pages relying on it are flagged.
 - **You decide what AI may change:** Set a page to **Allowed** or **Ask me first**, and restore any earlier version.
 - **Two ways to run it:** your AI tool as it works (default), or a background model you pick. [Steep guide](docs/steep.md).
@@ -183,7 +183,7 @@ Already run Claude Code on a notes folder? Keep it. Wenlan adds citation checks 
 
 ## Docs for your code repository
 
-In a repository, your AI tool reads the code and writes an overview and a doc for each part.
+In a repository, your AI tool reads the code and writes an overview and a page for each part.
 
 ```sh
 cd your-repo

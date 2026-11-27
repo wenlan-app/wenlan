@@ -17,6 +17,13 @@ use wenlan_types::rulesync_skill::{
     SaveSkillRequest, SaveSkillResult, SavedSkillFile, SavedSkillScope, SavedSkillTool,
 };
 
+/// What a read-only team member's AI tells the person when it cannot edit.
+/// The team server's refusal says the same (`wenlan-server` team policy).
+macro_rules! read_only_team_note {
+    () => {
+        "You can read this team's pages. To edit, sign in with Google or GitHub on the team's web page (needs the team's https address), or ask the team owner."
+    };
+}
 mod hosted_team;
 pub mod team_library;
 
@@ -79,6 +86,48 @@ pub fn effective_space(inbound: &Option<String>) -> Option<String> {
 /// what Claude Code captured, and nobody saw folder-ingested or refinery rows.
 /// Attribution for activity logging already travels in the `x-agent-name`
 /// header (`WenlanClient::with_agent_name`), so the body field stays `None`.
+const READ_ONLY_TEAM_NOTE: &str = read_only_team_note!();
+const READ_ONLY_TEAM_INSTRUCTIONS: &str = concat!(
+    "You can read this shared Space. Use brief for its overview, recall to search its pages, and read_space_rules for approved rules. ",
+    read_only_team_note!()
+);
+
+/// What a search result names for a memory kept in no Space (the daemon's
+/// internal id for the unfiled Space, `wenlan-core`'s `UNFILED_SPACE_ID`).
+const UNFILED_SPACE_ID: &str = "00000000-0000-4000-8000-000000000001";
+
+/// How many matches the "other Spaces" probe asks for.
+const OTHER_SPACES_PROBE_LIMIT: usize = 5;
+
+/// The line a zero-result recall in `space` gets when other Spaces match.
+fn other_spaces_message(
+    space: &str,
+    query: &str,
+    found: &[wenlan_types::SearchResult],
+) -> Option<String> {
+    if found.is_empty() {
+        return None;
+    }
+    let mut holding: Vec<String> = Vec::new();
+    for hit in found {
+        let name = hit
+            .space
+            .as_deref()
+            .filter(|name| !name.is_empty() && *name != UNFILED_SPACE_ID)
+            .unwrap_or("uncategorized")
+            .to_string();
+        if !holding.contains(&name) {
+            holding.push(name);
+        }
+    }
+    Some(format!(
+        "Nothing in Space `{space}`. Other Spaces have possibly related memories: {}. Recall \
+         there (`space` set to one of those) to check; the person can run \
+         `wenlan --all-spaces recall {query:?}` in a terminal.",
+        holding.join(", ")
+    ))
+}
+
 fn recall_search_request(params: RecallParams) -> SearchMemoryRequest {
     SearchMemoryRequest {
         query: params.query,
@@ -118,6 +167,10 @@ pub enum ToolProfile {
     /// them. This is a shorter list, not a boundary: every other tool still
     /// answers when called by name, exactly as under `Standard`.
     Daily,
+    /// What the Wenlan plugins pass: the `daily` tools plus exactly the
+    /// tools the plugin skills name. Like
+    /// `Daily`, a shorter list and not a boundary.
+    Plugin,
     /// Expose only tools needed to read existing knowledge.
     QueryOnly,
     /// Query-only reads plus the writes a user allowed a web AI app to make:
@@ -131,6 +184,7 @@ impl ToolProfile {
         match self {
             Self::Standard => "standard",
             Self::Daily => "daily",
+            Self::Plugin => "plugin",
             Self::QueryOnly => "query-only",
             Self::WebWrite => "web-write",
         }
@@ -141,6 +195,61 @@ impl ToolProfile {
     fn projects_query_output(self) -> bool {
         matches!(self, Self::QueryOnly | Self::WebWrite)
     }
+}
+
+/// What `lint_repair_prepare` says when its request went out and no answer came back.
+const REPAIR_PLAN_NO_ANSWER: &str = "The repair plan request was sent but Wenlan did not \
+     answer in time. Wenlan may already have written the plan, so its completion is unknown. \
+     Do not retry this call: the cached lint reports were consumed. Run `lint` again and open \
+     a new plan once Wenlan answers.";
+
+/// Most characters of rule text the instructions carry; the rest are named
+/// by count and `read_space_rules` lists them.
+const STARTUP_RULES_MAX_CHARS: usize = 1_200;
+/// Most characters of one rule; a longer one is cut and read_space_rules has it whole.
+const STARTUP_RULE_MAX_CHARS: usize = 400;
+
+/// The instructions' rules section: what the user already told an AI tool.
+fn startup_rules_note(lines: &[wenlan_types::skills::SkillLine]) -> Option<String> {
+    // One line per rule: a rule's own line breaks must not read as
+    // instruction text outside its bullet.
+    let texts: Vec<String> = lines
+        .iter()
+        .map(|line| line.text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty())
+        .collect();
+    if texts.is_empty() {
+        return None;
+    }
+    let mut note = String::from(
+        "The user's working rules, as of this session's start (they said these once; follow \
+         them without asking again; read_space_rules has the current list):",
+    );
+    let mut used = 0;
+    let mut shown = 0;
+    for text in &texts {
+        let text: String = if text.chars().count() > STARTUP_RULE_MAX_CHARS {
+            let cut: String = text.chars().take(STARTUP_RULE_MAX_CHARS).collect();
+            format!("{cut}…")
+        } else {
+            text.clone()
+        };
+        let length = text.chars().count();
+        if shown > 0 && used + length > STARTUP_RULES_MAX_CHARS {
+            break;
+        }
+        note.push_str("\n- ");
+        note.push_str(&text);
+        used += length;
+        shown += 1;
+    }
+    if shown < texts.len() {
+        note.push_str(&format!(
+            "\n- …and {} more: read_space_rules lists them.",
+            texts.len() - shown
+        ));
+    }
+    Some(note)
 }
 
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources", "read_space_rules"];
@@ -178,6 +287,52 @@ pub const DAILY_TOOL_NAMES: &[&str] = &[
     "steep",
     "distill",
 ];
+/// Tools the plugin skills name that `daily` does not list: curation, lint and
+/// its repair steps, entities, folders, page history and moves, and the
+/// pending-review reads. `accept_refinement` and `accept_revision` are not here
+/// (they always refuse; a person accepts in the Wenlan app), nor is
+/// `update_brief` or any tool no skill names. Guarded by
+/// `the_plugin_profile_is_what_the_plugin_skills_name`.
+pub const PLUGIN_EXTRA_TOOL_NAMES: &[&str] = &[
+    "confirm_memory",
+    "create_entity",
+    "create_folder",
+    "create_relation",
+    "dismiss_revision",
+    "doc_fix",
+    "get_memory_revisions",
+    "get_page_links",
+    "get_page_revisions",
+    "lint",
+    "lint_repair_apply",
+    "lint_repair_prepare",
+    "lint_repair_verify",
+    "list_entities",
+    "list_folders",
+    "list_pending",
+    "list_pending_imports",
+    "list_pending_revisions",
+    "list_refinements",
+    "list_rejections",
+    "move_page",
+    "page_basis",
+    "page_code_basis",
+    "read_entity",
+    "reject_refinement",
+    "restore_page_version",
+    "set_page_space",
+    "theme",
+];
+/// Whether the `plugin` profile lists `name`.
+pub fn plugin_profile_lists(name: &str) -> bool {
+    DAILY_TOOL_NAMES.contains(&name) || PLUGIN_EXTRA_TOOL_NAMES.contains(&name)
+}
+/// Added to the standard instructions under the `plugin` profile.
+const PLUGIN_INSTRUCTIONS_NOTE: &str = "\n\nThis connection lists the tools the Wenlan plugin \
+     uses. A person accepts a proposed refinement or revision in the Wenlan app (these tools \
+     only list and turn them down); `wenlan curate` in a terminal lists and dismisses pending \
+     revisions only. \
+     With a terminal, `wenlan tool list` shows Wenlan's other tools.";
 /// Added to the standard instructions under the `daily` profile, so the AI
 /// tool knows the list it sees is not all of Wenlan.
 const DAILY_INSTRUCTIONS_NOTE: &str = "\n\nThis connection lists Wenlan's everyday tools. \
@@ -539,6 +694,9 @@ pub struct WenlanMcpServer {
     /// Stdio only: keeps the working folder's Space current before each call.
     folder_space: Option<std::sync::Arc<crate::folder_space::FolderSpaceWatch>>,
     team_library: Option<(bool, team_library::Lookup)>,
+    /// Stdio only: the working rules read once at start, put into the
+    /// instructions so a tool with no rule file still follows them.
+    startup_rules: Option<String>,
 }
 
 // ===== Parameter Structs =====
@@ -563,7 +721,7 @@ pub struct CaptureParams {
     )]
     pub entity: Option<String>,
     #[schemars(
-        description = "What `entity` is: 'person', 'project', 'tool', 'organization', 'place', or another plain noun. Pass it with every `entity` so a name the wiki does not know yet is created and linked."
+        description = "What `entity` is: 'person', 'project', 'tool', 'organization', 'place', or another plain noun. Pass it with every `entity` so a name Wenlan does not know yet is created and linked."
     )]
     pub entity_type: Option<String>,
     #[schemars(
@@ -1207,7 +1365,7 @@ pub struct WritePageParams {
     )]
     pub title: Option<String>,
     #[schemars(
-        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Open with one plain paragraph that states the page's point; a person reads it first. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
+        description = "Markdown body — 3-7 paragraphs of prose with [[wikilinks]]. Open with one plain paragraph that states the page's point; a person reads it first. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
     )]
     pub content: String,
     #[schemars(
@@ -1222,7 +1380,7 @@ pub struct WritePageParams {
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
     #[schemars(
-        description = "Exact source_ids of captured memories or indexed files/webpages in the page's Space. A note's page id is refused here; pass it in `basis`. Optional: pass them when the page is built from sources, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
+        description = "Exact source_ids of captured memories or indexed files/webpages in the page's Space. Another page's id is refused here; pass it in `basis`. Optional: pass them when the page is built from sources, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
     )]
     #[serde(default)]
     pub source_memory_ids: Vec<String>,
@@ -1242,7 +1400,7 @@ pub struct WritePageParams {
     #[serde(default)]
     pub session: Option<String>,
     #[schemars(
-        description = "Other notes (wiki pages) this page relies on, each as {page_id, version} where version is that note's page.version from your read_page. Use it for notes only; memories go in source_memory_ids and a note's page id never does. A listed note counts as confirmed only if it is still at that version; if it changed after your read it is recorded as pending instead. Existing bases of the page stay as they are. The reply lists the page's bases after the write."
+        description = "Other pages this page relies on, each as {page_id, version} where version is that page's page.version from your read_page. Use it for pages only; memories go in source_memory_ids and a page id never does. A listed page counts as confirmed only if it is still at that version; if it changed after your read it is recorded as pending instead. Existing bases of the page stay as they are. The reply lists the page's bases after the write."
     )]
     #[serde(default)]
     pub basis: Vec<BasisParam>,
@@ -1252,7 +1410,7 @@ pub struct WritePageParams {
     #[serde(default)]
     pub minor: Option<bool>,
     #[schemars(
-        description = "Lines of code this note relies on; Wenlan tells you when they change. Each entry is {repo_root, path, line_start, line_end}: repo_root is the absolute path of the repository, path is relative to it with `/` separators (no `..`), lines are 1-based and inclusive. Wenlan reads the file when you write; an unreadable file, a path outside the repository or lines past the end of the file refuse the whole write. Entries are added to the page's existing code bases (naming one again re-anchors it as `ok`). Local stdio only. The reply lists the page's code bases after the write."
+        description = "Lines of code this page relies on; Wenlan tells you when they change. Each entry is {repo_root, path, line_start, line_end}: repo_root is the absolute path of the repository, path is relative to it with `/` separators (no `..`), lines are 1-based and inclusive. Wenlan reads the file when you write; an unreadable file, a path outside the repository or lines past the end of the file refuse the whole write. Entries are added to the page's existing code bases (naming one again re-anchors it as `ok`). Local stdio only. The reply lists the page's code bases after the write."
     )]
     #[serde(default)]
     pub code_basis: Vec<CodeBasisParam>,
@@ -1317,17 +1475,17 @@ pub enum PageCodeBasisAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SteepAction {
-    /// The notes waiting for steep.
+    /// The pages waiting for steep.
     List,
-    /// Take one note: its numbered sources and a token.
+    /// Take one page: its numbered sources and a token.
     Claim,
-    /// Save the rewrite of a claimed note.
+    /// Save the rewrite of a claimed page.
     Commit,
-    /// The sources changed but the claimed note still holds.
+    /// The sources changed but the claimed page still holds.
     StillAccurate,
     /// The answers to a claim whose plan is judge.
     Judge,
-    /// Give a claimed note, or a claim_new's items, back.
+    /// Give a claimed page, or a claim_new's items, back.
     Release,
     /// Material no page uses yet: imported notes, chats, files, captures.
     New,
@@ -1402,7 +1560,7 @@ pub struct SteepParams {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocFixAction {
-    /// Record one fix for the repository's wiki pull request.
+    /// Record one fix for the pull request with the repository's pages.
     Suggest,
     /// Say how many docs were read against the code.
     Checked,
@@ -1507,9 +1665,9 @@ pub struct PageCodeBasisParams {
 /// is stable without giving the wire crate a schema dependency.
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct BasisParam {
-    #[schemars(description = "Page id of the note this page relies on.")]
+    #[schemars(description = "Id of the page this page relies on.")]
     pub page_id: String,
-    #[schemars(description = "That note's page.version as your read_page returned it.")]
+    #[schemars(description = "That page's page.version as your read_page returned it.")]
     pub version: i64,
 }
 
@@ -1525,30 +1683,30 @@ impl From<BasisParam> for wenlan_types::BasisInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PageBasisAction {
-    /// Record that the page relies on the basis note, as of `version`.
+    /// Record that the page relies on the basis page, as of `version`.
     Mark,
-    /// Show the text the page relied on next to the basis note's text now.
+    /// Show the text the page relied on next to the basis page's text now.
     Diff,
-    /// Say the page still holds after the basis note's change, as of `version`.
+    /// Say the page still holds after the basis page's change, as of `version`.
     Confirm,
-    /// Stop the page relying on the basis note.
+    /// Stop the page relying on the basis page.
     Remove,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PageBasisParams {
     #[schemars(
-        description = "The page that relies on the other note (the one that would be rewritten or confirmed). Opaque page id."
+        description = "The page that relies on the other page (the one that would be rewritten or confirmed). Opaque page id."
     )]
     pub page_id: String,
-    #[schemars(description = "The note it relies on. Opaque page id; never a memory id.")]
+    #[schemars(description = "The page it relies on. Opaque page id; never a memory id.")]
     pub basis_page_id: String,
     #[schemars(
-        description = "mark: record the reliance. diff: show what the basis note said when you last confirmed it and what it says now. confirm: say the page still holds after the basis note's change. remove: drop the reliance."
+        description = "mark: record the reliance. diff: show what the basis page said when you last confirmed it and what it says now. confirm: say the page still holds after the basis page's change. remove: drop the reliance."
     )]
     pub action: PageBasisAction,
     #[schemars(
-        description = "Required for mark and confirm: the basis note's page.version from your read_page (not the citing page's). If the basis note has moved on since, the call is refused and nothing changes. Ignored by diff and remove."
+        description = "Required for mark and confirm: the basis page's page.version from your read_page (not the citing page's). If the basis page has moved on since, the call is refused and nothing changes. Ignored by diff and remove."
     )]
     #[serde(default)]
     pub version: Option<i64>,
@@ -1955,7 +2113,7 @@ pub struct ReportSpaceRuleUseParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListFoldersParams {
     #[schemars(
-        description = "Only folders visible in this Space (project). Omit to list the shared Wiki folders; a locked WENLAN_SPACE always wins."
+        description = "Only folders visible in this Space (project). Omit to list the shared page folders; a locked WENLAN_SPACE always wins."
     )]
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
@@ -1963,7 +2121,9 @@ pub struct ListFoldersParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateFolderParams {
-    #[schemars(description = "Parent folder path; omit or use an empty string for the Wiki root.")]
+    #[schemars(
+        description = "Parent folder path; omit or use an empty string for the top of the pages folder."
+    )]
     #[serde(default)]
     pub parent_path: String,
     #[schemars(description = "Name of the new child folder.")]
@@ -1979,7 +2139,7 @@ pub struct MovePageParams {
     )]
     pub expected_storage_path: String,
     #[schemars(
-        description = "Destination folder path; empty string moves the page to the Wiki root."
+        description = "Destination folder path; empty string moves the page to the top of the pages folder."
     )]
     pub folder_path: String,
     #[schemars(
@@ -2276,7 +2436,7 @@ pub struct ListPendingRevisionsParams {
 
 /// Validate `save_source` arguments and build the daemon request. The link
 /// becomes the document's `source_id`, so only an http(s) URL is accepted:
-/// that is what lets a note's citation resolve to the original.
+/// that is what lets a page's citation resolve to the original.
 fn save_source_request(
     params: SaveSourceParams,
 ) -> Result<wenlan_types::requests::IngestWebpageRequest, String> {
@@ -2532,6 +2692,16 @@ fn format_capture_success(resp: &StoreMemoryResponse) -> String {
         resp.space_source,
         resp.write_outcome,
     );
+    if !resp.gated && resp.memory_type == "preference" && resp.space.is_none() {
+        msg.push_str(&format!(
+            "\nwaiting_for_person: other AI tools get this preference only after the person \
+             says yes, so tell them it is waiting. In a terminal they run \
+             `wenlan memories confirm {}`; if that shows a plan, `wenlan rules review`, then \
+             `wenlan rules shared apply <plan id>`, typing yes themselves. With the Wenlan app \
+             installed they can confirm it there.",
+            resp.source_id
+        ));
+    }
     if let Some(near_duplicate) = &resp.near_duplicate {
         msg.push_str(&format!(
             "\nnear_duplicate: {} ({:.2})",
@@ -2563,7 +2733,7 @@ fn distill_pending_guide(pending: usize) -> String {
     format!(
         "{pending} cluster(s) in `pending` are waiting for you to write them as pages. \
          For each one, read `contents`; skip it if the memories do not share one topic. \
-         Otherwise write a short noun-phrase title, a one-sentence summary and wiki prose \
+         Otherwise write a short noun-phrase title, a one-sentence summary and prose \
          that only states what the memories say, then call write_page with \
          source_memory_ids set to the cluster's `source_ids` (and its `entity_id` and \
          `space` when present). When `existing_page_id` is set, pass it as page_id to \
@@ -2571,22 +2741,24 @@ fn distill_pending_guide(pending: usize) -> String {
     )
 }
 
-fn daemon_setup_hint() -> &'static str {
-    "If Wenlan is already installed, the daemon may just be stopped. If you use the Wenlan app, open or restart it; if the `wenlan` CLI is on PATH, run `wenlan status`, then `wenlan background on`. A connector-only install (`wenlan-mcp` from npm, Homebrew, or Cargo) has no daemon of its own and needs the local runtime below.
+/// What to do when the daemon cannot be reached at `address`: the first step
+/// and where to read about installing, without a setup menu.
+fn daemon_setup_hint(address: &str) -> String {
+    format!(
+        "First step: run `wenlan status`. If it says Wenlan is stopped, run `wenlan start`. \
+         If it shows a different address than {address}, this connection points at the wrong \
+         one (WENLAN_HOST, or `wenlan connect <client>` again). Not installed? See Get started: \
+         https://github.com/wenlan-app/wenlan#get-started"
+    )
+}
 
-Otherwise install the local Wenlan runtime and run `wenlan setup`.
-
-Setup choices:
-- Local Memory: store, search, and recall now. No model download or API key.
-- On-device Model: write notes on this computer after downloading a model.
-- Anthropic Key: write notes using your Anthropic API key.
-
-Install:
-  curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/main/install.sh | bash
-  export PATH=\"$HOME/.wenlan/bin:$PATH\"
-  wenlan setup
-  wenlan background on
-  wenlan status"
+/// The reply for a daemon that did not answer, for the AI tool to pass on.
+fn daemon_not_running_message(address: &str, verb: &str) -> String {
+    format!(
+        "Wenlan is not running at {address} (retried 3x over ~6s). The {verb} was NOT done, so \
+         nothing was saved. Tell the person, and try again once it is running.\n\n{}",
+        daemon_setup_hint(address)
+    )
 }
 
 /// Convert a backend error into a tool-level error result (isError: true)
@@ -2631,35 +2803,35 @@ fn page_basis_error_result(error: WenlanError, action: PageBasisAction) -> CallT
         return tool_error(error, "page_basis");
     };
     let text = match (*status, action) {
-        (404, _) => "page_basis refused, nothing changed: one of the two notes was not found, \
-                     or this page does not rely on that note. Check both ids with read_page."
+        (404, _) => "page_basis refused, nothing changed: one of the two pages was not found, \
+                     or this page does not rely on that page. Check both ids with read_page."
             .to_string(),
         (409, PageBasisAction::Diff) => {
-            "No comparison is available for this basis: the basis note was deleted or \
+            "No comparison is available for this basis: the basis page was deleted or \
              archived, or the text this page relied on is no longer stored. Read the basis \
-             note with read_page and rewrite this page, or remove the basis."
+             page with read_page and rewrite this page, or remove the basis."
                 .to_string()
         }
-        (409, _) => "page_basis refused, nothing changed: the basis note moved on since your \
+        (409, _) => "page_basis refused, nothing changed: the basis page moved on since your \
                      read, or it is archived or deleted. Read it again with read_page and \
                      retry with its current page.version."
             .to_string(),
         (422, _) => "page_basis refused, nothing changed: a page cannot rely on itself, a \
-                     draft, an entity page, or a note in another Space, and a version must be \
-                     one the basis note has had."
+                     draft, an entity page, or a page in another Space, and a version must be \
+                     one the basis page has had."
             .to_string(),
         _ => return tool_error(error, "page_basis"),
     };
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
-/// A refresh the daemon refused because a note listed in `basis` cannot be
+/// A refresh the daemon refused because a page listed in `basis` cannot be
 /// relied on. Nothing was written, including the page text.
 fn page_write_basis_refused_result(page_id: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(format!(
-        "write_page refused, nothing was written: a note listed in `basis` for page {page_id} \
+        "write_page refused, nothing was written: a page listed in `basis` for page {page_id} \
          cannot be relied on (it is archived, deleted, or in another Space). Check each \
-         basis note with read_page, drop the one that is gone, and retry."
+         basis page with read_page, drop the one that is gone, and retry."
     ))])
 }
 
@@ -2821,7 +2993,7 @@ fn steep_new_text(new_total: u32, transport: &TransportMode) -> Option<String> {
     })
 }
 
-/// For `read_page`: what to do about this note when it is waiting for steep.
+/// For `read_page`: what to do about this page when it is waiting for steep.
 fn steep_page_hint(stale_reason: Option<&str>, transport: &TransportMode) -> Option<String> {
     let why = match stale_reason? {
         "source_updated" => "a source it was written from changed",
@@ -2925,7 +3097,7 @@ fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolRe
     );
     if target == "unfiled" {
         text.push_str(
-            "This page is in no Space, so it can cite only notes that are in no Space. If \
+            "This page is in no Space, so it can cite only pages that are in no Space. If \
              those sources all share one Space, move the page there with set_page_space and \
              retry; otherwise leave out the ones it cannot read and retry, or tell the person \
              which ones were left out. ",
@@ -2983,11 +3155,7 @@ fn page_write_citations_refused_result(
 
 fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
     let msg = match &e {
-        WenlanError::Unreachable(_) => format!(
-            "Wenlan daemon is not reachable (retried 3x over ~6s). \
-             The {verb} was NOT completed.\n\n{}",
-            daemon_setup_hint()
-        ),
+        WenlanError::Unreachable(address) => daemon_not_running_message(address, verb),
         WenlanError::Api { status, reason } => {
             // A 4xx is a refusal: the daemon looked at the request and did
             // not do it. Only a server-side failure leaves the outcome open.
@@ -3010,6 +3178,10 @@ fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
         ),
         WenlanError::ResponseTooLarge => format!(
             "The daemon response exceeded Wenlan MCP's size limit. The {verb} was not completed."
+        ),
+        WenlanError::NoAnswer => format!(
+            "Wenlan did not answer in time; the {verb} may or may not have landed. Check with \
+             recall before retrying."
         ),
         WenlanError::Busy => format!(
             "Wenlan is busy and did not finish the {verb} within {} minutes. It may still \
@@ -3070,12 +3242,12 @@ struct RecallHit<'a> {
     merged_from: Option<&'a [String]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_delta_summary: Option<&'a str>,
-    /// For a note hit: the notes it relies on that are not `ok`. Absent for
-    /// memories and for notes with nothing outstanding.
+    /// For a page hit: the pages it relies on that are not `ok`. Absent for
+    /// memories and for pages with nothing outstanding.
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     basis: &'a [wenlan_types::BasisRef],
-    /// For a note hit: the code it relies on that is not `ok`. Absent for
-    /// memories and for notes with nothing outstanding.
+    /// For a page hit: the code it relies on that is not `ok`. Absent for
+    /// memories and for pages with nothing outstanding.
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     code_basis: &'a [wenlan_types::CodeBasisRef],
 }
@@ -3113,16 +3285,16 @@ fn recall_hits(results: &[wenlan_types::SearchResult]) -> Vec<RecallHit<'_>> {
     results.iter().map(RecallHit::from).collect()
 }
 
-/// The Brief's line about notes that rely on code that changed, or `None` when
+/// The Brief's line about pages that rely on code that changed, or `None` when
 /// there are none. The recheck already ran inside the Brief read; nothing for
 /// the agent to run first. `explained` is true when the everyday model already
-/// judged every one of them. Steep brings these notes up to date (#942); wiki
-/// only writes notes that are missing.
+/// judged every one of them. Steep brings these pages up to date (#942); wiki
+/// only writes pages that are missing.
 fn code_basis_drift_line(count: Option<u32>, explained: bool) -> Option<String> {
     let line = match count? {
         0 => return None,
-        1 => "1 note relies on code that changed".to_string(),
-        count => format!("{count} notes rely on code that changed"),
+        1 => "1 page relies on code that changed".to_string(),
+        count => format!("{count} pages rely on code that changed"),
     };
     Some(if explained {
         format!("{line}. AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person (Codex: $wenlan steep).")
@@ -3584,7 +3756,7 @@ impl WenlanMcpServer {
             .await
     }
 
-    /// How many notes in reach wait for steep, as one reply line. Best effort:
+    /// How many pages in reach wait for steep, as one reply line. Best effort:
     /// a failed count adds nothing to the reply it rides on.
     async fn steep_waiting_line(
         &self,
@@ -3978,11 +4150,42 @@ impl WenlanMcpServer {
                 linked_json
             ));
         }
+        if resp.results.is_empty() {
+            if let Some(line) = self.other_spaces_line(&client, &req).await {
+                output.push_str("\n\n");
+                output.push_str(&line);
+            }
+        }
         let output = self
             .with_steep_line(&client, req.space.as_deref(), output)
             .await;
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
+    }
+
+    /// When a recall in one Space finds nothing, one more search with no Space
+    /// says whether other Spaces hold matches, so "0 results" is not read as
+    /// "never saved". Best effort: a failure adds nothing. A connection locked
+    /// to one Space, or a remote one, never looks outside it.
+    async fn other_spaces_line(
+        &self,
+        client: &WenlanClient,
+        req: &SearchMemoryRequest,
+    ) -> Option<String> {
+        let space = req.space.as_deref()?;
+        if self.transport != TransportMode::Stdio || crate::lock_state::is_locked() {
+            return None;
+        }
+        let wider = SearchMemoryRequest {
+            query: req.query.clone(),
+            limit: OTHER_SPACES_PROBE_LIMIT,
+            memory_type: req.memory_type.clone(),
+            space: None,
+            source_agent: None,
+            rerank: false,
+        };
+        let found: SearchMemoryResponse = client.post("/api/memory/search", &wider).await.ok()?;
+        other_spaces_message(space, &req.query, &found.results)
     }
 
     pub async fn brief_impl(&self, params: BriefParams) -> Result<CallToolResult, McpError> {
@@ -4410,15 +4613,12 @@ impl WenlanMcpServer {
         let summary: wenlan_types::repair_plan::RepairPlanSummary =
             match self.client.post("/api/repairs/plan", &request).await {
                 Ok(summary) => summary,
-                Err(WenlanError::Unreachable(_)) => {
-                    return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                        "The repair plan request was sent but no response came back \
-                         (retried 3x over ~6s). Wenlan may already have written the plan, \
-                         so its completion is unknown. Do not retry this call: the cached \
-                         lint reports were consumed. Run `lint` again and open a new plan \
-                         once Wenlan answers.\n\n{}",
-                        daemon_setup_hint()
-                    ))]));
+                // Only a lost answer is unknown; a connection that never opened
+                // sent nothing and gets the ordinary not-running text.
+                Err(WenlanError::NoAnswer) => {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        REPAIR_PLAN_NO_ANSWER.to_string(),
+                    )]));
                 }
                 Err(error) => return Ok(tool_error(error, "repair plan prepare")),
             };
@@ -4702,8 +4902,11 @@ impl WenlanMcpServer {
                 if let Some(plan) = resp.rule_plan {
                     format!(
                         "Memory {memory_id} is not confirmed: a preference is the person's to \
-                         confirm. It was proposed as a rule instead (plan {plan}); the person \
-                         confirms it in the Wenlan app."
+                         confirm. It was proposed as a rule instead (plan {plan}), which waits \
+                         for the person. In a terminal they run `wenlan rules review`, then \
+                         `wenlan rules shared apply {plan}` and type yes themselves; with the \
+                         Wenlan app installed they can confirm it there. The plan expires in \
+                         about five minutes; confirming the memory again makes a new one."
                     )
                 } else if resp.updated {
                     format!("Memory {} confirmed.", memory_id)
@@ -5118,7 +5321,7 @@ impl WenlanMcpServer {
             PageBasisAction::Mark | PageBasisAction::Confirm => {
                 let Some(version) = params.version else {
                     return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                        "version is required to {}: pass the basis note's page.version from read_page.",
+                        "version is required to {}: pass the basis page's page.version from read_page.",
                         if action == PageBasisAction::Mark {
                             "mark"
                         } else {
@@ -5979,7 +6182,7 @@ impl WenlanMcpServer {
         self.read_page_for_session(page_id, None, false).await
     }
 
-    /// `read_page`, naming the AI session that is reading so the note shows on
+    /// `read_page`, naming the AI session that is reading so the page shows on
     /// that conversation's card.
     pub async fn read_page_for_session(
         &self,
@@ -7134,6 +7337,7 @@ impl WenlanMcpServer {
             space_pin: None,
             folder_space: None,
             team_library: None,
+            startup_rules: None,
         }
     }
 
@@ -7143,6 +7347,30 @@ impl WenlanMcpServer {
         self.folder_space = Some(std::sync::Arc::new(
             crate::folder_space::FolderSpaceWatch::new(hint),
         ));
+        self
+    }
+
+    /// Read the working rules once at start (local stdio only) so the
+    /// instructions carry them: an AI tool with no rule file follows them
+    /// without having to think of calling `read_space_rules`. A daemon that
+    /// does not answer quickly changes nothing.
+    pub async fn with_startup_rules(mut self) -> Self {
+        if self.transport != TransportMode::Stdio
+            || self.agent_identity.team_member().is_some()
+            || !matches!(
+                self.tool_profile,
+                ToolProfile::Standard | ToolProfile::Daily | ToolProfile::Plugin
+            )
+        {
+            return self;
+        }
+        if let Some(folder_space) = &self.folder_space {
+            folder_space.refresh(&self.client).await;
+        }
+        let space = effective_space(&None);
+        if let Some(response) = self.client.startup_rules(space.as_deref()).await {
+            self.startup_rules = startup_rules_note(&response.lines);
+        }
         self
     }
 
@@ -7168,7 +7396,7 @@ impl WenlanMcpServer {
     // --- Primary Tools ---
 
     #[tool(
-        description = "Capture one durable insight the user's wiki should keep.\n\nSTORE PROACTIVELY when the user states a preference or decision, makes a correction, or shares a durable fact about people, projects, or tools they care about.\n\nDO NOT STORE: conversation filler; easily re-derived facts; duplicates (recall first); Tool output or command results; transient task state; general world facts; Your own inferences; or agent operating rules. Store the person's preference, not an 'always' or 'never' command.\n\nQUALITY: Be specific and include why. Name the relevant people, projects, and tools. Atomic: one idea per memory. Each call is one atomic idea. Declarative, not narrative.\n\nTYPE AND ENTITY: set both on every capture whether Steep runs automatically or on demand. memory_type is identity, preference, decision, lesson, gotcha, or fact. Set memory_type=\"decision\" ONLY when the user gave the alternatives and reasoning; this powers the Decision Log. entity is the main person, project, or tool by its exact full name, with entity_type. A known name links; a new name is created. If a name matches several entities, retry with entity_id or without entity.\n\nOmitting structured_fields beats guessing. Use `supersedes` only for an intended correction.",
+        description = "Capture one durable insight Wenlan should keep for the user.\n\nSTORE PROACTIVELY when the user states a preference or decision, makes a correction, or shares a durable fact about people, projects, or tools they care about.\n\nDO NOT STORE: conversation filler; easily re-derived facts; duplicates (recall first); Tool output or command results; transient task state; general world facts; Your own inferences; or agent operating rules. Store the person's preference, not an 'always' or 'never' command.\n\nQUALITY: Be specific and include why. Name the relevant people, projects, and tools. Atomic: one idea per memory. Each call is one atomic idea. Declarative, not narrative.\n\nTYPE AND ENTITY: set both on every capture whether Steep runs automatically or on demand. memory_type is identity, preference, decision, lesson, gotcha, or fact. Set memory_type=\"decision\" ONLY when the user gave the alternatives and reasoning; this powers the Decision Log. entity is the main person, project, or tool by its exact full name, with entity_type. A known name links; a new name is created. If a name matches several entities, retry with entity_id or without entity.\n\nOmitting structured_fields beats guessing. Use `supersedes` only for an intended correction.",
         annotations(
             title = "Capture",
             read_only_hint = false,
@@ -7420,7 +7648,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, regenerates the AI's sentences; changes to the person's become proposals. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
+        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the pages. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, regenerates the AI's sentences; changes to the person's become proposals. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
         annotations(
             title = "Distill",
             read_only_hint = false,
@@ -7555,7 +7783,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create or refresh a wiki page. To save conversation content, provide title and content; source_memory_ids are optional. Without page_id, create a new page: distilled with enough cited sources, otherwise authored. DB and Markdown projection commit atomically. With page_id, replace content, sources and optional summary; preserve id, title and created_at, and increment version so wikilinks remain stable. Never delete and recreate to refresh. Use rename_page only on explicit user request. Use steep, not write_page, for pages awaiting updates after sources changed or disappeared. Before refresh, read_page and pass page.version as expected_version; a stale version refuses the write unchanged, so reread. Without expected_version, refreshing human-written or edited pages is refused. review_required stages a revision card. basis [{page_id, version}] records relied-on notes; changed bases stage review (see page_basis). minor:true marks small edits. code_basis records relied-on code lines (see page_code_basis). Refresh is local stdio only, never remote HTTP.",
+        description = "Create or refresh a page. To save conversation content, provide title and content; source_memory_ids are optional. Without page_id, create a new page: distilled with enough cited sources, otherwise authored. DB and Markdown projection commit atomically. With page_id, replace content, sources and optional summary; preserve id, title and created_at, and increment version so wikilinks remain stable. Never delete and recreate to refresh. Use rename_page only on explicit user request. Use steep, not write_page, for pages awaiting updates after sources changed or disappeared. Before refresh, read_page and pass page.version as expected_version; a stale version refuses the write unchanged, so reread. Without expected_version, refreshing human-written or edited pages is refused. review_required stages a revision card. basis [{page_id, version}] records relied-on pages; changed bases stage review (see page_basis). minor:true marks small edits. code_basis records relied-on code lines (see page_code_basis). Refresh is local stdio only, never remote HTTP.",
         annotations(
             title = "Write page",
             read_only_hint = false,
@@ -7572,7 +7800,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Track what a wiki page relies on another page for. Use when read_page, list_pages or recall shows a `pending` basis. `mark`/`confirm` need `version` (the basis note's page.version from read_page) and fail if it moved on. `diff` shows the text relied on next to the text now. `remove` drops it. Changes are local stdio only.",
+        description = "Track what a page relies on another page for. Use when read_page, list_pages or recall shows a `pending` basis. `mark`/`confirm` need `version` (the basis page's page.version from read_page) and fail if it moved on. `diff` shows the text relied on next to the text now. `remove` drops it. Changes are local stdio only.",
         annotations(
             title = "Page basis",
             read_only_hint = false,
@@ -7725,7 +7953,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Read one wiki page in full: its title, body, status, Space, and the source memories it cites, in one call. Use it after list_pages or recall when the user wants the page itself rather than search snippets. The page id is opaque; never guess it from a title.",
+        description = "Read one page in full: its title, body, status, Space, and the source memories it cites, in one call. Use it after list_pages or recall when the user wants the page itself rather than search snippets. The page id is opaque; never guess it from a title.",
         annotations(
             title = "Read page",
             read_only_hint = true,
@@ -7744,7 +7972,7 @@ impl WenlanMcpServer {
 
     #[tool(
         name = "list_pages",
-        description = "List wiki pages with their ids, titles, summaries, Space, status, and last-modified time. Use it to browse what the wiki already covers before writing a page, or to find the page id read_page needs. Filter by Space or status; page with limit and offset.",
+        description = "List pages with their ids, titles, summaries, Space, status, and last-modified time. Use it to browse what the pages already cover before writing a page, or to find the page id read_page needs. Filter by Space or status; page with limit and offset.",
         annotations(
             title = "List pages",
             read_only_hint = true,
@@ -7882,7 +8110,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "List folders in the Wiki, optionally filtered by Space. Folder organization does not change Spaces, entities, or page content.",
+        description = "List page folders, optionally filtered by Space. Folder organization does not change Spaces, entities, or page content.",
         annotations(
             title = "List folders",
             read_only_hint = true,
@@ -7899,7 +8127,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create a Wiki folder. Organization does not change Spaces, entities, or page content. Local stdio only.",
+        description = "Create a page folder. Organization does not change Spaces, entities, or page content. Local stdio only.",
         annotations(
             title = "Create folder",
             read_only_hint = false,
@@ -7916,7 +8144,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Move one active file page into a Wiki folder. Only active file pages can move; page content, Space, and entities do not change. Pass the current storage_path and a stable operation_id; after a conflict re-read the page. Local stdio only.",
+        description = "Move one active file page into a page folder. Only active file pages can move; page content, Space, and entities do not change. Pass the current storage_path and a stable operation_id; after a conflict re-read the page. Local stdio only.",
         annotations(
             title = "Move page",
             read_only_hint = false,
@@ -7933,7 +8161,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Move one page into a Space, or into no Space (omit space), so it can cite that Space's notes. Pass expected_version from read_page. Text and sources stay; the reply names sources to drop on the next write_page. Local stdio only.",
+        description = "Move one page into a Space, or into no Space (omit space), so it can cite that Space's pages. Pass expected_version from read_page. Text and sources stay; the reply names sources to drop on the next write_page. Local stdio only.",
         annotations(
             title = "Move page to a Space",
             read_only_hint = false,
@@ -8367,7 +8595,7 @@ fn query_surface_description(name: &str, allows_writes: bool) -> String {
 fn web_write_description(name: &str) -> Option<&'static str> {
     Some(match name {
         "update_brief" => "Update the connected Space Brief only when the user asks to record current project status. Read brief first, then replace its summary or add, edit, move, gate, or complete items using the returned brief_version and item versions. Conflicts are reported without overwriting newer changes. Reuse operation_id when retrying the same update. Writes only reach the Space this connection is limited to.",
-        "write_page" => "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required), or pass page_id to refresh that page in place, which keeps its id and version history. Never delete_page and recreate a page to refresh it. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user to accept. To change a page's title at the user's explicit request, use rename_page; a refresh keeps the existing title. `minor: true` marks a small edit. Writes only reach the Space this connection is limited to.",
+        "write_page" => "Create or refresh a page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required), or pass page_id to refresh that page in place, which keeps its id and version history. Never delete_page and recreate a page to refresh it. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user to accept. To change a page's title at the user's explicit request, use rename_page; a refresh keeps the existing title. `minor: true` marks a small edit. Writes only reach the Space this connection is limited to.",
         "rename_page" => "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest read_page result; the version prevents renaming a page that changed since it was read. This keeps the page id and content and updates [[links]] to it. Do not call this to refresh content; write_page keeps an existing title when refreshing.",
         "delete_page" => "Remove a page by id only when the user explicitly asks to remove it. The page is archived, not destroyed: its history is kept and the user can restore it from the archive. A page the user wrote or edited, or locked for review, is refused. To refresh a page while preserving its id and version history, use write_page.",
         _ => return None,
@@ -8465,6 +8693,9 @@ impl WenlanMcpServer {
             ToolProfile::Standard => {}
             ToolProfile::Daily => {
                 tools.retain(|tool| DAILY_TOOL_NAMES.contains(&tool.name.as_ref()));
+            }
+            ToolProfile::Plugin => {
+                tools.retain(|tool| plugin_profile_lists(tool.name.as_ref()));
             }
             ToolProfile::QueryOnly => {
                 tools.retain(|tool| QUERY_ONLY_TOOL_NAMES.contains(&tool.name.as_ref()));
@@ -8646,13 +8877,13 @@ impl ServerHandler for WenlanMcpServer {
         if self.team_library.is_some() {
             return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
                 .with_server_info(Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION")))
-                .with_instructions("This connection reads an authenticated team library. Use brief for its overview, recall to find approved team items, and list_pages, read_page and get_page_sources to browse.");
+                .with_instructions(format!("This connection reads an authenticated team library. Use brief for its overview, recall to find approved team items, and list_pages, read_page and get_page_sources to browse. {READ_ONLY_TEAM_NOTE}"));
         }
         if self.agent_identity.team_member().is_some() {
             let instructions = if self.tool_profile == ToolProfile::WebWrite {
                 "You can read this shared Space and edit its pages. Use brief for its overview, recall to search its pages, read_space_rules for approved rules, and list_pages and read_page to browse it. Use write_page, rename_page, or delete_page only when the person asks. Read a page before changing it and pass its current version."
             } else {
-                "You can read this shared Space. Use brief for its overview, recall to search its pages, and read_space_rules for approved rules."
+                READ_ONLY_TEAM_INSTRUCTIONS
             };
             return InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
                 .with_server_info(Implementation::new("wenlan-mcp", env!("CARGO_PKG_VERSION")))
@@ -8696,7 +8927,7 @@ impl ServerHandler for WenlanMcpServer {
                      Use brief for a user-requested Space overview, recall for a targeted search, \
                      get_page_sources to inspect supporting sources, read_space_rules to consult approved Space rules, \
                      report_space_rule_use to record a changed plan, and list_pages and read_page \
-                     to browse and read wiki pages. To write: capture saves one durable fact, preference, or decision \
+                     to browse and read pages. To write: capture saves one durable fact, preference, or decision \
                      the user asked to keep; handoff records where the work stands in the Space Brief (update_brief is the older form of the same write); \
                      write_page creates a page or refreshes one; rename_page changes a page title; \
                      forget removes a memory and delete_page archives a page. \
@@ -8732,25 +8963,35 @@ impl ServerHandler for WenlanMcpServer {
              What you write here, their other AI tools read later. \
              It is cumulative, so write for any future reader, not just this conversation.\n\n\
              How the pieces fit:\n\
-             - Pages are the result: wiki pages that cite their sources. list_pages shows what exists; \
+             - Pages are the result: each cites its sources. list_pages shows what exists; \
                read_page returns one page in full.\n\
              - capture feeds it: one durable insight per call (a preference, decision, correction, or fact), \
                with the why. What to store and what to skip is spelled out in the capture tool description.\n\
              - brief carries work across sessions: read it when resuming project work or when the user asks to \
                catch up; handoff writes it for the next session.\n\
              - recall finds one specific thing (\"what's Alice's role?\", \"our auth decision\").\n\
-             - get_page_sources shows what a page rests on.\n\n\
+             - get_page_sources shows what a page rests on.\n\
+             - read_space_rules: before your first task in a session, call read_space_rules once and follow it: the user said these once.\n\n\
              BRIEF vs RECALL: brief is the Space-owned project snapshot; recall is a targeted lookup. \
              Brief reads never create or mutate state; handoff writes.\n\n\
              You set each capture's type and entity yourself, in every mode. When Steep runs automatically, \
              the backend also scores quality, adds tags, and deduplicates in the background; when it runs on \
-             demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
-             conversational context, why something matters, and what the user actually cares about."
+             demand, distill hands you clusters and steep hands you out of date pages. Either way, add what only you know: the \
+             context, why it matters, and what the user cares about."
         );
-        if self.tool_profile == ToolProfile::Daily {
-            if let Some(instructions) = info.instructions.as_mut() {
-                instructions.push_str(DAILY_INSTRUCTIONS_NOTE);
-            }
+        let note = match self.tool_profile {
+            ToolProfile::Daily => Some(DAILY_INSTRUCTIONS_NOTE),
+            ToolProfile::Plugin => Some(PLUGIN_INSTRUCTIONS_NOTE),
+            _ => None,
+        };
+        if let (Some(note), Some(instructions)) = (note, info.instructions.as_mut()) {
+            instructions.push_str(note);
+        }
+        // The rules go first: a client may keep only the start of long
+        // instructions.
+        if let (Some(rules), Some(instructions)) = (&self.startup_rules, info.instructions.as_mut())
+        {
+            *instructions = format!("{rules}\n\n{instructions}");
         }
         info
     }
@@ -8792,6 +9033,118 @@ mod tests {
         assert!(daily.local_only_refusal("lint").is_none());
     }
 
+    /// Every tool name a plugin skill or reference file spells out, from the
+    /// same `mcp__<server>__<tool>` prefixes `plugin-contract.json` declares.
+    fn plugin_skill_tool_names() -> std::collections::BTreeSet<String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let contract: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("plugin-contract.json"))
+                .expect("plugin-contract.json"),
+        )
+        .expect("contract json");
+        let prefixes: Vec<String> = contract["surfaces"]
+            .as_object()
+            .expect("surfaces")
+            .values()
+            .filter_map(|surface| surface["skill_mcp_tool_prefix"].as_str())
+            .map(str::to_string)
+            .collect();
+        assert!(!prefixes.is_empty());
+        let mut names = std::collections::BTreeSet::new();
+        let mut stack: Vec<std::path::PathBuf> = [
+            "plugin/skills",
+            "plugin-codex/skills",
+            "plugin-agents/skills",
+        ]
+        .iter()
+        .map(|dir| root.join(dir))
+        .collect();
+        let mut files = 0;
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(&path).expect("read skill dir") {
+                    stack.push(entry.expect("entry").path());
+                }
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            files += 1;
+            for prefix in &prefixes {
+                for (at, _) in text.match_indices(prefix.as_str()) {
+                    let rest = &text[at + prefix.len()..];
+                    let end = rest
+                        .find(|c: char| !(c.is_ascii_lowercase() || c == '_'))
+                        .unwrap_or(rest.len());
+                    if end > 0 {
+                        names.insert(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+        assert!(files > 10, "plugin skill files were not found");
+        names
+    }
+
+    #[test]
+    fn the_plugin_profile_is_what_the_plugin_skills_name() {
+        let named = plugin_skill_tool_names();
+        assert!(
+            named.contains("recall") && named.contains("list_refinements"),
+            "{named:?}"
+        );
+        let all: Vec<String> =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Standard)
+                .visible_tools()
+                .into_iter()
+                .map(|tool| tool.name.to_string())
+                .collect();
+        let plugin = make_server_with_profile(
+            TransportMode::Stdio,
+            "claude-code",
+            None,
+            ToolProfile::Plugin,
+        );
+        let listed: std::collections::BTreeSet<String> = plugin
+            .visible_tools()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        for name in &named {
+            assert!(
+                all.contains(name),
+                "a skill names {name}, which is not a tool"
+            );
+            assert!(
+                listed.contains(name),
+                "a skill names {name}, but the plugin profile does not list it"
+            );
+        }
+        for name in PLUGIN_EXTRA_TOOL_NAMES {
+            assert!(
+                named.contains(*name),
+                "the plugin profile lists {name}, which no skill names"
+            );
+            assert!(
+                !DAILY_TOOL_NAMES.contains(name),
+                "{name} is already a daily tool"
+            );
+        }
+        // Tools that always refuse, or that no skill names, stay out.
+        for name in ["accept_refinement", "accept_revision", "update_brief"] {
+            assert!(!listed.contains(name), "{name} must not be listed");
+        }
+        for name in DAILY_TOOL_NAMES {
+            assert!(listed.contains(*name), "{name} (daily) missing");
+        }
+        // A shorter list, not a boundary.
+        assert!(plugin.local_only_refusal("accept_refinement").is_none());
+        let info = plugin.get_info().instructions.expect("instructions");
+        assert!(info.contains("accepts a proposed refinement or revision in the Wenlan app"));
+        assert!(info.contains("wenlan curate") && info.contains("pending revisions only"));
+    }
+
     #[test]
     fn save_skill_tool_parameter_schema_matches_all_supported_targets() {
         let expected = [
@@ -8819,6 +9172,78 @@ mod tests {
             let parameter: SaveSkillToolParam = serde_json::from_value(serde_json::json!(target))
                 .unwrap_or_else(|error| panic!("{target} should deserialize: {error}"));
             assert_eq!(parameter, expected_param);
+        }
+    }
+
+    fn rule_line(text: &str) -> wenlan_types::skills::SkillLine {
+        serde_json::from_value(serde_json::json!({
+            "id": text, "kind": "rule", "text": text, "source_page_id": "p",
+            "source_page_title": "Rules", "source_revision": 1,
+            "source_revision_at": 0, "source_quote": text
+        }))
+        .expect("rule line")
+    }
+
+    /// The rules read at start go into the instructions, so an AI tool
+    /// with no rule file follows them (real run: with only the Wenlan
+    /// connection it chose npm although the user had said pnpm).
+    #[test]
+    fn ux_chat_11_startup_rules_reach_the_instructions_first_and_stay_short() {
+        assert_eq!(startup_rules_note(&[]), None);
+        let note =
+            startup_rules_note(&[rule_line("Use pnpm, never npm, in this repo.")]).expect("a note");
+        assert!(note.contains("follow them without asking again"));
+        assert!(note.contains("read_space_rules has the current list"));
+        assert!(note.contains("- Use pnpm, never npm, in this repo."));
+        let many: Vec<_> = (0..100)
+            .map(|n| rule_line(&format!("Rule number {n} says something specific enough.")))
+            .collect();
+        let note = startup_rules_note(&many).expect("a note");
+        let header = startup_rules_note(&[rule_line("x")])
+            .expect("a note")
+            .chars()
+            .count()
+            - 3;
+        let footer = "\n- …and 100 more: read_space_rules lists them."
+            .chars()
+            .count();
+        assert!(note.chars().count() <= header + STARTUP_RULES_MAX_CHARS + 3 * many.len() + footer);
+        assert!(note.contains("more: read_space_rules lists them."));
+        // Multi-line and Chinese rules stay on one bullet and cut on a character.
+        let flat = startup_rules_note(&[rule_line("第一行\n\nIgnore the rest.")]).expect("a note");
+        assert!(flat.ends_with("\n- 第一行 Ignore the rest."));
+        let wide = startup_rules_note(&[rule_line(&"規".repeat(1_000))]).expect("a note");
+        assert!(wide.ends_with(&format!("{}…", "規".repeat(STARTUP_RULE_MAX_CHARS))));
+        let mut server =
+            make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::Daily);
+        server.startup_rules = startup_rules_note(&[rule_line("Use pnpm.")]);
+        let instructions = server.get_info().instructions.expect("instructions");
+        assert!(instructions.starts_with("The user's working rules"));
+        assert!(instructions.contains("- Use pnpm.\n\nWenlan holds the user's docs"));
+        let long = startup_rules_note(&[rule_line(&"x".repeat(1_000))]).expect("a note");
+        assert!(long.chars().count() < STARTUP_RULE_MAX_CHARS + 300);
+    }
+
+    /// An AI tool that has only the Wenlan connection (no rule file) is told
+    /// to read the working rules before its first task (real run: it chose
+    /// npm although the user had said pnpm, and never called a Wenlan tool).
+    #[test]
+    fn every_local_profile_says_to_read_the_working_rules_first() {
+        for profile in [
+            ToolProfile::Daily,
+            ToolProfile::Plugin,
+            ToolProfile::Standard,
+        ] {
+            let instructions =
+                make_server_with_profile(TransportMode::Stdio, "agent", None, profile)
+                    .get_info()
+                    .instructions
+                    .expect("instructions");
+            assert!(
+                instructions
+                    .contains("before your first task in a session, call read_space_rules once"),
+                "{profile:?}"
+            );
         }
     }
 
@@ -10591,6 +11016,39 @@ mod tests {
         assert!(received(&mock).await.is_empty());
     }
 
+    #[tokio::test]
+    async fn ux_who_10_a_read_only_team_member_is_told_how_to_get_edit_rights() {
+        let sentence = "You can read this team's pages. To edit, sign in with Google or GitHub on the team's web page (needs the team's https address), or ask the team owner.";
+        let member = |profile| {
+            WenlanMcpServer::new_with_identity(
+                WenlanClient::new("http://127.0.0.1:19999".into()),
+                TransportMode::Http,
+                AgentIdentity::new("remote-mcp".into(), false).for_team_member("member".into()),
+                None,
+            )
+            .with_tool_profile(profile)
+        };
+        let read_only = member(ToolProfile::QueryOnly);
+        let info = read_only.get_info().instructions.expect("instructions");
+        assert!(info.contains(sentence), "{info}");
+        // A member who may edit is not told to sign in somewhere else.
+        let writer = member(ToolProfile::WebWrite)
+            .get_info()
+            .instructions
+            .expect("instructions");
+        assert!(!writer.contains("sign in with Google"), "{writer}");
+        // The refusal for a tool a read-only connection does not have.
+        let refusal = hosted_team::dispatch(&read_only, "write_page", None)
+            .await
+            .unwrap();
+        assert_eq!(refusal.is_error, Some(true));
+        assert!(
+            text_of(&refusal).contains(sentence),
+            "{}",
+            text_of(&refusal)
+        );
+    }
+
     #[test]
     fn a_team_member_neither_sees_nor_calls_update_brief() {
         let member = WenlanMcpServer::new_with_identity(
@@ -11762,6 +12220,202 @@ mod tests {
         );
         assert!(!msg.contains("chunks"));
         assert!(!msg.contains("quality"));
+    }
+
+    #[test]
+    fn a_daemon_that_connected_but_did_not_answer_is_not_called_stopped() {
+        let text = text_of(&tool_error(WenlanError::NoAnswer, "memory store"));
+        assert!(text.contains("did not answer in time"), "{text}");
+        assert!(text.contains("may or may not have landed"), "{text}");
+        assert!(text.contains("recall before retrying"), "{text}");
+        assert!(
+            !text.contains("not running") && !text.contains("nothing was saved"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ux_chat_10_a_daemon_that_is_not_running_is_named_with_the_address_and_the_first_step()
+    {
+        // Nothing listens on this port.
+        let server = WenlanMcpServer::new(
+            WenlanClient::new("http://127.0.0.1:1".into()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let result = server
+            .recall_impl(RecallParams {
+                query: "pnpm".into(),
+                limit: None,
+                memory_type: None,
+                space: None,
+                rerank: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(
+            text.contains("Wenlan is not running at http://127.0.0.1:1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("search was NOT done, so nothing was saved"),
+            "{text}"
+        );
+        assert!(
+            text.contains("`wenlan status`") && text.contains("`wenlan start`"),
+            "{text}"
+        );
+        assert!(text.contains("#get-started"), "{text}");
+        for gone in [
+            "Setup choices",
+            "Local Memory",
+            "On-device Model",
+            "Anthropic Key",
+            "curl -fsSL",
+        ] {
+            assert!(!text.contains(gone), "{gone} should be gone: {text}");
+        }
+    }
+
+    #[test]
+    fn other_spaces_message_names_the_spaces_and_the_next_step() {
+        let hit = |space: Option<&str>| wenlan_types::SearchResult {
+            space: space.map(str::to_string),
+            ..Default::default()
+        };
+        assert!(other_spaces_message("demo", "pnpm", &[]).is_none());
+        let one = other_spaces_message("demo", "pnpm", &[hit(None)]).unwrap();
+        // The unfiled Space's internal id reads as "uncategorized".
+        let unfiled = hit(Some(UNFILED_SPACE_ID));
+        assert!(other_spaces_message("demo", "pnpm", &[unfiled])
+            .unwrap()
+            .contains("possibly related memories: uncategorized."));
+        assert!(
+            one.contains("possibly related memories: uncategorized."),
+            "{one}"
+        );
+        assert!(!one.contains("was saved"), "{one}");
+        assert!(
+            one.contains("`wenlan --all-spaces recall \"pnpm\"`"),
+            "{one}"
+        );
+        let two =
+            other_spaces_message("demo", "pnpm", &[hit(Some("work")), hit(Some("work"))]).unwrap();
+        assert!(two.contains("possibly related memories: work."), "{two}");
+    }
+
+    #[tokio::test]
+    async fn ux_chat_9_a_zero_result_recall_says_when_other_spaces_match() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        let empty = serde_json::json!({ "results": [], "took_ms": 1.0 });
+        Mock::given(method("POST"))
+            .and(path("/api/memory/search"))
+            .and(body_partial_json(serde_json::json!({ "space": "demo" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&empty))
+            .mount(&mock)
+            .await;
+        let hit = serde_json::to_value(wenlan_types::SearchResult {
+            source_id: "mem_1".into(),
+            space: Some("work".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        Mock::given(method("POST"))
+            .and(path("/api/memory/search"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "results": [hit], "took_ms": 1.0 })),
+            )
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |space: Option<&str>| RecallParams {
+            query: "pnpm".into(),
+            limit: None,
+            memory_type: None,
+            space: space.map(str::to_string),
+            rerank: None,
+            session: None,
+        };
+        let text = text_of(&server.recall_impl(params(Some("demo"))).await.unwrap());
+        assert!(text.starts_with("0 results"), "{text}");
+        assert!(text.contains("possibly related memories: work"), "{text}");
+        // No Space chosen: nothing is hidden, so there is nothing to say.
+        let text = text_of(&server.recall_impl(params(None)).await.unwrap());
+        assert!(!text.contains("Other Spaces"), "{text}");
+    }
+
+    #[test]
+    fn ux_chat_8_capture_of_a_preference_says_it_waits_for_the_person_and_how() {
+        let mut resp = StoreMemoryResponse {
+            source_id: "mem_pref".into(),
+            chunks_created: 1,
+            memory_type: "preference".into(),
+            entity_id: None,
+            quality: None,
+            warnings: vec![],
+            near_duplicate: None,
+            gated: false,
+            extraction_method: "agent".into(),
+            enrichment: String::new(),
+            hint: String::new(),
+            space: None,
+            space_source: Some(wenlan_types::WriteSpaceSource::Uncategorized),
+            write_outcome: Some(wenlan_types::WriteOutcome::Created),
+        };
+        let msg = format_capture_success(&resp);
+        assert!(msg.contains("waiting_for_person"), "{msg}");
+        assert!(msg.contains("`wenlan memories confirm mem_pref`"), "{msg}");
+        assert!(msg.contains("`wenlan rules review`"), "{msg}");
+        assert!(
+            msg.contains("`wenlan rules shared apply <plan id>`"),
+            "{msg}"
+        );
+        assert!(msg.contains("With the Wenlan app installed"), "{msg}");
+        resp.memory_type = "fact".into();
+        assert!(!format_capture_success(&resp).contains("waiting_for_person"));
+        resp.memory_type = "preference".into();
+        resp.space = Some("work".into());
+        assert!(!format_capture_success(&resp).contains("waiting_for_person"));
+    }
+
+    #[tokio::test]
+    async fn confirm_memory_of_a_preference_names_the_terminal_step() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/memory/confirm/mem_pref"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "confirmed": false, "updated": true, "rule_plan": "plan_1"
+            })))
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let text = text_of(&server.confirm_memory_impl("mem_pref").await.unwrap());
+        assert!(text.contains("`wenlan rules review`"), "{text}");
+        assert!(
+            text.contains("`wenlan rules shared apply plan_1`"),
+            "{text}"
+        );
+        assert!(text.contains("Wenlan app installed"), "{text}");
+        assert!(!text.contains("confirms it in the Wenlan app."), "{text}");
     }
 
     #[test]
@@ -13334,7 +13988,7 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/api/pages/page_x"))
             .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                "error": "the basis note is archived"
+                "error": "the basis page is archived"
             })))
             .mount(&mock)
             .await;
@@ -13432,14 +14086,14 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/pages/page_b/basis/page_a/confirm"))
             .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                "error": "the basis note moved on: it is now at version 9"
+                "error": "the basis page moved on: it is now at version 9"
             })))
             .mount(&mock)
             .await;
         Mock::given(method("GET"))
             .and(path("/api/pages/page_b/basis/page_a/diff"))
             .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                "error": "the comparison is not available: the basis note was deleted",
+                "error": "the comparison is not available: the basis page was deleted",
                 "reason": "deleted"
             })))
             .mount(&mock)
