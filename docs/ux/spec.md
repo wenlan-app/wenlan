@@ -79,6 +79,15 @@ and wait for evidence that people need them.
   make it yours. Only yours counts as decided.
 - **Proposal**: a change the AI suggests to one of your sentences. It lands
   only when you accept it.
+- **UX-WORDS-1** `shipped` A Wenlan page has one name: "page/pages" in
+  English, 頁面 in Traditional Chinese and 页面 in Simplified Chinese. The app
+  never calls it a note, 筆記/笔记, wiki or 文檔/文档. Chinese text says
+  空間/空间, never the English word "Space". "Note" stays only where it means
+  the person's own material or another app's notes (an Obsidian vault, Apple
+  Notes, Zotero, release notes); those keys are listed with a reason in the
+  test. The sidebar section label ("Docs"/文件/文档) is a separate pending
+  decision. Test: `src/i18n/pageNaming.test.ts`.
+  決定（2026-11-26，Qi-Xuan）：Wenlan 的頁一律叫「頁面」，不叫筆記、wiki、文檔；中文裡的 Space 一律寫「空間」。
 
 ## Handoff between AI sessions
 

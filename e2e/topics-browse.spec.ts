@@ -19,7 +19,7 @@ async function capture(page: Page, name: string) {
 
 const cases = [
   { locale: "en", theme: "light", more: "More", title: "Topics", search: "Filter topics", openAda: "Ada Lovelace", options: "Topic options", archived: "View archived topics", archivedTitle: "Archived topics", confirm: "Confirm topic", archive: "Archive", restore: "Restore", back: "Back", edit: "Edit page", noteConfirm: "Mark page confirmed" },
-  { locale: "zh-Hant", theme: "dark", more: "更多", title: "主題", search: "篩選主題", openAda: "Ada Lovelace", options: "主題選項", archived: "查看已歸檔主題", archivedTitle: "已歸檔的主題", confirm: "確認主題", archive: "歸檔", restore: "復原", back: "返回", edit: "編輯筆記", noteConfirm: "標記筆記為已確認" },
+  { locale: "zh-Hant", theme: "dark", more: "更多", title: "主題", search: "篩選主題", openAda: "Ada Lovelace", options: "主題選項", archived: "查看已歸檔主題", archivedTitle: "已歸檔的主題", confirm: "確認主題", archive: "歸檔", restore: "復原", back: "返回", edit: "編輯頁面", noteConfirm: "標記筆記為已確認" },
 ] as const;
 
 for (const copy of cases) test(`${copy.locale} topics browse before managing`, async ({ page }) => {

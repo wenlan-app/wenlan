@@ -90,7 +90,7 @@ describe("ask-AI hints", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     wrap(<ConnectedHint />);
     const hint = await screen.findByTestId("ask-ai-hint-connected");
-    expect(hint).toHaveTextContent("Next, start a new chat in Claude Code and type /wenlan to ask about your notes.");
+    expect(hint).toHaveTextContent("Next, start a new chat in Claude Code and type /wenlan to ask about your pages.");
     expect(hint.querySelector("code, input, textarea")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Claude Code" }));
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan"));
@@ -112,10 +112,10 @@ describe("ask-AI hints", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
     wrap(<ConnectedHint />);
     const hint = await screen.findByTestId("ask-ai-hint-connected");
-    expect(hint).toHaveTextContent("ask about your notes in plain words");
+    expect(hint).toHaveTextContent("ask about your pages in plain words");
     expect(hint).not.toHaveTextContent("/wenlan");
     fireEvent.click(screen.getByTestId("ask-ai-hint-open"));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("Use Wenlan: what do my notes cover so far?"));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("Use Wenlan: what do my pages cover so far?"));
     expect(openToolWithPrompt).not.toHaveBeenCalled();
     expect(await screen.findByTestId("ask-ai-hint-open")).toHaveTextContent("Copied.");
   });

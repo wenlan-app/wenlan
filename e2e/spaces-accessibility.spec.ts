@@ -574,7 +574,7 @@ test("preserves the Entity signature and CJK dossiers at 200 percent zoom", asyn
   const selectedNoteTab = zoomPage.getByRole("tab", { name: "Independent research", exact: true });
   await expect(selectedNoteTab).toBeVisible();
   await assertNotClipped(selectedNoteTab);
-  const pageEditor = zoomPage.getByRole("textbox", { name: "筆記編輯器", exact: true });
+  const pageEditor = zoomPage.getByRole("textbox", { name: "頁面編輯器", exact: true });
   await expect(pageEditor).toBeVisible();
   await expect(pageEditor).toContainText("Independent research");
   const editorBounds = await pageEditor.evaluate((node) => { const box = node.getBoundingClientRect(); const element = node as HTMLElement; return { left: box.left, right: box.right, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }; });

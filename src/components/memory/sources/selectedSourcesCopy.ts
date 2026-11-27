@@ -166,7 +166,7 @@ export const hantSelectedSources = {
   newPage: "新研究頁",
   pagesLoading: "正在讀取研究頁…",
   pagesFailed: "無法讀取研究頁，請重試後選擇寫入位置。",
-  pagesLimited: "顯示此 Space 前 1,000 個頁面。",
+  pagesLimited: "顯示此空間前 1,000 個頁面。",
   scopeChanges: "與上次整理相比：新增 {{added}} 個，不再選取 {{removed}} 個",
   scopeChangesHint: "這只改變本次整理範圍，不會移除來源或原有文字。",
   scopeAdded: "本次新增",

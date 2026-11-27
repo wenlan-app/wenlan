@@ -39,7 +39,7 @@ for (const locale of ["zh-Hant", "en"] as const) {
     await page.getByRole("button", { name: /meeting-notes/ }).click();
     await expect(page.getByText("Keep the speaker's words when quoting.")).toBeVisible();
     await page.getByLabel(zh ? /只在一個 Space/ : /One Space only/).check();
-    await page.getByLabel(zh ? "選擇 Space" : "Choose a Space").selectOption({ index: 1 });
+    await page.getByLabel(zh ? "選擇空間" : "Choose a Space").selectOption({ index: 1 });
     await shot(page, `2-detail-${locale}`);
     await page.getByRole("button", { name: zh ? "安裝" : "Install", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: zh ? "已裝給 2 個 AI 工具" : "Installed for 2 AI tools" })).toBeVisible();

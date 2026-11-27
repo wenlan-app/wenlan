@@ -155,8 +155,8 @@ describe("ReviewDialog page-target revision card", () => {
 
   it.each([
     ["en", "page", "page_write", "Page update"],
-    ["zh-Hant", "page", "page_write", "筆記更新"],
-    ["zh-Hans", "page", "page_write", "笔记更新"],
+    ["zh-Hant", "page", "page_write", "頁面更新"],
+    ["zh-Hans", "page", "page_write", "页面更新"],
     ["en", "page", "claude-code", "proposed by claude-code"],
     ["zh-Hant", "page", "claude-code", "由 claude-code 提議"],
     ["zh-Hans", "page", "claude-code", "由 claude-code 提议"],
@@ -244,13 +244,13 @@ describe("ReviewDialog page-target revision card", () => {
 
   it.each([
     ["authored", "en", "Reason: you wrote this page, so AI edits wait for your review"],
-    ["authored", "zh-Hant", "原因：你寫過這篇筆記，AI 的修改要等你審核"],
+    ["authored", "zh-Hant", "原因：你寫過這個頁面，AI 的修改要等你審核"],
     ["locked", "en", "Reason: this page is set to Ask me first"],
     ["background", "en", "Reason: Wenlan steeped this automatically"],
     ["owned", "en", "Reason: the page has your edits"],
-    ["locked", "zh-Hant", "原因：這篇設成了先問我"],
+    ["locked", "zh-Hant", "原因：這一頁設成了先問我"],
     ["background", "zh-Hans", "原因：文澜自动沉淀"],
-    ["owned", "zh-Hant", "原因：筆記有你的修改"],
+    ["owned", "zh-Hant", "原因：頁面有你的修改"],
   ])("says why a %s card needs review (%s)", async (reviewReason, language, text) => {
     await i18n.changeLanguage(language);
     const dialog = await openDialog({ ...pageItem, reviewReason });
@@ -260,7 +260,7 @@ describe("ReviewDialog page-target revision card", () => {
 
   it.each([
     ["en", "Positioning", "Reason: \u201cPositioning\u201d changed, and this page follows it"],
-    ["zh-Hant", "Positioning", "原因：『Positioning』改了，這篇跟著它"],
+    ["zh-Hant", "Positioning", "原因：『Positioning』改了，這一頁跟著它"],
     ["en", null, "Reason: a page this one follows changed"],
   ])("names the page a locked page follows (%s, %s)", async (language, followsTitle, text) => {
     await i18n.changeLanguage(language);
