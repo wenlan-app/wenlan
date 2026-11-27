@@ -195,12 +195,12 @@ wenlan spaces move scratch career
 
 **`wenlan team`**
 
-Run a team server (add members, share Spaces) or join one with a join code.
+Run a team server (invite people, share Spaces) or join one with an invite link.
 
 ```bash
 wenlan team status
-wenlan team add Ana --access Work --access Notes:read --url https://wenlan.example.com
-wenlan team join "https://wenlan.example.com#wlt_…" --server-space Work
+wenlan team invite Ana --access Work --access Notes:read --url https://wenlan.example.com
+wenlan team join "https://wenlan.example.com/join#wlt_…"
 ```
 
 ### Setup

@@ -66,7 +66,6 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     // (see Main); until then it counts as Docs.
     case "distill-review":
     case "page":
-    case "team-page":
     case "page-draft":
       return "pages";
     case "pages":
@@ -78,6 +77,8 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
       return "graph";
     case "entity":
       return "entities";
+    // A joined team's pages are listed under Spaces and open from there.
+    case "team-page":
     case "space":
     case "spaces":
       return "spaces";

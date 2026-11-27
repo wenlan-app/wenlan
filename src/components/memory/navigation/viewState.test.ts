@@ -30,6 +30,9 @@ describe("activeNavigationForView", () => {
     expect(activeNavigationForView({ kind: "pages", section: "rules" })).toBe("rules");
     expect(activeNavigationForView({ kind: "skills" })).toBe("skills");
   });
+  it("lights Spaces on a joined team's page, which opens from the Spaces list", () => {
+    expect(activeNavigationForView({ kind: "team-page", teamId: "team-1", pageId: "page-1" })).toBe("spaces");
+  });
   it("lights the graph on the topic list, which opens from it", () => {
     expect(activeNavigationForView({ kind: "entities" })).toBe("graph");
     expect(activeNavigationForView({ kind: "entity", entityId: "entity-1" })).toBe("entities");

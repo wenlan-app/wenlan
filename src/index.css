@@ -4200,7 +4200,11 @@ p.entity-error {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mem-toast-icon { display: flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-danger); }
+.mem-toast-icon { display: flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-text-secondary); }
+/* The icon carries the toast's kind: only a failure is red. */
+[data-sonner-toast][data-type="success"] .mem-toast-icon { color: var(--mem-status-success-text); }
+[data-sonner-toast][data-type="warning"] .mem-toast-icon { color: var(--mem-status-warning-text); }
+[data-sonner-toast][data-type="error"] .mem-toast-icon { color: var(--mem-danger); }
 .mem-toast-icon svg { width: 14px; height: 14px; }
 
 /* Quick Capture: the Markdown editor scrolls inside the fixed window; state
