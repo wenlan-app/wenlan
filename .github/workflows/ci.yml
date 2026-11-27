@@ -1526,7 +1526,10 @@ jobs:
     needs: [detect-changes]
     if: "needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
     runs-on: macos-15
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 25 || 60 }}
+    # Main and queue runs can build the whole graph without a warm cache (a
+    # timed-out run saves none). That cold build took 49 minutes for the first
+    # archive alone on 2026-11-27, so 60 minutes cancelled two main runs in a row.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 25 || 100 }}
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
