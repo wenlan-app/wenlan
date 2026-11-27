@@ -442,7 +442,7 @@ pub(crate) fn reopen_edits_after_old_host_refusal(space: &str) -> Result<()> {
     )
 }
 
-fn reopen_edits_after_old_host_refusal_at(
+pub(crate) fn reopen_edits_after_old_host_refusal_at(
     setup: &Setup,
     settings: &Path,
     space: &str,
@@ -3581,100 +3581,6 @@ impl Setup {
             if removed {
                 personal_rules::stage_team_rules_moved_history(self, manifest)?;
                 manifest.team_rules_moved_notice_pending = true;
-                self.save(manifest)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn rebase_waiting_team_edits(
-        &self,
-        root: &FileRoot,
-        manifest: &mut Manifest,
-        generated: &[String],
-        layers: &[TeamRuleLayer],
-        render_rule: &impl Fn(&str, &str) -> Result<SkillFiles>,
-    ) -> Result<()> {
-        let mut answers = rulesync_shared_answers::read(&self.data)?;
-        let waiting = answers.waiting.clone();
-        for (id, edit) in waiting {
-            let Some(layer) = layers.iter().find(|layer| layer.id == edit.layer_id) else {
-                continue;
-            };
-            let key = rulesync_layers::key(layer)?;
-            for name in &edit.files {
-                let path = Path::new(name);
-                let Some(delivery) = manifest.delivered.get(path) else {
-                    continue;
-                };
-                let Kind::Rule { target, .. } = &delivery.kind else {
-                    continue;
-                };
-                if !rulesync_layers::waiting_in_file(
-                    &edit,
-                    name,
-                    Path::new(""),
-                    &self.data,
-                    &self.home,
-                ) {
-                    continue;
-                }
-                let old = text(&delivery.delivered)?;
-                let current = root.read(path, false)?;
-                let local = text(&current)?;
-                if rulesync_layers::only_personal(old)? != rulesync_layers::only_personal(local)? {
-                    continue;
-                }
-                let source = manifest.master.rule_text(target, generated)?;
-                let rendered = render_rule(target, &source)?;
-                let Some(next) = rendered.get(path) else {
-                    continue;
-                };
-                let next_text = std::str::from_utf8(next)?;
-                if next_text == old {
-                    continue;
-                }
-                let old_blocks = rulesync_layers::blocks(old)?;
-                let local_blocks = rulesync_layers::blocks(local)?;
-                let next_blocks = rulesync_layers::blocks(next_text)?;
-                let (Some(base), Some(mine), Some(theirs)) = (
-                    old_blocks.get(key.as_str()),
-                    local_blocks.get(key.as_str()),
-                    next_blocks.get(key.as_str()),
-                ) else {
-                    continue;
-                };
-                let merged = wenlan_core::rulesync_personal::merge_rule_text(
-                    base.body,
-                    mine.body,
-                    theirs.body,
-                )
-                .context("The team's rules changed since this edit; check it again.")?;
-                let rebased = rulesync_layers::replace_block_body(next_text, &key, &merged)?;
-                let updated = with_bytes(&current, rebased.into_bytes());
-                ensure!(
-                    root.apply(path, &current, &updated, false)? == ApplyOutcome::Applied,
-                    "shared rule file changed during rebase"
-                );
-                let new_block = rulesync_layers::blocks(text(&updated)?)?;
-                let new_block = new_block
-                    .get(key.as_str())
-                    .context("rebased section is missing")?;
-                let markdown = rulesync_layers::proposed_markdown(layer, new_block)?;
-                let new_id = wenlan_core::rulesync_personal::fingerprint(&(
-                    &layer.id,
-                    new_block.revision,
-                    new_block.body,
-                ))?;
-                answers.waiting.remove(&id);
-                let mut moved = edit.clone();
-                moved.revision = layer.revision.clone();
-                moved.markdown = markdown;
-                answers.waiting.insert(new_id, moved);
-                rulesync_shared_answers::save(&self.data, &answers)?;
-                let delivery = manifest.delivered.get_mut(path).expect("checked delivery");
-                delivery.delivered = with_bytes(&delivery.delivered, next.clone());
-                delivery.observed = None;
                 self.save(manifest)?;
             }
         }

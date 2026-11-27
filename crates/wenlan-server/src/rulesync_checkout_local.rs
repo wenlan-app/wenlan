@@ -16,6 +16,7 @@ use crate::{
     rulesync_apply::{ApplyOutcome, FileRoot, Snapshot},
     rulesync_layers::{self, ProposalReceipts, SharedReview},
     rulesync_routes::{text, with_bytes, Setup},
+    rulesync_shared_answers,
 };
 
 const START: &str = "<!-- WENLAN CHECKOUT RULES -->\n";
@@ -67,6 +68,161 @@ fn local_text(teams: &[TeamRuleLayer], project: &[TeamRuleLayer]) -> Result<Stri
         text.push_str(&rulesync_layers::format_layer("Project", layer)?);
     }
     Ok(text)
+}
+
+fn codex_instructions(source: &str) -> Result<String> {
+    let value: toml::Value = toml::from_str(source)?;
+    Ok(value
+        .get("developer_instructions")
+        .and_then(toml::Value::as_str)
+        .context("Codex checkout instructions changed")?
+        .to_owned())
+}
+
+/// Carry a pending edit onto the current approved rendering, including newly
+/// approved sections in the same file. The approved rendering stays the
+/// baseline; the person's changed body remains a waiting edit.
+#[allow(clippy::too_many_arguments)]
+fn rebase_waiting_local(
+    setup: &Setup,
+    root: &FileRoot,
+    key: &str,
+    expected: &str,
+    authorized: &BTreeMap<String, &TeamRuleLayer>,
+    claude_record: &mut Option<String>,
+    codex_record: &mut Option<String>,
+) -> Result<()> {
+    let mut answers = rulesync_shared_answers::read(&setup.data)?;
+    for (id, edit) in answers.waiting.clone() {
+        let Some(layer) = authorized.values().find(|layer| layer.id == edit.layer_id) else {
+            continue;
+        };
+        let block_key = rulesync_layers::key(layer)?;
+        let mut updates = Vec::new();
+        for (name, baseline) in [
+            ("CLAUDE.local.md", claude_record.as_deref()),
+            (".codex/config.toml", codex_record.as_deref()),
+        ] {
+            let file = alias(key, name).display().to_string();
+            if !edit.files.contains(&file)
+                || !rulesync_layers::waiting_in_file(
+                    &edit,
+                    &file,
+                    Path::new(""),
+                    &setup.data,
+                    &setup.home,
+                )
+            {
+                continue;
+            }
+            let Some(baseline) = baseline else { continue };
+            let path = Path::new(name);
+            let current = root.read(path, false)?;
+            let local = text(&current)?;
+            let (old_rules, local_rules) = if name == "CLAUDE.local.md" {
+                let old_span = managed_span(baseline)?.context("missing checkout baseline")?;
+                let local_span = managed_span(local)?.context("missing checkout rules")?;
+                (&baseline[old_span], &local[local_span])
+            } else {
+                // Owned strings are needed because TOML unescapes the value.
+                let old = codex_instructions(baseline)?;
+                let mine = codex_instructions(local)?;
+                if old == expected {
+                    continue;
+                }
+                let (rebased, new_id, markdown) =
+                    rebase_rules(&old, &mine, expected, layer, &block_key)?;
+                let next = format!(
+                    "{CODEX_HEADER}developer_instructions = {}\n",
+                    toml::Value::String(rebased)
+                );
+                let approved = format!(
+                    "{CODEX_HEADER}developer_instructions = {}\n",
+                    toml::Value::String(expected.to_owned())
+                );
+                updates.push((name, current, next, approved, new_id, markdown));
+                continue;
+            };
+            let approved = format!("{START}{expected}{END}");
+            if old_rules == approved {
+                continue;
+            }
+            let (rebased, new_id, markdown) =
+                rebase_rules(old_rules, local_rules, &approved, layer, &block_key)?;
+            let span = managed_span(local)?.context("missing checkout rules")?;
+            let mut next = local.to_owned();
+            next.replace_range(span, &rebased);
+            updates.push((name, current, next, approved, new_id, markdown));
+        }
+        if updates.is_empty() {
+            continue;
+        }
+        let (new_id, markdown) = (updates[0].4.clone(), updates[0].5.clone());
+        ensure!(
+            updates
+                .iter()
+                .all(|update| update.4 == new_id && update.5 == markdown),
+            "checkout rule edits disagree across tools"
+        );
+        for (name, current, next, approved, _, _) in updates {
+            write(root, Path::new(name), &current, Some(&next))?;
+            if name == "CLAUDE.local.md" {
+                *claude_record = Some(approved);
+            } else {
+                *codex_record = Some(approved);
+            }
+        }
+        answers.waiting.remove(&id);
+        let mut moved = edit;
+        moved.revision = layer.revision.clone();
+        moved.markdown = markdown;
+        answers.waiting.insert(new_id, moved);
+        rulesync_shared_answers::save(&setup.data, &answers)?;
+    }
+    Ok(())
+}
+
+fn rebase_rules(
+    old: &str,
+    mine: &str,
+    approved: &str,
+    layer: &TeamRuleLayer,
+    key: &str,
+) -> Result<(String, String, String)> {
+    ensure!(
+        rulesync_layers::only_personal(old)? == rulesync_layers::only_personal(mine)?,
+        "checkout rule markers changed"
+    );
+    ensure!(
+        rulesync_layers::edits(old, mine)?
+            .iter()
+            .all(|(changed, _)| *changed == key),
+        "another shared section changed while this edit is waiting"
+    );
+    let old_blocks = rulesync_layers::blocks(old)?;
+    let mine_blocks = rulesync_layers::blocks(mine)?;
+    let approved_blocks = rulesync_layers::blocks(approved)?;
+    let (base, changed, fresh) = (
+        old_blocks
+            .get(key)
+            .context("old shared section is missing")?,
+        mine_blocks
+            .get(key)
+            .context("edited shared section is missing")?,
+        approved_blocks
+            .get(key)
+            .context("new shared section is missing")?,
+    );
+    let merged =
+        wenlan_core::rulesync_personal::merge_rule_text(base.body, changed.body, fresh.body)
+            .context("The team's rules changed since this edit; check it again.")?;
+    let rebased = rulesync_layers::replace_block_body(approved, key, &merged)?;
+    let blocks = rulesync_layers::blocks(&rebased)?;
+    let changed = blocks.get(key).context("rebased section is missing")?;
+    let markdown = rulesync_layers::proposed_markdown(layer, changed)?;
+    let id =
+        wenlan_core::rulesync_personal::fingerprint(&(&layer.id, changed.revision, changed.body))?;
+    Ok((rebased, id, markdown))
 }
 
 fn write(root: &FileRoot, path: &Path, current: &Snapshot, next: Option<&str>) -> Result<bool> {
@@ -187,10 +343,11 @@ fn update_exclude(repo: &Path, claude: bool, codex: bool) -> Result<()> {
     Ok(())
 }
 
+/// Codex's folder under the tool home, the same place rule sync writes
+/// `.codex/AGENTS.md`. Reading `CODEX_HOME` here would let a test or a
+/// differently configured process read another Codex config.
 pub(super) fn codex_home(home: &Path) -> PathBuf {
-    std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".codex"))
+    home.join(".codex")
 }
 
 fn codex_trusted(codex_home: &Path, repo: &Path) -> Result<bool> {
@@ -234,6 +391,17 @@ pub(super) fn sync(
     let root = FileRoot::open(repo)?;
     let expected = local_text(teams, project)?;
     let wanted = !project.is_empty();
+    if person && wanted {
+        rebase_waiting_local(
+            setup,
+            &root,
+            key,
+            &expected,
+            authorized,
+            claude_record,
+            codex_record,
+        )?;
+    }
     let claude_path = Path::new("CLAUDE.local.md");
     let current = root.read(claude_path, false)?;
     let content = match &current {
@@ -309,16 +477,8 @@ pub(super) fn sync(
         if let Some(after) = current_text {
             if codex_record.as_deref() != Some(after) {
                 if let Some(before) = codex_record.as_deref() {
-                    let instructions = |source: &str| -> Result<String> {
-                        let value: toml::Value = toml::from_str(source)?;
-                        Ok(value
-                            .get("developer_instructions")
-                            .and_then(toml::Value::as_str)
-                            .context("Codex checkout instructions changed")?
-                            .to_owned())
-                    };
-                    let decision = instructions(before).and_then(|before| {
-                        let after = instructions(after)?;
+                    let decision = codex_instructions(before).and_then(|before| {
+                        let after = codex_instructions(after)?;
                         review(
                             settings,
                             setup,
@@ -593,6 +753,41 @@ mod tests {
             .unwrap();
             result
         }
+
+        fn approve_rules(&mut self, space: &str, markdown: &str) {
+            let proposal =
+                rulesync_team::update_hosted_rules(&self.settings, space, markdown).unwrap();
+            if space == rulesync_team::SPACE {
+                rulesync_team::decide_local_proposal(&self.settings, &proposal, true).unwrap();
+                self.team = rulesync_team::load_layers(&self.settings).unwrap();
+            } else {
+                rulesync_team::decide_local_space_proposal(&self.settings, space, &proposal, true)
+                    .unwrap();
+                self.project = rulesync_team::load_project_layers(&self.settings).unwrap();
+            }
+        }
+
+        fn decide_edit(&self, id: String) {
+            crate::rulesync_routes::decide_shared_edit_at(
+                &self.setup,
+                &self.settings,
+                wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
+            )
+            .unwrap();
+        }
+
+        fn pending_team_count(&self) -> usize {
+            use wenlan_core::team::{self, CredentialKind};
+            rulesync_team::pending_proposals(
+                &self.settings.with_file_name(team::TEAM_FILE),
+                &self.settings,
+                rulesync_team::SPACE,
+                &self.writer.id,
+                CredentialKind::BrowserSession,
+            )
+            .unwrap()
+            .len()
+        }
     }
 
     #[test]
@@ -844,6 +1039,40 @@ mod tests {
         (claude_edited, codex_edited)
     }
 
+    fn proposal_kind(
+        folder: &Path,
+        id: &str,
+    ) -> Option<wenlan_core::shared_space::version::AuthorKind> {
+        for entry in fs::read_dir(folder).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(kind) = proposal_kind(&path, id) {
+                    return Some(kind);
+                }
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(id))
+            {
+                let bytes = fs::read(&path).ok()?;
+                let name = path.file_name()?.to_str()?;
+                if let Ok(version) = wenlan_core::shared_space::version::parse(name, &bytes) {
+                    return Some(version.meta.author.kind);
+                }
+            }
+        }
+        None
+    }
+
+    fn file_rules(repo: &Path, name: &str) -> String {
+        let content = fs::read_to_string(repo.join(name)).unwrap();
+        if name == ".codex/config.toml" {
+            codex_instructions(&content).unwrap()
+        } else {
+            content
+        }
+    }
+
     #[test]
     fn rulesync_checkout_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection() {
         use wenlan_core::team::{self, CredentialKind};
@@ -879,6 +1108,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(proposals.len(), 1);
+        assert_eq!(
+            proposal_kind(&f.setup.data, &proposals[0].id),
+            Some(wenlan_core::shared_space::version::AuthorKind::Unknown)
+        );
         rulesync_team::decide_proposal(
             &team_path,
             &f.settings,
@@ -948,6 +1181,126 @@ mod tests {
         assert!(fs::read_to_string(f.repo.join(".codex/config.toml"))
             .unwrap()
             .contains("revised checklist"));
+    }
+
+    #[test]
+    fn rulesync_checkout_old_host_refusal_returns_edit_to_waiting() {
+        let mut f = Fixture::new();
+        let (claude, codex) = edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        f.decide_edit(id.clone());
+        assert_eq!(f.pending_team_count(), 1);
+        crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
+            &f.setup,
+            &f.settings,
+            rulesync_team::SPACE,
+        )
+        .unwrap();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert!(answers.waiting.contains_key(&id));
+        assert!(answers.answered_edits.is_empty());
+        assert!(answers.answers.is_empty());
+        assert_eq!(f.pending_team_count(), 0);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        assert!(f
+            .run()
+            .blocked
+            .iter()
+            .any(|line| line.contains("shared-edits")));
+        assert_eq!(f.pending_team_count(), 0);
+        f.decide_edit(id);
+        assert_eq!(f.pending_team_count(), 1);
+    }
+
+    #[test]
+    fn rulesync_checkout_new_team_revision_refuses_old_confirmation_and_keeps_edit() {
+        let mut f = Fixture::new();
+        let (claude, codex) = edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nAnother approved line.\n",
+        );
+        let error = crate::rulesync_routes::decide_shared_edit_at(
+            &f.setup,
+            &f.settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest {
+                id: id.clone(),
+                send: true,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit; check it again.")
+        );
+        assert!(rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .waiting
+            .contains_key(&id));
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("shared-edits")));
+        for name in ["CLAUDE.local.md", ".codex/config.toml"] {
+            let content = file_rules(&f.repo, name);
+            assert!(content.contains("Use the revised checklist.\nAnother approved line."));
+        }
+        let new_id = pending_id(&f);
+        assert_ne!(new_id, id);
+        assert_eq!(
+            rulesync_shared_answers::read(&f.setup.data)
+                .unwrap()
+                .waiting[&new_id]
+                .markdown,
+            "Use the revised checklist.\nAnother approved line.\n"
+        );
+        f.decide_edit(new_id);
+    }
+
+    #[test]
+    fn rulesync_checkout_waiting_team_edit_delivers_new_project_section_in_same_file() {
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        f.approve_rules(
+            crate::rulesync_layers::tests::PROJECT,
+            "Use the approved checklist.\nNew project instruction.\n",
+        );
+        let report = f.run();
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("shared-edits")));
+        for name in ["CLAUDE.local.md", ".codex/config.toml"] {
+            let content = file_rules(&f.repo, name);
+            assert!(content.contains("Use the revised checklist."));
+            assert!(content.contains("New project instruction."));
+        }
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert!(answers.waiting.contains_key(&id));
+        assert_eq!(
+            answers.waiting[&id].markdown,
+            "Use the revised checklist.\n"
+        );
     }
 
     #[test]
