@@ -1687,12 +1687,6 @@ export async function teamLibraryCreateSpace(name: string, restricted: boolean):
   return invoke("team_library_create_space", { name, restricted });
 }
 
-export interface TeamPerson {
-  id: string;
-  name: string;
-  owner: boolean;
-}
-
 export interface TeamItem {
   team_id: string;
   item_id: string;
