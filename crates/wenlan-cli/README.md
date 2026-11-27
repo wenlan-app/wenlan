@@ -661,6 +661,14 @@ Arguments:
 
 - `<ID>`: The rule's id, as `wenlan rules` prints it.
 
+#### `wenlan rules shared-edits`
+
+Confirm or decline edits to team and project rule sections.
+
+```text
+wenlan rules shared-edits [OPTIONS]
+```
+
 #### `wenlan rules on`
 
 Turn on personal tool sync for this data root.
