@@ -56,6 +56,12 @@ fn fixture_in(dir: tempfile::TempDir) -> Fixture {
 
 fn fixture_in_profile(dir: tempfile::TempDir, profile: &str) -> Fixture {
     let root = dir.path().join(profile);
+    fixture_at(dir, &root)
+}
+
+/// The fixture's team, settings and hosted Space kept in `root`, for a
+/// test whose routes read them from the data root; `dir` holds the rest.
+fn fixture_at(dir: tempfile::TempDir, root: &std::path::Path) -> Fixture {
     let team_path = root.join(team::TEAM_FILE);
     let settings_path = root.join(shared_space::SETTINGS_FILE);
     let folder = root.join("team-spaces").join("design");
@@ -176,11 +182,47 @@ async fn fixture_with_hosted_mode(mode: HostedMode) -> (Fixture, Arc<wenlan_core
     (fixture, db)
 }
 
-async fn with_daemon(mut fixture: Fixture) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+/// [`fixture_with_hosted_mode`] whose database never loads the embedding
+/// model, for tests that embed nothing: they run with no model cache and
+/// no network.
+async fn fixture_without_embedder(mode: HostedMode) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+    let (mut fixture, db) = with_daemon_db(
+        fixture(),
+        wenlan_core::db::MemoryEmbeddingRecovery::Deferred,
+    )
+    .await;
+    fixture.set_hosted_mode(mode);
+    (fixture, db)
+}
+
+/// [`fixture_without_embedder`] kept in this process's data root, where the
+/// daemon's own routes look for the team. Only for a test run in an
+/// isolated child, whose data root is scratch.
+async fn fixture_in_data_root(mode: HostedMode) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+    let root = wenlan_core::config::data_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let (mut fixture, db) = with_daemon_db(
+        fixture_at(tempfile::tempdir().unwrap(), &root),
+        wenlan_core::db::MemoryEmbeddingRecovery::Deferred,
+    )
+    .await;
+    fixture.set_hosted_mode(mode);
+    (fixture, db)
+}
+
+async fn with_daemon(fixture: Fixture) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
+    with_daemon_db(fixture, wenlan_core::db::MemoryEmbeddingRecovery::AtOpen).await
+}
+
+async fn with_daemon_db(
+    mut fixture: Fixture,
+    recovery: wenlan_core::db::MemoryEmbeddingRecovery,
+) -> (Fixture, Arc<wenlan_core::db::MemoryDB>) {
     let db = Arc::new(
-        wenlan_core::db::MemoryDB::new(
+        wenlan_core::db::MemoryDB::new_with_embedding_recovery(
             &fixture.state.team_path.parent().unwrap().join("daemon"),
             Arc::new(wenlan_core::events::NoopEmitter),
+            recovery,
         )
         .await
         .unwrap(),

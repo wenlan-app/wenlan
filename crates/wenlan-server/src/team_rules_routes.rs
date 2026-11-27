@@ -23,7 +23,14 @@ use crate::state::SharedState;
 pub(super) const ON_THE_HOST: &str =
     "This team's Rules are kept on the team host. Propose and decide on the team host.";
 
+/// The refusal to an AI tool, or to any caller but the person.
+const ONLY_THE_PERSON: &str =
+    "only the person using the daemon on this computer can review the team's Rules";
+
 async fn host_person(headers: &HeaderMap) -> Result<(), ServerError> {
+    if crate::rulesync_routes::require_local_person(headers).is_err() {
+        return Err(ServerError::ValidationError(ONLY_THE_PERSON.into()));
+    }
     crate::repo_wiki_routes::require_project_review(headers)?;
     if super::managed_elsewhere().await?.is_some() {
         return Err(ServerError::ValidationError(ON_THE_HOST.into()));
@@ -60,17 +67,98 @@ pub(super) async fn decide(
     Json(request): Json<TeamRulesDecisionRequest>,
 ) -> Result<Json<TeamRulesHostDecision>, ServerError> {
     host_person(&headers).await?;
-    let decision =
-        super::blocking(move || decide_at(&shared_space::settings_path(), &id, request.accept))
-            .await?;
+    let db = state.read().await.db.clone();
+    let root = crate::repo_wiki_routes::page_root_of(&state).await;
+    decide_and_deliver(
+        shared_space::settings_path(),
+        id,
+        request.accept,
+        db.as_deref(),
+        root.as_deref(),
+    )
+    .await
+    .map(Json)
+}
+
+/// The start of a decision's note when the accepted text did not reach the
+/// repositories' tool files; the reason follows.
+const NOT_DELIVERED: &str = "accepted; the repositories' tool files were not updated: ";
+
+/// The reason given when the daemon has no database to read the rules from.
+const NO_DATABASE: &str = "Wenlan's database is not open";
+
+/// The note when the tool files were written except some that need the
+/// person, wherever they are.
+const NEEDS_ATTENTION: &str =
+    "accepted; some tool files were not updated and need your attention: see `wenlan rules status`";
+
+/// The note when nothing on this computer receives the accepted text.
+const NO_CHECKOUT: &str = "accepted; this computer has no checkout of that repository yet";
+
+/// The reason given when the checkout receipts could not be read.
+const RECEIPTS_UNREAD: &str = "the checkout records on this computer could not be read";
+
+/// Decides, then after an accept updates the tool files right away. When
+/// they were not updated, or no checkout here receives the text, the reply
+/// says so, unless it already says the text reaches no repository.
+pub(super) async fn decide_and_deliver(
+    settings: std::path::PathBuf,
+    id: String,
+    accept: bool,
+    db: Option<&wenlan_core::db::MemoryDB>,
+    page_root: Option<&FilePath>,
+) -> Result<TeamRulesHostDecision, ServerError> {
+    let mut decision = super::blocking({
+        let settings = settings.clone();
+        move || decide_at(&settings, &id, accept)
+    })
+    .await?;
     if decision.accepted {
-        let db = state.read().await.db.clone();
-        if let Some(db) = db {
-            let root = crate::repo_wiki_routes::page_root_of(&state).await;
-            crate::skill_grow::sync_rules_files_quietly(&db, root.as_deref()).await;
+        let tool_files = match db {
+            Some(db) => crate::skill_grow::sync_rules_files_reporting(db, page_root).await,
+            None => crate::skill_grow::ToolFiles::NotUpdated(NO_DATABASE.into()),
+        };
+        if decision.note.is_none() {
+            decision.note = delivery_note(tool_files, settings, decision.space.clone()).await;
         }
     }
-    Ok(Json(decision))
+    Ok(decision)
+}
+
+/// What an accept's reply says about the tool files: nothing when they were
+/// updated and a checkout on this computer receives the Space's Rules.
+pub(super) async fn delivery_note(
+    tool_files: crate::skill_grow::ToolFiles,
+    settings: std::path::PathBuf,
+    space: String,
+) -> Option<String> {
+    use crate::skill_grow::ToolFiles;
+    match tool_files {
+        ToolFiles::Updated => reach_note(settings, space).await,
+        ToolFiles::NeedsAttention => Some(NEEDS_ATTENTION.into()),
+        ToolFiles::NotUpdated(reason) => Some(format!("{NOT_DELIVERED}{reason}")),
+    }
+}
+
+/// `None` when a checkout on this computer receives the Space's Rules.
+async fn reach_note(settings: std::path::PathBuf, space: String) -> Option<String> {
+    let reaches = tokio::task::spawn_blocking(move || {
+        let setup = crate::rulesync_routes::Setup::system()?;
+        crate::rulesync_checkout::space_reaches_a_checkout(&setup, &settings, &space)
+    })
+    .await;
+    match reaches {
+        Ok(Ok(true)) => None,
+        Ok(Ok(false)) => Some(NO_CHECKOUT.into()),
+        Ok(Err(error)) => {
+            tracing::warn!(error = %format_args!("{error:#}"), "[team rules] checkout receipts not read");
+            Some(format!("{NOT_DELIVERED}{RECEIPTS_UNREAD}"))
+        }
+        Err(error) => {
+            tracing::warn!(%error, "[team rules] checkout receipt check failed");
+            Some(format!("{NOT_DELIVERED}{RECEIPTS_UNREAD}"))
+        }
+    }
 }
 
 pub(super) fn proposals_at(settings: &FilePath) -> Result<Vec<TeamRulesHostProposal>, WenlanError> {
@@ -81,8 +169,28 @@ pub(super) fn propose_at(
     settings: &FilePath,
     request: &TeamRulesHostProposeRequest,
 ) -> Result<String, WenlanError> {
-    rulesync_team::host_propose(settings, &request.space, &request.markdown)
-        .map_err(crate::repo_wiki_routes::team_rule_error)
+    rulesync_team::host_propose(settings, &request.space, &request.markdown).map_err(|error| {
+        match error {
+            rulesync_team::ReviewError::NotConfigured => {
+                WenlanError::NotFound(no_rules_for(settings, &request.space))
+            }
+            error => crate::repo_wiki_routes::team_rule_error(error),
+        }
+    })
+}
+
+/// The answer for a Space name this host keeps no Rules for: a hosted
+/// Space waits for a repository, any other name is not a team Space.
+fn no_rules_for(settings: &FilePath, space: &str) -> String {
+    if rulesync_team::name_looks_secret(space) {
+        // A typed key stays out of the reply.
+        "That name is not a team Space.".to_string()
+    } else if wenlan_core::team::hosted_folder(settings, space).is_ok_and(|folder| folder.is_some())
+    {
+        format!("\"{space}\" has no Rules page yet: bind a repository to it first.")
+    } else {
+        format!("\"{space}\" is not a team Space.")
+    }
 }
 
 pub(super) fn decide_at(

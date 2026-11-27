@@ -23,7 +23,7 @@ struct Host {
 }
 
 async fn host() -> Host {
-    let (f, db) = fixture_with_hosted_mode(HostedMode::Migrated).await;
+    let (f, db) = fixture_without_embedder(HostedMode::Migrated).await;
     let owner = team::ensure_owner(&f.state.team_path, "Owner").unwrap();
     Host { f, db, owner }
 }
@@ -199,15 +199,16 @@ async fn team_library_unbound_space_accept_says_it_is_not_delivered() {
     h.create_space("Roadmap").await;
     let change = h.propose("Roadmap", SPACE_TEXT);
     let decision = rules::decide_at(h.settings(), &change, true).unwrap();
+    // The exact words the person reads.
     assert_eq!(
         decision.note.as_deref(),
-        Some(rulesync_team::UNBOUND_SPACE_NOTE)
+        Some("accepted; not in any repository's tool files yet — bind a repository to this Space")
     );
     let team = h.propose(rulesync_team::SPACE, TEAM_TEXT);
     let decision = rules::decide_at(h.settings(), &team, true).unwrap();
     assert_eq!(
         decision.note.as_deref(),
-        Some(rulesync_team::UNBOUND_TEAM_NOTE)
+        Some("accepted; not in any repository's tool files yet — the team-wide Rules reach a repository together with a Space bound to it")
     );
     let mut checkout = h.checkout();
     assert!(checkout.project.is_empty() && checkout.team.is_empty());
@@ -296,7 +297,7 @@ async fn team_library_hosted_space_never_falls_back_to_the_library() {
 /// and the name is refused for a new Space.
 #[tokio::test]
 async fn team_library_everyone_is_never_a_space() {
-    let (f, db) = fixture_with_daemon().await;
+    let (f, db) = fixture_without_embedder(HostedMode::Legacy).await;
     let settings = &f.state.settings_path;
     let scope = Scope::Space(rulesync_team::SPACE.into());
     let folder = team::new_hosted_folder(settings);
@@ -499,4 +500,342 @@ async fn team_library_rules_skip_a_checkout_of_another_repository() {
     assert!(checkout.project.is_empty() && checkout.team.is_empty());
     checkout.run();
     assert_eq!(tool_file(&checkout), None);
+}
+
+/// A proposal for a name that is neither a hosted nor a team-library Space
+/// is refused with that name; a hosted Space without a repository is told
+/// to bind one.
+#[tokio::test]
+async fn team_library_unknown_space_is_named_in_the_refusal() {
+    let h = host().await;
+    h.create_space("Roadmap").await;
+    let error = rules::propose_at(h.settings(), &propose_request("Nowhere")).unwrap_err();
+    match error {
+        wenlan_core::error::WenlanError::NotFound(message) => {
+            assert_eq!(message, "\"Nowhere\" is not a team Space.")
+        }
+        other => panic!("expected not found, got {other:?}"),
+    }
+    // A typed name that looks like a key is not repeated back.
+    let typed = "api-key: w79wxza928af410e9c4f36xdpycb01h6";
+    match rules::propose_at(h.settings(), &propose_request(typed)).unwrap_err() {
+        wenlan_core::error::WenlanError::NotFound(message) => {
+            assert_eq!(message, "That name is not a team Space.")
+        }
+        other => panic!("expected not found, got {other:?}"),
+    }
+    // A hosted Space no repository is bound to is a team Space; it waits.
+    match rules::propose_at(h.settings(), &propose_request("Design")).unwrap_err() {
+        wenlan_core::error::WenlanError::NotFound(message) => assert_eq!(
+            message,
+            "\"Design\" has no Rules page yet: bind a repository to it first."
+        ),
+        other => panic!("expected not found, got {other:?}"),
+    }
+}
+
+fn propose_request(space: &str) -> TeamRulesHostProposeRequest {
+    TeamRulesHostProposeRequest {
+        space: space.into(),
+        markdown: SPACE_TEXT.into(),
+    }
+}
+
+/// Accepting on a bound Space updates the tool files at once; when they
+/// were not updated the reply says so and why. Here tool sync is on but the
+/// tool setup was never finished.
+#[tokio::test]
+async fn team_library_accept_says_when_the_tool_files_were_not_updated() {
+    if !crate::person_key::person_key_test::in_isolated_child(
+        "team_routes::tests::library_rules::team_library_accept_says_when_the_tool_files_were_not_updated",
+        &[],
+        tempfile::tempdir().unwrap().path(),
+    ) {
+        return;
+    }
+    // As on an installed Wenlan: the data folder exists and tool sync is on.
+    std::fs::create_dir_all(wenlan_core::config::data_root()).unwrap();
+    wenlan_core::rulesync_personal::set_enabled(true).unwrap();
+    let h = host().await;
+    h.bind(&["Roadmap"]);
+    h.create_space("Roadmap").await;
+    let change = h.propose("Roadmap", SPACE_TEXT);
+    let decision =
+        rules::decide_and_deliver(h.settings().to_path_buf(), change, true, Some(&h.db), None)
+            .await
+            .unwrap();
+    assert!(decision.accepted);
+    assert_eq!(
+        decision.note.as_deref(),
+        Some(
+            "accepted; the repositories' tool files were not updated: the tool setup on this \
+             computer is not finished; see `wenlan rules adopt --dry-run`"
+        ),
+        "{decision:?}"
+    );
+
+    let change = h.propose("Roadmap", TEAM_TEXT);
+    let decision = rules::decide_and_deliver(h.settings().to_path_buf(), change, true, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        decision.note.as_deref(),
+        Some("accepted; the repositories' tool files were not updated: Wenlan's database is not open")
+    );
+
+    let change = h.propose("Roadmap", SPACE_TEXT);
+    let decision =
+        rules::decide_and_deliver(h.settings().to_path_buf(), change, false, Some(&h.db), None)
+            .await
+            .unwrap();
+    assert!(!decision.accepted);
+    assert_eq!(decision.note, None, "a rejection changes no tool file");
+}
+
+const KEY_LIKE: &str = "Password: reset-flow";
+
+/// A Space name that looks like a password or key is refused, by the same
+/// check as Rules text, and no Space or Rules page is made.
+#[tokio::test]
+async fn team_library_space_name_that_looks_like_a_key_is_refused() {
+    let h = host().await;
+    for name in [KEY_LIKE, "api-key: w79wxza928af410e9c4f36xdpycb01h6"] {
+        match h.create(name).await {
+            Err(LibraryError::Invalid(message)) => assert_eq!(
+                message,
+                "This name looks like a password or key; choose another Space name."
+            ),
+            other => panic!("{name}: expected a refusal, got {other:?}"),
+        }
+    }
+    let before = h.groups();
+    assert!(
+        before.iter().all(|group| group.name == "Design"),
+        "only the fixture's hosted Space: {before:?}"
+    );
+    assert!(!h.rules_dir().exists() || files_under(&h.rules_dir()).is_empty());
+}
+
+/// A Space made before that check with a key-like name is skipped: the
+/// other Spaces' Rules are still listed, decided and delivered, and the
+/// name never reaches a tool file.
+#[tokio::test]
+async fn team_library_space_with_a_key_like_name_is_skipped() {
+    let h = host().await;
+    h.bind(&["Roadmap"]);
+    h.create_space("Roadmap").await;
+    let (leak, _) = h.create_space("Leak").await;
+    let library = h.rules_dir().with_file_name("library.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&library).unwrap()).unwrap();
+    let renamed = manifest["groups"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .find(|group| group["id"] == leak.id.as_str())
+        .unwrap();
+    renamed["name"] = KEY_LIKE.into();
+    std::fs::write(&library, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(h.groups().iter().any(|group| group.name == KEY_LIKE));
+
+    let change = h.propose("Roadmap", SPACE_TEXT);
+    let pending = rules::proposals_at(h.settings()).unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let decision = rules::decide_at(h.settings(), &change, true).unwrap();
+    assert_eq!(decision.note, None, "{decision:?}");
+    let layers = rulesync_team::load_project_layers(h.settings()).unwrap();
+    assert!(
+        layers.iter().all(|layer| !layer.markdown.contains(KEY_LIKE)
+            && layer
+                .project
+                .as_ref()
+                .is_some_and(|project| project.space == "Roadmap")),
+        "{layers:?}"
+    );
+    let mut checkout = h.checkout();
+    assert_eq!(checkout.project.len(), 1);
+    checkout.run();
+    let text = tool_file(&checkout).unwrap();
+    assert!(
+        text.contains(SPACE_TEXT) && !text.contains(KEY_LIKE),
+        "{text}"
+    );
+    // Proposing to it by that name is refused without repeating the name.
+    let error = rules::propose_at(h.settings(), &propose_request(KEY_LIKE))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(&leak.id) && !error.contains("reset-flow"),
+        "{error}"
+    );
+}
+
+/// After an accept whose tool files were updated, the reply says when no
+/// checkout on this computer gets the Space's Rules, as its checkout
+/// receipts tell; files that need the person point to `wenlan rules
+/// status`; receipts that cannot be read give the plain reason.
+#[tokio::test]
+async fn team_library_accept_says_when_no_checkout_here_gets_the_rules() {
+    if !crate::person_key::person_key_test::in_isolated_child(
+        "team_routes::tests::library_rules::team_library_accept_says_when_no_checkout_here_gets_the_rules",
+        &[],
+        tempfile::tempdir().unwrap().path(),
+    ) {
+        return;
+    }
+    std::fs::create_dir_all(wenlan_core::config::data_root()).unwrap();
+    let h = host().await;
+    h.bind(&["Roadmap"]);
+    h.create_space("Roadmap").await;
+    for (space, text) in [("Roadmap", SPACE_TEXT), (rulesync_team::SPACE, TEAM_TEXT)] {
+        let change = h.propose(space, text);
+        let decision = rules::decide_at(h.settings(), &change, true).unwrap();
+        assert_eq!(decision.note, None, "the Space is bound: {decision:?}");
+    }
+    let note = |tool_files, space: &str| {
+        rules::delivery_note(tool_files, h.settings().to_path_buf(), space.to_string())
+    };
+    use crate::skill_grow::ToolFiles;
+    const NO_CHECKOUT: &str = "accepted; this computer has no checkout of that repository yet";
+    for space in ["Roadmap", rulesync_team::SPACE] {
+        assert_eq!(
+            note(ToolFiles::Updated, space).await.as_deref(),
+            Some(NO_CHECKOUT),
+            "{space}: no receipt at all"
+        );
+    }
+    let setup = crate::rulesync_routes::Setup::system().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    crate::rulesync_checkout::record_checkout_for_test(&setup, &elsewhere.path().join("gone"));
+    assert_eq!(
+        note(ToolFiles::Updated, "Roadmap").await.as_deref(),
+        Some(NO_CHECKOUT),
+        "a receipt of no repository of this Space"
+    );
+
+    let unreadable = setup
+        .data
+        .join(format!("checkouts/{}.json", "0".repeat(64)));
+    std::fs::write(&unreadable, b"not a receipt").unwrap();
+    assert_eq!(
+        note(ToolFiles::Updated, "Roadmap").await.as_deref(),
+        Some(
+            "accepted; the repositories' tool files were not updated: the checkout records on \
+             this computer could not be read"
+        )
+    );
+    std::fs::remove_file(&unreadable).unwrap();
+
+    let checkout = h.checkout();
+    crate::rulesync_checkout::record_checkout_for_test(&setup, &checkout.repo);
+    for space in ["Roadmap", rulesync_team::SPACE] {
+        assert_eq!(note(ToolFiles::Updated, space).await, None, "{space}");
+    }
+    assert_eq!(
+        note(ToolFiles::NeedsAttention, "Roadmap").await.as_deref(),
+        Some(
+            "accepted; some tool files were not updated and need your attention: see \
+             `wenlan rules status`"
+        )
+    );
+}
+
+/// The daemon's decide route itself reports the delivery: a person's accept
+/// through HTTP gets the note about the tool files.
+#[tokio::test]
+async fn team_library_decide_route_reports_the_delivery() {
+    if !crate::person_key::person_key_test::in_isolated_child(
+        "team_routes::tests::library_rules::team_library_decide_route_reports_the_delivery",
+        &[],
+        tempfile::tempdir().unwrap().path(),
+    ) {
+        return;
+    }
+    let (f, db) = fixture_in_data_root(HostedMode::Migrated).await;
+    let owner = team::ensure_owner(&f.state.team_path, "Owner").unwrap();
+    let h = Host { f, db, owner };
+    assert_eq!(h.settings(), shared_space::settings_path());
+    wenlan_core::rulesync_personal::set_enabled(true).unwrap();
+    h.bind(&["Roadmap"]);
+    h.create_space("Roadmap").await;
+    let change = h.propose("Roadmap", SPACE_TEXT);
+    let app = crate::router::build_router(Arc::new(tokio::sync::RwLock::new(
+        crate::state::ServerState {
+            db: Some(h.db.clone()),
+            ..Default::default()
+        },
+    )));
+    use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE, PERSON_KEY_HEADER};
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/team/rules/proposals/{change}/decision"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(PERSON_KEY_HEADER, crate::person_key::test_key())
+        .body(Body::from(r#"{"accept":true}"#))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let decision: wenlan_types::team::TeamRulesHostDecision =
+        serde_json::from_slice(&bytes).unwrap();
+    assert!(decision.accepted);
+    assert_eq!(
+        decision.note.as_deref(),
+        Some(
+            "accepted; the repositories' tool files were not updated: the tool setup on this \
+             computer is not finished; see `wenlan rules adopt --dry-run`"
+        ),
+        "{decision:?}"
+    );
+}
+
+/// A hosted Space whose name looks like a key is skipped like a library
+/// one: the other Spaces' Rules still load, list, decide and deliver.
+#[tokio::test]
+async fn team_library_hosted_space_with_a_key_like_name_is_skipped() {
+    let h = host().await;
+    let scope = Scope::Space(KEY_LIKE.into());
+    let folder = team::new_hosted_folder(h.settings());
+    shared_space::join_at(h.settings(), &scope, &folder, "Owner").unwrap();
+    shared_space::update_share(h.settings(), &scope, |share| share.hosted = true).unwrap();
+    shared_space::ensure_space_file(
+        &folder,
+        &scope,
+        KEY_LIKE,
+        &SpaceMember {
+            id: h.owner.id.clone(),
+            name: h.owner.name.clone(),
+        },
+    )
+    .unwrap();
+    h.bind(&["Roadmap", KEY_LIKE]);
+    h.create_space("Roadmap").await;
+
+    let change = h.propose("Roadmap", SPACE_TEXT);
+    assert_eq!(rules::proposals_at(h.settings()).unwrap().len(), 1);
+    let decision = rules::decide_at(h.settings(), &change, true).unwrap();
+    assert_eq!(decision.note, None, "{decision:?}");
+    let layers = rulesync_team::load_project_layers(h.settings()).unwrap();
+    assert!(
+        layers.iter().all(|layer| layer
+            .project
+            .as_ref()
+            .is_some_and(|project| project.space == "Roadmap")),
+        "{layers:?}"
+    );
+    let mut checkout = h.checkout();
+    assert_eq!(checkout.project.len(), 1);
+    checkout.run();
+    let text = tool_file(&checkout).unwrap();
+    assert!(
+        text.contains(SPACE_TEXT) && !text.contains("reset-flow"),
+        "{text}"
+    );
 }

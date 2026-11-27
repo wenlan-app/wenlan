@@ -210,7 +210,10 @@ fn team_rules_decide_needs_a_terminal() {
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(stderr.contains("type yes when asked"), "{stderr}");
+    assert!(
+        stderr.contains("answer y at its \"Type y to go on\" prompt"),
+        "{stderr}"
+    );
     let out = cli()
         .args(["team", "rules", "proposals", "decide", "abc"])
         .assert()

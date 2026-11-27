@@ -12,7 +12,7 @@ use wenlan_core::skill_registry::printable;
 use wenlan_types::team::TeamRulesHostProposal;
 
 use crate::client::WenlanClient;
-use crate::commands::skills::{one_line, person_says_yes};
+use crate::commands::skills::{one_line, person_says_yes, NEEDS_A_TERMINAL};
 use crate::output::{print_json, ResolvedFormat};
 
 #[derive(Subcommand)]
@@ -70,7 +70,7 @@ impl TeamRulesCmd {
                     command: Some(TeamRulesProposalsCmd::Decide { .. })
                 }
             ) || (io::stdin().is_terminal() && io::stdout().is_terminal()),
-            "Run this command in your own terminal and type yes when asked."
+            "{NEEDS_A_TERMINAL}"
         );
         Ok(())
     }

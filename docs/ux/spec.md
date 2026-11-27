@@ -1156,8 +1156,11 @@ and wait for evidence that people need them.
   `wenlan team rules propose --space NAME FILE` proposes the whole new text
   (`team_rules_list_and_propose_use_the_host_routes`).
   `wenlan team rules proposals decide ID --accept` or `--reject` shows the
-  change and acts only after they type yes at a terminal
-  (`team_rules_decide_needs_a_terminal`). An AI tool is refused before the
+  change and acts only after they answer y at its "Type y to go on" prompt
+  in a terminal (`team_rules_decide_needs_a_terminal`). A proposal for a name
+  that is not a team Space is refused with that name, unless the name looks
+  like a password or key
+  (`team_library_unknown_space_is_named_in_the_refusal`). An AI tool is refused before the
   daemon is asked (`team_rules_refuse_an_ai_tool_before_the_daemon`), and the
   daemon refuses it too (`team_rules_routes_refuse_an_ai_tool`). These
   commands also refuse to run under `WENLAN_SPACE`
@@ -1175,6 +1178,20 @@ and wait for evidence that people need them.
   Rules, so accepting them while every bound Space still has its empty page
   says the same, and no tool file changes
   (`team_library_team_wide_accept_beside_an_empty_space_is_not_delivered`).
+  An accept tries to update the tool files right away. The reply says when
+  they were not updated and why
+  (`team_library_accept_says_when_the_tool_files_were_not_updated`), also
+  from the daemon's own route
+  (`team_library_decide_route_reports_the_delivery`); when some tool files
+  need the person's attention, it points to `wenlan rules status`; and when
+  this computer has no checkout of that repository, it says so
+  (`team_library_accept_says_when_no_checkout_here_gets_the_rules`).
+  A Space name that looks like a password or key is refused
+  (`team_library_space_name_that_looks_like_a_key_is_refused`), and a Space
+  that already has such a name, in the team library or hosted, is skipped,
+  so the other Spaces' Rules keep working
+  (`team_library_space_with_a_key_like_name_is_skipped`,
+  `team_library_hosted_space_with_a_key_like_name_is_skipped`).
   A rejection is recorded and the tool file keeps its text
   (`team_library_reject_keeps_the_tool_file`). A Rules page that is still
   empty adds no section (`team_library_empty_seed_adds_no_section`). A Space
@@ -1287,6 +1304,13 @@ and wait for evidence that people need them.
   `team_library_team_wide_accept_beside_an_empty_space_is_not_delivered`,
   `team_library_unreadable_library_keeps_hosted_rules_rendering`,
   `team_library_rules_skip_a_checkout_of_another_repository`,
+  `team_library_unknown_space_is_named_in_the_refusal`,
+  `team_library_accept_says_when_the_tool_files_were_not_updated`,
+  `team_library_decide_route_reports_the_delivery`,
+  `team_library_accept_says_when_no_checkout_here_gets_the_rules`,
+  `team_library_space_name_that_looks_like_a_key_is_refused`,
+  `team_library_space_with_a_key_like_name_is_skipped`,
+  `team_library_hosted_space_with_a_key_like_name_is_skipped`,
   `team_rules_refuse_a_wenlan_space_pin`,
   `team_rules_routes_refuse_an_ai_tool`,
   `team_rules_refuse_an_ai_tool_before_the_daemon`,

@@ -771,8 +771,9 @@ async fn team_rules_routes_refuse_an_ai_tool() {
                 .await
                 .unwrap();
             let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert!(
-                refusal(&answer).contains("only the person using the daemon"),
+            assert_eq!(
+                refusal(&answer),
+                "only the person using the daemon on this computer can review the team's Rules",
                 "{path} {identity}: {answer}"
             );
         }

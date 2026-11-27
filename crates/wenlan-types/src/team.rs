@@ -481,7 +481,9 @@ pub struct TeamRulesHostProposeRequest {
 pub struct TeamRulesHostDecision {
     pub space: String,
     pub accepted: bool,
-    /// Set when an accepted change reaches no repository's tool files yet.
+    /// Set when an accepted change did not reach the tool files it goes to:
+    /// no repository is bound yet, this computer has no checkout of it, or
+    /// the files were not (all) updated, with the reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }

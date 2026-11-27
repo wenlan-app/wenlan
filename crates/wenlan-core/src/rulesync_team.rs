@@ -256,6 +256,13 @@ fn check_markdown(markdown: &str) -> Result<(), WenlanError> {
     reject_secret_lines(markdown).map_err(|error| validation(error.to_string()))
 }
 
+/// Whether a Space name looks like a password or key, by the same check as
+/// Rules text. Such a name is never made a team-library Space, and one made
+/// before is skipped, so its name never lands in a tool file.
+pub fn name_looks_secret(name: &str) -> bool {
+    reject_secret_lines(name).is_err()
+}
+
 fn new_page(id: &str, markdown: &str) -> PageFile {
     let mut page = PageFile::new(TITLE, markdown);
     page.id = Some(id.to_string());
@@ -390,7 +397,12 @@ fn scope_rules_in(
         else {
             return Ok(None);
         };
-        check_markdown(space)?;
+        if name_looks_secret(space) {
+            return Err(validation(format!(
+                "The team Space {} has a name that looks like a password or key, so its Rules are not used. Rename that Space.",
+                group.id
+            )));
+        }
         // The repository comes from a binding of the same-named local Space.
         let repo_id =
             repo_wiki::binding_at(&settings_path.with_file_name("repo-wiki.json"), space)?
@@ -442,13 +454,24 @@ fn scope_names(
     groups: Vec<wenlan_types::team_library::TeamGroup>,
 ) -> Result<Vec<String>, WenlanError> {
     let mut names = BTreeSet::from([SPACE.to_string()]);
-    names.extend(
-        team::hosted_spaces(settings_path)?
-            .into_iter()
-            .map(|(space, _)| space),
-    );
-    names.extend(groups.into_iter().map(|group| group.name));
+    let hosted = team::hosted_spaces(settings_path)?
+        .into_iter()
+        .map(|(space, folder)| (space, team::hosted_space_id(&folder).unwrap_or_default()));
+    let library = groups.into_iter().map(|group| (group.name, group.id));
+    names.extend(hosted.chain(library).filter_map(|(name, id)| {
+        if name_looks_secret(&name) {
+            skipped_secret_name(&id);
+            return None;
+        }
+        Some(name)
+    }));
     Ok(names.into_iter().collect())
+}
+
+/// Logs a team Space left out because its name looks like a secret, by its
+/// id: the name is what looks like the secret.
+fn skipped_secret_name(id: &str) {
+    log::warn!("[rulesync-team] team Space {id} skipped: its name looks like a password or key");
 }
 
 /// A library page's first, still-empty version, which renders nothing.

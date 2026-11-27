@@ -826,6 +826,12 @@ impl Library {
                 "The name everyone is used by the team-wide Rules; choose another Space name.",
             ));
         }
+        if crate::rulesync_team::name_looks_secret(name) {
+            // The name lands in tool files and review lists.
+            return Err(LibraryError::Invalid(
+                "This name looks like a password or key; choose another Space name.",
+            ));
+        }
         let _lock = team::lock_team(&self.team_path)?;
         let mut data = self.open(team::read_team(&self.team_path)?)?;
         if data.member(actor)?.role != TeamRole::Owner {
