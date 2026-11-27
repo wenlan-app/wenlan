@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Stack } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import { teamJoinedLibrary, type JoinedTeamLibrary, type TeamLibrarySpace } from "../../../lib/tauri";
+import { teamJoinedLibrary, type JoinedTeamLibrary, type TeamLibrarySpace, type TeamPageSummary } from "../../../lib/tauri";
 
 export const JOINED_TEAM_LIBRARY_QUERY_KEY = ["team-joined-library"] as const;
 
@@ -48,6 +48,12 @@ export function JoinedTeamLibraryGroups({
               </div>
             ) : (
               <div className="team-library-spaces">
+                {(joined.library.team_pages?.length ?? 0) > 0 && (
+                  <section className="team-library-space" aria-label={t("team.joinedWholeTeam")}>
+                    <h3 className="team-library-space-name">{t("team.joinedWholeTeam")}</h3>
+                    <JoinedLibraryPages pages={joined.library.team_pages ?? []} teamId={teamId} onOpenPage={onOpenPage} />
+                  </section>
+                )}
                 {joined.library.spaces.map((space) => (
                   <JoinedLibrarySpace key={space.space.id} space={space} teamId={joined.team?.id} onOpenPage={onOpenPage} />
                 ))}
@@ -57,6 +63,34 @@ export function JoinedTeamLibraryGroups({
         );
       })}
     </>
+  );
+}
+
+function JoinedLibraryPages({
+  pages,
+  teamId,
+  onOpenPage,
+}: {
+  readonly pages: readonly TeamPageSummary[];
+  readonly teamId?: string;
+  readonly onOpenPage?: (teamId: string, pageId: string) => void;
+}) {
+  return (
+    <ul className="team-library-pages">
+      {pages.map((page) => (
+        <li key={page.id}>
+          <button
+            type="button"
+            className="team-library-page"
+            disabled={!teamId || !onOpenPage}
+            onClick={() => teamId && onOpenPage?.(teamId, page.id)}
+          >
+            <Stack aria-hidden="true" size={16} />
+            <span>{page.title}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

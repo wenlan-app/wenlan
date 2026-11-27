@@ -10,6 +10,7 @@ import { teamGroups } from "./TeamPage";
 import { IssuedCode } from "../sharing/TeamMembers";
 import { ScopeProvider, useScopeState } from "./scope";
 import { ScopeSwitcher } from "./ScopeSwitcher";
+import { JoinedTeamLibraryGroups } from "./joinedLibrary";
 import {
   listShares,
   listSpaces,
@@ -22,6 +23,7 @@ import {
   teamNewMemberKey,
   teamRename,
   teamStatus,
+  teamJoinedLibrary,
   type SharedStatus,
   type TeamMember,
   type TeamStatus,
@@ -48,6 +50,7 @@ vi.mock("../../../lib/tauri", async () => {
     teamRename: vi.fn(),
     teamHostSpace: vi.fn(),
     stopSharingSpace: vi.fn(),
+    teamJoinedLibrary: vi.fn(),
   };
 });
 vi.mock("../../../lib/confirmAction", () => ({ confirmAction: vi.fn() }));
@@ -82,6 +85,7 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) { this.removeAttribute("open"); };
   vi.mocked(listSpaces).mockResolvedValue([]);
   vi.mocked(teamStatus).mockRejectedValue(new Error("off"));
+  vi.mocked(teamJoinedLibrary).mockResolvedValue({ teams: [] });
   localStorage.clear();
 });
 afterEach(() => vi.clearAllMocks());
@@ -110,6 +114,7 @@ function Shell() {
   return (
     <ScopeProvider value={scope}>
       <ScopeSwitcher onSwitched={() => undefined} onJoined={() => undefined} />
+      <JoinedTeamLibraryGroups />
       <p data-testid="side">{scope.team?.key ?? "private"}</p>
     </ScopeProvider>
   );
@@ -213,6 +218,17 @@ describe("the team's own things on a member's computer", () => {
     expect(stopSharingSpace).toHaveBeenCalledWith("Product");
     expect(stopSharingSpace).toHaveBeenCalledWith("Sales");
     await waitFor(() => expect(screen.getByTestId("side")).toHaveTextContent("private"));
+  });
+
+  it("removes the departed team's live library without refetching it", async () => {
+    vi.mocked(confirmAction).mockResolvedValue(true);
+    vi.mocked(stopSharingSpace).mockResolvedValue();
+    vi.mocked(teamJoinedLibrary).mockResolvedValue({ teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [{ space: { id: "s1", name: "Roadmap", restricted: false }, pages: [] }] } }] });
+    wrap(<Shell />);
+    expect(await screen.findByTestId("team-joined-library")).toBeInTheDocument();
+    await userEvent.click(within(await openMenu("Acme")).getByRole("menuitem", { name: "Leave Acme…" }));
+    await waitFor(() => expect(screen.queryByTestId("team-joined-library")).not.toBeInTheDocument());
+    expect(teamJoinedLibrary).toHaveBeenCalledTimes(1);
   });
 
   it("stays on the team when leaving is cancelled", async () => {

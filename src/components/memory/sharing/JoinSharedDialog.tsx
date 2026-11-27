@@ -154,8 +154,8 @@ export function JoinSharedDialog({ onClose, onJoined, only, code: given }: JoinS
         ? joinedTeam.library.spaces.map((space) => t("team.join.pagesInSpace", { space: space.space.name, count: space.pages.length })).join(", ") || t("team.join.noPublishedPages")
         : null;
       toast(summary
-        ? t("team.join.success", { team: joiningTeam, spaces: summary, address: checked.response.url })
-        : t("team.join.successUnavailable", { team: joiningTeam, address: checked.response.url }));
+        ? t("team.join.success", { team: joiningTeam, spaces: summary })
+        : t("team.join.successUnavailable", { team: joiningTeam }));
       onClose();
       onJoined?.("team", checked.response.me.team?.id ?? checked.response.url);
     } catch (caught) {

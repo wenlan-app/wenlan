@@ -4,6 +4,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
+
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast }));
 import { JoinSharedDialog } from "./JoinSharedDialog";
 import { ShareDialog } from "./ShareDialog";
 import { groupTeamSpaces } from "./sharing";
@@ -145,6 +148,10 @@ describe("JoinSharedDialog code mode", () => {
     await userEvent.click(screen.getByRole("button", { name: "Join Acme" }));
     await waitFor(() => expect(teamRememberMembership).toHaveBeenCalledWith(link));
     expect(joinTeamSpace).not.toHaveBeenCalled();
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const lastToast = toast.mock.calls[toast.mock.calls.length - 1]?.[0] as string;
+    expect(lastToast).not.toContain("team.example.com");
+    expect(lastToast).toContain("Connect your AI tool from its setup screen too.");
   });
 
   it("UX-TEAM-MEMBER-4: invalidates the joined-library query after a successful join", async () => {

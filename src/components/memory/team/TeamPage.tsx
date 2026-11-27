@@ -33,6 +33,7 @@ import { SHARES_KEY, sharedWriter, teamKeyOf, teamLabel, useShares } from "../sh
 import { TEAM_KEY, activeMembers, prefillTeamUrl, rememberTeamUrl, sameName, useTeamStatus } from "../sharing/team";
 import { IssuedCode, MemberMenu, codeOf, errorText, memberTag, usesSignIn } from "../sharing/TeamMembers";
 import { shortDate } from "../../../web/TeamOwnDialogs";
+import { JOINED_TEAM_LIBRARY_QUERY_KEY } from "./joinedLibrary";
 import "../sharing/sharing.css";
 import "../space-detail/space-brief.css";
 import "../space-detail/space-recent-changes.css";
@@ -224,9 +225,16 @@ export function useLeaveTeam(group: TeamGroup | null): () => Promise<boolean> {
     if (!ok) return false;
     for (const share of group.shares) await stopSharingSpace(share.target);
     if (group.host) await teamForgetMembership(group.host);
+    if (group.team?.id) {
+      queryClient.setQueryData<{ teams: Array<{ team: TeamInfo | null }> }>(JOINED_TEAM_LIBRARY_QUERY_KEY, (current) =>
+        current ? { ...current, teams: current.teams.filter((entry) => entry.team?.id !== group.team?.id) } : current,
+      );
+      queryClient.removeQueries({ queryKey: ["team-joined-page", group.team.id] });
+    }
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
       queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
+      queryClient.invalidateQueries({ queryKey: JOINED_TEAM_LIBRARY_QUERY_KEY, refetchType: "none" }),
     ]);
     return true;
   };

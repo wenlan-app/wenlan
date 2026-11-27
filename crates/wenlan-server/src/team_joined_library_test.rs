@@ -53,6 +53,9 @@ struct FakeTeam {
     team: TeamInfo,
     space: TeamGroup,
     page: TeamItem,
+    extra_pages: Vec<TeamItem>,
+    many_pages: bool,
+    slow_library: bool,
     requests: Arc<Mutex<Vec<(String, String)>>>,
 }
 
@@ -88,6 +91,9 @@ impl FakeTeam {
                 last_editor: None,
                 published_at: Some("2026-11-26T12:00:00Z".into()),
             },
+            extra_pages: Vec::new(),
+            many_pages: false,
+            slow_library: false,
             requests: Arc::default(),
         }
     }
@@ -119,6 +125,9 @@ async fn fake_team(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let path = request.uri().path();
+    if fake.slow_library && path.starts_with("/team/v1/library") {
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    }
     let response = if path == "/team/v1/me" {
         Json(TeamMe {
             member_id: "member-local".into(),
@@ -136,10 +145,31 @@ async fn fake_team(
         })
         .into_response()
     } else if path == "/team/v1/library/pages" {
-        Json(TeamPages {
-            pages: vec![fake.page.clone()],
-        })
-        .into_response()
+        let offset = request
+            .uri()
+            .query()
+            .and_then(|query| {
+                query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("offset="))
+            })
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let pages = if fake.many_pages {
+            (offset..offset.saturating_add(200).min(201))
+                .map(|index| {
+                    let mut page = fake.page.clone();
+                    page.item_id = format!("page-{index}");
+                    page.title = format!("Page {index}");
+                    page
+                })
+                .collect()
+        } else {
+            let mut pages = vec![fake.page.clone()];
+            pages.extend(fake.extra_pages.clone());
+            pages
+        };
+        Json(TeamPages { pages }).into_response()
     } else if path == "/team/v1/library" {
         Json(TeamLibraryInfo {
             team: fake.team.clone(),
@@ -170,7 +200,7 @@ async fn fake_team(
                     }),
                 },
                 TeamCitation::PrivateSource {
-                    label: "private source".into(),
+                    label: "SENTINEL-SECRET-7731".into(),
                 },
             ],
         })
@@ -181,8 +211,11 @@ async fn fake_team(
     response
 }
 
-async fn fake_server() -> (String, FakeTeam, tokio::task::JoinHandle<()>) {
-    let fake = FakeTeam::new();
+async fn fake_server_with(
+    configure: impl FnOnce(&mut FakeTeam),
+) -> (String, FakeTeam, tokio::task::JoinHandle<()>) {
+    let mut fake = FakeTeam::new();
+    configure(&mut fake);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new().fallback(fake_team).with_state(fake.clone());
@@ -190,6 +223,10 @@ async fn fake_server() -> (String, FakeTeam, tokio::task::JoinHandle<()>) {
         axum::serve(listener, app).await.unwrap();
     });
     (url, fake, task)
+}
+
+async fn fake_server() -> (String, FakeTeam, tokio::task::JoinHandle<()>) {
+    fake_server_with(|_| {}).await
 }
 
 fn remember(url: &str, team: TeamInfo) {
@@ -211,7 +248,7 @@ fn remember(url: &str, team: TeamInfo) {
     .unwrap();
 }
 
-async fn daemon_get(uri: &str, headers: HeaderMap) -> (StatusCode, Value) {
+async fn daemon_get(uri: &str, headers: HeaderMap) -> (StatusCode, HeaderMap, Value) {
     let state = Arc::new(tokio::sync::RwLock::new(
         crate::state::ServerState::default(),
     ));
@@ -225,11 +262,13 @@ async fn daemon_get(uri: &str, headers: HeaderMap) -> (StatusCode, Value) {
         .await
         .unwrap();
     let status = response.status();
+    let response_headers = response.headers().clone();
     let bytes = axum::body::to_bytes(response.into_body(), 4 << 20)
         .await
         .unwrap();
     (
         status,
+        response_headers,
         serde_json::from_slice(&bytes)
             .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into())),
     )
@@ -259,8 +298,10 @@ async fn joined_team_library_lists_pages_and_forwards_the_key_only_to_that_team(
     let (url, fake, task) = fake_server().await;
     remember(&url, fake.team.clone());
 
-    let (status, body) = daemon_get("/api/team/joined/library", person_headers()).await;
+    let (status, response_headers, body) =
+        daemon_get("/api/team/joined/library", person_headers()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(response_headers[header::CACHE_CONTROL], "no-store");
     assert_eq!(body["teams"][0]["team"]["id"], TEAM_ID);
     assert_eq!(body["teams"][0]["team"]["name"], "Acme");
     assert_eq!(body["teams"][0]["library"]["state"], "ready", "{body}");
@@ -292,18 +333,47 @@ async fn joined_team_library_lists_pages_and_forwards_the_key_only_to_that_team(
 }
 
 #[tokio::test]
+async fn joined_team_library_lists_whole_team_pages_before_spaces() {
+    let _lock = test_lock().await;
+    let _env = DataDirGuard::new();
+    let (url, fake, task) = fake_server_with(|fake| {
+        let mut whole_team = fake.page.clone();
+        whole_team.item_id = "page-whole-team".into();
+        whole_team.title = "Team-wide announcement".into();
+        whole_team.space_id = None;
+        fake.extra_pages.push(whole_team);
+    })
+    .await;
+    remember(&url, fake.team.clone());
+
+    let (status, _, body) = daemon_get("/api/team/joined/library", person_headers()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["teams"][0]["library"]["team_pages"][0]["id"],
+        "page-whole-team"
+    );
+    assert_eq!(
+        body["teams"][0]["library"]["team_pages"][0]["space"],
+        Value::Null
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn joined_team_page_reads_shared_source_and_redacts_private_source_text() {
     let _lock = test_lock().await;
     let _env = DataDirGuard::new();
     let (url, fake, task) = fake_server().await;
     remember(&url, fake.team.clone());
 
-    let (status, body) = daemon_get(
+    let (status, response_headers, body) = daemon_get(
         &format!("/api/team/joined/{TEAM_ID}/pages/{PAGE_ID}"),
         person_headers(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(response_headers[header::CACHE_CONTROL], "no-store");
+    assert!(!body.to_string().contains("SENTINEL-SECRET-7731"));
     let page: JoinedTeamPage = serde_json::from_value(body).unwrap();
     let JoinedTeamPage::Ready { page, sources } = page else {
         panic!("expected a ready page");
@@ -331,12 +401,89 @@ async fn joined_team_library_marks_an_unreachable_team_without_waiting_for_the_l
         },
     );
     let started = Instant::now();
-    let (status, body) = daemon_get("/api/team/joined/library", person_headers()).await;
+    let (status, _, body) = daemon_get("/api/team/joined/library", person_headers()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
     assert!(body["teams"].as_array().unwrap().iter().any(|team| {
         team["team"]["id"] == "team-offline" && team["library"]["state"] == "unreachable"
     }));
+}
+
+#[tokio::test]
+async fn joined_team_library_marks_a_nonresponsive_team_unreachable_at_the_deadline() {
+    let _lock = test_lock().await;
+    let _env = DataDirGuard::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let _socket = socket;
+                std::future::pending::<()>().await;
+            });
+        }
+    });
+    remember(
+        &url,
+        TeamInfo {
+            id: "team-hanging".into(),
+            name: Some("Hanging team".into()),
+        },
+    );
+
+    let started = Instant::now();
+    let (status, _, body) = daemon_get("/api/team/joined/library", person_headers()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "route exceeded its deadline: {:?}",
+        started.elapsed()
+    );
+    assert!(body["teams"].as_array().unwrap().iter().any(|team| {
+        team["team"]["id"] == "team-hanging" && team["library"]["state"] == "unreachable"
+    }));
+    task.abort();
+}
+
+#[tokio::test]
+async fn joined_team_library_fetches_slow_independent_calls_concurrently() {
+    let _lock = test_lock().await;
+    let _env = DataDirGuard::new();
+    let (url, fake, task) = fake_server_with(|fake| fake.slow_library = true).await;
+    remember(&url, fake.team.clone());
+
+    let started = Instant::now();
+    let (status, _, body) = daemon_get("/api/team/joined/library", person_headers()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(6),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(body["teams"][0]["library"]["state"], "ready");
+    task.abort();
+}
+
+#[tokio::test]
+async fn joined_team_library_paginates_past_two_hundred_pages() {
+    let _lock = test_lock().await;
+    let _env = DataDirGuard::new();
+    let (url, fake, task) = fake_server_with(|fake| fake.many_pages = true).await;
+    remember(&url, fake.team.clone());
+
+    let (status, _, body) = daemon_get("/api/team/joined/library", person_headers()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["teams"][0]["library"]["spaces"][0]["pages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        201
+    );
+    assert!(body.to_string().contains("page-200"), "{body}");
+    assert_eq!(body["teams"][0]["library"]["truncated"], false);
+    task.abort();
 }
 
 #[tokio::test]
@@ -348,12 +495,30 @@ async fn joined_team_library_requires_the_person_marker_and_a_valid_person_key()
 
     let mut ai = person_headers();
     ai.insert("x-agent-name", "claude-code".parse().unwrap());
-    let (status, _) = daemon_get("/api/team/joined/library", ai).await;
+    let (status, response_headers, _) = daemon_get("/api/team/joined/library", ai).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(response_headers[header::CACHE_CONTROL], "no-store");
 
     let mut missing_key = HeaderMap::new();
     missing_key.insert(CALLER_HEADER, PERSON_CALLER_VALUE.parse().unwrap());
-    let (status, _) = daemon_get("/api/team/joined/library", missing_key).await;
+    let (status, _, _) = daemon_get("/api/team/joined/library", missing_key).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let previous = std::env::var_os("WENLAN_BIND_ADDR");
+    for bind in ["0.0.0.0:7878", "not-a-bind"] {
+        std::env::set_var("WENLAN_BIND_ADDR", bind);
+        let (status, _, _) = daemon_get("/api/team/joined/library", person_headers()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "bind={bind}");
+        let (status, _, _) = daemon_get(
+            &format!("/api/team/joined/{TEAM_ID}/pages/{PAGE_ID}"),
+            person_headers(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "bind={bind}");
+    }
+    match previous {
+        Some(value) => std::env::set_var("WENLAN_BIND_ADDR", value),
+        None => std::env::remove_var("WENLAN_BIND_ADDR"),
+    }
     task.abort();
 }

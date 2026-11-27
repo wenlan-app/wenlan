@@ -1635,7 +1635,7 @@ export interface TeamLibrarySpace {
 }
 
 export type JoinedTeamLibraryState =
-  | { state: "ready"; spaces: TeamLibrarySpace[] }
+  | { state: "ready"; spaces: TeamLibrarySpace[]; team_pages?: TeamPageSummary[]; truncated?: boolean }
   | { state: "unreachable"; reason: string };
 
 export interface JoinedTeamLibrary {

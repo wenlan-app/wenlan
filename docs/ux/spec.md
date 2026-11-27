@@ -82,7 +82,7 @@ and wait for evidence that people need them.
 
 ## Team member view
 
-- **UX-TEAM-MEMBER-1** `shipped` A joined team's published pages appear live in a Team group beneath Private, grouped by Space; the rows are read-only and have no page or Space management actions.
+- **UX-TEAM-MEMBER-1** `shipped` A joined team's published pages appear live in a Team group beneath Private, with whole-team pages first and the remaining pages grouped by Space; the rows are read-only and have no page or Space management actions.
 - **UX-TEAM-MEMBER-2** `shipped` Opening a joined team page shows its title, body, publisher line and read-only label; a citation the publisher did not share reads as 「私人來源」/「私人来源」/"private source" without exposing its text.
 - **UX-TEAM-MEMBER-3** `shipped` When a team server cannot be reached, the member view says only the localized plain-language unreachable message and offers Retry; it does not expose a URL, id, path or error code.
 - **UX-TEAM-MEMBER-4** `shipped` After joining, the app invalidates the live joined-library read so newly visible team pages do not wait for a sync loop.

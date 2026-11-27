@@ -3,7 +3,7 @@
 
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::handler::Handler;
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::MethodRouter;
 use axum::Json;
@@ -24,6 +24,10 @@ struct Typed;
 
 impl MemberResponse {
     fn new(response: Response) -> Self {
+        let mut response = response;
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         Self(response)
     }
 

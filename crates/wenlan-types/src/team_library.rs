@@ -190,8 +190,18 @@ pub struct TeamLibrarySpace {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum JoinedTeamLibraryState {
-    Ready { spaces: Vec<TeamLibrarySpace> },
-    Unreachable { reason: String },
+    Ready {
+        spaces: Vec<TeamLibrarySpace>,
+        /// Pages published to the whole team, before any Space groups.
+        #[serde(default)]
+        team_pages: Vec<TeamPageSummary>,
+        /// True when the member route stopped at its hard page ceiling.
+        #[serde(default)]
+        truncated: bool,
+    },
+    Unreachable {
+        reason: String,
+    },
 }
 
 /// One joined team as seen by the member app. A cached team identity is kept

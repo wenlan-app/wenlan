@@ -128,19 +128,27 @@ fn library_client() -> Result<reqwest::Client, String> {
 
 fn space_url(url: &str, space: &str, rest: &str) -> String {
     let mut out = format!("{url}/team/v1/spaces/");
-    out.push_str(&urlencoding_component(space));
+    out.push_str(&encode_path_segment(space));
     out.push_str(rest);
     out
 }
 
 /// Percent-encodes one path segment.
-pub fn urlencoding_component(text: &str) -> String {
+pub fn urlencoding_component(text: &str) -> Result<String, &'static str> {
+    if text.is_empty() {
+        return Err("path id must not be empty");
+    }
+    if text == "." || text == ".." {
+        return Err("path id must not be a dot segment");
+    }
+    Ok(encode_path_segment(text))
+}
+
+fn encode_path_segment(text: &str) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'~' => out.push(byte as char),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -651,5 +659,13 @@ mod tests {
             space_url("https://h", "婚禮 準備/x", "/files"),
             "https://h/team/v1/spaces/%E5%A9%9A%E7%A6%AE%20%E6%BA%96%E5%82%99%2Fx/files"
         );
+    }
+
+    #[test]
+    fn dot_segments_are_encoded_before_they_can_become_path_segments() {
+        for id in ["", ".", ".."] {
+            assert!(urlencoding_component(id).is_err(), "{id:?}");
+        }
+        assert_eq!(urlencoding_component("page/x").unwrap(), "page%2Fx");
     }
 }

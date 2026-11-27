@@ -10,12 +10,13 @@ Bo's Wenlan app  ──┼── team listener ──┤   (its own routes stay 
 Cy's AI tool     ──┘   /team/v1, /mcp  └── team-spaces/<Space>/
 ```
 
-- **Desktop app members** keep their own copy of a legacy shared Space. Every ~30 seconds
-  their Wenlan takes the team's new page versions from the server and sends
-  their own. It works offline and catches up later.
+- **Legacy shared-Space members** keep a local copy. Every ~30 seconds their
+  Wenlan exchanges page versions with the server; it works offline and catches
+  up later. This is the old writable-copy workflow.
 - **Team-library members** read published pages live from the team server. They
   see those pages in their app right after joining; they do not wait for a sync
-  loop or keep a writable copy locally.
+  loop or keep a writable copy locally. The library is read-only for pages;
+  Rules proposals still go through their separate route.
 - **AI-tool-only members** (no Wenlan installed) open their invite link in a
   browser. It shows the server address and setup for Claude Code, Codex and
   Cursor. What their AI tool changes is recorded as theirs ("Cy's AI tool").
@@ -184,8 +185,8 @@ need a person:
   With the compose file: `docker compose pull && docker compose up -d`.
   The team, its people and pages live in the `wenlan-data` volume and stay.
 - **Backups.** Everything is in the `wenlan-data` volume on that box. Back it
-  up with the host's own snapshots, or copy the volume. Each member's
-  computer also keeps a full copy of the Spaces open to them.
+  up with the host's own snapshots, or copy the volume. Legacy shared
+  Spaces may also have local member copies; live team-library pages do not.
 
 ### Going back to an older Wenlan
 

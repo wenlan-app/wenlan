@@ -59,4 +59,33 @@ describe("SpacesOverview team groups", () => {
     expect(open).toHaveBeenCalledWith("t1", "page-1");
     expect(within(group).queryByRole("button", { name: /Actions for|Rename|Delete|New/ })).not.toBeInTheDocument();
   });
+
+  it("UX-TEAM-MEMBER-1: renders whole-team pages above team Spaces", async () => {
+    const open = vi.fn();
+    api.listShares.mockResolvedValue([]);
+    api.teamJoinedLibrary.mockResolvedValue({
+      teams: [{
+        team: { id: "t1", name: "Acme" },
+        library: {
+          state: "ready",
+          team_pages: [{ id: "team-page", title: "Team announcement", space: null, published_by: null, published_at: null }],
+          spaces: [],
+        },
+      }],
+    });
+    renderOverview({ onOpenTeamPage: open });
+    const group = await screen.findByTestId("team-joined-library");
+    expect(within(group).getByRole("heading", { name: "Whole team" })).toBeInTheDocument();
+    fireEvent.click(within(group).getByRole("button", { name: "Team announcement" }));
+    expect(open).toHaveBeenCalledWith("t1", "team-page");
+  });
+
+  it("shows Private when a joined team exists without legacy shares", async () => {
+    api.listShares.mockResolvedValue([]);
+    api.teamJoinedLibrary.mockResolvedValue({
+      teams: [{ team: { id: "t1", name: "Acme" }, library: { state: "ready", team_pages: [], spaces: [] } }],
+    });
+    renderOverview();
+    expect(await screen.findByRole("heading", { name: "Private" })).toBeInTheDocument();
+  });
 });

@@ -626,7 +626,7 @@ async fn status(client: &WenlanClient, format: ResolvedFormat, quiet: bool) -> R
         println!("Joined: {}", team_label(team));
         let spaces = team_shares(&shares, &team.url);
         if spaces.is_empty() && team.library_spaces.is_empty() {
-            println!("  No Spaces are open to you yet. They sync here when the team opens one.");
+            println!("  No legacy Spaces are open to you yet. Published pages are read-only in the team library and appear in the app when the server is reachable.");
         }
         for share in spaces {
             let access = if share.read_only { " (read)" } else { "" };
@@ -887,7 +887,7 @@ async fn join_all(
     output(format, quiet, &joined, || {
         println!("Joined {team} as {}.", joined.me.name);
         if joined.spaces.is_empty() && joined.me.library_spaces.is_empty() {
-            println!("No Spaces are open to you yet. They sync here when the team opens one.");
+            println!("No legacy Spaces are open to you yet. Published pages are read-only in the team library and appear here when the server is reachable.");
         }
         for space in &joined.spaces {
             let access = match space.access {
@@ -923,11 +923,18 @@ fn print_joined_library_summary(
             .find(|candidate| candidate.team.as_ref().map(|team| team.id.as_str()) == team_id)
     });
     match entry.map(|entry| &entry.library) {
-        Some(wenlan_types::team_library::JoinedTeamLibraryState::Ready { spaces }) => {
+        Some(wenlan_types::team_library::JoinedTeamLibraryState::Ready {
+            spaces,
+            team_pages,
+            ..
+        }) => {
             println!("Published pages open in the team library:");
-            if spaces.is_empty() {
+            if spaces.is_empty() && team_pages.is_empty() {
                 println!("  No published pages are open yet.");
             } else {
+                if !team_pages.is_empty() {
+                    println!("  Whole team: {} pages", team_pages.len());
+                }
                 for space in spaces {
                     println!("  {}: {} pages", space.space.name, space.pages.len());
                 }

@@ -91,6 +91,7 @@ async function http(
   // in this browser the cookie is all there is.
   const key = team && teamCredential() !== "browser" ? readTeamKey() : null;
   const base = team ? TEAM_GATE_PREFIX : isWebBuild() ? "" : "/daemon";
+  const noStore = team || path === "/api/team/joined/library" || path.startsWith("/api/team/joined/");
   const res = await fetch(`${base}${path}`, {
     method,
     headers: {
@@ -100,7 +101,8 @@ async function http(
       ...(team ? (key ? { Authorization: `Bearer ${key}` } : undefined) : extraHeaders),
       ...(personKey ? { [PERSON_KEY_HEADER]: personKey } : undefined),
     },
-    ...(team ? { credentials: key ? ("omit" as const) : ("same-origin" as const), cache: "no-store" as const } : undefined),
+    ...(team ? { credentials: key ? ("omit" as const) : ("same-origin" as const) } : undefined),
+    ...(noStore ? { cache: "no-store" as const } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();

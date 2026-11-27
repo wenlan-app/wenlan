@@ -31,7 +31,7 @@ import "../pages/pageActions.css";
 import "./spaces.css";
 import "./spacesInventory.css";
 import { isWebBuild } from "../../../web/runtime";
-import { JoinedTeamLibraryGroups } from "../team/joinedLibrary";
+import { JoinedTeamLibraryGroups, useJoinedTeamLibrary } from "../team/joinedLibrary";
 import "../team/joinedLibrary.css";
 
 const DEPENDENT_QUERY_KEYS = [
@@ -93,6 +93,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const pendingRef = useRef(new Set<string>());
   const query = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   const shares = useShares();
+  const joinedLibrary = useJoinedTeamLibrary();
   const scope = useScope();
   const pagesQuery = useQuery({
     queryKey: ["spaces-page-counts"],
@@ -192,6 +193,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const { own: ownConfirmed, groups: teamGroups } = scope.teams.length > 0
     ? { own: confirmed, groups: [] }
     : groupTeamSpaces(confirmed, shares.data);
+  const hasJoinedTeams = (joinedLibrary.data?.teams.length ?? 0) > 0;
   const hasFilter = filter.trim().length > 0;
   const noResults = hasFilter && suggested.length === 0 && confirmed.length === 0;
   const pendingCreate = pendingIds.includes("create");
@@ -269,8 +271,8 @@ export function SpacesOverview(props: SpacesOverviewProps) {
       {query.isPending && lastGood === null ? null : (
         <>
           {ownConfirmed.length > 0 || teamGroups.length === 0 ? (
-          <div className={teamGroups.length > 0 ? "spaces-team-group" : undefined}>
-            {teamGroups.length > 0 ? <h2 className="spaces-group-title">{t("team.groupMine")}</h2> : null}
+          <div className={teamGroups.length > 0 || hasJoinedTeams ? "spaces-team-group" : undefined}>
+            {teamGroups.length > 0 || hasJoinedTeams ? <h2 className="spaces-group-title">{t("team.groupMine")}</h2> : null}
           <ConfirmedSpaces
             spaces={ownConfirmed}
             allSpaces={allSpaces}
