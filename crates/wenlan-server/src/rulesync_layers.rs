@@ -257,7 +257,7 @@ pub(crate) type ProposalReceipts = BTreeMap<String, ProposalReceipt>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ProposalReceipt {
     edit: String,
-    proposal: String,
+    pub(crate) proposal: String,
 }
 
 pub(crate) enum SharedReview {
@@ -314,7 +314,9 @@ pub(crate) fn waiting_in_file(
         return false;
     };
     let codex_rules;
-    let source = if relative == Path::new(file) && file.ends_with("/local/.codex/config.toml") {
+    let source = if relative == Path::new(".codex/config.toml")
+        && Path::new(file).ends_with(Path::new("local").join(".codex/config.toml"))
+    {
         let Ok(parsed) = toml::from_str::<toml::Value>(source) else {
             return false;
         };

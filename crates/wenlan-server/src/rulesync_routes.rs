@@ -471,23 +471,37 @@ pub(crate) fn reopen_edits_after_old_host_refusal_at(
         .filter(|(_, record)| proposal_ids.contains(&record.proposal))
         .map(|(id, _)| id.clone())
         .collect();
+    let mut retire = Vec::new();
     for id in restore {
         let record = &answers.sent_edits[&id];
-        rulesync_team::retire_queued_proposal_at(
-            &record.proposal_path,
-            &record.edit.revision,
-            &record.proposal,
-        )?;
+        retire.push((
+            record.proposal_path.clone(),
+            record.edit.revision.clone(),
+            record.proposal.clone(),
+        ));
         let record = answers.sent_edits.remove(&id).expect("checked sent edit");
         answers.answered_edits.remove(&id);
         answers.answers.remove(&id);
-        if record.edit.files.iter().any(|file| {
-            rulesync_layers::waiting_in_file(&record.edit, file, settings, &setup.data, &setup.home)
-        }) {
-            answers.waiting.insert(id, record.edit);
+        let mut edit = record.edit;
+        let live = edit
+            .files
+            .iter()
+            .filter(|file| {
+                rulesync_layers::waiting_in_file(&edit, file, settings, &setup.data, &setup.home)
+            })
+            .cloned()
+            .collect();
+        edit.files = live;
+        if !edit.files.is_empty() {
+            answers.waiting.insert(id, edit);
         }
     }
-    rulesync_shared_answers::save(&setup.data, &answers)
+    for (path, revision, proposal) in &retire {
+        rulesync_team::retire_queued_proposal_at(path, revision, proposal)?;
+    }
+    rulesync_shared_answers::save(&setup.data, &answers)?;
+    crate::rulesync_checkout::clear_refused_receipts(&setup.data, proposal_ids)?;
+    Ok(())
 }
 
 async fn decide_shared_edit(
@@ -3508,8 +3522,8 @@ impl Setup {
     {
         let can_restore = caller == SyncCaller::Person;
         let mut held = BTreeSet::new();
-        let mut had_team_block = false;
-        if can_restore {
+        let mut had_team_blocks = BTreeSet::new();
+        {
             for (path, record) in manifest.active_deliveries() {
                 if !matches!(record.kind, Kind::Rule { .. }) {
                     continue;
@@ -3524,7 +3538,9 @@ impl Setup {
                     continue;
                 }
                 match rulesync_layers::blocks(content) {
-                    Ok(blocks) if !blocks.is_empty() => had_team_block = true,
+                    Ok(blocks) if !blocks.is_empty() => {
+                        had_team_blocks.insert(path.clone());
+                    }
                     Ok(_) => (),
                     Err(_) => {
                         held.insert(path.clone());
@@ -3558,13 +3574,11 @@ impl Setup {
             rulesync_layers::report_rejection(result);
         }
         rulesync_layers::refresh_answers(settings, &self.data, &self.home)?;
-        if can_restore
-            && had_team_block
+        if !had_team_blocks.is_empty()
             && !personal_rules::has_team_rules_moved_history(self, manifest)?
         {
-            let removed = manifest.active_deliveries().any(|(path, record)| {
-                matches!(record.kind, Kind::Rule { .. })
-                    && !held.contains(path)
+            let removed = had_team_blocks.iter().any(|path| {
+                !held.contains(path)
                     && root
                         .read(path, false)
                         .ok()
@@ -13179,6 +13193,10 @@ mod tests {
     }
 
     fn sync_home_for_migration(f: &Fixture) -> RulesSyncReport {
+        sync_home_for_migration_as(f, SyncCaller::Person)
+    }
+
+    fn sync_home_for_migration_as(f: &Fixture, caller: SyncCaller) -> RulesSyncReport {
         let _lock = f.setup.lock().unwrap();
         let root = f.setup.home_files().unwrap();
         let mut manifest = f.setup.load().unwrap().unwrap();
@@ -13187,7 +13205,7 @@ mod tests {
             .sync_member_files(
                 &root,
                 &mut manifest,
-                (&[], SyncCaller::Person),
+                (&[], caller),
                 (&f.setup.data.join("settings.toml"), &[]),
                 (&fixture_rule_renderer, &fixture_skill_renderer),
                 &mut result,
@@ -13256,6 +13274,35 @@ mod tests {
             f.setup.load().unwrap().unwrap().personal_rule_history.len(),
             count
         );
+    }
+
+    #[test]
+    fn rulesync_background_home_cleanup_records_team_rules_migration() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Team rules\n\nLast synced date.\n\nTeam advice.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        sync_home_for_migration_as(&f, SyncCaller::Background);
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(personal_rules::has_team_rules_moved_history(&f.setup, &manifest).unwrap());
+        assert!(!f.text(CODEX).contains("WENLAN SHARED RULES"));
+    }
+
+    #[test]
+    fn rulesync_home_migration_waits_until_a_legacy_block_is_removed() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Team rules\n\nLast synced date.\n\nTeam advice.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        f.write(CLAUDE, &f.text(CLAUDE).replace(&block, ""));
+        f.write(
+            CODEX,
+            &f.text(CODEX).replace("Team advice.", "My pending edit."),
+        );
+        sync_home_for_migration_as(&f, SyncCaller::Background);
+        assert!(f.text(CODEX).contains("WENLAN SHARED RULES"));
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(!personal_rules::has_team_rules_moved_history(&f.setup, &manifest).unwrap());
     }
 
     #[test]

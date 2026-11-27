@@ -88,6 +88,54 @@ fn read_checkout(bytes: &[u8]) -> Result<Checkout> {
     Ok(stored.checkout)
 }
 
+pub(crate) fn clear_refused_receipts(data: &Path, proposal_ids: &[String]) -> Result<()> {
+    let directory = data.join("checkouts");
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    let root = FileRoot::open(data)?;
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        let path = Path::new("checkouts").join(entry.file_name());
+        let seen = root.read(&path, false)?;
+        let mut checkout = match text(&seen).and_then(|source| read_checkout(source.as_bytes())) {
+            Ok(checkout) => checkout,
+            Err(error) => {
+                tracing::warn!("[rulesync] skipping incompatible checkout receipt during proposal refusal: {}: {error:#}", path.display());
+                continue;
+            }
+        };
+        let before = checkout.shared_rule_proposals.clone();
+        for receipts in checkout.shared_rule_proposals.values_mut() {
+            receipts.retain(|_, receipt| !proposal_ids.contains(&receipt.proposal));
+        }
+        checkout
+            .shared_rule_proposals
+            .retain(|_, receipts| !receipts.is_empty());
+        if checkout.shared_rule_proposals != before {
+            let next = with_bytes(
+                &seen,
+                serde_json::to_vec(&CheckoutRecord {
+                    format: CHECKOUT_FORMAT,
+                    checkout,
+                })?,
+            );
+            ensure!(
+                root.apply(&path, &seen, &next, false)? == ApplyOutcome::Applied,
+                "checkout receipt changed during refusal recovery"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn local_recorded_path(data: &Path, relative: &Path) -> Option<(PathBuf, PathBuf)> {
     let mut parts = relative.components();
     if parts.next()?.as_os_str() != "checkouts" {
@@ -619,24 +667,38 @@ impl Job<'_> {
             .file_stem()
             .and_then(|s| s.to_str())
             .context("invalid checkout key")?;
-        let local_revoked = project.is_empty() && !checkout.repo.as_os_str().is_empty();
-        if local_revoked {
-            let cleanup = crate::rulesync_checkout_local::sync(
-                self.setup,
-                &crate::rulesync_checkout_local::codex_home(&self.setup.home),
-                &self.settings,
-                &checkout.repo,
-                &project,
-                &teams,
-                &authorized,
-                &mut checkout.local_claude,
-                &mut checkout.local_codex,
-                &mut checkout.local_codex_dir_created,
-                &mut checkout.shared_rule_proposals,
-                &mut result,
-                self.can_restore_rejection,
-                local_key,
-            );
+        let has_repo = !checkout.repo.as_os_str().is_empty();
+        let local_revoked = project.is_empty() && has_repo;
+        if has_repo {
+            let cleanup = if local_revoked {
+                crate::rulesync_checkout_local::sync(
+                    self.setup,
+                    &crate::rulesync_checkout_local::codex_home(&self.setup.home),
+                    &self.settings,
+                    &checkout.repo,
+                    &project,
+                    &teams,
+                    &authorized,
+                    &mut checkout.local_claude,
+                    &mut checkout.local_codex,
+                    &mut checkout.local_codex_dir_created,
+                    &mut checkout.shared_rule_proposals,
+                    &mut result,
+                    self.can_restore_rejection,
+                    local_key,
+                )
+            } else {
+                crate::rulesync_checkout_local::prune_inaccessible(
+                    self.setup,
+                    &checkout.repo,
+                    local_key,
+                    &authorized,
+                    &mut checkout.local_claude,
+                    &mut checkout.local_codex,
+                    &mut checkout.shared_rule_proposals,
+                    &mut result,
+                )
+            };
             record = self.save(state_path, &record, &checkout)?;
             if let Err(error) = cleanup {
                 result.block(
@@ -1540,6 +1602,125 @@ mod tests {
     #[test]
     fn rulesync_checkout_local_revocation_survives_a_render_failure() {
         checkout_hand_edit(false, true);
+    }
+
+    #[test]
+    fn rulesync_checkout_one_revoked_project_is_removed_before_render_failure() {
+        use crate::rulesync_layers::tests::{hosted_fixture, PROJECT, REMOTE};
+        use std::{fs, process::Command};
+        use wenlan_core::{shared_space, team};
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, owner, _) = hosted_fixture(&setup.data);
+        let other = "Another project";
+        let scope = shared_space::Scope::Space(other.into());
+        let folder = team::new_hosted_folder(&settings);
+        shared_space::join_at(&settings, &scope, &folder, "Owner").unwrap();
+        shared_space::update_share(&settings, &scope, |share| share.hosted = true).unwrap();
+        shared_space::ensure_space_file(
+            &folder,
+            &scope,
+            other,
+            &shared_space::SpaceMember {
+                id: owner.id,
+                name: owner.name,
+            },
+        )
+        .unwrap();
+        fs::write(setup.data.join("repo-wiki.json"), serde_json::to_vec(&serde_json::json!({"bindings": [
+            {"space": PROJECT, "repo_root": scratch.path().join("repo"), "folder": "wiki", "remote_url": REMOTE},
+            {"space": other, "repo_root": scratch.path().join("repo"), "folder": "other-wiki", "remote_url": REMOTE}
+        ]})).unwrap()).unwrap();
+        let proposal =
+            rulesync_team::update_hosted_rules(&settings, other, "Other project instruction.\n")
+                .unwrap();
+        rulesync_team::decide_local_space_proposal(&settings, other, &proposal, true).unwrap();
+        let repo = scratch.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &["remote", "add", "origin", REMOTE],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        fs::create_dir(setup.home.join(".codex")).unwrap();
+        fs::write(
+            setup.home.join(".codex/config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings: settings.clone(),
+            root: &root,
+            directory: Path::new("checkouts/example/rules"),
+            can_restore_rejection: true,
+        };
+        let state_path = Path::new("checkouts/example.json");
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let state = Snapshot::Absent;
+        let checkout = Checkout {
+            repo: repo.clone(),
+            ..Checkout::default()
+        };
+        job.run_using(
+            state_path,
+            state,
+            checkout,
+            Some(&master),
+            |projects, _, _, _| {
+                assert_eq!(projects.len(), 2);
+                Ok(RenderedCheckout::default())
+            },
+        )
+        .unwrap();
+        let revoked = rulesync_team::load_project_layers(&settings)
+            .unwrap()
+            .into_iter()
+            .find(|layer| layer.project.as_ref().is_some_and(|p| p.space == other))
+            .unwrap();
+        let revoked_key = rulesync_layers::key(&revoked).unwrap();
+        let retained = rulesync_team::load_project_layers(&settings)
+            .unwrap()
+            .into_iter()
+            .find(|layer| layer.project.as_ref().is_some_and(|p| p.space == PROJECT))
+            .unwrap();
+        let retained_key = rulesync_layers::key(&retained).unwrap();
+        shared_space::leave_at(&settings, &scope).unwrap();
+        let state = root.read(state_path, false).unwrap();
+        let checkout = read_checkout(text(&state).unwrap().as_bytes()).unwrap();
+        let result = job
+            .run_using(state_path, state, checkout, Some(&master), |_, _, _, _| {
+                anyhow::bail!("deliberate render failure")
+            })
+            .unwrap();
+        assert!(result
+            .blocked
+            .iter()
+            .any(|line| line.contains("deliberate render failure")));
+        for name in ["CLAUDE.local.md", ".codex/config.toml"] {
+            let content = fs::read_to_string(repo.join(name)).unwrap();
+            assert!(!content.contains(&revoked_key));
+            assert!(content.contains(&retained_key));
+        }
     }
 
     fn checkout_hand_edit(new_revision: bool, fail_revoked_render: bool) {

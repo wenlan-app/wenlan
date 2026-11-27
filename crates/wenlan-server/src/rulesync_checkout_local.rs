@@ -81,17 +81,237 @@ fn codex_instructions(source: &str) -> Result<String> {
 
 fn codex_unmanaged_changed(current: &str, recorded: &str) -> bool {
     let outside = |source: &str| -> Option<String> {
-        let value = codex_instructions(source).ok()?;
-        let encoded = toml::Value::String(value).to_string();
-        let prefix = "developer_instructions = ";
-        let start = source.find(prefix)? + prefix.len();
-        source[start..].starts_with(&encoded).then(|| {
-            let mut outside = source.to_owned();
-            outside.replace_range(start..start + encoded.len(), "<Wenlan instructions>");
-            outside
-        })
+        let range = codex_value_range(source).ok()?;
+        let mut outside = source.to_owned();
+        outside.replace_range(range, "<Wenlan instructions>");
+        Some(outside)
     };
     outside(current).is_none_or(|value| Some(value) != outside(recorded))
+}
+
+fn codex_value_range(source: &str) -> Result<std::ops::Range<usize>> {
+    let original: toml::Value = toml::from_str(source)?;
+    original
+        .get("developer_instructions")
+        .and_then(toml::Value::as_str)
+        .context("Codex checkout instructions changed")?;
+    let prefix = "developer_instructions = ";
+    ensure!(
+        source.matches(prefix).count() == 1,
+        "Codex instruction key appears more than once"
+    );
+    let start = source
+        .find(prefix)
+        .context("Codex instruction key changed")?
+        + prefix.len();
+    let rest = &source[start..];
+    let end = if let Some(after_open) = rest.strip_prefix("\"\"\"") {
+        start
+            + 3
+            + after_open
+                .find("\n\"\"\"")
+                .context("Codex instruction format changed")?
+            + 4
+    } else {
+        ensure!(rest.starts_with('"'), "Codex instruction format changed");
+        let mut escaped = false;
+        let mut end = None;
+        for (offset, byte) in rest.bytes().enumerate().skip(1) {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if byte == b'\\' {
+                escaped = true;
+                continue;
+            }
+            if byte == b'"' {
+                end = Some(start + offset + 1);
+                break;
+            }
+        }
+        end.context("Codex instruction format changed")?
+    };
+    // Prove the range is the real top-level key: emptying it must change
+    // nothing else in the parsed file.
+    let mut changed_source = source.to_owned();
+    changed_source.replace_range(start..end, "\"\"");
+    let changed: toml::Value = toml::from_str(&changed_source)
+        .context("Codex instruction range is not the managed key")?;
+    let mut expected = original;
+    expected
+        .as_table_mut()
+        .context("Codex config is not a table")?
+        .insert(
+            "developer_instructions".into(),
+            toml::Value::String(String::new()),
+        );
+    ensure!(
+        changed == expected,
+        "Codex instruction range is not the managed key"
+    );
+    Ok(start..end)
+}
+
+fn remove_codex_instructions(source: &str) -> Result<String> {
+    let prefix = "developer_instructions = ";
+    let start = source
+        .find(prefix)
+        .context("Codex instruction key changed")?;
+    let end = codex_value_range(source)?.end;
+    let mut next = source.to_owned();
+    next.replace_range(
+        start..end + usize::from(source.as_bytes().get(end) == Some(&b'\n')),
+        "",
+    );
+    Ok(next)
+}
+
+fn replace_codex_instructions(source: &str, replacement: &str) -> Result<String> {
+    let range = codex_value_range(source)?;
+    let mut next = source.to_owned();
+    next.replace_range(
+        range,
+        &toml::Value::String(replacement.to_owned()).to_string(),
+    );
+    Ok(next)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prune_inaccessible(
+    setup: &Setup,
+    repo: &Path,
+    key: &str,
+    authorized: &BTreeMap<String, &TeamRuleLayer>,
+    claude_record: &mut Option<String>,
+    codex_record: &mut Option<String>,
+    receipts: &mut BTreeMap<PathBuf, ProposalReceipts>,
+    result: &mut RulesSyncReport,
+) -> Result<()> {
+    let keys = authorized
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let root = FileRoot::open(repo)?;
+    for name in ["CLAUDE.local.md", ".codex/config.toml"] {
+        let record = if name == "CLAUDE.local.md" {
+            &mut *claude_record
+        } else {
+            &mut *codex_record
+        };
+        let Some(prior) = record.as_deref() else {
+            continue;
+        };
+        let old_rules = if name == "CLAUDE.local.md" {
+            prior.to_owned()
+        } else {
+            codex_instructions(prior)?
+        };
+        let old_blocks = rulesync_layers::blocks(&old_rules)?;
+        if old_blocks.keys().all(|key| keys.contains(*key)) {
+            continue;
+        }
+        let path = Path::new(name);
+        let current = match root.read(path, false) {
+            Ok(value) => value,
+            Err(_) => {
+                result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{} because it could not be read; repair that file and sync again.", repo.display(), name));
+                continue;
+            }
+        };
+        let current_text = match text(&current) {
+            Ok(value) => value,
+            Err(_) => {
+                result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{} because it could not be read as text; repair that file and sync again.", repo.display(), name));
+                continue;
+            }
+        };
+        if name == ".codex/config.toml"
+            && (!current_text.starts_with(CODEX_HEADER) || tracked(repo, name)?)
+        {
+            result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{}; remove their developer_instructions after saving your settings.", repo.display(), name));
+            continue;
+        }
+        let current_rules = if name == "CLAUDE.local.md" {
+            match managed_span(current_text) {
+                Ok(Some(span)) => current_text[span].to_owned(),
+                _ => {
+                    result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{} because its markers changed; repair that file and sync again.", repo.display(), name));
+                    continue;
+                }
+            }
+        } else {
+            match codex_instructions(current_text) {
+                Ok(value) => value,
+                Err(_) => {
+                    result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{}; repair the instructions and sync again.", repo.display(), name));
+                    continue;
+                }
+            }
+        };
+        let current_blocks = match rulesync_layers::blocks(&current_rules) {
+            Ok(blocks) => blocks,
+            Err(_) => {
+                result.block(Code::CheckoutNeedsReview, format!("The revoked team rules are still in {}/{}; repair the section markers and sync again.", repo.display(), name));
+                continue;
+            }
+        };
+        let changed_revoked = old_blocks.iter().any(|(key, block)| {
+            !keys.contains(*key)
+                && current_blocks
+                    .get(key)
+                    .is_some_and(|current| current.body != block.body)
+        });
+        let copy = if changed_revoked {
+            Some(keep_revoked_copy(setup, key, name, current_text)?)
+        } else {
+            None
+        };
+        let kept = rulesync_layers::remove_inaccessible(&current_rules, &keys)?;
+        let next = if name == "CLAUDE.local.md" {
+            let span = managed_span(current_text)?.context("missing checkout block")?;
+            let mut next = current_text.to_owned();
+            next.replace_range(span, &kept);
+            next
+        } else {
+            replace_codex_instructions(current_text, &kept)?
+        };
+        write(&root, path, &current, Some(&next))?;
+        let approved = rulesync_layers::remove_inaccessible(&old_rules, &keys)?;
+        *record = Some(if name == "CLAUDE.local.md" {
+            approved
+        } else {
+            replace_codex_instructions(prior, &approved)?
+        });
+        if let Some(receipts) = receipts.get_mut(&alias(key, name)) {
+            receipts.retain(|layer_key, _| keys.contains(layer_key));
+        }
+        if let Some(copy) = copy {
+            result.block(
+                Code::CheckoutNeedsReview,
+                format!(
+                    "Revoked team rules were removed from {}/{}; your edited text is in {}.",
+                    repo.display(),
+                    name,
+                    copy.display()
+                ),
+            );
+        }
+    }
+    let mut answers = rulesync_shared_answers::read(&setup.data)?;
+    answers.waiting.retain(|_, edit| {
+        if wenlan_core::rulesync_personal::fingerprint(&edit.layer_id)
+            .is_ok_and(|layer_key| !keys.contains(&layer_key))
+        {
+            edit.files.retain(|file| {
+                file != &alias(key, "CLAUDE.local.md").display().to_string()
+                    && file != &alias(key, ".codex/config.toml").display().to_string()
+            });
+        }
+        !edit.files.is_empty()
+    });
+    rulesync_shared_answers::save(&setup.data, &answers)?;
+    Ok(())
 }
 
 fn keep_revoked_copy(setup: &Setup, key: &str, name: &str, content: &str) -> Result<PathBuf> {
@@ -130,53 +350,82 @@ fn revoke(
     let root = FileRoot::open(repo)?;
     let mut removed = Vec::new();
     let claude_path = Path::new("CLAUDE.local.md");
-    let current = root.read(claude_path, false)?;
-    if let Snapshot::File { .. } = current {
-        let content = text(&current)?;
-        if let Some(span) = managed_span(content)? {
-            if let Some(prior) = claude_record.as_deref() {
-                if &content[span.clone()] != prior {
-                    let copy = keep_revoked_copy(setup, key, "CLAUDE.local.md", content)?;
-                    removed.push(copy);
-                }
-                let mut next = content.to_owned();
-                next.replace_range(span, "");
-                write(
-                    &root,
-                    claude_path,
-                    &current,
-                    (!next.is_empty()).then_some(&next),
-                )?;
-                *claude_record = None;
-                receipts.remove(&alias(key, "CLAUDE.local.md"));
-            }
+    let current = match root.read(claude_path, false) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/CLAUDE.local.md because it could not be read; repair that file and sync again.", repo.display()));
+            None
         }
-    } else if current == Snapshot::Absent {
-        *claude_record = None;
+    };
+    if let Some(current) = current {
+        if let Snapshot::File { .. } = current {
+            let content = match text(&current) {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/CLAUDE.local.md because it could not be read as text; repair that file and sync again.", repo.display()));
+                    None
+                }
+            };
+            if let Some(content) = content {
+                let span = match managed_span(content) {
+                    Ok(span) => span,
+                    Err(_) => {
+                        result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/CLAUDE.local.md because its markers changed; repair or remove the Wenlan block.", repo.display()));
+                        None
+                    }
+                };
+                if let Some(span) = span {
+                    if let Some(prior) = claude_record.as_deref() {
+                        if &content[span.clone()] != prior {
+                            let copy = keep_revoked_copy(setup, key, "CLAUDE.local.md", content)?;
+                            removed.push(copy);
+                        }
+                        let mut next = content.to_owned();
+                        next.replace_range(span, "");
+                        write(
+                            &root,
+                            claude_path,
+                            &current,
+                            (!next.is_empty()).then_some(&next),
+                        )?;
+                        *claude_record = None;
+                        receipts.remove(&alias(key, "CLAUDE.local.md"));
+                    }
+                }
+            }
+        } else if current == Snapshot::Absent {
+            *claude_record = None;
+        }
     }
     let codex_path = Path::new(".codex/config.toml");
     let current = root.read(codex_path, false)?;
     if let Snapshot::File { .. } = current {
         let content = text(&current)?;
         if let Some(prior) = codex_record.as_deref() {
-            if content.starts_with(CODEX_HEADER)
-                && !tracked(repo, ".codex/config.toml")?
-                && !codex_unmanaged_changed(content, prior)
-            {
-                if content != prior {
-                    let copy = keep_revoked_copy(setup, key, ".codex/config.toml", content)?;
-                    removed.push(copy);
-                }
-                write(&root, codex_path, &current, None)?;
-                *codex_record = None;
-                receipts.remove(&alias(key, ".codex/config.toml"));
-                let directory = repo.join(".codex");
-                if *codex_dir_created && fs::read_dir(&directory)?.next().is_none() {
-                    fs::remove_dir(directory)?;
-                    *codex_dir_created = false;
+            if content.starts_with(CODEX_HEADER) && !tracked(repo, ".codex/config.toml")? {
+                if let Ok(next) = remove_codex_instructions(content) {
+                    if codex_instructions(content)? != codex_instructions(prior)? {
+                        let copy = keep_revoked_copy(setup, key, ".codex/config.toml", content)?;
+                        removed.push(copy);
+                    }
+                    write(
+                        &root,
+                        codex_path,
+                        &current,
+                        (next != CODEX_HEADER && !next.is_empty()).then_some(next.as_str()),
+                    )?;
+                    *codex_record = None;
+                    receipts.remove(&alias(key, ".codex/config.toml"));
+                    let directory = repo.join(".codex");
+                    if *codex_dir_created && fs::read_dir(&directory)?.next().is_none() {
+                        fs::remove_dir(directory)?;
+                        *codex_dir_created = false;
+                    }
+                } else {
+                    result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/.codex/config.toml because its instructions could not be parsed; remove the developer_instructions key after saving your settings.", repo.display()));
                 }
             } else {
-                result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/.codex/config.toml because it has your own settings; remove the team rules there after saving your settings.", repo.display()));
+                result.block(Code::CheckoutNeedsReview, format!("The team rules are still in {}/.codex/config.toml because it is tracked or no longer Wenlan's file; remove the developer_instructions key after saving your settings.", repo.display()));
             }
         }
     } else if current == Snapshot::Absent {
@@ -205,6 +454,8 @@ fn revoke(
 fn rebase_waiting_local(
     setup: &Setup,
     root: &FileRoot,
+    codex_home: &Path,
+    repo: &Path,
     key: &str,
     expected: &str,
     authorized: &BTreeMap<String, &TeamRuleLayer>,
@@ -235,15 +486,26 @@ fn rebase_waiting_local(
                 continue;
             }
             let Some(baseline) = baseline else { continue };
+            if name == ".codex/config.toml"
+                && (!codex_trusted(codex_home, repo)? || tracked(repo, name)?)
+            {
+                continue;
+            }
             let path = Path::new(name);
-            let current = root.read(path, false)?;
-            let local = text(&current)?;
+            let Ok(current) = root.read(path, false) else {
+                continue;
+            };
+            let Ok(local) = text(&current) else { continue };
             if name == ".codex/config.toml" && codex_unmanaged_changed(local, baseline) {
                 continue;
             }
             let (old_rules, local_rules) = if name == "CLAUDE.local.md" {
-                let old_span = managed_span(baseline)?.context("missing checkout baseline")?;
-                let local_span = managed_span(local)?.context("missing checkout rules")?;
+                let Ok(Some(old_span)) = managed_span(baseline) else {
+                    continue;
+                };
+                let Ok(Some(local_span)) = managed_span(local) else {
+                    continue;
+                };
                 (&baseline[old_span], &local[local_span])
             } else {
                 // Owned strings are needed because TOML unescapes the value.
@@ -252,8 +514,11 @@ fn rebase_waiting_local(
                 if old == expected {
                     continue;
                 }
-                let (rebased, new_id, markdown) =
-                    rebase_rules(&old, &mine, expected, layer, &block_key)?;
+                let Ok((rebased, new_id, markdown)) =
+                    rebase_rules(&old, &mine, expected, layer, &block_key)
+                else {
+                    continue;
+                };
                 let next = format!(
                     "{CODEX_HEADER}developer_instructions = {}\n",
                     toml::Value::String(rebased)
@@ -269,9 +534,14 @@ fn rebase_waiting_local(
             if old_rules == approved {
                 continue;
             }
-            let (rebased, new_id, markdown) =
-                rebase_rules(old_rules, local_rules, &approved, layer, &block_key)?;
-            let span = managed_span(local)?.context("missing checkout rules")?;
+            let Ok((rebased, new_id, markdown)) =
+                rebase_rules(old_rules, local_rules, &approved, layer, &block_key)
+            else {
+                continue;
+            };
+            let Ok(Some(span)) = managed_span(local) else {
+                continue;
+            };
             let mut next = local.to_owned();
             next.replace_range(span, &rebased);
             updates.push((name, current, next, approved, new_id, markdown));
@@ -286,6 +556,10 @@ fn rebase_waiting_local(
                 .all(|update| update.4 == new_id && update.5 == markdown),
             "checkout rule edits disagree across tools"
         );
+        let updated_files = updates
+            .iter()
+            .map(|update| alias(key, update.0).display().to_string())
+            .collect::<Vec<_>>();
         for (name, current, next, approved, _, _) in updates {
             write(root, Path::new(name), &current, Some(&next))?;
             if name == "CLAUDE.local.md" {
@@ -295,10 +569,24 @@ fn rebase_waiting_local(
             }
         }
         answers.waiting.remove(&id);
+        let mut remaining = edit.clone();
+        remaining.files.retain(|file| !updated_files.contains(file));
+        if !remaining.files.is_empty() {
+            answers.waiting.insert(id, remaining);
+        }
         let mut moved = edit;
+        moved.files = updated_files;
         moved.revision = layer.revision.clone();
         moved.markdown = markdown;
-        answers.waiting.insert(new_id, moved);
+        if let Some(existing) = answers.waiting.get_mut(&new_id) {
+            for file in moved.files {
+                if !existing.files.contains(&file) {
+                    existing.files.push(file);
+                }
+            }
+        } else {
+            answers.waiting.insert(new_id, moved);
+        }
         rulesync_shared_answers::save(&setup.data, &answers)?;
     }
     Ok(())
@@ -440,7 +728,7 @@ fn update_exclude(repo: &Path, claude: bool, codex: bool) -> Result<()> {
     }
     let mut entries = Vec::new();
     for (enabled, name) in [(claude, "CLAUDE.local.md"), (codex, ".codex/config.toml")] {
-        if enabled && (!excluded(repo, name)? || owned_before.contains(&format!("\n{name}\n"))) {
+        if owned_before.contains(&format!("\n{name}\n")) || (enabled && !excluded(repo, name)?) {
             entries.push(name);
         }
     }
@@ -529,6 +817,8 @@ pub(super) fn sync(
         rebase_waiting_local(
             setup,
             &root,
+            codex_home,
+            repo,
             key,
             &expected,
             authorized,
@@ -551,11 +841,12 @@ pub(super) fn sync(
             let existing = content.and_then(|content| span.as_ref().map(|range| &content[range.clone()]));
             let changed = existing != prior;
             let mut replace = !changed;
+            let mut rejected = false;
             if changed && person && wanted {
                 let before = prior.unwrap_or_default();
                 let after = existing.unwrap_or_default();
                 match review(settings, setup, key, "CLAUDE.local.md", before, after, authorized, receipts) {
-                    Ok(SharedReview::Decided { rejected: true }) => replace = true,
+                    Ok(SharedReview::Decided { rejected: true }) => { replace = true; rejected = true; },
                     Ok(SharedReview::Decided { rejected: false }) => replace = true,
                     Ok(_) | Err(_) => (),
                 }
@@ -576,6 +867,7 @@ pub(super) fn sync(
                 if write(&root, claude_path, &current, desired)? { result.written.push(repo.join(claude_path).display().to_string()); }
                 *claude_record = block;
                 receipts.remove(&alias(key, "CLAUDE.local.md"));
+                if rejected { rulesync_layers::report_rejection(result); }
             }
         }
     }
@@ -629,7 +921,11 @@ pub(super) fn sync(
                             receipts,
                         )
                     });
-                    held = !matches!(decision, Ok(SharedReview::Decided { .. }));
+                    let decided = matches!(&decision, Ok(SharedReview::Decided { .. }));
+                    if person && matches!(&decision, Ok(SharedReview::Decided { rejected: true })) {
+                        rulesync_layers::report_rejection(result);
+                    }
+                    held = !person || !decided;
                 } else {
                     held = true;
                 }
@@ -997,6 +1293,40 @@ mod tests {
     }
 
     #[test]
+    fn rulesync_checkout_codex_quoted_edit_stays_waiting_for_confirmation() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join(".codex/config.toml");
+        let value = codex_instructions(&fs::read_to_string(&path).unwrap())
+            .unwrap()
+            .replacen(
+                "Use the approved checklist.",
+                "Use the \"quoted\" checklist.",
+                1,
+            );
+        let edited = format!(
+            "{CODEX_HEADER}developer_instructions = {}\n",
+            serde_json::to_string(&value).unwrap()
+        );
+        assert!(edited.contains("\\\"quoted\\\""));
+        fs::write(&path, &edited).unwrap();
+        f.run();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        let edit = answers.waiting.values().next().unwrap();
+        assert_eq!(edit.files.len(), 1);
+        assert!(rulesync_layers::waiting_in_file(
+            edit,
+            &edit.files[0],
+            &f.settings,
+            &f.setup.data,
+            &f.setup.home
+        ));
+        assert_eq!(fs::read_to_string(path).unwrap(), edited);
+    }
+
+    #[test]
     fn checkout_codex_config_refuses_a_file_that_is_not_wenlans() {
         let mut f = Fixture::new();
         f.trust();
@@ -1061,7 +1391,46 @@ mod tests {
         assert!(!f.repo.join(".codex/config.toml").exists());
         let exclude =
             fs::read_to_string(git_common_dir(&f.repo).unwrap().join("info/exclude")).unwrap();
-        assert!(!exclude.contains(EXCLUDE_START));
+        assert!(exclude.contains(EXCLUDE_START));
+    }
+
+    #[test]
+    fn rulesync_checkout_broken_claude_marker_does_not_block_codex_revocation() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join("CLAUDE.local.md");
+        let broken = fs::read_to_string(&path)
+            .unwrap()
+            .replace(END, "<!-- broken end -->\n");
+        fs::write(&path, &broken).unwrap();
+        f.project.clear();
+        f.team.clear();
+        let report = f.run();
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("CLAUDE.local.md") && line.contains("still")));
+    }
+
+    #[test]
+    fn rulesync_checkout_non_utf8_claude_does_not_block_codex_revocation() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let bytes = vec![0xff, 0xfe, 0x00];
+        fs::write(f.repo.join("CLAUDE.local.md"), &bytes).unwrap();
+        f.project.clear();
+        f.team.clear();
+        let report = f.run();
+        assert_eq!(fs::read(f.repo.join("CLAUDE.local.md")).unwrap(), bytes);
+        assert!(!f.repo.join(".codex/config.toml").exists());
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("CLAUDE.local.md") && line.contains("read as text")));
     }
 
     #[test]
@@ -1103,6 +1472,57 @@ mod tests {
             .unwrap()
             .waiting
             .is_empty());
+    }
+
+    #[test]
+    fn rulesync_checkout_prunes_one_revoked_project_with_another_edit_waiting() {
+        let mut f = Fixture::new();
+        let mut second = f.project[0].clone();
+        second.id = "second-project-layer".into();
+        second.markdown = "Other project checklist.\n".into();
+        let retained_key = rulesync_layers::key(&second).unwrap();
+        let revoked_key = rulesync_layers::key(&f.project[0]).unwrap();
+        f.project.push(second);
+        edit_both(&mut f);
+        f.run();
+        let mut sample = f.project[0].clone();
+        sample.id = "unrelated-personal-example".into();
+        let example = format!(
+            "\n```md\n{}```\n",
+            rulesync_layers::format_layer("Example", &sample).unwrap()
+        );
+        let claude_path = f.repo.join("CLAUDE.local.md");
+        fs::write(
+            &claude_path,
+            format!("{}{}", fs::read_to_string(&claude_path).unwrap(), example),
+        )
+        .unwrap();
+        f.project.remove(0);
+        let authorized = f
+            .team
+            .iter()
+            .chain(&f.project)
+            .map(|layer| (rulesync_layers::key(layer).unwrap(), layer))
+            .collect();
+        let mut result = report("checkout");
+        prune_inaccessible(
+            &f.setup,
+            &f.repo,
+            &f.key,
+            &authorized,
+            &mut f.claude,
+            &mut f.codex,
+            &mut f.receipts,
+            &mut result,
+        )
+        .unwrap();
+        for name in ["CLAUDE.local.md", ".codex/config.toml"] {
+            let content = file_rules(&f.repo, name);
+            assert!(!content.contains(&revoked_key));
+            assert!(content.contains(&retained_key));
+            assert!(content.contains("Use the revised checklist."));
+        }
+        assert!(fs::read_to_string(claude_path).unwrap().ends_with(&example));
     }
 
     #[test]
@@ -1151,12 +1571,73 @@ mod tests {
         f.project.clear();
         f.team.clear();
         let report = f.run();
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("model = \"custom\""));
+        assert!(!after.contains("developer_instructions"));
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("access ended") && line.contains("revoked-local-")));
+    }
+
+    #[test]
+    fn rulesync_checkout_revocation_refuses_ambiguous_codex_key_without_losing_bytes() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join(".codex/config.toml");
+        let original = fs::read_to_string(&path).unwrap();
+        let altered = original.replacen("developer_instructions = ", "# developer_instructions = \"\"\"\nmodel = \"custom\"\n# keep this comment\ndeveloper_instructions = ", 1);
+        assert!(toml::from_str::<toml::Value>(&altered).is_ok());
+        fs::write(&path, &altered).unwrap();
+        f.project.clear();
+        f.team.clear();
+        let report = f.run();
+        assert_eq!(fs::read_to_string(&path).unwrap(), altered);
         assert!(report
             .blocked
             .iter()
             .any(|line| line.contains("team rules are still")
-                && line.contains("remove the team rules")));
-        assert_eq!(fs::read_to_string(&path).unwrap(), own);
+                && line.contains("remove the developer_instructions key")));
+    }
+
+    #[test]
+    fn rulesync_checkout_revocation_refuses_a_key_spelling_hidden_by_personal_text() {
+        // The personal string first holds a different quoted value, then an exact
+        // copy of the managed value: each must be refused by its own check.
+        for exact_copy in [false, true] {
+            let mut f = Fixture::new();
+            f.trust();
+            f.run();
+            let path = f.repo.join(".codex/config.toml");
+            let original = fs::read_to_string(&path).unwrap();
+            let key = "developer_instructions = ";
+            let start = original.find(key).unwrap() + key.len();
+            let value = &original[start..original.rfind("\"\"\"").unwrap() + 3];
+            let hidden = if exact_copy {
+                format!("'''{key}{value}'''")
+            } else {
+                format!("'{key}\"z\"'")
+            };
+            let altered = original.replacen(
+                key,
+                &format!("label = {hidden}\n\"developer_instructions\" = "),
+                1,
+            );
+            assert!(toml::from_str::<toml::Value>(&altered).is_ok());
+            fs::write(&path, &altered).unwrap();
+            let receipt = f.codex.clone();
+            f.project.clear();
+            f.team.clear();
+            let result = f.run();
+            assert_eq!(fs::read_to_string(&path).unwrap(), altered);
+            assert_eq!(f.codex, receipt);
+            assert!(result
+                .blocked
+                .iter()
+                .any(|line| line.contains("team rules are still")
+                    && line.contains("remove the developer_instructions key")));
+        }
     }
 
     #[test]
@@ -1243,11 +1724,32 @@ mod tests {
         .status
         .success());
         f.repo = linked;
+        f.trust();
         f.run();
         let common = git_common_dir(&f.repo).unwrap();
         assert!(fs::read_to_string(common.join("info/exclude"))
             .unwrap()
-            .contains("CLAUDE.local.md"));
+            .contains(".codex/config.toml"));
+        let sibling = f._temp.path().join("sibling");
+        assert!(command(
+            &f.repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "sibling",
+                sibling.to_str().unwrap()
+            ]
+        )
+        .unwrap()
+        .status
+        .success());
+        f.repo = sibling;
+        f.run();
+        let exclude = fs::read_to_string(common.join("info/exclude")).unwrap();
+        assert!(exclude.contains("CLAUDE.local.md"));
+        assert!(exclude.contains(".codex/config.toml"));
     }
 
     fn pending_id(f: &Fixture) -> String {
@@ -1365,7 +1867,19 @@ mod tests {
         )
         .unwrap();
         f.team = rulesync_team::load_layers(&f.settings).unwrap();
-        f.run();
+        f.run_as(false);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        let report = f.run();
+        assert!(report
+            .notice_codes
+            .contains(&Code::SharedRuleRejected.into()));
         assert!(!fs::read_to_string(f.repo.join("CLAUDE.local.md"))
             .unwrap()
             .contains("revised checklist"));
@@ -1432,6 +1946,13 @@ mod tests {
         f.run();
         let id = pending_id(&f);
         f.decide_edit(id.clone());
+        f.run();
+        let state_path = f.setup.data.join(format!("checkouts/{}.json", f.key));
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        state["checkout"]["shared_rule_proposals"] = serde_json::to_value(&f.receipts).unwrap();
+        fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+        fs::write(f.setup.data.join("checkouts/incompatible.json"), b"{}").unwrap();
         assert_eq!(f.pending_team_count(), 1);
         let refused = rulesync_shared_answers::read(&f.setup.data)
             .unwrap()
@@ -1445,6 +1966,12 @@ mod tests {
         )
         .unwrap();
         let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        assert!(state["checkout"]["shared_rule_proposals"]
+            .as_object()
+            .is_none_or(|map| map.is_empty()));
+        f.receipts.clear();
         assert!(answers.waiting.contains_key(&id));
         assert!(answers.answered_edits.is_empty());
         assert!(answers.answers.is_empty());
@@ -1465,6 +1992,96 @@ mod tests {
         assert_eq!(f.pending_team_count(), 0);
         f.decide_edit(id);
         assert_eq!(f.pending_team_count(), 1);
+        let team_path = f.settings.with_file_name(wenlan_core::team::TEAM_FILE);
+        let proposals = rulesync_team::pending_proposals(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            wenlan_core::team::CredentialKind::BrowserSession,
+        )
+        .unwrap();
+        rulesync_team::decide_proposal(
+            &team_path,
+            &f.settings,
+            rulesync_team::SPACE,
+            &f.writer.id,
+            wenlan_core::team::CredentialKind::BrowserSession,
+            &proposals[0].id,
+            true,
+        )
+        .unwrap();
+        f.team = rulesync_team::load_layers(&f.settings).unwrap();
+        f.run();
+        assert!(fs::read_to_string(f.repo.join("CLAUDE.local.md"))
+            .unwrap()
+            .contains("revised checklist"));
+    }
+
+    #[test]
+    fn rulesync_checkout_refusal_reopens_only_live_files() {
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        f.decide_edit(id.clone());
+        let proposal = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .sent_edits[&id]
+            .proposal
+            .clone();
+        fs::remove_file(f.repo.join("CLAUDE.local.md")).unwrap();
+        crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
+            &f.setup,
+            &f.settings,
+            &[proposal],
+        )
+        .unwrap();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(
+            answers.waiting[&id].files,
+            vec![alias(&f.key, ".codex/config.toml").display().to_string()]
+        );
+        f.decide_edit(id);
+    }
+
+    #[test]
+    fn rulesync_checkout_failed_proposal_retirement_keeps_sent_edit_retryable() {
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let id = pending_id(&f);
+        f.decide_edit(id.clone());
+        let sent = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .sent_edits[&id]
+            .clone();
+        let original = fs::read(&sent.proposal_path).unwrap();
+        fs::remove_file(&sent.proposal_path).unwrap();
+        fs::create_dir(&sent.proposal_path).unwrap();
+        assert!(
+            crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
+                &f.setup,
+                &f.settings,
+                std::slice::from_ref(&sent.proposal)
+            )
+            .is_err()
+        );
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert!(answers.sent_edits.contains_key(&id));
+        assert!(!answers.waiting.contains_key(&id));
+        fs::remove_dir(&sent.proposal_path).unwrap();
+        fs::write(&sent.proposal_path, original).unwrap();
+        crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
+            &f.setup,
+            &f.settings,
+            std::slice::from_ref(&sent.proposal),
+        )
+        .unwrap();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert!(!answers.sent_edits.contains_key(&id));
+        assert!(answers.waiting.contains_key(&id));
+        assert!(!sent.proposal_path.exists());
     }
 
     #[test]
@@ -1508,6 +2125,88 @@ mod tests {
         )
         .unwrap()
         .contains("New approved line."));
+    }
+
+    #[test]
+    fn rulesync_checkout_rebase_error_in_one_file_allows_other_file_to_update() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join("CLAUDE.local.md");
+        fs::write(
+            &path,
+            fs::read_to_string(&path).unwrap().replacen(
+                "Use the approved checklist.",
+                "First team edit.",
+                1,
+            ),
+        )
+        .unwrap();
+        f.run();
+        let team_id = rulesync_shared_answers::read(&f.setup.data)
+            .unwrap()
+            .waiting
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        f.decide_edit(team_id);
+        f.run();
+        fs::write(
+            &path,
+            fs::read_to_string(&path)
+                .unwrap()
+                .replace("Use the approved checklist.", "Waiting project edit."),
+        )
+        .unwrap();
+        f.run();
+        assert_eq!(
+            rulesync_shared_answers::read(&f.setup.data)
+                .unwrap()
+                .waiting
+                .len(),
+            1
+        );
+        let changed = fs::read_to_string(&path)
+            .unwrap()
+            .replace("First team edit.", "Changed sent edit.");
+        fs::write(&path, &changed).unwrap();
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        f.run();
+        assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+        assert!(file_rules(&f.repo, ".codex/config.toml").contains("New approved line."));
+    }
+
+    #[test]
+    fn rulesync_checkout_broken_wrapper_during_rebase_does_not_block_codex() {
+        let mut f = Fixture::new();
+        f.trust();
+        f.run();
+        let path = f.repo.join("CLAUDE.local.md");
+        fs::write(
+            &path,
+            fs::read_to_string(&path).unwrap().replacen(
+                "Use the approved checklist.",
+                "Waiting team edit.",
+                1,
+            ),
+        )
+        .unwrap();
+        f.run();
+        let broken = fs::read_to_string(&path)
+            .unwrap()
+            .replace(END, "<!-- damaged checkout end -->\n");
+        fs::write(&path, &broken).unwrap();
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        f.run();
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        assert!(file_rules(&f.repo, ".codex/config.toml").contains("New approved line."));
     }
 
     #[test]
@@ -1582,6 +2281,96 @@ mod tests {
         assert!(fs::read_to_string(f.repo.join("CLAUDE.local.md"))
             .unwrap()
             .contains("New approved line."));
+    }
+
+    #[test]
+    fn rulesync_checkout_rebase_merges_identical_waiting_edits_from_two_repos() {
+        let mut f = Fixture::new();
+        edit_both(&mut f);
+        f.run();
+        let first = (
+            f.repo.clone(),
+            f.key.clone(),
+            f.claude.take(),
+            f.codex.take(),
+            std::mem::take(&mut f.receipts),
+        );
+        let second = f._temp.path().join("second-repo");
+        fs::create_dir(&second).unwrap();
+        assert!(command(&second, &["init", "--quiet"])
+            .unwrap()
+            .status
+            .success());
+        assert!(command(
+            &second,
+            &[
+                "remote",
+                "add",
+                "origin",
+                crate::rulesync_layers::tests::REMOTE
+            ]
+        )
+        .unwrap()
+        .status
+        .success());
+        f.key = wenlan_core::rulesync_personal::fingerprint(&second).unwrap();
+        let mut state: serde_json::Value = serde_json::from_slice(
+            &fs::read(f.setup.data.join(format!("checkouts/{}.json", first.1))).unwrap(),
+        )
+        .unwrap();
+        state["checkout"]["repo"] = serde_json::to_value(&second).unwrap();
+        fs::write(
+            f.setup.data.join(format!("checkouts/{}.json", f.key)),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        f.repo = second;
+        edit_both(&mut f);
+        f.run();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        let old_id = answers.waiting.keys().next().unwrap().clone();
+        assert_eq!(answers.waiting[&old_id].files.len(), 4);
+        f.approve_rules(
+            rulesync_team::SPACE,
+            "Use the approved checklist.\nNew approved line.\n",
+        );
+        f.run();
+        f.repo = first.0;
+        f.key = first.1;
+        f.claude = first.2;
+        f.codex = first.3;
+        f.receipts = first.4;
+        f.trust();
+        f.run();
+        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        assert_eq!(answers.waiting.values().next().unwrap().files.len(), 4);
+    }
+
+    #[test]
+    fn rulesync_checkout_codex_rebase_checks_trust_and_tracking_first() {
+        for tracked_file in [false, true] {
+            let mut f = Fixture::new();
+            let (_, codex) = edit_both(&mut f);
+            f.run();
+            if tracked_file {
+                assert!(command(&f.repo, &["add", "-f", ".codex/config.toml"])
+                    .unwrap()
+                    .status
+                    .success());
+            } else {
+                fs::remove_file(f.setup.home.join(".codex/config.toml")).unwrap();
+            }
+            f.approve_rules(
+                rulesync_team::SPACE,
+                "Use the approved checklist.\nNew approved line.\n",
+            );
+            f.run();
+            assert_eq!(
+                fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+                codex
+            );
+        }
     }
 
     #[test]
@@ -1670,7 +2459,7 @@ mod tests {
     #[test]
     fn rulesync_checkout_declined_shared_edit_restores_approved_lines_on_person_sync() {
         let mut f = Fixture::new();
-        edit_both(&mut f);
+        let (claude, codex) = edit_both(&mut f);
         f.run();
         let id = pending_id(&f);
         crate::rulesync_routes::decide_shared_edit_at(
@@ -1679,7 +2468,19 @@ mod tests {
             wenlan_types::rulesync::SharedEditDecisionRequest { id, send: false },
         )
         .unwrap();
-        f.run();
+        f.run_as(false);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("CLAUDE.local.md")).unwrap(),
+            claude
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
+            codex
+        );
+        let report = f.run();
+        assert!(report
+            .notice_codes
+            .contains(&Code::SharedRuleRejected.into()));
         assert!(!fs::read_to_string(f.repo.join("CLAUDE.local.md"))
             .unwrap()
             .contains("revised checklist"));
