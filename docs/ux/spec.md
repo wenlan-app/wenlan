@@ -1073,7 +1073,7 @@ and wait for evidence that people need them.
   `rulesync_checkout_prunes_one_revoked_project_with_another_edit_waiting`,
   `rulesync_checkout_broken_claude_marker_does_not_block_codex_revocation`,
   `rulesync_checkout_non_utf8_claude_does_not_block_codex_revocation`,
-  `rulesync_checkout_revocation_refuses_ambiguous_codex_key_without_losing_bytes`,
+  `rulesync_checkout_revocation_finds_the_real_codex_key_and_keeps_own_lines`,
   `rulesync_checkout_revocation_refuses_a_key_spelling_hidden_by_personal_text`,
   `rulesync_checkout_failed_proposal_retirement_keeps_sent_edit_retryable`,
   `rulesync_checkout_broken_wrapper_during_rebase_does_not_block_codex`,

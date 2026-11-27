@@ -122,15 +122,30 @@ fn codex_value_range(source: &str) -> Result<std::ops::Range<usize>> {
         .get("developer_instructions")
         .and_then(toml::Value::as_str)
         .context("Codex checkout instructions changed")?;
+    // The key text can also appear inside a rule, so try each place it starts
+    // a line and keep the one that proves to be the real top-level key.
     let prefix = "developer_instructions = ";
-    ensure!(
-        source.matches(prefix).count() == 1,
-        "Codex instruction key appears more than once"
-    );
-    let start = source
-        .find(prefix)
-        .context("Codex instruction key changed")?
-        + prefix.len();
+    let mut found = None;
+    for (at, _) in source.match_indices(prefix) {
+        if at != 0 && source.as_bytes()[at - 1] != b'\n' {
+            continue;
+        }
+        if let Ok(range) = codex_value_range_at(source, &original, at + prefix.len()) {
+            ensure!(
+                found.is_none(),
+                "Codex instruction key appears more than once"
+            );
+            found = Some(range);
+        }
+    }
+    found.context("Codex instruction key changed")
+}
+
+fn codex_value_range_at(
+    source: &str,
+    original: &toml::Value,
+    start: usize,
+) -> Result<std::ops::Range<usize>> {
     let rest = &source[start..];
     let end = if let Some(after_open) = rest.strip_prefix("\"\"\"") {
         start
@@ -165,7 +180,7 @@ fn codex_value_range(source: &str) -> Result<std::ops::Range<usize>> {
     changed_source.replace_range(start..end, "\"\"");
     let changed: toml::Value = toml::from_str(&changed_source)
         .context("Codex instruction range is not the managed key")?;
-    let mut expected = original;
+    let mut expected = original.clone();
     expected
         .as_table_mut()
         .context("Codex config is not a table")?
@@ -181,11 +196,9 @@ fn codex_value_range(source: &str) -> Result<std::ops::Range<usize>> {
 }
 
 fn remove_codex_instructions(source: &str) -> Result<String> {
-    let prefix = "developer_instructions = ";
-    let start = source
-        .find(prefix)
-        .context("Codex instruction key changed")?;
-    let end = codex_value_range(source)?.end;
+    let range = codex_value_range(source)?;
+    let start = range.start - "developer_instructions = ".len();
+    let end = range.end;
     let mut next = source.to_owned();
     next.replace_range(
         start..end + usize::from(source.as_bytes().get(end) == Some(&b'\n')),
@@ -884,7 +897,7 @@ fn codex_has_global_instructions(codex_home: &Path) -> Result<bool> {
 }
 
 #[cfg(test)]
-fn trust_config(path: &str) -> String {
+pub(crate) fn trust_config(path: &str) -> String {
     let mut project = toml::map::Map::new();
     project.insert("trust_level".into(), toml::Value::String("trusted".into()));
     let mut projects = toml::map::Map::new();
@@ -930,10 +943,18 @@ pub(super) fn sync(
     // CLAUDE.local.md; this sync then leaves .codex/config.toml as it is.
     let codex_readable = codex_config(codex_home).is_ok();
     let trusted = codex_readable && codex_trusted(codex_home, repo)?;
-    update_exclude(repo, true, trusted)?;
+    // Hide .codex/config.toml from Git only when Wenlan may write it: a
+    // person's own untracked file must stay visible to `git status`.
+    let codex_ours = match fs::read_to_string(repo.join(".codex/config.toml")) {
+        Ok(existing) => existing.starts_with(CODEX_HEADER),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    };
+    update_exclude(repo, true, trusted && codex_ours)?;
     let claude_safe = safe_local_write(repo, "CLAUDE.local.md", result)?;
-    let codex_safe =
-        codex_readable && (!trusted || safe_local_write(repo, ".codex/config.toml", result)?);
+    // A file that isn't Wenlan's is never written; the check below says so.
+    let codex_safe = codex_readable
+        && (!trusted || !codex_ours || safe_local_write(repo, ".codex/config.toml", result)?);
     if person && wanted {
         rebase_waiting_local(
             setup,
@@ -1175,10 +1196,7 @@ mod tests {
         }
         fs::write(
             codex_home.join("config.toml"),
-            format!(
-                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                trusted.display()
-            ),
+            trust_config(&trusted.display().to_string()),
         )
         .unwrap();
         let team = TeamRuleLayer {
@@ -1587,6 +1605,9 @@ mod tests {
             fs::read_to_string(f.repo.join(".codex/config.toml")).unwrap(),
             "developer_instructions = 'mine'\n"
         );
+        // The person's own untracked file stays visible to Git.
+        assert!(!excluded(&f.repo, ".codex/config.toml").unwrap());
+        assert!(excluded(&f.repo, "CLAUDE.local.md").unwrap());
     }
 
     #[test]
@@ -1640,8 +1661,13 @@ mod tests {
                 .iter()
                 .filter(|line| line.contains("Git tracks"))
                 .count(),
-            2
+            1
         );
+        // The tracked Codex file isn't Wenlan's, so it is refused as such.
+        assert!(report
+            .blocked
+            .iter()
+            .any(|line| line.contains("isn't Wenlan's file")));
     }
 
     #[test]
@@ -1685,6 +1711,8 @@ mod tests {
             "Use \"\"\" here.",
             "Use ''' here.",
             "Use \\d+, \"\"\", and ''' here.",
+            "Put developer_instructions = \"x\" in config.",
+            "developer_instructions = \"x\" starts this rule.",
         ] {
             let mut f = Fixture::new();
             f.trust();
@@ -2136,24 +2164,29 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_checkout_revocation_refuses_ambiguous_codex_key_without_losing_bytes() {
+    fn rulesync_checkout_revocation_finds_the_real_codex_key_and_keeps_own_lines() {
+        // A commented copy of the key does not hide the real one: revocation
+        // removes only the managed key and keeps the person's own lines.
         let mut f = Fixture::new();
         f.trust();
         f.run();
         let path = f.repo.join(".codex/config.toml");
         let original = fs::read_to_string(&path).unwrap();
-        let altered = original.replacen("developer_instructions = ", "# developer_instructions = \"\"\"\nmodel = \"custom\"\n# keep this comment\ndeveloper_instructions = ", 1);
+        let own = "# developer_instructions = \"\"\"\nmodel = \"custom\"\n# keep this comment\n";
+        let altered = original.replacen(
+            "developer_instructions = ",
+            &format!("{own}developer_instructions = "),
+            1,
+        );
         assert!(toml::from_str::<toml::Value>(&altered).is_ok());
         fs::write(&path, &altered).unwrap();
         f.project.clear();
         f.team.clear();
-        let report = f.run();
-        assert_eq!(fs::read_to_string(&path).unwrap(), altered);
-        assert!(report
-            .blocked
-            .iter()
-            .any(|line| line.contains("team rules are still")
-                && line.contains("remove the developer_instructions key")));
+        f.run();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            format!("{CODEX_HEADER}{own}")
+        );
     }
 
     #[test]

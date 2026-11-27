@@ -1282,10 +1282,7 @@ mod tests {
             .success());
         fs::write(
             setup.home.join(".codex/config.toml"),
-            format!(
-                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                repo.display()
-            ),
+            crate::rulesync_checkout_local::trust_config(&repo.display().to_string()),
         )
         .unwrap();
         let make_team = |id: &str, markdown: &str| TeamRuleLayer {
@@ -1794,10 +1791,7 @@ mod tests {
         fs::create_dir(setup.home.join(".codex")).unwrap();
         fs::write(
             setup.home.join(".codex/config.toml"),
-            format!(
-                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                repo.display()
-            ),
+            crate::rulesync_checkout_local::trust_config(&repo.display().to_string()),
         )
         .unwrap();
         let root = setup.data_files().unwrap();
@@ -1892,10 +1886,7 @@ mod tests {
         fs::create_dir(setup.home.join(".codex")).unwrap();
         fs::write(
             setup.home.join(".codex/config.toml"),
-            format!(
-                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                repo.display()
-            ),
+            crate::rulesync_checkout_local::trust_config(&repo.display().to_string()),
         )
         .unwrap();
         let root = setup.data_files().unwrap();
