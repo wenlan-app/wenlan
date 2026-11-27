@@ -432,12 +432,13 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // routes. A code basis' lines then and now add one PageWorkspace-scoped
     // single-id route. Personal-rule plans and history add seven Global routes.
     // Previewing and declining the one-time page-rule move add two more.
-    assert_eq!(rows.len(), 185);
+    // Listing and deciding tool-file team edits add two more Global routes.
+    assert_eq!(rows.len(), 187);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        62
+        64
     );
     assert_eq!(
         rows.iter()
