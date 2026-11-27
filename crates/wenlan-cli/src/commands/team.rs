@@ -131,8 +131,9 @@ pub enum TeamCmd {
         #[arg(long, value_name = "ACCESS", num_args = 0..=1, default_missing_value = "write", value_parser = parse_everyone)]
         everyone: Option<TeamEveryone>,
     },
-    /// Join a team with an invite link: every Space open to you is synced
-    /// to this computer, and Spaces opened to you later follow.
+    /// Join a team with an invite link: its published pages show in the
+    /// Wenlan app right away, read live from the team. Older shared Spaces
+    /// open to you are synced to this computer.
     Join {
         /// The invite link you were sent (`https://…/join#wlt_…`).
         #[arg(value_name = "INVITE LINK")]
