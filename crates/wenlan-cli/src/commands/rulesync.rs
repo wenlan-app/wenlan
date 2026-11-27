@@ -378,17 +378,14 @@ async fn run_shared_edits(client: &WenlanClient) -> Result<()> {
     Ok(())
 }
 
-const SHARED_EDIT_REBASE_MESSAGE: &str = "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.";
-
 fn shared_edit_decision_or_continue<T>(decision: Result<T>) -> Result<Option<T>> {
     match decision {
         Ok(value) => Ok(Some(value)),
-        Err(error)
-            if error
-                .to_string()
-                .contains("The team's rules changed since this edit.") =>
-        {
-            println!("{SHARED_EDIT_REBASE_MESSAGE}");
+        Err(error) if error.is::<crate::client::SharedEditStaleRevision>() => {
+            println!(
+                "{}",
+                wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE
+            );
             Ok(None)
         }
         Err(error) => Err(error),
@@ -2176,7 +2173,7 @@ mod tests {
 
     #[test]
     fn rulesync_shared_edits_continues_after_stale_revision() {
-        let decisions = [Err(anyhow::anyhow!(SHARED_EDIT_REBASE_MESSAGE)), Ok(())];
+        let decisions = [Err(crate::client::SharedEditStaleRevision.into()), Ok(())];
         let mut completed = 0;
         for decision in decisions {
             if shared_edit_decision_or_continue(decision)
@@ -2188,6 +2185,23 @@ mod tests {
             completed += 1;
         }
         assert_eq!(completed, 1);
+        assert!(crate::client::shared_edit_stale_revision(
+            &serde_json::json!({
+                "code": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE,
+                "error": "wording may change"
+            })
+            .to_string()
+        ));
+        assert!(!crate::client::shared_edit_stale_revision(
+            &serde_json::json!({
+                "error": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE
+            })
+            .to_string()
+        ));
+        assert!(shared_edit_decision_or_continue::<()>(Err(anyhow::anyhow!(
+            wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE
+        )))
+        .is_err());
         assert!(
             shared_edit_decision_or_continue::<()>(Err(anyhow::anyhow!("different failure")))
                 .is_err()

@@ -252,7 +252,7 @@ pub(crate) type ProposalReceipts = BTreeMap<String, ProposalReceipt>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ProposalReceipt {
     edit: String,
-    proposal: String,
+    pub(crate) proposal: String,
 }
 
 pub(crate) enum SharedReview {
@@ -381,7 +381,16 @@ pub(crate) fn review_edits(
     home: &Path,
 ) -> Result<SharedReview> {
     let mut answers = refresh_answers(_settings, data, home)?;
-    receipts.retain(|key, _| edits.iter().any(|(changed, _)| *changed == key));
+    receipts.retain(|key, receipt| {
+        edits.iter().any(|(changed, _)| *changed == key)
+            && (answers
+                .sent_edits
+                .values()
+                .any(|sent| sent.proposal == receipt.proposal)
+                || accessible
+                    .get(key)
+                    .is_some_and(|layer| layer.proposal_decisions.contains_key(&receipt.proposal)))
+    });
     let mut pending = false;
     let mut rejected = false;
     let mut needs_confirm = false;

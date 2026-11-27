@@ -1618,6 +1618,8 @@ pub struct SyncTarget<'a> {
     /// Sync through this team server; `folder` is then this Wenlan's copy of
     /// its folder ([`remote::mirror_folder`]).
     pub host: Option<HostLink>,
+    /// Confirmed tool-file proposal versions eligible for refusal recovery.
+    pub rules_edit_proposals: &'a [String],
 }
 
 /// One sync pass of `target.scope` with its folder (see the module docs),
@@ -1740,6 +1742,7 @@ pub async fn sync_space(
             target.settings_path,
             target.knowledge_path,
             false,
+            target.rules_edit_proposals,
         )
         .await
     }
@@ -1779,6 +1782,7 @@ async fn run_pass(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
     automatic: bool,
+    rules_edit_proposals: &[String],
 ) -> Result<Result<SharedSyncCounts, SyncPause>, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
     if matches!(scope, Scope::Library) {
@@ -1867,7 +1871,15 @@ async fn run_pass(
         library::main_jobs(db, settings_path, &settings, &counts).await;
     }
     if let Some((host, listed)) = listed {
-        if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
+        if let Err(reason) = remote::push(
+            &host,
+            &folder,
+            &settings.member_id,
+            &listed,
+            rules_edit_proposals,
+        )
+        .await
+        {
             clear_rule_layer_if_refused(settings_path, &host, &reason)?;
             return Ok(Err(reason.into()));
         }
@@ -1948,6 +1960,7 @@ pub async fn sync_shared_spaces(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
     person_name: Option<&str>,
+    rules_edit_proposals: &[String],
 ) -> Vec<(String, SharedSyncRun)> {
     follow::follow_teams(db, settings_path).await;
     let shares = match shares_at(settings_path) {
@@ -1990,12 +2003,21 @@ pub async fn sync_shared_spaces(
                 Err(error) => log::warn!("[shared_space] {key}: name not changed: {error}"),
             }
         }
-        let outcome =
-            match run_pass(db, &scope, settings, settings_path, knowledge_path, true).await {
-                Ok(Ok(counts)) => Outcome::Done(counts),
-                Ok(Err(reason)) => Outcome::Paused(reason),
-                Err(error) => Outcome::Failed(error.to_string()),
-            };
+        let outcome = match run_pass(
+            db,
+            &scope,
+            settings,
+            settings_path,
+            knowledge_path,
+            true,
+            rules_edit_proposals,
+        )
+        .await
+        {
+            Ok(Ok(counts)) => Outcome::Done(counts),
+            Ok(Err(reason)) => Outcome::Paused(reason),
+            Err(error) => Outcome::Failed(error.to_string()),
+        };
         out.push((key.clone(), finish(&run, &key, outcome)));
     }
     out

@@ -1330,6 +1330,18 @@ impl WenlanClient {
         }
         let resp = self.send(request, &format!("POST {url} failed")).await?;
         let refused_without_key = key.is_none() && resp.status().is_client_error();
+        if url.ends_with("/api/rules/setup/shared-edits/decide")
+            && resp.status() == reqwest::StatusCode::CONFLICT
+        {
+            let body = resp.text().await.unwrap_or_default();
+            if shared_edit_stale_revision(&body) {
+                return Err(SharedEditStaleRevision.into());
+            }
+            if refused_without_key {
+                anyhow::bail!(NO_PERSON_KEY);
+            }
+            anyhow::bail!("{}", daemon_error_message(&body));
+        }
         let resp = match ensure_ok(resp, url).await {
             Ok(resp) => resp,
             Err(_) if refused_without_key => anyhow::bail!(NO_PERSON_KEY),
@@ -1958,6 +1970,28 @@ fn daemon_refusal_message(body: &str) -> String {
 /// Non-success response -> `anyhow::Error` carrying the daemon's own error
 /// message. Used by `list_entities`, `merge_entity`, `add_entity_alias` and
 /// `export_pages_okf`, which keep the status and address in every case.
+#[derive(Debug)]
+pub(crate) struct SharedEditStaleRevision;
+
+impl std::fmt::Display for SharedEditStaleRevision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE)
+    }
+}
+
+impl std::error::Error for SharedEditStaleRevision {}
+
+pub(crate) fn shared_edit_stale_revision(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|body| {
+            body.get("code")
+                .and_then(|code| code.as_str())
+                .map(str::to_owned)
+        })
+        .is_some_and(|code| code == wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE)
+}
+
 async fn ensure_daemon_success(resp: reqwest::Response, url: &str) -> Result<reqwest::Response> {
     if resp.status().is_success() {
         return Ok(resp);

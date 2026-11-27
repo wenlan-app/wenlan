@@ -1853,11 +1853,20 @@ pub fn spawn_scheduler(
                 let person_name = wenlan_core::shared_space::person_name(&db)
                     .await
                     .unwrap_or_default();
+                let rules_edit_proposals = if wenlan_core::rulesync_personal::enabled() {
+                    crate::rulesync_routes::sent_edit_proposal_ids().unwrap_or_else(|error| {
+                        tracing::warn!("[rulesync] could not inspect confirmed edits: {error:#}");
+                        Vec::new()
+                    })
+                } else {
+                    Vec::new()
+                };
                 let runs = wenlan_core::shared_space::sync_shared_spaces(
                     &db,
                     &wenlan_core::shared_space::settings_path(),
                     Some(knowledge_path.as_path()),
                     person_name.as_deref(),
+                    &rules_edit_proposals,
                 )
                 .await;
                 for (_, run) in &runs {
