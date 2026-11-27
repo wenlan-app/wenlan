@@ -28,7 +28,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use wenlan_types::team::{TeamAccess, TeamFileList, TeamMe};
 
-use super::{version, HostLink, SPACE_FILE};
+use super::{version, HostLink, OUTDATED_HOST_EDIT_MESSAGE, SPACE_FILE};
 use crate::error::WenlanError;
 use crate::rulesync_team::{self, TeamRuleLayer};
 
@@ -163,8 +163,8 @@ pub(super) enum SyncError {
     Refused(String),
     #[error("{0}")]
     Unavailable(String),
-    #[error("Your team's Wenlan needs an update before this edit can be sent.")]
-    OutdatedHost,
+    #[error("{OUTDATED_HOST_EDIT_MESSAGE}")]
+    OutdatedHost(Vec<String>),
 }
 
 impl From<String> for SyncError {
@@ -179,7 +179,7 @@ impl SyncError {
             Self::Revoked(_) => 2,
             Self::Refused(_) => 1,
             Self::Unavailable(_) => 0,
-            Self::OutdatedHost => 1,
+            Self::OutdatedHost(_) => 1,
         }
     }
 }
@@ -193,9 +193,8 @@ fn response_error(url: &str, status: reqwest::StatusCode) -> SyncError {
     }
 }
 
-fn proposal_response_error(status: reqwest::StatusCode, body: &str) -> bool {
-    status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
-        && body.contains("author kind is not person or ai")
+fn proposal_response_error(is_proposal: bool, status: reqwest::StatusCode, _body: &str) -> bool {
+    is_proposal && status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
 }
 
 /// Who `key` belongs to on the server at `url`.
@@ -477,10 +476,12 @@ pub(super) async fn push(
             !have.contains(version::version_key(path))
         })
         .collect();
+    let rules_page = listed.rules.as_ref().map(|rules| rules.page_id.clone());
     let sent: Vec<Result<(), SyncError>> = futures::stream::iter(missing)
         .map(|(path, page, local)| {
             let client = client.clone();
             let url = url.clone();
+            let rules_page = rules_page.clone();
             async move {
                 let bytes = std::fs::read(&local).map_err(|error| error.to_string())?;
                 if bytes.len() > MAX_VERSION_BYTES {
@@ -508,8 +509,18 @@ pub(super) async fn push(
                 } else if response.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
                     let status = response.status();
                     let body = response.text().await.unwrap_or_default();
-                    if proposal_response_error(status, &body) {
-                        return Err(SyncError::OutdatedHost);
+                    if proposal_response_error(
+                        path.split('/').nth(2) == Some(version::PROPOSALS_DIR)
+                            && rulesync_team::is_master_page(&page)
+                            && rules_page.as_deref() == Some(page.as_str()),
+                        status,
+                        &body,
+                    ) {
+                        let id = version::version_sha(&name)
+                            .expect("queued proposal has a version id")
+                            .to_owned();
+                        log::warn!("[shared_space] proposal {id} refused with status {status}");
+                        return Err(SyncError::OutdatedHost(vec![id]));
                     }
                     // A version the server cannot take as it is: sending it
                     // again would not change that.
@@ -524,11 +535,20 @@ pub(super) async fn push(
         .collect()
         .await;
     let count = sent.len() as u32;
-    if let Some(error) = sent
-        .into_iter()
-        .filter_map(Result::err)
-        .max_by_key(SyncError::priority)
-    {
+    let mut refused = Vec::new();
+    let mut other = Vec::new();
+    for error in sent.into_iter().filter_map(Result::err) {
+        match error {
+            SyncError::OutdatedHost(ids) => refused.extend(ids),
+            error => other.push(error),
+        }
+    }
+    if !refused.is_empty() {
+        refused.sort();
+        refused.dedup();
+        return Err(SyncError::OutdatedHost(refused));
+    }
+    if let Some(error) = other.into_iter().max_by_key(SyncError::priority) {
         return Err(error);
     }
     Ok(count)
@@ -587,15 +607,79 @@ mod tests {
 
     #[test]
     fn old_team_host_refusal_has_one_update_line() {
-        let fake_host_body = r#"{"error":"author kind is not person or ai"}"#;
+        let fake_host_body = "The Rules operation could not be completed.";
         assert!(proposal_response_error(
+            true,
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            fake_host_body
+        ));
+        assert!(!proposal_response_error(
+            true,
+            reqwest::StatusCode::BAD_REQUEST,
+            fake_host_body
+        ));
+        assert!(!proposal_response_error(
+            false,
             reqwest::StatusCode::UNPROCESSABLE_ENTITY,
             fake_host_body
         ));
         assert_eq!(
-            SyncError::OutdatedHost.to_string(),
-            "Your team's Wenlan needs an update before this edit can be sent."
+            SyncError::OutdatedHost(vec!["a".repeat(64)]).to_string(),
+            OUTDATED_HOST_EDIT_MESSAGE
         );
+    }
+
+    #[tokio::test]
+    async fn ordinary_page_proposal_422_does_not_claim_a_rules_host_update() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let scratch = tempfile::tempdir().unwrap();
+        let folder = scratch.path();
+        let member = "test-member";
+        let page = "ordinary-page";
+        let (id, _) = version::write_file(
+            folder,
+            member,
+            version::PROPOSALS_DIR,
+            page,
+            "ordinary proposal",
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            let bytes = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.contains(&format!("/versions/{page}/{id}.wlv")));
+            let body = "The Rules operation could not be completed.";
+            let response = format!(
+                "HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let listed = TeamFileList {
+            access: TeamAccess::Write,
+            files: Vec::new(),
+            deleted_pages: Vec::new(),
+            refused_changes: Vec::new(),
+            rules: None,
+        };
+        let result = push(
+            &HostLink {
+                key: "fake-key".into(),
+                url,
+                space: "Team".into(),
+                space_id: None,
+            },
+            folder,
+            member,
+            &listed,
+        )
+        .await;
+        host.await.unwrap();
+        assert_eq!(result.unwrap(), 1);
     }
 
     #[test]

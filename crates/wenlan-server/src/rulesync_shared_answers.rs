@@ -4,7 +4,10 @@
 use crate::rulesync_apply::{ApplyOutcome, FileRoot, Snapshot};
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 const FILE: &str = "shared-edit-answers.json";
 
@@ -31,12 +34,21 @@ pub(crate) struct Answers {
     pub(crate) answers: BTreeMap<String, Answer>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) answered_edits: BTreeMap<String, AnsweredEdit>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) sent_edits: BTreeMap<String, SentEdit>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AnsweredEdit {
     pub(crate) edit: Waiting,
     pub(crate) received: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SentEdit {
+    pub(crate) edit: Waiting,
+    pub(crate) proposal: String,
+    pub(crate) proposal_path: PathBuf,
 }
 
 impl Default for Answers {
@@ -46,6 +58,7 @@ impl Default for Answers {
             waiting: BTreeMap::new(),
             answers: BTreeMap::new(),
             answered_edits: BTreeMap::new(),
+            sent_edits: BTreeMap::new(),
         }
     }
 }

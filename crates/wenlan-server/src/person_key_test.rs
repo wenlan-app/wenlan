@@ -501,24 +501,29 @@ async fn rulesync_router_rejects_session_on_person_only_routes() {
             r#"{"id":"test","send":true}"#,
         ),
     ] {
-        let request = HttpRequest::builder()
-            .method("POST")
-            .uri(path)
-            .header("content-type", "application/json")
-            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
-            .header(PERSON_KEY_HEADER, test_key())
-            .header(wenlan_types::SESSION_HEADER, "codex:fixture")
-            .body(Body::from(body))
-            .unwrap();
-        let response = app.clone().oneshot(request).await.unwrap();
-        let bytes = axum::body::to_bytes(response.into_body(), 65536)
-            .await
-            .unwrap();
-        let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(
-            refusal(&answer).contains("only the person using the daemon"),
-            "{path}: {answer}"
-        );
+        for identity in ["session", "agent"] {
+            let mut request = HttpRequest::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(PERSON_KEY_HEADER, test_key());
+            if identity == "agent" {
+                request = request.header("x-agent-name", "codex");
+            } else {
+                request = request.header(wenlan_types::SESSION_HEADER, "codex:fixture");
+            }
+            let request = request.body(Body::from(body)).unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), 65536)
+                .await
+                .unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                refusal(&answer).contains("only the person using the daemon"),
+                "{path}: {answer}"
+            );
+        }
     }
 }
 

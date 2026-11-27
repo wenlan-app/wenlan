@@ -257,11 +257,11 @@ fn require_personal_rule_confirmation(
 ) -> Result<()> {
     ensure!(
         !has_ai_identity,
-        "Only you can confirm team or project rule edits. Run this from your own terminal outside an AI session."
+        "Only you can confirm personal rule changes. Run this from your own terminal outside an AI session."
     );
     ensure!(
         stdin_is_terminal && stdout_is_terminal,
-        "Only you can confirm team or project rule edits: run this in a terminal and type yes yourself. There is no flag or piped approval."
+        "Only you can confirm personal rule changes: run this in a terminal and type yes yourself. There is no flag or piped approval."
     );
     Ok(())
 }
@@ -272,8 +272,24 @@ fn after_shared_edit_gate<T>(
     stdout_is_terminal: bool,
     request: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
-    require_personal_rule_confirmation(has_ai_identity, stdin_is_terminal, stdout_is_terminal)?;
+    require_shared_edit_confirmation(has_ai_identity, stdin_is_terminal, stdout_is_terminal)?;
     request()
+}
+
+fn require_shared_edit_confirmation(
+    has_ai_identity: bool,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> Result<()> {
+    ensure!(
+        !has_ai_identity,
+        "Only you can confirm team or project rule edits. Run this from your own terminal outside an AI session."
+    );
+    ensure!(
+        stdin_is_terminal && stdout_is_terminal,
+        "Only you can confirm team or project rule edits: run this in a terminal and type yes yourself. There is no flag or piped approval."
+    );
+    Ok(())
 }
 
 fn person_types_yes(
@@ -341,12 +357,15 @@ async fn run_shared_edits(client: &WenlanClient) -> Result<()> {
         else {
             continue;
         };
-        client
+        let decision = client
             .decide_shared_rule_edit(&wenlan_types::rulesync::SharedEditDecisionRequest {
                 id: edit.id,
                 send,
             })
-            .await?;
+            .await;
+        if shared_edit_decision_or_continue(decision)?.is_none() {
+            continue;
+        }
         println!(
             "{}",
             if send {
@@ -357,6 +376,23 @@ async fn run_shared_edits(client: &WenlanClient) -> Result<()> {
         );
     }
     Ok(())
+}
+
+const SHARED_EDIT_REBASE_MESSAGE: &str = "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.";
+
+fn shared_edit_decision_or_continue<T>(decision: Result<T>) -> Result<Option<T>> {
+    match decision {
+        Ok(value) => Ok(Some(value)),
+        Err(error)
+            if error
+                .to_string()
+                .contains("The team's rules changed since this edit.") =>
+        {
+            println!("{SHARED_EDIT_REBASE_MESSAGE}");
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn read_personal_rule_edits(
@@ -2071,6 +2107,8 @@ mod tests {
 
     #[test]
     fn personal_rule_apply_refuses_ai_identity_and_piped_input_or_output() {
+        assert_eq!(require_personal_rule_confirmation(true, true, true).unwrap_err().to_string(), "Only you can confirm personal rule changes. Run this from your own terminal outside an AI session.");
+        assert_eq!(require_personal_rule_confirmation(false, false, true).unwrap_err().to_string(), "Only you can confirm personal rule changes: run this in a terminal and type yes yourself. There is no flag or piped approval.");
         assert!(require_personal_rule_confirmation(true, true, true).is_err());
         assert!(require_personal_rule_confirmation(false, false, true).is_err());
         assert!(require_personal_rule_confirmation(false, true, false).is_err());
@@ -2119,6 +2157,8 @@ mod tests {
 
     #[test]
     fn rulesync_shared_edits_refuses_ai_or_pipes_before_request() {
+        assert_eq!(require_shared_edit_confirmation(true, true, true).unwrap_err().to_string(), "Only you can confirm team or project rule edits. Run this from your own terminal outside an AI session.");
+        assert_eq!(require_shared_edit_confirmation(false, false, true).unwrap_err().to_string(), "Only you can confirm team or project rule edits: run this in a terminal and type yes yourself. There is no flag or piped approval.");
         for (ai, stdin, stdout) in [
             (true, true, true),
             (false, false, true),
@@ -2132,6 +2172,26 @@ mod tests {
             .is_err());
             assert!(!requested);
         }
+    }
+
+    #[test]
+    fn rulesync_shared_edits_continues_after_stale_revision() {
+        let decisions = [Err(anyhow::anyhow!(SHARED_EDIT_REBASE_MESSAGE)), Ok(())];
+        let mut completed = 0;
+        for decision in decisions {
+            if shared_edit_decision_or_continue(decision)
+                .unwrap()
+                .is_none()
+            {
+                continue;
+            }
+            completed += 1;
+        }
+        assert_eq!(completed, 1);
+        assert!(
+            shared_edit_decision_or_continue::<()>(Err(anyhow::anyhow!("different failure")))
+                .is_err()
+        );
     }
 
     #[test]

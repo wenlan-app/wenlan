@@ -1016,7 +1016,7 @@ and wait for evidence that people need them.
   `rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it`,
   `rulesync_checkout_waiting_edit_survives_new_revision`,
   `rulesync_write_holder_applies_their_team_hand_edit_after_person_and_write_holder_confirm`,
-  `rulesync_ai_caller_cannot_confirm_a_shared_edit`,
+  `rulesync_router_rejects_session_on_person_only_routes`,
   `rulesync_shared_section_uses_current_precedence`,
   `rulesync_waiting_edit_survives_a_new_team_revision`,
   `rulesync_new_team_revision_refuses_old_confirmation_and_keeps_edit`,

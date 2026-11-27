@@ -30,6 +30,9 @@ pub enum WenlanError {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    #[error("{}", crate::shared_space::OUTDATED_HOST_EDIT_MESSAGE)]
+    TeamRulesProposalRefused { proposal_ids: Vec<String> },
+
     #[error("Conflict: {0}")]
     Conflict(String),
 
