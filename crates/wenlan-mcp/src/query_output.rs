@@ -119,8 +119,8 @@ pub struct QueryBriefOutput {
     pub space: Option<String>,
     pub brief: Option<QueryBrief>,
     pub related_context: Option<QueryRelatedContext>,
-    /// Notes in the Space that rely on code that changed or went missing.
-    /// `None` when no note in the Space relies on code.
+    /// Pages in the Space that rely on code that changed or went missing.
+    /// `None` when no page in the Space relies on code.
     pub code_basis_pending: Option<u32>,
     /// While the library is new: how many pages exist, how many items wait to
     /// be written into pages, and the user's next step. `None` once the

@@ -721,7 +721,7 @@ pub struct CaptureParams {
     )]
     pub entity: Option<String>,
     #[schemars(
-        description = "What `entity` is: 'person', 'project', 'tool', 'organization', 'place', or another plain noun. Pass it with every `entity` so a name the wiki does not know yet is created and linked."
+        description = "What `entity` is: 'person', 'project', 'tool', 'organization', 'place', or another plain noun. Pass it with every `entity` so a name Wenlan does not know yet is created and linked."
     )]
     pub entity_type: Option<String>,
     #[schemars(
@@ -1365,7 +1365,7 @@ pub struct WritePageParams {
     )]
     pub title: Option<String>,
     #[schemars(
-        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Open with one plain paragraph that states the page's point; a person reads it first. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
+        description = "Markdown body — 3-7 paragraphs of prose with [[wikilinks]]. Open with one plain paragraph that states the page's point; a person reads it first. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
     )]
     pub content: String,
     #[schemars(
@@ -1380,7 +1380,7 @@ pub struct WritePageParams {
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
     #[schemars(
-        description = "Exact source_ids of captured memories or indexed files/webpages in the page's Space. A note's page id is refused here; pass it in `basis`. Optional: pass them when the page is built from sources, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
+        description = "Exact source_ids of captured memories or indexed files/webpages in the page's Space. Another page's id is refused here; pass it in `basis`. Optional: pass them when the page is built from sources, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
     )]
     #[serde(default)]
     pub source_memory_ids: Vec<String>,
@@ -1400,7 +1400,7 @@ pub struct WritePageParams {
     #[serde(default)]
     pub session: Option<String>,
     #[schemars(
-        description = "Other notes (wiki pages) this page relies on, each as {page_id, version} where version is that note's page.version from your read_page. Use it for notes only; memories go in source_memory_ids and a note's page id never does. A listed note counts as confirmed only if it is still at that version; if it changed after your read it is recorded as pending instead. Existing bases of the page stay as they are. The reply lists the page's bases after the write."
+        description = "Other pages this page relies on, each as {page_id, version} where version is that page's page.version from your read_page. Use it for pages only; memories go in source_memory_ids and a page id never does. A listed page counts as confirmed only if it is still at that version; if it changed after your read it is recorded as pending instead. Existing bases of the page stay as they are. The reply lists the page's bases after the write."
     )]
     #[serde(default)]
     pub basis: Vec<BasisParam>,
@@ -1410,7 +1410,7 @@ pub struct WritePageParams {
     #[serde(default)]
     pub minor: Option<bool>,
     #[schemars(
-        description = "Lines of code this note relies on; Wenlan tells you when they change. Each entry is {repo_root, path, line_start, line_end}: repo_root is the absolute path of the repository, path is relative to it with `/` separators (no `..`), lines are 1-based and inclusive. Wenlan reads the file when you write; an unreadable file, a path outside the repository or lines past the end of the file refuse the whole write. Entries are added to the page's existing code bases (naming one again re-anchors it as `ok`). Local stdio only. The reply lists the page's code bases after the write."
+        description = "Lines of code this page relies on; Wenlan tells you when they change. Each entry is {repo_root, path, line_start, line_end}: repo_root is the absolute path of the repository, path is relative to it with `/` separators (no `..`), lines are 1-based and inclusive. Wenlan reads the file when you write; an unreadable file, a path outside the repository or lines past the end of the file refuse the whole write. Entries are added to the page's existing code bases (naming one again re-anchors it as `ok`). Local stdio only. The reply lists the page's code bases after the write."
     )]
     #[serde(default)]
     pub code_basis: Vec<CodeBasisParam>,
@@ -1475,17 +1475,17 @@ pub enum PageCodeBasisAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SteepAction {
-    /// The notes waiting for steep.
+    /// The pages waiting for steep.
     List,
-    /// Take one note: its numbered sources and a token.
+    /// Take one page: its numbered sources and a token.
     Claim,
-    /// Save the rewrite of a claimed note.
+    /// Save the rewrite of a claimed page.
     Commit,
-    /// The sources changed but the claimed note still holds.
+    /// The sources changed but the claimed page still holds.
     StillAccurate,
     /// The answers to a claim whose plan is judge.
     Judge,
-    /// Give a claimed note, or a claim_new's items, back.
+    /// Give a claimed page, or a claim_new's items, back.
     Release,
     /// Material no page uses yet: imported notes, chats, files, captures.
     New,
@@ -1560,7 +1560,7 @@ pub struct SteepParams {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocFixAction {
-    /// Record one fix for the repository's wiki pull request.
+    /// Record one fix for the pull request with the repository's pages.
     Suggest,
     /// Say how many docs were read against the code.
     Checked,
@@ -1665,9 +1665,9 @@ pub struct PageCodeBasisParams {
 /// is stable without giving the wire crate a schema dependency.
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct BasisParam {
-    #[schemars(description = "Page id of the note this page relies on.")]
+    #[schemars(description = "Id of the page this page relies on.")]
     pub page_id: String,
-    #[schemars(description = "That note's page.version as your read_page returned it.")]
+    #[schemars(description = "That page's page.version as your read_page returned it.")]
     pub version: i64,
 }
 
@@ -1683,30 +1683,30 @@ impl From<BasisParam> for wenlan_types::BasisInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PageBasisAction {
-    /// Record that the page relies on the basis note, as of `version`.
+    /// Record that the page relies on the basis page, as of `version`.
     Mark,
-    /// Show the text the page relied on next to the basis note's text now.
+    /// Show the text the page relied on next to the basis page's text now.
     Diff,
-    /// Say the page still holds after the basis note's change, as of `version`.
+    /// Say the page still holds after the basis page's change, as of `version`.
     Confirm,
-    /// Stop the page relying on the basis note.
+    /// Stop the page relying on the basis page.
     Remove,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PageBasisParams {
     #[schemars(
-        description = "The page that relies on the other note (the one that would be rewritten or confirmed). Opaque page id."
+        description = "The page that relies on the other page (the one that would be rewritten or confirmed). Opaque page id."
     )]
     pub page_id: String,
-    #[schemars(description = "The note it relies on. Opaque page id; never a memory id.")]
+    #[schemars(description = "The page it relies on. Opaque page id; never a memory id.")]
     pub basis_page_id: String,
     #[schemars(
-        description = "mark: record the reliance. diff: show what the basis note said when you last confirmed it and what it says now. confirm: say the page still holds after the basis note's change. remove: drop the reliance."
+        description = "mark: record the reliance. diff: show what the basis page said when you last confirmed it and what it says now. confirm: say the page still holds after the basis page's change. remove: drop the reliance."
     )]
     pub action: PageBasisAction,
     #[schemars(
-        description = "Required for mark and confirm: the basis note's page.version from your read_page (not the citing page's). If the basis note has moved on since, the call is refused and nothing changes. Ignored by diff and remove."
+        description = "Required for mark and confirm: the basis page's page.version from your read_page (not the citing page's). If the basis page has moved on since, the call is refused and nothing changes. Ignored by diff and remove."
     )]
     #[serde(default)]
     pub version: Option<i64>,
@@ -2113,7 +2113,7 @@ pub struct ReportSpaceRuleUseParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListFoldersParams {
     #[schemars(
-        description = "Only folders visible in this Space (project). Omit to list the shared Wiki folders; a locked WENLAN_SPACE always wins."
+        description = "Only folders visible in this Space (project). Omit to list the shared page folders; a locked WENLAN_SPACE always wins."
     )]
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
@@ -2121,7 +2121,9 @@ pub struct ListFoldersParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateFolderParams {
-    #[schemars(description = "Parent folder path; omit or use an empty string for the Wiki root.")]
+    #[schemars(
+        description = "Parent folder path; omit or use an empty string for the top of the pages folder."
+    )]
     #[serde(default)]
     pub parent_path: String,
     #[schemars(description = "Name of the new child folder.")]
@@ -2137,7 +2139,7 @@ pub struct MovePageParams {
     )]
     pub expected_storage_path: String,
     #[schemars(
-        description = "Destination folder path; empty string moves the page to the Wiki root."
+        description = "Destination folder path; empty string moves the page to the top of the pages folder."
     )]
     pub folder_path: String,
     #[schemars(
@@ -2434,7 +2436,7 @@ pub struct ListPendingRevisionsParams {
 
 /// Validate `save_source` arguments and build the daemon request. The link
 /// becomes the document's `source_id`, so only an http(s) URL is accepted:
-/// that is what lets a note's citation resolve to the original.
+/// that is what lets a page's citation resolve to the original.
 fn save_source_request(
     params: SaveSourceParams,
 ) -> Result<wenlan_types::requests::IngestWebpageRequest, String> {
@@ -2731,7 +2733,7 @@ fn distill_pending_guide(pending: usize) -> String {
     format!(
         "{pending} cluster(s) in `pending` are waiting for you to write them as pages. \
          For each one, read `contents`; skip it if the memories do not share one topic. \
-         Otherwise write a short noun-phrase title, a one-sentence summary and wiki prose \
+         Otherwise write a short noun-phrase title, a one-sentence summary and prose \
          that only states what the memories say, then call write_page with \
          source_memory_ids set to the cluster's `source_ids` (and its `entity_id` and \
          `space` when present). When `existing_page_id` is set, pass it as page_id to \
@@ -2801,35 +2803,35 @@ fn page_basis_error_result(error: WenlanError, action: PageBasisAction) -> CallT
         return tool_error(error, "page_basis");
     };
     let text = match (*status, action) {
-        (404, _) => "page_basis refused, nothing changed: one of the two notes was not found, \
-                     or this page does not rely on that note. Check both ids with read_page."
+        (404, _) => "page_basis refused, nothing changed: one of the two pages was not found, \
+                     or this page does not rely on that page. Check both ids with read_page."
             .to_string(),
         (409, PageBasisAction::Diff) => {
-            "No comparison is available for this basis: the basis note was deleted or \
+            "No comparison is available for this basis: the basis page was deleted or \
              archived, or the text this page relied on is no longer stored. Read the basis \
-             note with read_page and rewrite this page, or remove the basis."
+             page with read_page and rewrite this page, or remove the basis."
                 .to_string()
         }
-        (409, _) => "page_basis refused, nothing changed: the basis note moved on since your \
+        (409, _) => "page_basis refused, nothing changed: the basis page moved on since your \
                      read, or it is archived or deleted. Read it again with read_page and \
                      retry with its current page.version."
             .to_string(),
         (422, _) => "page_basis refused, nothing changed: a page cannot rely on itself, a \
-                     draft, an entity page, or a note in another Space, and a version must be \
-                     one the basis note has had."
+                     draft, an entity page, or a page in another Space, and a version must be \
+                     one the basis page has had."
             .to_string(),
         _ => return tool_error(error, "page_basis"),
     };
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
-/// A refresh the daemon refused because a note listed in `basis` cannot be
+/// A refresh the daemon refused because a page listed in `basis` cannot be
 /// relied on. Nothing was written, including the page text.
 fn page_write_basis_refused_result(page_id: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(format!(
-        "write_page refused, nothing was written: a note listed in `basis` for page {page_id} \
+        "write_page refused, nothing was written: a page listed in `basis` for page {page_id} \
          cannot be relied on (it is archived, deleted, or in another Space). Check each \
-         basis note with read_page, drop the one that is gone, and retry."
+         basis page with read_page, drop the one that is gone, and retry."
     ))])
 }
 
@@ -2991,7 +2993,7 @@ fn steep_new_text(new_total: u32, transport: &TransportMode) -> Option<String> {
     })
 }
 
-/// For `read_page`: what to do about this note when it is waiting for steep.
+/// For `read_page`: what to do about this page when it is waiting for steep.
 fn steep_page_hint(stale_reason: Option<&str>, transport: &TransportMode) -> Option<String> {
     let why = match stale_reason? {
         "source_updated" => "a source it was written from changed",
@@ -3095,7 +3097,7 @@ fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolRe
     );
     if target == "unfiled" {
         text.push_str(
-            "This page is in no Space, so it can cite only notes that are in no Space. If \
+            "This page is in no Space, so it can cite only pages that are in no Space. If \
              those sources all share one Space, move the page there with set_page_space and \
              retry; otherwise leave out the ones it cannot read and retry, or tell the person \
              which ones were left out. ",
@@ -3240,12 +3242,12 @@ struct RecallHit<'a> {
     merged_from: Option<&'a [String]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_delta_summary: Option<&'a str>,
-    /// For a note hit: the notes it relies on that are not `ok`. Absent for
-    /// memories and for notes with nothing outstanding.
+    /// For a page hit: the pages it relies on that are not `ok`. Absent for
+    /// memories and for pages with nothing outstanding.
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     basis: &'a [wenlan_types::BasisRef],
-    /// For a note hit: the code it relies on that is not `ok`. Absent for
-    /// memories and for notes with nothing outstanding.
+    /// For a page hit: the code it relies on that is not `ok`. Absent for
+    /// memories and for pages with nothing outstanding.
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     code_basis: &'a [wenlan_types::CodeBasisRef],
 }
@@ -3283,16 +3285,16 @@ fn recall_hits(results: &[wenlan_types::SearchResult]) -> Vec<RecallHit<'_>> {
     results.iter().map(RecallHit::from).collect()
 }
 
-/// The Brief's line about notes that rely on code that changed, or `None` when
+/// The Brief's line about pages that rely on code that changed, or `None` when
 /// there are none. The recheck already ran inside the Brief read; nothing for
 /// the agent to run first. `explained` is true when the everyday model already
-/// judged every one of them. Steep brings these notes up to date (#942); wiki
-/// only writes notes that are missing.
+/// judged every one of them. Steep brings these pages up to date (#942); wiki
+/// only writes pages that are missing.
 fn code_basis_drift_line(count: Option<u32>, explained: bool) -> Option<String> {
     let line = match count? {
         0 => return None,
-        1 => "1 note relies on code that changed".to_string(),
-        count => format!("{count} notes rely on code that changed"),
+        1 => "1 page relies on code that changed".to_string(),
+        count => format!("{count} pages rely on code that changed"),
     };
     Some(if explained {
         format!("{line}. AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person (Codex: $wenlan steep).")
@@ -3754,7 +3756,7 @@ impl WenlanMcpServer {
             .await
     }
 
-    /// How many notes in reach wait for steep, as one reply line. Best effort:
+    /// How many pages in reach wait for steep, as one reply line. Best effort:
     /// a failed count adds nothing to the reply it rides on.
     async fn steep_waiting_line(
         &self,
@@ -5319,7 +5321,7 @@ impl WenlanMcpServer {
             PageBasisAction::Mark | PageBasisAction::Confirm => {
                 let Some(version) = params.version else {
                     return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                        "version is required to {}: pass the basis note's page.version from read_page.",
+                        "version is required to {}: pass the basis page's page.version from read_page.",
                         if action == PageBasisAction::Mark {
                             "mark"
                         } else {
@@ -6180,7 +6182,7 @@ impl WenlanMcpServer {
         self.read_page_for_session(page_id, None, false).await
     }
 
-    /// `read_page`, naming the AI session that is reading so the note shows on
+    /// `read_page`, naming the AI session that is reading so the page shows on
     /// that conversation's card.
     pub async fn read_page_for_session(
         &self,
@@ -7394,7 +7396,7 @@ impl WenlanMcpServer {
     // --- Primary Tools ---
 
     #[tool(
-        description = "Capture one durable insight the user's wiki should keep.\n\nSTORE PROACTIVELY when the user states a preference or decision, makes a correction, or shares a durable fact about people, projects, or tools they care about.\n\nDO NOT STORE: conversation filler; easily re-derived facts; duplicates (recall first); Tool output or command results; transient task state; general world facts; Your own inferences; or agent operating rules. Store the person's preference, not an 'always' or 'never' command.\n\nQUALITY: Be specific and include why. Name the relevant people, projects, and tools. Atomic: one idea per memory. Each call is one atomic idea. Declarative, not narrative.\n\nTYPE AND ENTITY: set both on every capture whether Steep runs automatically or on demand. memory_type is identity, preference, decision, lesson, gotcha, or fact. Set memory_type=\"decision\" ONLY when the user gave the alternatives and reasoning; this powers the Decision Log. entity is the main person, project, or tool by its exact full name, with entity_type. A known name links; a new name is created. If a name matches several entities, retry with entity_id or without entity.\n\nOmitting structured_fields beats guessing. Use `supersedes` only for an intended correction.",
+        description = "Capture one durable insight Wenlan should keep for the user.\n\nSTORE PROACTIVELY when the user states a preference or decision, makes a correction, or shares a durable fact about people, projects, or tools they care about.\n\nDO NOT STORE: conversation filler; easily re-derived facts; duplicates (recall first); Tool output or command results; transient task state; general world facts; Your own inferences; or agent operating rules. Store the person's preference, not an 'always' or 'never' command.\n\nQUALITY: Be specific and include why. Name the relevant people, projects, and tools. Atomic: one idea per memory. Each call is one atomic idea. Declarative, not narrative.\n\nTYPE AND ENTITY: set both on every capture whether Steep runs automatically or on demand. memory_type is identity, preference, decision, lesson, gotcha, or fact. Set memory_type=\"decision\" ONLY when the user gave the alternatives and reasoning; this powers the Decision Log. entity is the main person, project, or tool by its exact full name, with entity_type. A known name links; a new name is created. If a name matches several entities, retry with entity_id or without entity.\n\nOmitting structured_fields beats guessing. Use `supersedes` only for an intended correction.",
         annotations(
             title = "Capture",
             read_only_hint = false,
@@ -7646,7 +7648,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, regenerates the AI's sentences; changes to the person's become proposals. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
+        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the pages. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, regenerates the AI's sentences; changes to the person's become proposals. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
         annotations(
             title = "Distill",
             read_only_hint = false,
@@ -7781,7 +7783,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create or refresh a wiki page. To save conversation content, provide title and content; source_memory_ids are optional. Without page_id, create a new page: distilled with enough cited sources, otherwise authored. DB and Markdown projection commit atomically. With page_id, replace content, sources and optional summary; preserve id, title and created_at, and increment version so wikilinks remain stable. Never delete and recreate to refresh. Use rename_page only on explicit user request. Use steep, not write_page, for pages awaiting updates after sources changed or disappeared. Before refresh, read_page and pass page.version as expected_version; a stale version refuses the write unchanged, so reread. Without expected_version, refreshing human-written or edited pages is refused. review_required stages a revision card. basis [{page_id, version}] records relied-on notes; changed bases stage review (see page_basis). minor:true marks small edits. code_basis records relied-on code lines (see page_code_basis). Refresh is local stdio only, never remote HTTP.",
+        description = "Create or refresh a page. To save conversation content, provide title and content; source_memory_ids are optional. Without page_id, create a new page: distilled with enough cited sources, otherwise authored. DB and Markdown projection commit atomically. With page_id, replace content, sources and optional summary; preserve id, title and created_at, and increment version so wikilinks remain stable. Never delete and recreate to refresh. Use rename_page only on explicit user request. Use steep, not write_page, for pages awaiting updates after sources changed or disappeared. Before refresh, read_page and pass page.version as expected_version; a stale version refuses the write unchanged, so reread. Without expected_version, refreshing human-written or edited pages is refused. review_required stages a revision card. basis [{page_id, version}] records relied-on pages; changed bases stage review (see page_basis). minor:true marks small edits. code_basis records relied-on code lines (see page_code_basis). Refresh is local stdio only, never remote HTTP.",
         annotations(
             title = "Write page",
             read_only_hint = false,
@@ -7798,7 +7800,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Track what a wiki page relies on another page for. Use when read_page, list_pages or recall shows a `pending` basis. `mark`/`confirm` need `version` (the basis note's page.version from read_page) and fail if it moved on. `diff` shows the text relied on next to the text now. `remove` drops it. Changes are local stdio only.",
+        description = "Track what a page relies on another page for. Use when read_page, list_pages or recall shows a `pending` basis. `mark`/`confirm` need `version` (the basis page's page.version from read_page) and fail if it moved on. `diff` shows the text relied on next to the text now. `remove` drops it. Changes are local stdio only.",
         annotations(
             title = "Page basis",
             read_only_hint = false,
@@ -7951,7 +7953,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Read one wiki page in full: its title, body, status, Space, and the source memories it cites, in one call. Use it after list_pages or recall when the user wants the page itself rather than search snippets. The page id is opaque; never guess it from a title.",
+        description = "Read one page in full: its title, body, status, Space, and the source memories it cites, in one call. Use it after list_pages or recall when the user wants the page itself rather than search snippets. The page id is opaque; never guess it from a title.",
         annotations(
             title = "Read page",
             read_only_hint = true,
@@ -7970,7 +7972,7 @@ impl WenlanMcpServer {
 
     #[tool(
         name = "list_pages",
-        description = "List wiki pages with their ids, titles, summaries, Space, status, and last-modified time. Use it to browse what the wiki already covers before writing a page, or to find the page id read_page needs. Filter by Space or status; page with limit and offset.",
+        description = "List pages with their ids, titles, summaries, Space, status, and last-modified time. Use it to browse what the pages already cover before writing a page, or to find the page id read_page needs. Filter by Space or status; page with limit and offset.",
         annotations(
             title = "List pages",
             read_only_hint = true,
@@ -8108,7 +8110,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "List folders in the Wiki, optionally filtered by Space. Folder organization does not change Spaces, entities, or page content.",
+        description = "List page folders, optionally filtered by Space. Folder organization does not change Spaces, entities, or page content.",
         annotations(
             title = "List folders",
             read_only_hint = true,
@@ -8125,7 +8127,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create a Wiki folder. Organization does not change Spaces, entities, or page content. Local stdio only.",
+        description = "Create a page folder. Organization does not change Spaces, entities, or page content. Local stdio only.",
         annotations(
             title = "Create folder",
             read_only_hint = false,
@@ -8142,7 +8144,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Move one active file page into a Wiki folder. Only active file pages can move; page content, Space, and entities do not change. Pass the current storage_path and a stable operation_id; after a conflict re-read the page. Local stdio only.",
+        description = "Move one active file page into a page folder. Only active file pages can move; page content, Space, and entities do not change. Pass the current storage_path and a stable operation_id; after a conflict re-read the page. Local stdio only.",
         annotations(
             title = "Move page",
             read_only_hint = false,
@@ -8593,7 +8595,7 @@ fn query_surface_description(name: &str, allows_writes: bool) -> String {
 fn web_write_description(name: &str) -> Option<&'static str> {
     Some(match name {
         "update_brief" => "Update the connected Space Brief only when the user asks to record current project status. Read brief first, then replace its summary or add, edit, move, gate, or complete items using the returned brief_version and item versions. Conflicts are reported without overwriting newer changes. Reuse operation_id when retrying the same update. Writes only reach the Space this connection is limited to.",
-        "write_page" => "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required), or pass page_id to refresh that page in place, which keeps its id and version history. Never delete_page and recreate a page to refresh it. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user to accept. To change a page's title at the user's explicit request, use rename_page; a refresh keeps the existing title. `minor: true` marks a small edit. Writes only reach the Space this connection is limited to.",
+        "write_page" => "Create or refresh a page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required), or pass page_id to refresh that page in place, which keeps its id and version history. Never delete_page and recreate a page to refresh it. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user to accept. To change a page's title at the user's explicit request, use rename_page; a refresh keeps the existing title. `minor: true` marks a small edit. Writes only reach the Space this connection is limited to.",
         "rename_page" => "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest read_page result; the version prevents renaming a page that changed since it was read. This keeps the page id and content and updates [[links]] to it. Do not call this to refresh content; write_page keeps an existing title when refreshing.",
         "delete_page" => "Remove a page by id only when the user explicitly asks to remove it. The page is archived, not destroyed: its history is kept and the user can restore it from the archive. A page the user wrote or edited, or locked for review, is refused. To refresh a page while preserving its id and version history, use write_page.",
         _ => return None,
@@ -8925,7 +8927,7 @@ impl ServerHandler for WenlanMcpServer {
                      Use brief for a user-requested Space overview, recall for a targeted search, \
                      get_page_sources to inspect supporting sources, read_space_rules to consult approved Space rules, \
                      report_space_rule_use to record a changed plan, and list_pages and read_page \
-                     to browse and read wiki pages. To write: capture saves one durable fact, preference, or decision \
+                     to browse and read pages. To write: capture saves one durable fact, preference, or decision \
                      the user asked to keep; handoff records where the work stands in the Space Brief (update_brief is the older form of the same write); \
                      write_page creates a page or refreshes one; rename_page changes a page title; \
                      forget removes a memory and delete_page archives a page. \
@@ -8961,7 +8963,7 @@ impl ServerHandler for WenlanMcpServer {
              What you write here, their other AI tools read later. \
              It is cumulative, so write for any future reader, not just this conversation.\n\n\
              How the pieces fit:\n\
-             - Pages are the result: wiki pages that cite their sources. list_pages shows what exists; \
+             - Pages are the result: pages that cite their sources. list_pages shows what exists; \
                read_page returns one page in full.\n\
              - capture feeds it: one durable insight per call (a preference, decision, correction, or fact), \
                with the why. What to store and what to skip is spelled out in the capture tool description.\n\

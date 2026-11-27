@@ -58,7 +58,7 @@ watcher would skip its edits as stale, and a restore would refuse to replace
 them). The response adds `projection_status`: `synced` once the file is moved,
 `pending` with `projection_error` when it could not be; the next daemon start
 retries the move for every archived page (the desktop app does not show
-`pending` yet). Only files whose frontmatter names the page move, so a note
+`pending` yet). Only files whose frontmatter names the page move, so a file
 someone put at the page's old path stays put and is reported; and only files
 stamped no newer than the archived version, so a restore that projected the
 page in between keeps its file. The moved file is checked again after the

@@ -81,7 +81,8 @@ and wait for evidence that people need them.
   only when you accept it.
 - **UX-WORDS-1** `shipped` A Wenlan page has one name: "page/pages" in
   English, 頁面 in Traditional Chinese and 页面 in Simplified Chinese. The app
-  never calls it a note, 筆記/笔记, wiki or 文檔/文档. Chinese text says
+  never calls it a note, 筆記/笔记, wiki or 文檔/文档, and never calls the
+  collection of pages a wiki (the `/wenlan wiki` command keeps its name). Chinese text says
   空間/空间, never the English word "Space". "Note" stays only where it means
   the person's own material or another app's notes (an Obsidian vault, Apple
   Notes, Zotero, release notes); those keys are listed with a reason in the

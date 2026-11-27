@@ -4,7 +4,7 @@ Wenlan is a local-first personal memory system. This policy covers everything th
 
 ## What data Wenlan stores
 
-Only what you explicitly capture: decisions, lessons, observations, project context, and wiki pages synthesized from those memories. Wenlan does not monitor or scrape your machine for material to store.
+Only what you explicitly capture: decisions, lessons, observations, project context, and pages synthesized from those memories. Wenlan does not monitor or scrape your machine for material to store.
 
 It does keep a local record of its own use, in two tables of the same database that holds your memories. One table logs actions: searching, storing, refining, and forgetting. Each row names the action, which agent did it, when, which memories were involved, and a short description.
 
@@ -18,7 +18,7 @@ One thing is automatic, and you switch it on yourself. When you connect a folder
 
 Your data is stored on your machine:
 
-- `~/.wenlan/pages/` -- wiki pages (Markdown)
+- `~/.wenlan/pages/` -- pages (Markdown)
 - `~/.wenlan/sessions/` -- older session logs (Markdown; no longer written)
 - `~/.wenlan/sources/` -- uploaded source documents
 - `~/.wenlan/spaces.toml` -- Space mapping config
@@ -28,13 +28,13 @@ Your data is stored on your machine:
 
 The daemon listens on `127.0.0.1:7878`, which is your own machine only. Nothing you capture -- no memory, page, source, or search -- is sent anywhere unless you turn on one of the features in "Sending your content somewhere" below.
 
-One exception needs nothing turned on. If a note contains a remote image, displaying that note sends the image's address, which came out of your note, to whoever hosts it. See "Images in your notes reach their host" below.
+One exception needs nothing turned on. If a page contains a remote image, displaying that page sends the image's address, which came out of your page, to whoever hosts it. See "Images in your pages reach their host" below.
 
 ## When Wenlan reaches the network
 
 Wenlan is not fully offline. Three things happen on their own, and each tells the other end your IP address. The first is a download rather than a single request: it fetches the model file plus its tokenizer and configuration files, so expect several requests. Only one of the three has an off switch, noted in the table.
 
-Separately, displaying a note that contains remote images may reach those image hosts. That is described under "Images in your notes reach their host" below. Two more requests happen only when you press something: installing an optional model, covered in "Sending your content somewhere", and installing the Claude Code or Codex plugin from Settings, which runs that client's own CLI and clones this repository's plugin marketplace from GitHub. One more can happen without you pressing anything, in another program: when no `wenlan-mcp` binary is installed, Wenlan writes an `npx -y wenlan-mcp` command into your AI client's configuration, and that client fetches the package from npm the first time it starts.
+Separately, displaying a page that contains remote images may reach those image hosts. That is described under "Images in your pages reach their host" below. Two more requests happen only when you press something: installing an optional model, covered in "Sending your content somewhere", and installing the Claude Code or Codex plugin from Settings, which runs that client's own CLI and clones this repository's plugin marketplace from GitHub. One more can happen without you pressing anything, in another program: when no `wenlan-mcp` binary is installed, Wenlan writes an `npx -y wenlan-mcp` command into your AI client's configuration, and that client fetches the package from npm the first time it starts.
 
 | What | When | Where | What it sends |
 | --- | --- | --- | --- |
@@ -44,23 +44,23 @@ Separately, displaying a note that contains remote images may reach those image 
 
 To avoid the model download, copy an existing model cache into the daemon's cache directory before first start. To avoid the two version checks, block `github.com` for those processes at your firewall; both fail quietly and Wenlan keeps working.
 
-### Images in your notes reach their host
+### Images in your pages reach their host
 
-These requests deserve their own heading, because they are the ones that can reach a server nobody at Wenlan chose, and because a note can produce many of them.
+These requests deserve their own heading, because they are the ones that can reach a server nobody at Wenlan chose, and because a page can produce many of them.
 
-Wenlan renders Markdown, and a Markdown image may point at any address. If a note contains `![something](https://example.com/picture.png)`, **displaying that note tries to load the picture from `example.com`**. Every remote image in a note is a separate load, so a note with ten of them names up to ten hosts, and a redirect can pull in further hosts that the note never named. How many network requests that becomes depends on your browser cache and on those redirects. The desktop app sets no content security policy of its own, so it does not block them, though your network or the webview still might.
+Wenlan renders Markdown, and a Markdown image may point at any address. If a page contains `![something](https://example.com/picture.png)`, **displaying that page tries to load the picture from `example.com`**. Every remote image in a page is a separate load, so a page with ten of them names up to ten hosts, and a redirect can pull in further hosts that the page never named. How many network requests that becomes depends on your browser cache and on those redirects. The desktop app sets no content security policy of its own, so it does not block them, though your network or the webview still might.
 
-A load that does reach the host tells it your IP address, the time, and the address it asked for, which came out of your note. Wenlan adds nothing to that address; the path and any query string already in it are sent, while a fragment after a `#` stays in the browser. A uniquely generated image address therefore works as a read receipt on anyone who opens the note.
+A load that does reach the host tells it your IP address, the time, and the address it asked for, which came out of your page. Wenlan adds nothing to that address; the path and any query string already in it are sent, while a fragment after a `#` stays in the browser. A uniquely generated image address therefore works as a read receipt on anyone who opens the page.
 
-It may tell the host more than that. The reading view uses an ordinary image tag and sets nothing on it, so your browser's own defaults decide the rest: it may send cookies that host has already set in this app, subject to the usual same-site and scope rules, and it normally sends a `Referer` naming the app's address rather than the note. The editor sets `referrerpolicy="no-referrer"`, which drops the referrer but does not affect cookies. Exactly what is sent is your webview's behaviour, not something Wenlan controls or can promise.
+It may tell the host more than that. The reading view uses an ordinary image tag and sets nothing on it, so your browser's own defaults decide the rest: it may send cookies that host has already set in this app, subject to the usual same-site and scope rules, and it normally sends a `Referer` naming the app's address rather than the page. The editor sets `referrerpolicy="no-referrer"`, which drops the referrer but does not affect cookies. Exactly what is sent is your webview's behaviour, not something Wenlan controls or can promise.
 
-Reading and editing differ. The reading view builds every image as soon as it renders the note. The editor builds images only for the part of the note on screen, and marks them to load lazily, so an image far below your cursor is not fetched until you scroll to it.
+Reading and editing differ. The reading view builds every image as soon as it renders the page. The editor builds images only for the part of the page on screen, and marks them to load lazily, so an image far below your cursor is not fetched until you scroll to it.
 
 This matters most for content you did not write: a page imported from elsewhere, or a document someone sent you. There is no switch to turn it off.
 
-Nor is there a way to point a note at a picture in your own notes folder. A relative address such as `![x](pictures/photo.png)` is passed through unchanged by the reading view, which resolves it against the app rather than your folder, so your file does not appear; the editor accepts only `http:` and `https:` addresses and skips it. The app can display local files through the mechanism it uses for avatars, which is limited to the folders it is configured for and reaches no network -- on Windows that mechanism produces an address beginning `http://asset.localhost/`, which looks remote but is not. Outside those folders, an image you can see in a note came over the network.
+Nor is there a way to point a page at a picture in your own pages folder. A relative address such as `![x](pictures/photo.png)` is passed through unchanged by the reading view, which resolves it against the app rather than your folder, so your file does not appear; the editor accepts only `http:` and `https:` addresses and skips it. The app can display local files through the mechanism it uses for avatars, which is limited to the folders it is configured for and reaches no network -- on Windows that mechanism produces an address beginning `http://asset.localhost/`, which looks remote but is not. Outside those folders, an image you can see in a page came over the network.
 
-If a note worries you, remove the image link from it.
+If a page worries you, remove the image link from it.
 
 ## Sending your content somewhere
 
@@ -230,7 +230,7 @@ not send usage statistics.
 
 When enabled, the daemon sends small batches of operation counts to
 `https://wenlan.app/api/app-events`: daemon readiness, successful saves, searches
-with or without results, Wiki generation, and fixed operation-error categories
+with or without results, page generation, and fixed operation-error categories
 where those operations are instrumented. Batches include the Wenlan version and
 platform (macOS, Windows, Linux, or other), not an installation or account ID.
 These are operation counts, not a record of individual users or a claim that a
@@ -240,7 +240,7 @@ Coverage is limited to the instrumented daemon save, search/Brief and page
 creation/distillation request handlers; direct source-sync writes and background
 refinery/scheduler page generation are not counted by this version.
 
-No note, query, prompt, answer, title, file path, memory/entity/source identifier,
+No page, query, prompt, answer, title, file path, memory/entity/source identifier,
 email, relay identity, content hash, free-text error, or crash trace is included.
 The existing local activity history and onboarding content previews are never
 uploaded by this feature. Wenlan does not install a crash-reporting SDK. The
@@ -275,7 +275,7 @@ Its deployment configuration keeps only the request log lines described above
 in Workers Logs and turns Cloudflare's own invocation logs off; this is not a
 promise that Cloudflare retains no service-level data.
 
-Opening a window starts the update check listed in the table above about three seconds later. On a first run it also triggers the search model download in that table, and if you left Web access on, it connects to Wenlan's web service again. Beyond those, see "Images in your notes reach their host" above, because the note you open can reach the network on its own.
+Opening a window starts the update check listed in the table above about three seconds later. On a first run it also triggers the search model download in that table, and if you left Web access on, it connects to Wenlan's web service again. Beyond those, see "Images in your pages reach their host" above, because the page you open can reach the network on its own.
 
 ## The other companies involved
 
@@ -295,7 +295,7 @@ Cloudflare account and is bound by Cloudflare's own terms as a customer.
 | Hugging Face | Downloading the search model, and any optional model you install | [Hugging Face Privacy Policy](https://huggingface.co/privacy) |
 | npm, which GitHub operates | Only when no `wenlan-mcp` binary is installed, in which case your AI client runs `npx` to fetch it | [GitHub Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) |
 | Cloudflare | The legacy Remote Access tunnel, or the pre-release standalone connector at `https://relay.wenlan.app` | [Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/) |
-| The host of a remote image in one of your notes | Displaying a note whose Markdown points at a remote image | Whoever runs that host. Wenlan cannot know who that is |
+| The host of a remote image in one of your pages | Displaying a page whose Markdown points at a remote image | Whoever runs that host. Wenlan cannot know who that is |
 
 ### The cloud AI providers Wenlan offers
 

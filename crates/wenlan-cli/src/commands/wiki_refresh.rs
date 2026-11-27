@@ -328,7 +328,7 @@ fn rewrite(
 }
 
 fn pr_body(report: &RefreshReport) -> String {
-    let mut body = String::from("Wenlan checked the code each wiki page relies on.\n");
+    let mut body = String::from("Wenlan checked the code each page relies on.\n");
     if !report.rewritten.is_empty() {
         body.push_str("\nRewritten because their code changed:\n");
         for file in &report.rewritten {
@@ -378,7 +378,7 @@ fn open_pull_request(top: &Path, folder: &str, report: &RefreshReport) -> Result
         "commit",
         "--quiet",
         "-m",
-        "docs(wiki): keep the wiki in step with the code",
+        "docs: keep the pages in step with the code",
     ]);
     git(top, &commit)?;
     git(
@@ -433,7 +433,7 @@ fn open_pull_request(top: &Path, folder: &str, report: &RefreshReport) -> Result
         "--head",
         REFRESH_BRANCH,
         "--title",
-        "docs(wiki): keep the wiki in step with the code",
+        "docs: keep the pages in step with the code",
         "--body",
         &pr_body(report),
     ]) {

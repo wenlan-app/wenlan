@@ -52,12 +52,15 @@ const KEPT: Record<string, string> = {
   "findSkills.localHint_one": "the person's own remarks added to a skill",
   "findSkills.localHint_other": "the person's own remarks added to a skill",
   "aboutWenlan.releaseNotes": "release notes",
+  // A command the person types.
+  "repoWiki.docs.notChecked": "names the /wenlan wiki command",
 };
 
 // 筆記憶 is 筆 (the measure word for memories) + 記憶, not 筆記.
 const ZH_NOTE = /筆記(?!憶)|笔记/;
 const LATIN_SPACE = /\bSpaces?\b/;
 const EN_NOTE = /\bnotes?\b/i;
+const WIKI = /\bwikis?\b/i;
 
 function offenders(locale: "en" | "zh-Hans" | "zh-Hant", test: (text: string) => boolean): string[] {
   return flatten(resources[locale].translation)
@@ -70,11 +73,13 @@ describe("page naming", () => {
     for (const locale of ["zh-Hans", "zh-Hant"] as const) {
       expect(offenders(locale, text => ZH_NOTE.test(text)), `${locale} 筆記/笔记`).toEqual([]);
       expect(offenders(locale, text => LATIN_SPACE.test(text)), `${locale} Space`).toEqual([]);
+      expect(offenders(locale, text => WIKI.test(text)), `${locale} wiki`).toEqual([]);
     }
   });
 
-  it("UX-WORDS-1 ux_words_1: English calls a page a page, not a note", () => {
-    expect(offenders("en", text => EN_NOTE.test(text))).toEqual([]);
+  it("UX-WORDS-1 ux_words_1: English calls a page a page, not a note or a wiki", () => {
+    expect(offenders("en", text => EN_NOTE.test(text)), "en note").toEqual([]);
+    expect(offenders("en", text => WIKI.test(text)), "en wiki").toEqual([]);
   });
 
   it("UX-WORDS-1 ux_words_1: every kept key still exists and still needs keeping", () => {
@@ -85,7 +90,7 @@ describe("page naming", () => {
     );
     const stale = Object.keys(KEPT).filter(key => {
       const texts = ["en", "zh-Hans", "zh-Hant"].map(locale => flat.get(`${locale}:${key}`) ?? "");
-      return !(EN_NOTE.test(texts[0]) || ZH_NOTE.test(texts[1]) || ZH_NOTE.test(texts[2]));
+      return !texts.some(text => EN_NOTE.test(text) || ZH_NOTE.test(text) || WIKI.test(text));
     });
     expect(stale).toEqual([]);
   });

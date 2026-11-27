@@ -68,7 +68,7 @@ function data(): ExampleWikiData {
 
 export class ExampleWikiReadOnly extends Error {
   constructor(command: string) {
-    super(`The example wiki can't be changed (${command}).`);
+    super(`The example pages can't be changed (${command}).`);
     this.name = "ExampleWikiReadOnly";
   }
 }

@@ -18,7 +18,7 @@ export const enFirstUse = {
       pages_one: "{{count}} page written",
       pages_other: "{{count}} pages written",
     },
-    title: "Build your wiki in three steps",
+    title: "Set up your pages in three steps",
     progress: "{{done}} of {{total}} done",
     done: "Done",
     hide: "Hide getting started",
@@ -26,7 +26,7 @@ export const enFirstUse = {
     steps: {
       tool: {
         title: "Connect an AI tool",
-        body: "Claude Code, Codex, Cursor and more can use your pages, all sharing one wiki.",
+        body: "Claude Code, Codex, Cursor and more can all use the same pages.",
         action: "Connect a tool",
       },
       sources: {
@@ -104,7 +104,7 @@ export const hansFirstUse = {
       pages_one: "已写好 {{count}} 个页面",
       pages_other: "已写好 {{count}} 个页面",
     },
-    title: "三步建好你的 wiki",
+    title: "三步建好你的页面",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
     hide: "隐藏开始使用清单",
@@ -187,7 +187,7 @@ export const hantFirstUse = {
       pages_one: "已寫好 {{count}} 個頁面",
       pages_other: "已寫好 {{count}} 個頁面",
     },
-    title: "三步建好你的 wiki",
+    title: "三步建好你的頁面",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
     hide: "隱藏開始使用清單",
