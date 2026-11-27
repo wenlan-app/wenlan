@@ -87,8 +87,9 @@ and wait for evidence that people need them.
   only where it means the person's own material or another app's notes (an
   Obsidian vault, Apple Notes, Zotero, release notes), and 文章/文档 only for
   Zotero papers and source-library documents; the test lists those keys, each
-  kept only for that one word, with a reason. The sidebar section label
-  ("Docs"/文件/文档) is a separate pending decision. Test:
+  kept only for that one word, with a reason. "Docs"/文件/文档 stays only as
+  the kind of page next to Skills and Rules (sidebar section, README banner),
+  never as another word for page (decided 2026-11-27). Test:
   `src/i18n/pageNaming.test.ts`, which covers the app's copy only; the CLI,
   MCP tool text, plugins and docs follow the same rule and are reviewed by
   hand.
