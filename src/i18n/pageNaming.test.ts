@@ -73,9 +73,9 @@ const KEPT: Record<Rule, Record<string, string>> = {
     "sourceLibrary.documentError": "documents in the source library",
     "sourceLibrary.retryDocuments": "documents in the source library",
     "sourceLibrary.document": "documents in the source library",
-    // The Docs kind next to Skills and Rules; its name is a pending decision.
-    "sidebar.pages": "the Docs kind label, pending decision",
-    "pages.overview.title": "reuses the Docs kind label, pending decision",
+    // The Docs kind next to Skills and Rules (UX-WORDS-1, decided 2026-11-27).
+    "sidebar.pages": "the Docs kind label next to Skills and Rules",
+    "pages.overview.title": "reuses the Docs kind label",
     "aboutWenlan.description": "names the Docs kind beside skills and rules",
   },
 };
