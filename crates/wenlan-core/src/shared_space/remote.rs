@@ -739,6 +739,7 @@ mod tests {
                 project: None,
                 skills: Vec::new(),
                 proposal_decisions: Default::default(),
+                approved_by: None,
             }),
         };
         let result = push(

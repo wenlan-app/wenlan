@@ -246,6 +246,41 @@ fn ux_skill_14_the_tools_say_only_when_the_person_asked() {
     }
 }
 
+/// UX-SKILL-14: `add_rule` says it saves a personal rule, and that team and
+/// project rules come from the Space's Rules page or a proposal there.
+#[test]
+fn ux_skill_14_add_rule_says_it_saves_a_personal_rule() {
+    let tools = server("http://127.0.0.1:1".into(), TransportMode::Stdio)
+        .tool_router
+        .list_all();
+    let description = tools
+        .iter()
+        .find(|tool| tool.name == "add_rule")
+        .and_then(|tool| tool.description.as_deref())
+        .unwrap_or_default();
+    assert!(
+        description.contains("Save one PERSONAL working rule"),
+        "{description}"
+    );
+    assert!(
+        description.contains("not a team or project rule"),
+        "{description}"
+    );
+    assert!(
+        description.contains("Team and project rules come only from the Space's Rules page"),
+        "{description}"
+    );
+    assert!(
+        description.contains("from a proposal approved there"),
+        "{description}"
+    );
+    // Truthful about where a Space's rule goes: a connected repository too.
+    assert!(
+        description.contains("a repository connected to that Space"),
+        "{description}"
+    );
+}
+
 /// UX-SKILL-14: an AI tool reading the rules is told a saved rule was
 /// saved, and from where, never that the person wrote it.
 #[test]

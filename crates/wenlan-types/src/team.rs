@@ -414,6 +414,9 @@ pub struct TeamRulesManifest {
     /// Decisions on this member's proposals, keyed by proposal id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub proposal_decisions: BTreeMap<String, bool>,
+    /// The team member name of whoever approved this version, when the host knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
 }
 
 /// A project master follows the Space's grant and is rendered for its bound repo.

@@ -5,15 +5,25 @@ const COPILOT: &str = ".github/copilot-instructions.md";
 const SPACE: &str = "private fixture Space";
 const PUBLISHER: &str = "fixture-keeper";
 
+fn sources() -> RuleSources {
+    RuleSources {
+        space: SPACE.into(),
+        ..RuleSources::default()
+    }
+}
+
 #[test]
 fn repo_wiki_legacy_precedence_is_read_and_team_precedes_project() {
     let rendered = format!("{TEAM_HEADING}\n\n{LEGACY_RULE_PRECEDENCE}\n\n- Team line\n{RULES_HEADING}\n\n- Project line\n");
-    let result = block(Some(&rendered), "", None, true, PUBLISHER)
+    let result = block(Some(&rendered), "", None, true, PUBLISHER, &sources())
         .unwrap()
         .unwrap();
     assert!(result.contains(RULE_PRECEDENCE));
     assert!(!result.contains(LEGACY_RULE_PRECEDENCE));
-    assert!(result.find(TEAM_HEADING).unwrap() < result.find(RULES_HEADING).unwrap());
+    let team = result.find(TEAM_HEADING).unwrap();
+    let project = result.find(&project_heading(SPACE)).unwrap();
+    assert!(team < project, "{result}");
+    assert!(!result.contains(RULES_HEADING), "{result}");
 }
 
 struct Scratch {
@@ -151,7 +161,15 @@ fn squash_landed_bytes_identify_a_teammate_edit_and_only_approved_content_fans_o
         let plan = scratch
             .inspect(&mut project, &base, &generated)
             .unwrap()
-            .plan(&generated, Some("wiki"), PUBLISHER, &master, false, false)
+            .plan(
+                &generated,
+                Some("wiki"),
+                PUBLISHER,
+                &master,
+                false,
+                false,
+                &sources(),
+            )
             .unwrap();
         assert_eq!(plan.adopted, [ROOT_AGENTS, ROOT_CLAUDE]);
         let commit = scratch.stage_and_commit(&mut project, &base, &draft, &plan);
@@ -168,7 +186,13 @@ fn squash_landed_bytes_identify_a_teammate_edit_and_only_approved_content_fans_o
         assert!(agents.starts_with(hand));
         assert_eq!(agents.matches("Use the existing runtime.").count(), 1);
         assert!(agents.contains(super::super::RULES_HINT));
-        assert!(!agents.contains(SPACE));
+        // UX-SKILL-7: the project heading names the Space, with its source line.
+        assert!(
+            agents.replace("\r\n", "\n").contains(&format!(
+                "## Project rules for {SPACE}\n\nProject rules · Space {SPACE}\n\n"
+            )),
+            "{agents}"
+        );
         assert!(scratch.body(&commit, ROOT_CLAUDE).starts_with(claude));
         commit
     };
@@ -226,7 +250,15 @@ fn squash_landed_bytes_identify_a_teammate_edit_and_only_approved_content_fans_o
     let plan = scratch
         .inspect(&mut project, &base, &generated)
         .unwrap()
-        .plan(&generated, Some("wiki"), PUBLISHER, &approved, false, false)
+        .plan(
+            &generated,
+            Some("wiki"),
+            PUBLISHER,
+            &approved,
+            false,
+            false,
+            &sources(),
+        )
         .unwrap();
     let next = scratch.stage_and_commit(&mut project, &base, &draft, &plan);
     for path in [ROOT_AGENTS, ROOT_CLAUDE, COPILOT] {
@@ -253,7 +285,15 @@ fn an_open_offer_does_not_become_a_landed_baseline_or_create_removal_cards() {
     let plan = scratch
         .inspect(&mut project, &base, &generated)
         .unwrap()
-        .plan(&generated, None, PUBLISHER, &master, false, false)
+        .plan(
+            &generated,
+            None,
+            PUBLISHER,
+            &master,
+            false,
+            false,
+            &sources(),
+        )
         .unwrap();
     let branch = scratch.stage_and_commit(&mut project, &base, &draft, &plan);
     project
@@ -280,7 +320,15 @@ fn a_late_index_edit_is_never_replaced() {
     let plan = scratch
         .inspect(&mut project, &base, &generated)
         .unwrap()
-        .plan(&generated, None, PUBLISHER, &master, false, false)
+        .plan(
+            &generated,
+            None,
+            PUBLISHER,
+            &master,
+            false,
+            false,
+            &sources(),
+        )
         .unwrap();
     fs::write(draft.join(ROOT_AGENTS), "Late edit.\n").unwrap();
     git_run(&draft, &["add", ROOT_AGENTS]);
@@ -356,7 +404,15 @@ fn claude_import_does_not_repeat_project_instructions() {
     let plan = scratch
         .inspect(&mut project, &base, &generated)
         .unwrap()
-        .plan(&generated, None, PUBLISHER, &master, false, false)
+        .plan(
+            &generated,
+            None,
+            PUBLISHER,
+            &master,
+            false,
+            false,
+            &sources(),
+        )
         .unwrap();
     let draft = scratch.prepare_draft(&base);
     let commit = scratch.stage_and_commit(&mut project, &base, &draft, &plan);
@@ -376,7 +432,15 @@ fn a_local_unpushed_candidate_needs_delivery_evidence_before_matching_a_squash()
     let plan = scratch
         .inspect(&mut project, &base, &generated)
         .unwrap()
-        .plan(&generated, None, PUBLISHER, &master, false, false)
+        .plan(
+            &generated,
+            None,
+            PUBLISHER,
+            &master,
+            false,
+            false,
+            &sources(),
+        )
         .unwrap();
     plan.stage(&draft).unwrap();
     git_run(
@@ -408,7 +472,12 @@ fn a_local_unpushed_candidate_needs_delivery_evidence_before_matching_a_squash()
 #[test]
 fn inline_markers_are_hand_text_and_a_foreign_block_is_kept() {
     let comment = format!("Explain `{AGENTS_START}` and `{AGENTS_END}` here.\n");
-    let foreign = agents_block(None, &["A teammate's rule.".into()], Some("another-keeper"));
+    let foreign = agents_block(
+        None,
+        &["A teammate's rule.".into()],
+        Some("another-keeper"),
+        SPACE,
+    );
     let scratch = Scratch::new(&[(ROOT_AGENTS, &comment), (COPILOT, &foreign)]);
     assert!(parts(&comment).unwrap().block.is_empty());
     let base = scratch.head();
@@ -417,9 +486,103 @@ fn inline_markers_are_hand_text_and_a_foreign_block_is_kept() {
     let error = scratch
         .inspect(&mut project, &base, &generated)
         .unwrap()
-        .plan(&generated, None, PUBLISHER, &master, false, false)
+        .plan(
+            &generated,
+            None,
+            PUBLISHER,
+            &master,
+            false,
+            false,
+            &sources(),
+        )
         .err()
         .unwrap();
     assert!(error.to_string().contains("kept by another Wenlan"));
     assert_eq!(scratch.body(&base, COPILOT), foreign);
+}
+
+/// UX-SKILL-7: with no `CLAUDE.md` in the repository, the pull request adds
+/// one holding only the import, and the block with its named headings and
+/// source lines goes into `AGENTS.md`.
+#[test]
+fn ux_skill_7_missing_claude_md_gets_only_the_import() {
+    let scratch = Scratch::new(&[]);
+    let base = scratch.head();
+    let (master, generated) = rules(&["Run unit tests."]);
+    let sources = RuleSources {
+        space: SPACE.into(),
+        team_name: Some("Fixture Team".into()),
+        team_line: Some("Team rules · Team Fixture Team · approved by Amy · 2026-11-27".into()),
+        project_line: Some(
+            "Project rules · Space private fixture Space · approved by Bo · 2026-11-26".into(),
+        ),
+    };
+    let team = format!("{TEAM_HEADING}\n\n- Team line.\n{RULES_HEADING}\n\n- Run unit tests.\n");
+    let generated = generated
+        .into_iter()
+        .map(|(path, text)| {
+            let text = if path == ROOT_AGENTS {
+                team.clone()
+            } else {
+                text
+            };
+            (path, text)
+        })
+        .collect::<StagedRules>();
+    let mut project = scratch.project();
+    let draft = scratch.prepare_draft(&base);
+    let plan = scratch
+        .inspect(&mut project, &base, &generated)
+        .unwrap()
+        .plan(&generated, None, PUBLISHER, &master, false, false, &sources)
+        .unwrap();
+    let commit = scratch.stage_and_commit(&mut project, &base, &draft, &plan);
+    assert_eq!(scratch.body(&commit, ROOT_CLAUDE), "@AGENTS.md\n");
+    let agents = scratch.body(&commit, ROOT_AGENTS);
+    assert!(
+        agents.contains(
+            "## Team rules for Fixture Team\n\nTeam rules · Team Fixture Team · approved by Amy · 2026-11-27\n\n- Team line.\n"
+        ),
+        "{agents}"
+    );
+    assert!(
+        agents.contains(&format!(
+            "## Project rules for {SPACE}\n\nProject rules · Space {SPACE} · approved by Bo · 2026-11-26\n\n- Run unit tests.\n"
+        )),
+        "{agents}"
+    );
+    // A teammate edit in the named team section is still read back.
+    assert_eq!(team_rules_in(&agents).unwrap(), ["- Team line."]);
+}
+
+/// UX-SKILL-7: a `CLAUDE.md` that held only Wenlan's block becomes the
+/// import; Wenlan never keeps a block-only `CLAUDE.md`.
+#[test]
+fn ux_skill_7_block_only_claude_md_becomes_the_import() {
+    let old = format!(
+        "{AGENTS_START}\r\n<!-- wenlan-publisher: {PUBLISHER} -->\r\n{RULES_HEADING}\r\n\r\n- Run unit tests.\r\n{AGENTS_END}\r\n"
+    );
+    let scratch = Scratch::new(&[(ROOT_CLAUDE, old.as_str())]);
+    let base = scratch.head();
+    let (master, generated) = rules(&["Run unit tests."]);
+    let mut project = scratch.project();
+    let draft = scratch.prepare_draft(&base);
+    let plan = scratch
+        .inspect(&mut project, &base, &generated)
+        .unwrap()
+        .plan(
+            &generated,
+            None,
+            PUBLISHER,
+            &master,
+            false,
+            true,
+            &sources(),
+        )
+        .unwrap();
+    let commit = scratch.stage_and_commit(&mut project, &base, &draft, &plan);
+    assert_eq!(scratch.body(&commit, ROOT_CLAUDE), "@AGENTS.md\r\n");
+    assert!(scratch
+        .body(&commit, ROOT_AGENTS)
+        .contains(&project_heading(SPACE)));
 }

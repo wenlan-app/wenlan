@@ -627,3 +627,32 @@ async fn rulesync_team_shares_only_approved_safe_skills_from_the_exact_project()
         .unwrap()
         .contains("Updated checklist"));
 }
+
+/// UX-SKILL-7 / team layers: a member's pulled layer carries the name of
+/// whoever approved that version and when, so the member's block can say so.
+#[tokio::test]
+async fn rulesync_team_pulled_layer_names_who_approved_it() {
+    let fixture = Fixture::new().await;
+    let approved =
+        rulesync_team::update_hosted_rules(&fixture.settings, PROJECT, "Use the checklist")
+            .unwrap();
+    rulesync_team::decide_local_space_proposal(&fixture.settings, PROJECT, &approved, true)
+        .unwrap();
+    let manifest = rulesync_team::hosted_manifest(&fixture.team, &fixture.settings, PROJECT)
+        .unwrap()
+        .unwrap();
+    assert_eq!(manifest.approved_by.as_deref(), Some("Owner"));
+    let (settings, _, _) = fixture.pull("reader", &fixture.reader.1, PROJECT).await;
+    let layer = rulesync_team::load_project_layers(&settings)
+        .unwrap()
+        .remove(0);
+    assert_eq!(layer.approved_by.as_deref(), Some("Owner"));
+    let at = layer.approved_at.clone().unwrap();
+    assert_eq!(
+        layer.source_line("Project"),
+        format!(
+            "Project rules · Space {PROJECT} · approved by Owner · {}",
+            &at[..10]
+        )
+    );
+}

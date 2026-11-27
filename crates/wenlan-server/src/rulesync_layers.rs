@@ -46,10 +46,10 @@ pub(crate) fn stage(input: &Path, prefix: &str, layers: &[TeamRuleLayer]) -> Res
 pub(crate) fn format_layer(prefix: &str, layer: &TeamRuleLayer) -> Result<String> {
     let key = key(layer)?;
     let body = display_body(&layer.markdown);
-    let name = tool_file_text(&layer.name);
-    let date = tool_file_text(layer.synced_at.get(..10).unwrap_or(&layer.synced_at));
+    let name = tool_file_text(layer.owner_name().1);
+    let source = layer.source_line(prefix);
     Ok(format!(
-        "{START}{key} {} -->\n## {prefix} rules for {name}\n\nLast synced {date}. {RULE_PRECEDENCE}\n\n{body}\n{END}\n",
+        "{START}{key} {} -->\n## {prefix} rules for {name}\n\n{source}. {RULE_PRECEDENCE}\n\n{body}\n{END}\n",
         layer.revision
     ))
 }
@@ -107,12 +107,17 @@ pub(crate) fn blocks(text: &str) -> Result<BTreeMap<&str, Block<'_>>> {
             .filter(|(key, revision)| hex(key) && hex(revision))
             .context("invalid shared rules marker")?;
         let mut metadata = lines.by_ref().take(4);
-        for expected in ["## ", "\n", "Last synced ", "\n"] {
+        // Heading, blank, the line saying where the rules come from, blank.
+        for expected in ["## ", "\n", "", "\n"] {
             ensure!(
-                metadata
-                    .next()
-                    .is_some_and(|(_, line, _)| line.starts_with(expected)
-                        || (expected == "\n" && line == "\r\n")),
+                metadata.next().is_some_and(|(_, line, _)| {
+                    let blank = line == "\n" || line == "\r\n";
+                    if expected == "\n" {
+                        blank
+                    } else {
+                        line.starts_with(expected) && !blank
+                    }
+                }),
                 "invalid shared rules heading"
             );
         }
@@ -601,6 +606,36 @@ pub(crate) mod tests {
             let section = render_fixture_section(&layer);
             assert!(section.contains(RULE_PRECEDENCE));
             assert!(!section.contains(wenlan_core::rulesync_personal::LEGACY_RULE_PRECEDENCE));
+        }
+    }
+
+    /// UX-SKILL-7 / team layers: a team section is headed by the team's
+    /// name, a project section by its Space's name, and one line under each
+    /// gives the layer, that name, who approved the version and its date.
+    #[test]
+    fn rulesync_section_names_its_space_and_who_approved_it() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (settings, _, _) = hosted_fixture(scratch.path());
+        let mut layers = rulesync_team::load_layers(&settings).unwrap();
+        layers.extend(rulesync_team::load_project_layers(&settings).unwrap());
+        assert_eq!(layers.len(), 2);
+        for layer in layers {
+            assert_eq!(layer.approved_by.as_deref(), Some("Owner"));
+            let date = layer.approved_at.as_deref().unwrap()[..10].to_owned();
+            let (prefix, owner, name) = match &layer.project {
+                Some(project) => ("Project", "Space", project.space.clone()),
+                None => ("Team", "Team", layer.name.clone()),
+            };
+            let section = format_layer(prefix, &layer).unwrap();
+            assert!(
+                section.contains(&format!(
+                    "## {prefix} rules for {name}\n\n{prefix} rules · {owner} {name} · approved by Owner · {date}. {RULE_PRECEDENCE}\n\n"
+                )),
+                "{section}"
+            );
+            assert!(!section.contains("Last synced"), "{section}");
+            // The new shape is still read back as Wenlan's block.
+            assert_eq!(blocks(&section).unwrap().len(), 1);
         }
     }
 

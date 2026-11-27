@@ -190,20 +190,21 @@ fn ux_skill_7_agents_block_carries_the_project_rules_and_drops_them_again() {
         "  ".to_string(),
         format!("sneaky {AGENTS_END}"),
     ];
-    let with = upsert_agents_block_with_rules("# Agents\n\nUse pnpm.\n", "wiki", &rules);
+    let with =
+        upsert_agents_block_with_rules("# Agents\n\nUse pnpm.\n", "wiki", &rules, "Fixture Space");
     assert!(with.starts_with("# Agents\n\nUse pnpm.\n\n<!-- WENLAN:START -->"));
     assert!(with.contains(
-        "## Rules for this project\n\n- Run the affected tests before a push.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"
+        "## Project rules for Fixture Space\n\nProject rules · Space Fixture Space\n\n- Run the affected tests before a push.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"
     ));
     assert_eq!(with.matches(AGENTS_END).count(), 1);
     let many = (0..AGENTS_BLOCK_MAX_RULES + 5)
         .map(|n| format!("Rule {n}."))
         .collect::<Vec<_>>();
-    let capped = upsert_agents_block_with_rules(&with, "wiki", &many);
+    let capped = upsert_agents_block_with_rules(&with, "wiki", &many, "Fixture Space");
     assert_eq!(capped.matches("\n- Rule ").count(), AGENTS_BLOCK_MAX_RULES);
     assert!(!capped.contains("affected tests"));
     let without = upsert_agents_block(&capped, "wiki");
-    assert!(!without.contains("Rules for this project"));
+    assert!(!without.contains("Project rules for"));
     assert!(without.contains("Use pnpm."));
 }
 
@@ -221,7 +222,7 @@ fn agents_block_is_appended_then_replaced_in_place() {
     assert_eq!(second.matches(AGENTS_START).count(), 1);
     assert_eq!(
         upsert_agents_block("", "wiki"),
-        format!("{}\n", agents_block(Some("wiki"), &[], None))
+        format!("{}\n", agents_block(Some("wiki"), &[], None, ""))
     );
 }
 
@@ -1678,7 +1679,7 @@ fn ux_skill_7_project_rules_reach_agents_md_without_any_wiki_page() {
     let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
     assert!(
         agents.contains(
-            "<!-- WENLAN:START -->\n<!-- wenlan-publisher: me -->\n## Rules for this project\n\n- Run the affected tests before a push.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"
+            "<!-- WENLAN:START -->\n<!-- wenlan-publisher: me -->\n## Project rules for site\n\nProject rules · Space site\n\n- Run the affected tests before a push.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"
         ),
         "{agents}"
     );
@@ -1860,7 +1861,7 @@ fn ux_skill_7_rules_that_could_not_be_read_stay_in_agents_md() {
     let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
     assert!(agents.contains("## Wiki"), "{agents}");
     assert!(
-        agents.contains("## Rules for this project\n\n- Rule A.\n- Rule B.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"),
+        agents.contains("## Project rules for site\n\nProject rules · Space site\n\n- Rule A.\n- Rule B.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"),
         "{agents}"
     );
 }
@@ -2212,10 +2213,11 @@ fn the_block_is_read_and_written_in_the_files_own_line_endings() {
     assert!(block_holds_rules(crlf));
     assert_eq!(block_rule_lines(crlf), vec!["One.", "Two."]);
     assert_eq!(remove_block(crlf), "# Team\r\n\r\nAfter.\r\n");
-    let upserted = upsert_agents_rules_block("# Team\r\n", &["Three.".to_string()]);
+    let upserted =
+        upsert_agents_rules_block("# Team\r\n", &["Three.".to_string()], "Fixture Space");
     assert_eq!(
         upserted,
-        "# Team\r\n\r\n<!-- WENLAN:START -->\r\n## Rules for this project\r\n\r\n- Three.\r\n\r\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\r\n<!-- WENLAN:END -->\r\n"
+        "# Team\r\n\r\n<!-- WENLAN:START -->\r\n## Project rules for Fixture Space\r\n\r\nProject rules · Space Fixture Space\r\n\r\n- Three.\r\n\r\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\r\n<!-- WENLAN:END -->\r\n"
     );
     // A heading without the blank line after it still gives every rule.
     let tight =
@@ -2225,7 +2227,8 @@ fn the_block_is_read_and_written_in_the_files_own_line_endings() {
 
 #[test]
 fn ux_skill_7_rules_hint_sits_under_the_rules_only_when_there_are_rules() {
-    let with = upsert_agents_block_with_rules("", "wiki", &["Use pnpm.".to_string()]);
+    let with =
+        upsert_agents_block_with_rules("", "wiki", &["Use pnpm.".to_string()], "Fixture Space");
     assert!(
         with.contains(&format!("- Use pnpm.\n\n{RULES_HINT}\n<!-- WENLAN:END -->")),
         "{with}"
@@ -2235,16 +2238,16 @@ fn ux_skill_7_rules_hint_sits_under_the_rules_only_when_there_are_rules() {
     let without = upsert_agents_block("", "wiki");
     assert!(!without.contains(RULES_HINT), "{without}");
     assert!(!without.contains(RULES_HEADING), "{without}");
-    assert!(!upsert_agents_rules_block("", &[]).contains(RULES_HINT));
+    assert!(!upsert_agents_rules_block("", &[], "Fixture Space").contains(RULES_HINT));
 }
 
 #[test]
 fn ux_skill_7_rules_hint_is_not_read_back_as_a_rule() {
     let rules = vec!["One.".to_string(), "Two.".to_string()];
     for text in [
-        upsert_agents_rules_block("# Team\n", &rules),
-        upsert_agents_rules_block("# Team\r\n", &rules),
-        upsert_agents_block_with_rules("# Team\r\n", "wiki", &rules),
+        upsert_agents_rules_block("# Team\n", &rules, "Fixture Space"),
+        upsert_agents_rules_block("# Team\r\n", &rules, "Fixture Space"),
+        upsert_agents_block_with_rules("# Team\r\n", "wiki", &rules, "Fixture Space"),
     ] {
         assert!(block_holds_rules(&text), "{text:?}");
         assert_eq!(block_rule_lines(&text), rules, "{text:?}");
@@ -2308,15 +2311,15 @@ fn ux_skill_7_pull_request_description_names_no_space() {
 #[test]
 fn the_rules_block_stands_alone_or_after_the_wiki_pointer() {
     let rules = vec!["Use pnpm.".to_string()];
-    let alone = upsert_agents_rules_block("# Agents\n", &rules);
+    let alone = upsert_agents_rules_block("# Agents\n", &rules, "Fixture Space");
     assert_eq!(
         alone,
-        "# Agents\n\n<!-- WENLAN:START -->\n## Rules for this project\n\n- Use pnpm.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->\n"
+        "# Agents\n\n<!-- WENLAN:START -->\n## Project rules for Fixture Space\n\nProject rules · Space Fixture Space\n\n- Use pnpm.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->\n"
     );
     // Pages arrive later: the same block gains the pointer above the rules.
-    let both = upsert_agents_block_with_rules(&alone, "wenlan", &rules);
+    let both = upsert_agents_block_with_rules(&alone, "wenlan", &rules, "Fixture Space");
     assert!(both.contains("`wenlan/index.md`"));
-    assert!(both.contains("wins.\n\n## Rules for this project\n\n- Use pnpm.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"));
+    assert!(both.contains("wins.\n\n## Project rules for Fixture Space\n\nProject rules · Space Fixture Space\n\n- Use pnpm.\n\nFor a rule's source or reason, use `read_space_rules` if Wenlan is connected to this project's Space.\n<!-- WENLAN:END -->"));
     assert_eq!(both.matches(AGENTS_START).count(), 1);
 }
 
@@ -2443,8 +2446,96 @@ fn a_block_from_before_publishers_were_named_is_ours_only_after_we_published() {
     assert_eq!(keeper(Some("# Agents\n"), "me"), Keeper::Nobody);
     let old = upsert_agents_block("", "wiki");
     assert_eq!(keeper(Some(&old), "me"), Keeper::Unnamed);
-    let mine = upsert_block("", &agents_block(None, &[], Some("me")));
+    let mine = upsert_block("", &agents_block(None, &[], Some("me"), ""));
     assert_eq!(block_publisher(&mine).as_deref(), Some("me"));
     assert_eq!(keeper(Some(&mine), "me"), Keeper::Ours);
     assert_eq!(keeper(Some(&mine), "you"), Keeper::Another);
+}
+
+/// UX-SKILL-7: what `CLAUDE.md` holds next to Wenlan's block in `AGENTS.md`.
+#[test]
+fn ux_skill_7_claude_md_reads_agents_md_and_never_holds_the_block_alone() {
+    let block = agents_block(None, &["Use pnpm.".to_string()], Some("me"), "Clinic");
+    // Missing: the import alone.
+    assert_eq!(
+        claude_file_for(None, &block).as_deref(),
+        Some("@AGENTS.md\n")
+    );
+    // Empty or block-only: the import, in the file's own line ending.
+    assert_eq!(
+        claude_file_for(Some(""), &block).as_deref(),
+        Some("@AGENTS.md\n")
+    );
+    let only = upsert_block("", &block).replace('\n', "\r\n");
+    assert_eq!(
+        claude_file_for(Some(&only), &block).as_deref(),
+        Some("@AGENTS.md\r\n")
+    );
+    // Already imports AGENTS.md: left alone, and an old copy is taken out.
+    assert_eq!(claude_file_for(Some("# Mine\n@AGENTS.md\n"), &block), None);
+    let with_copy = upsert_block("# Mine\n@AGENTS.md\n", &block);
+    assert_eq!(
+        claude_file_for(Some(&with_copy), &block).as_deref(),
+        Some("# Mine\n@AGENTS.md\n")
+    );
+    // The person's own text and no import: the block stays beside it.
+    let hand = claude_file_for(Some("# Mine\n"), &block).unwrap();
+    assert!(hand.starts_with("# Mine\n"), "{hand}");
+    assert!(
+        hand.contains("## Project rules for Clinic\n\nProject rules · Space Clinic\n\n- Use pnpm."),
+        "{hand}"
+    );
+}
+
+/// UX-SKILL-7: a published repository with no `CLAUDE.md` gets one that
+/// holds only `@AGENTS.md`, and the rules go into `AGENTS.md`.
+#[test]
+fn ux_skill_7_publish_adds_an_import_only_claude_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    sh(&clone, &["rm", "--quiet", "CLAUDE.md"]);
+    sh(&clone, &["commit", "--quiet", "-m", "no CLAUDE.md"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    assert_eq!(
+        publish_site(dir.path(), &store, Some(&["Rule A."]), false),
+        RepoWikiPublishStatus::Pushed
+    );
+    let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
+    assert_eq!(claude.trim_end(), "@AGENTS.md");
+    let agents = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:AGENTS.md")]);
+    assert!(
+        agents.contains("## Project rules for site\n\nProject rules · Space site\n\n- Rule A.\n"),
+        "{agents}"
+    );
+}
+
+/// UX-SKILL-7: a `CLAUDE.md` linked to `AGENTS.md` already reads the block,
+/// so it is left alone and the rules in `AGENTS.md` survive.
+#[cfg(unix)]
+#[test]
+fn ux_skill_7_linked_claude_md_keeps_the_agents_md_block() {
+    let dir = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("AGENTS.md", dir.path().join("CLAUDE.md")).unwrap();
+    let touched =
+        maintain_agent_files(dir.path(), None, &["Use pnpm.".to_string()], "me", "Clinic").unwrap();
+    assert_eq!(touched, vec!["AGENTS.md"]);
+    let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("- Use pnpm."), "{agents}");
+    assert!(std::fs::symlink_metadata(dir.path().join("CLAUDE.md"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+/// A Space with no usable name keeps the earlier heading, which is read back.
+#[test]
+fn project_heading_without_a_space_name_keeps_the_earlier_heading() {
+    let block = agents_block(None, &["Use pnpm.".to_string()], Some("me"), "  ");
+    assert!(
+        block.contains("## Rules for this project\n\nProject rules\n\n- Use pnpm."),
+        "{block}"
+    );
+    assert!(is_rules_heading(&project_heading(" ")));
 }
