@@ -178,6 +178,19 @@ fn page_id(team_id: &str, project: Option<&TeamRulesProject>) -> String {
     format!("{ID_PREFIX}{}", version::sha256_hex(scope.as_bytes()))
 }
 
+/// Whether a project Rules layer was published by the server represented by a team layer.
+/// Project IDs are derived from the server ID and bound Space ID, so this keeps the server
+/// association without exposing a server URL or credential in the layer.
+pub fn project_layer_belongs_to_team(
+    team_layer: &TeamRuleLayer,
+    project_layer: &TeamRuleLayer,
+) -> bool {
+    project_layer
+        .project
+        .as_ref()
+        .is_some_and(|project| project_layer.id == page_id(&team_layer.id, Some(project)))
+}
+
 /// The stable origin identifier can cross the team boundary without a URL or credentials.
 pub fn repo_identity(remote: &str) -> Option<String> {
     if let Some(slug) = repo_wiki::github_slug(remote) {

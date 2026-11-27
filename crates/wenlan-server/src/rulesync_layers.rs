@@ -33,13 +33,7 @@ pub(crate) fn key(layer: &TeamRuleLayer) -> Result<String> {
 pub(crate) fn stage(input: &Path, prefix: &str, layers: &[TeamRuleLayer]) -> Result<()> {
     for layer in layers {
         let key = key(layer)?;
-        let body = display_body(&layer.markdown);
-        let name = tool_file_text(&layer.name);
-        let date = tool_file_text(layer.synced_at.get(..10).unwrap_or(&layer.synced_at));
-        let text = format!(
-            "{START}{key} {} -->\n## {prefix} rules for {name}\n\nLast synced {date}. {RULE_PRECEDENCE}\n\n{body}\n{END}\n",
-            layer.revision
-        );
+        let text = format_layer(prefix, layer)?;
         write_named_root_rule(
             input,
             &format!("{}-{key}", prefix.to_ascii_lowercase()),
@@ -47,6 +41,17 @@ pub(crate) fn stage(input: &Path, prefix: &str, layers: &[TeamRuleLayer]) -> Res
         )?;
     }
     Ok(())
+}
+
+pub(crate) fn format_layer(prefix: &str, layer: &TeamRuleLayer) -> Result<String> {
+    let key = key(layer)?;
+    let body = display_body(&layer.markdown);
+    let name = tool_file_text(&layer.name);
+    let date = tool_file_text(layer.synced_at.get(..10).unwrap_or(&layer.synced_at));
+    Ok(format!(
+        "{START}{key} {} -->\n## {prefix} rules for {name}\n\nLast synced {date}. {RULE_PRECEDENCE}\n\n{body}\n{END}\n",
+        layer.revision
+    ))
 }
 
 fn display_body(markdown: &str) -> String {
@@ -273,6 +278,14 @@ fn recorded_path(
     {
         return None;
     }
+    if relative.starts_with("checkouts")
+        && relative
+            .components()
+            .nth(2)
+            .is_some_and(|part| part.as_os_str() == "local")
+    {
+        return crate::rulesync_checkout::local_recorded_path(data, relative);
+    }
     let root = if relative.starts_with("checkouts") {
         data
     } else {
@@ -300,7 +313,26 @@ pub(crate) fn waiting_in_file(
     let Ok(source) = std::str::from_utf8(&bytes) else {
         return false;
     };
-    let Ok(blocks) = blocks(source) else {
+    let codex_rules;
+    let source = if relative == Path::new(".codex/config.toml")
+        && Path::new(file).ends_with(Path::new("local").join(".codex/config.toml"))
+    {
+        let Ok(parsed) = toml::from_str::<toml::Value>(source) else {
+            return false;
+        };
+        let Some(value) = parsed
+            .get("developer_instructions")
+            .and_then(toml::Value::as_str)
+        else {
+            return false;
+        };
+        codex_rules = value.to_owned();
+        codex_rules.as_str()
+    } else {
+        source
+    };
+    let source = source.replace("\r\n", "\n");
+    let Ok(blocks) = blocks(&source) else {
         return false;
     };
     let Ok(key) = fingerprint(&waiting.layer_id) else {
@@ -340,10 +372,11 @@ pub(crate) fn refresh_answers(settings: &Path, data: &Path, home: &Path) -> Resu
         }
     }
     answers.waiting.retain(|_, waiting| {
-        waiting
-            .files
-            .iter()
-            .any(|file| waiting_in_file(waiting, file, settings, data, home))
+        (waiting.files.len() == 1 && waiting.files[0].starts_with("preference:"))
+            || waiting
+                .files
+                .iter()
+                .any(|file| waiting_in_file(waiting, file, settings, data, home))
     });
     let settled: Vec<_> = answers
         .answered_edits

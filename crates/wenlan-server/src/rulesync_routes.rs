@@ -320,7 +320,7 @@ async fn skill_updates(headers: HeaderMap) -> Result<Json<Vec<AdoptedSkillUpdate
     Ok(Json(review_list::existing_update_check().await?))
 }
 
-async fn shared_edits(
+pub(crate) async fn shared_edits(
     headers: HeaderMap,
 ) -> Result<Json<Vec<wenlan_types::rulesync::SharedEditWaiting>>, ServerError> {
     require_local_rules_access(&headers)?;
@@ -359,7 +359,7 @@ pub(crate) fn decide_shared_edit_at(
     if answers.answers.contains_key(&request.id) {
         return Err(ServerError::Conflict("shared edit already answered".into()));
     }
-    let waiting = answers.waiting.get(&request.id).ok_or_else(|| {
+    let mut waiting = answers.waiting.get(&request.id).cloned().ok_or_else(|| {
         ServerError::Conflict(
             if request.send {
                 "This edit is no longer in the file, so nothing was sent."
@@ -369,6 +369,7 @@ pub(crate) fn decide_shared_edit_at(
             .into(),
         )
     })?;
+    let preference_edit = waiting.files.len() == 1 && waiting.files[0].starts_with("preference:");
     if request.send {
         let current = rulesync_team::load_layers(settings)
             .and_then(|mut layers| {
@@ -376,22 +377,51 @@ pub(crate) fn decide_shared_edit_at(
                 Ok(layers)
             })
             .map_err(|error| ServerError::Conflict(error.to_string()))?;
-        if current
+        if let Some(layer) = current
             .iter()
-            .any(|layer| layer.id == waiting.layer_id && layer.revision != waiting.revision)
+            .find(|layer| layer.id == waiting.layer_id && layer.revision != waiting.revision)
         {
-            return Err(ServerError::Structured {
-                status: axum::http::StatusCode::CONFLICT,
-                body: serde_json::json!({
-                    "error": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE,
-                    "code": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE,
-                }),
-            });
+            if !preference_edit {
+                return Err(ServerError::Structured {
+                    status: axum::http::StatusCode::CONFLICT,
+                    body: serde_json::json!({
+                        "error": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE,
+                        "code": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE,
+                    }),
+                });
+            }
+            // A preference edit is one added bullet, so it can be carried onto
+            // the current approved rules instead of waiting on a sync that
+            // never rebases it.
+            let bullet = waiting
+                .markdown
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or_default()
+                .to_owned();
+            if layer.markdown.lines().any(|line| line == bullet) {
+                answers.waiting.remove(&request.id);
+                rulesync_shared_answers::save(&setup.data, &answers)
+                    .map_err(|error| ServerError::Conflict(format!("{error:#}")))?;
+                return Err(ServerError::Conflict(
+                    "This rule is already in the team rules, so nothing was sent.".into(),
+                ));
+            }
+            let mut markdown = layer.markdown.clone();
+            if !markdown.is_empty() && !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            markdown.push_str(&bullet);
+            markdown.push('\n');
+            waiting.markdown = markdown;
+            waiting.revision.clone_from(&layer.revision);
         }
     }
     if request.send
+        && !preference_edit
         && !waiting.files.iter().all(|file| {
-            rulesync_layers::waiting_in_file(waiting, file, settings, &setup.data, &setup.home)
+            rulesync_layers::waiting_in_file(&waiting, file, settings, &setup.data, &setup.home)
         })
     {
         answers.waiting.remove(&request.id);
@@ -407,7 +437,11 @@ pub(crate) fn decide_shared_edit_at(
             &waiting.layer_id,
             &waiting.revision,
             &waiting.markdown,
-            wenlan_core::shared_space::version::AuthorKind::Unknown,
+            if preference_edit {
+                wenlan_core::shared_space::version::AuthorKind::Person
+            } else {
+                wenlan_core::shared_space::version::AuthorKind::Unknown
+            },
         )
         .map_err(|error| ServerError::Conflict(error.to_string()))?;
         Answer::Send { proposal }
@@ -420,7 +454,7 @@ pub(crate) fn decide_shared_edit_at(
         },
         Answer::Decline => wenlan_types::rulesync::SharedEditDecision::Decline,
     };
-    let waiting = answers
+    answers
         .waiting
         .remove(&request.id)
         .expect("checked waiting edit");
@@ -488,25 +522,39 @@ pub(crate) fn reopen_edits_after_old_host_refusal_at(
         .filter(|(_, record)| proposal_ids.contains(&record.proposal))
         .map(|(id, _)| id.clone())
         .collect();
-    let mut retired = Vec::new();
+    let mut retire = Vec::new();
     for id in restore {
         let record = &answers.sent_edits[&id];
-        rulesync_team::retire_queued_proposal_at(
-            &record.proposal_path,
-            &record.edit.revision,
-            &record.proposal,
-        )?;
-        retired.push(record.proposal.clone());
+        retire.push((
+            record.proposal_path.clone(),
+            record.edit.revision.clone(),
+            record.proposal.clone(),
+        ));
         let record = answers.sent_edits.remove(&id).expect("checked sent edit");
         answers.answered_edits.remove(&id);
         answers.answers.remove(&id);
-        if record.edit.files.iter().any(|file| {
-            rulesync_layers::waiting_in_file(&record.edit, file, settings, &setup.data, &setup.home)
-        }) {
-            answers.waiting.insert(id, record.edit);
+        let mut edit = record.edit;
+        let live = edit
+            .files
+            .iter()
+            .filter(|file| {
+                rulesync_layers::waiting_in_file(&edit, file, settings, &setup.data, &setup.home)
+            })
+            .cloned()
+            .collect();
+        edit.files = live;
+        if !edit.files.is_empty() {
+            answers.waiting.insert(id, edit);
         }
     }
+    for (path, revision, proposal) in &retire {
+        rulesync_team::retire_queued_proposal_at(path, revision, proposal)?;
+    }
     rulesync_shared_answers::save(&setup.data, &answers)?;
+    let retired = retire
+        .into_iter()
+        .map(|(_, _, proposal)| proposal)
+        .collect::<Vec<_>>();
     if !retired.is_empty() {
         let clear_home = || -> Result<()> {
             if let Some(mut manifest) = setup.load()? {
@@ -528,7 +576,12 @@ pub(crate) fn reopen_edits_after_old_host_refusal_at(
                 "[rulesync] could not clear home receipts for withdrawn proposal: {error:#}"
             );
         }
-        crate::rulesync_checkout::drop_proposal_receipts(setup, &retired);
+        if let Err(error) = crate::rulesync_checkout::clear_refused_receipts(&setup.data, &retired)
+        {
+            tracing::warn!(
+                "[rulesync] could not clear checkout receipts for withdrawn proposal: {error:#}"
+            );
+        }
     }
     Ok(())
 }
@@ -1053,6 +1106,11 @@ impl Setup {
             manifest.rule_import_notice_pending = false;
             self.save(&manifest)?;
         }
+        if person && manifest.team_rules_moved_notice_pending {
+            status.notes.push(TEAM_RULES_MOVED_NOTICE.into());
+            manifest.team_rules_moved_notice_pending = false;
+            self.save(&manifest)?;
+        }
         status.waiting_plans = personal_rules::pending_page_plans(self)
             .into_iter()
             .map(|plan| wenlan_types::rulesync::WaitingRulePlan {
@@ -1428,6 +1486,8 @@ impl BatchDirectories {
 }
 
 const RULE_IMPORT_NOTICE: &str = "Edit your shared rules in Wenlan from now on.";
+const TEAM_RULES_MOVED_NOTICE: &str =
+    "Team rules now appear only in your team's repositories, not in your global tool files.";
 
 fn deliveries_match_master(manifest: &Manifest) -> bool {
     manifest.active_deliveries().all(|(_, delivery)| {
@@ -1471,6 +1531,8 @@ struct Manifest<Content = Vec<u8>> {
     legacy_source_following: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     rule_import_notice_pending: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    team_rules_moved_notice_pending: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     key_skills_notice: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1588,6 +1650,7 @@ impl Manifest {
             page_rules: Default::default(),
             legacy_source_following: false,
             rule_import_notice_pending: false,
+            team_rules_moved_notice_pending: false,
             key_skills_notice: Vec::new(),
             key_blobs_to_remove: Vec::new(),
             key_skills_dropped: false,
@@ -3546,7 +3609,7 @@ impl Setup {
             (generated, caller),
             (&settings, &layers),
             (
-                &|target, source| self.render_member_rule(&session, target, source, &layers),
+                &|target, source| self.render_member_rule(&session, target, source),
                 &|renderer, skills| self.render_skills(&session, renderer, skills),
             ),
             &mut result,
@@ -3574,12 +3637,43 @@ impl Setup {
         S: Fn(&str, &SkillPackages) -> Result<SkillFiles>,
     {
         let can_restore = caller == SyncCaller::Person;
-        if can_restore {
-            self.rebase_waiting_team_edits(root, manifest, generated, layers, renderers.0)?;
+        let mut held = BTreeSet::new();
+        let mut had_team_blocks = BTreeSet::new();
+        {
+            for (path, record) in manifest.active_deliveries() {
+                if !matches!(record.kind, Kind::Rule { .. }) {
+                    continue;
+                }
+                let Ok(current) = root.read(path, false) else {
+                    continue;
+                };
+                let Ok(content) = text(&current) else {
+                    continue;
+                };
+                if !content.contains("<!-- WENLAN SHARED RULES") {
+                    continue;
+                }
+                match rulesync_layers::blocks(content) {
+                    Ok(blocks) if !blocks.is_empty() => {
+                        had_team_blocks.insert(path.clone());
+                    }
+                    Ok(_) => (),
+                    Err(_) => {
+                        held.insert(path.clone());
+                        block_path(result, path, Code::ReviewNeeded,
+                            format!("{}: Team rule markers were changed. This file was left untouched; repair the markers before syncing.", path.display()));
+                    }
+                }
+            }
         }
-        let rejected =
-            self.capture_team_edits(root, manifest, settings, layers, can_restore, result)?;
-        let held = BTreeSet::new();
+        let rejected = self.capture_team_edits(
+            root,
+            manifest,
+            settings,
+            if can_restore { &[] } else { layers },
+            can_restore,
+            result,
+        )?;
         self.sync_deliveries(
             root,
             manifest,
@@ -3588,6 +3682,24 @@ impl Setup {
             result,
             if can_restore { &held } else { &rejected },
         )?;
+        for path in &had_team_blocks {
+            if let Some((line, notice)) =
+                result
+                    .blocked
+                    .iter_mut()
+                    .zip(&result.blocked_codes)
+                    .find(|(line, notice)| {
+                        line.starts_with(&format!("{}:", path.display()))
+                            && notice.code == Code::SharedRulePending
+                    })
+            {
+                *line = format!(
+                    "{}: The team rules block was left in place because it was edited.",
+                    path.display()
+                );
+                let _ = notice;
+            }
+        }
         if result
             .written
             .iter()
@@ -3596,97 +3708,20 @@ impl Setup {
             rulesync_layers::report_rejection(result);
         }
         rulesync_layers::refresh_answers(settings, &self.data, &self.home)?;
-        Ok(())
-    }
-
-    fn rebase_waiting_team_edits(
-        &self,
-        root: &FileRoot,
-        manifest: &mut Manifest,
-        generated: &[String],
-        layers: &[TeamRuleLayer],
-        render_rule: &impl Fn(&str, &str) -> Result<SkillFiles>,
-    ) -> Result<()> {
-        let mut answers = rulesync_shared_answers::read(&self.data)?;
-        let waiting = answers.waiting.clone();
-        for (id, edit) in waiting {
-            let Some(layer) = layers.iter().find(|layer| layer.id == edit.layer_id) else {
-                continue;
-            };
-            let key = rulesync_layers::key(layer)?;
-            for name in &edit.files {
-                let path = Path::new(name);
-                let Some(delivery) = manifest.delivered.get(path) else {
-                    continue;
-                };
-                let Kind::Rule { target, .. } = &delivery.kind else {
-                    continue;
-                };
-                if !rulesync_layers::waiting_in_file(
-                    &edit,
-                    name,
-                    Path::new(""),
-                    &self.data,
-                    &self.home,
-                ) {
-                    continue;
-                }
-                let old = text(&delivery.delivered)?;
-                let current = root.read(path, false)?;
-                let local = text(&current)?;
-                if rulesync_layers::only_personal(old)? != rulesync_layers::only_personal(local)? {
-                    continue;
-                }
-                let source = manifest.master.rule_text(target, generated)?;
-                let rendered = render_rule(target, &source)?;
-                let Some(next) = rendered.get(path) else {
-                    continue;
-                };
-                let next_text = std::str::from_utf8(next)?;
-                if next_text == old {
-                    continue;
-                }
-                let old_blocks = rulesync_layers::blocks(old)?;
-                let local_blocks = rulesync_layers::blocks(local)?;
-                let next_blocks = rulesync_layers::blocks(next_text)?;
-                let (Some(base), Some(mine), Some(theirs)) = (
-                    old_blocks.get(key.as_str()),
-                    local_blocks.get(key.as_str()),
-                    next_blocks.get(key.as_str()),
-                ) else {
-                    continue;
-                };
-                let merged = wenlan_core::rulesync_personal::merge_rule_text(
-                    base.body,
-                    mine.body,
-                    theirs.body,
-                )
-                .context(wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE)?;
-                let rebased = rulesync_layers::replace_block_body(next_text, &key, &merged)?;
-                let updated = with_bytes(&current, rebased.into_bytes());
-                ensure!(
-                    root.apply(path, &current, &updated, false)? == ApplyOutcome::Applied,
-                    "shared rule file changed during rebase"
-                );
-                let new_block = rulesync_layers::blocks(text(&updated)?)?;
-                let new_block = new_block
-                    .get(key.as_str())
-                    .context("rebased section is missing")?;
-                let markdown = rulesync_layers::proposed_markdown(layer, new_block)?;
-                let new_id = wenlan_core::rulesync_personal::fingerprint(&(
-                    &layer.id,
-                    new_block.revision,
-                    new_block.body,
-                ))?;
-                answers.waiting.remove(&id);
-                let mut moved = edit.clone();
-                moved.revision = layer.revision.clone();
-                moved.markdown = markdown;
-                answers.waiting.insert(new_id, moved);
-                rulesync_shared_answers::save(&self.data, &answers)?;
-                let delivery = manifest.delivered.get_mut(path).expect("checked delivery");
-                delivery.delivered = with_bytes(&delivery.delivered, next.clone());
-                delivery.observed = None;
+        if !had_team_blocks.is_empty()
+            && !personal_rules::has_team_rules_moved_history(self, manifest)?
+        {
+            let removed = had_team_blocks.iter().any(|path| {
+                !held.contains(path)
+                    && root
+                        .read(path, false)
+                        .ok()
+                        .and_then(|snapshot| text(&snapshot).ok().map(str::to_owned))
+                        .is_some_and(|content| !content.contains("<!-- WENLAN SHARED RULES"))
+            });
+            if removed {
+                personal_rules::stage_team_rules_moved_history(self, manifest)?;
+                manifest.team_rules_moved_notice_pending = true;
                 self.save(manifest)?;
             }
         }
@@ -4021,11 +4056,17 @@ impl Setup {
             let Kind::Rule { target, .. } = &delivery.kind else {
                 continue;
             };
-            let seen = delivery
+            let mut seen = delivery
                 .observed
                 .as_ref()
                 .unwrap_or(&delivery.delivered)
                 .clone();
+            let actual = root.read(&path, false)?;
+            if let (Ok(expected), Ok(current)) = (text(&seen), text(&actual)) {
+                if expected.replace("\r\n", "\n") == current.replace("\r\n", "\n") {
+                    seen = actual;
+                }
+            }
             let source = match manifest.master.rule_text(target, generated) {
                 Ok(text) => text,
                 Err(error) => {
@@ -4075,7 +4116,17 @@ impl Setup {
                 // receipt until shared, team, or generated content renders.
                 continue;
             }
-            let desired = with_bytes(&seen, bytes.clone());
+            let rendered = std::str::from_utf8(bytes)
+                .ok()
+                .map(|rendered| match text(&seen) {
+                    Ok(existing) if existing.contains("\r\n") => rendered
+                        .replace("\r\n", "\n")
+                        .replace('\n', "\r\n")
+                        .into_bytes(),
+                    _ => bytes.clone(),
+                })
+                .unwrap_or_else(|| bytes.clone());
+            let desired = with_bytes(&seen, rendered);
             if desired == seen && delivery.observed.is_none() {
                 continue;
             }
@@ -5106,48 +5157,8 @@ impl Setup {
         session: &RenderSession<'_>,
         target: &str,
         source: &str,
-        layers: &[TeamRuleLayer],
     ) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
-        if layers.is_empty() {
-            return self.render_rule(session, target, source);
-        }
-        let rules = personal_target(target)
-            .context("unknown personal rule target")?
-            .rules;
-        let stage = rulesync_renderer::new_stage(&self.data)?;
-        let team = stage.path().join("team");
-        let personal = stage.path().join("personal");
-        let output = stage.path().join("output");
-        fs::create_dir(&output)?;
-        rulesync_layers::stage(&team, "Team", layers)?;
-        write_root_rule(&personal, source)?;
-        session.render(
-            stage.path(),
-            &[team, personal],
-            &output,
-            true,
-            &[rules.renderer.into()],
-            &["rules"],
-        )?;
-        let mut rendered = BTreeMap::new();
-        read_stage(&output, &output, &mut rendered)?;
-        let rendered = personal_rule_destination(rules, rendered)?;
-        let expected = layers
-            .iter()
-            .map(rulesync_layers::key)
-            .collect::<Result<BTreeSet<_>>>()?;
-        for bytes in rendered.values() {
-            let blocks = rulesync_layers::blocks(std::str::from_utf8(bytes)?)?;
-            ensure!(
-                blocks
-                    .keys()
-                    .map(|key| (*key).to_owned())
-                    .collect::<BTreeSet<_>>()
-                    == expected,
-                "rulesync did not preserve the authorized team layers"
-            );
-        }
-        Ok(rendered)
+        self.render_rule(session, target, source)
     }
 
     fn render_tree(
@@ -6436,7 +6447,12 @@ fn inspect_rule(
         blocked.insert(path.to_owned(), (Code::RuleEncoding, "The rules file is missing or is not UTF-8. Restore it as a UTF-8 text file and sync again.".into()));
         return Ok(None);
     };
-    match rulesync_layers::edits(before, after) {
+    if before.replace("\r\n", "\n") == after.replace("\r\n", "\n") {
+        return Ok(None);
+    }
+    let before_normalized = before.replace("\r\n", "\n");
+    let after_normalized = after.replace("\r\n", "\n");
+    match rulesync_layers::edits(&before_normalized, &after_normalized) {
         Ok(edits) if edits.is_empty() => (),
         Ok(_) => {
             let answers = crate::rulesync_shared_answers::read(data)?;
@@ -13430,16 +13446,6 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection() {
-        team_hand_edit(false, false, false, None);
-    }
-
-    #[test]
-    fn rulesync_write_holder_applies_their_team_hand_edit_after_person_and_write_holder_confirm() {
-        team_hand_edit(true, false, false, None);
-    }
-
-    #[test]
     fn rulesync_ai_caller_cannot_confirm_a_shared_edit() {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -13462,48 +13468,231 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn rulesync_declined_shared_edit_restores_approved_lines_on_person_sync() {
-        team_hand_edit(false, true, false, None);
+    fn sync_home_for_migration(f: &Fixture) -> RulesSyncReport {
+        sync_home_for_migration_as(f, SyncCaller::Person)
+    }
+
+    fn sync_home_for_migration_as(f: &Fixture, caller: SyncCaller) -> RulesSyncReport {
+        let _lock = f.setup.lock().unwrap();
+        let root = f.setup.home_files().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let mut result = report("Checked the local tool setup");
+        f.setup
+            .sync_member_files(
+                &root,
+                &mut manifest,
+                (&[], caller),
+                (&f.setup.data.join("settings.toml"), &[]),
+                (&fixture_rule_renderer, &fixture_skill_renderer),
+                &mut result,
+            )
+            .unwrap();
+        result
     }
 
     #[test]
-    fn rulesync_stale_shared_edit_cannot_be_sent() {
-        team_hand_edit(false, false, true, None);
+    fn rulesync_home_files_never_receive_team_rules() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let result = sync_home_for_migration(&f);
+        assert!(result.blocked.is_empty(), "{result:?}");
+        for path in [CLAUDE, CODEX] {
+            let content = f.text(path);
+            assert!(!content.contains("WENLAN SHARED RULES"), "{path}");
+            let personal = if path == CLAUDE {
+                "Claude only.\n"
+            } else {
+                "Codex only.\n"
+            };
+            assert!(content.contains(personal), "{content}");
+        }
     }
 
     #[test]
-    fn rulesync_old_host_refusal_returns_edit_to_waiting() {
-        team_hand_edit(false, false, false, Some(RefusalFollowup::Reconfirm));
-    }
-
-    #[derive(Clone, Copy)]
-    enum RefusalFollowup {
-        Reconfirm,
-        Decline,
-        Reject,
-        Accept,
-        Changed,
+    fn rulesync_home_sync_with_real_team_layers_never_writes_a_team_block() {
+        use crate::rulesync_layers::tests::hosted_fixture;
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layers = rulesync_team::load_layers(&settings).unwrap();
+        assert!(!layers.is_empty());
+        let _lock = f.setup.lock().unwrap();
+        let root = f.setup.home_files().unwrap();
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let mut result = report("home sync");
+        f.setup
+            .sync_member_files(
+                &root,
+                &mut manifest,
+                (&[], SyncCaller::Person),
+                (&settings, &layers),
+                (&fixture_rule_renderer, &fixture_skill_renderer),
+                &mut result,
+            )
+            .unwrap();
+        assert!(result.blocked.is_empty(), "{result:?}");
+        for path in [CLAUDE, CODEX] {
+            let content = f.text(path);
+            assert!(
+                !content.contains("WENLAN SHARED RULES"),
+                "{path}: {content}"
+            );
+            assert!(!content.contains(&layers[0].markdown), "{path}: {content}");
+        }
     }
 
     #[test]
-    fn rulesync_refused_home_edit_can_be_declined_after_receipt() {
-        team_hand_edit(false, false, false, Some(RefusalFollowup::Decline));
+    fn rulesync_home_global_crlf_survives_team_block_cleanup() {
+        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section};
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let block = render_fixture_section(&layer);
+        let block_crlf = block.replace('\n', "\r\n");
+        f.sync_with(&block);
+        let mut expected = BTreeMap::new();
+        for path in [CLAUDE, CODEX] {
+            let current = f.text(path);
+            let with_own = current.replace('\n', "\r\n").replace(&block, &block_crlf);
+            expected.insert(path, with_own.replace(&block_crlf, ""));
+            f.write(path, &with_own);
+        }
+        let first = sync_home_for_migration(&f);
+        assert!(first.blocked.is_empty(), "{first:?}");
+        for path in [CLAUDE, CODEX] {
+            assert_eq!(f.text(path), expected[path]);
+        }
+        let second = sync_home_for_migration(&f);
+        assert!(second.blocked.is_empty(), "{second:?}");
+        for path in [CLAUDE, CODEX] {
+            assert_eq!(f.text(path), expected[path]);
+        }
     }
 
     #[test]
-    fn rulesync_refused_home_edit_can_be_reconfirmed_then_rejected() {
-        team_hand_edit(false, false, false, Some(RefusalFollowup::Reject));
+    fn rulesync_home_edited_legacy_block_is_left_without_shared_edit_notice() {
+        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section};
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let (settings, _, _) = hosted_fixture(&f.setup.data);
+        let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
+        let block = render_fixture_section(&layer);
+        f.sync_with(&block);
+        let edited = f
+            .text(CODEX)
+            .replace(&layer.markdown, "My edited advice.\n");
+        f.write(CODEX, &edited);
+        let result = sync_home_for_migration(&f);
+        assert_eq!(f.text(CODEX), edited);
+        let notice = result
+            .blocked
+            .iter()
+            .find(|line| line.contains(CODEX))
+            .unwrap();
+        assert!(
+            notice.contains("edited") && notice.contains("left in place"),
+            "{notice}"
+        );
+        assert!(
+            !notice.contains("proposal") && !notice.contains("shared-edits"),
+            "{notice}"
+        );
     }
 
     #[test]
-    fn rulesync_refused_home_edit_can_be_reconfirmed_then_accepted() {
-        team_hand_edit(false, false, false, Some(RefusalFollowup::Accept));
+    fn rulesync_home_team_blocks_are_removed_once_and_recorded() {
+        let f = Fixture::new();
+        for path in [CLAUDE, CODEX] {
+            let personal = f.text(path);
+            f.write(path, &format!("Own above.\n{personal}Own below.\n"));
+        }
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Team rules\n\nLast synced date.\n\nTeam advice.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        let mut expected = BTreeMap::new();
+        for path in [CLAUDE, CODEX] {
+            let current = f.text(path);
+            expected.insert(path, current.replace(&block, ""));
+        }
+        let first = sync_home_for_migration(&f);
+        assert!(first.blocked.is_empty(), "{first:?}");
+        for path in [CLAUDE, CODEX] {
+            assert_eq!(f.text(path), expected[path]);
+        }
+        let manifest = f.setup.load().unwrap().unwrap();
+        let count = manifest.personal_rule_history.len();
+        assert!(personal_rules::has_team_rules_moved_history(&f.setup, &manifest).unwrap());
+        let note = f.setup.status().unwrap();
+        assert_eq!(
+            note.notes
+                .iter()
+                .filter(|n| n.as_str() == TEAM_RULES_MOVED_NOTICE)
+                .count(),
+            1
+        );
+        assert!(!f
+            .setup
+            .status()
+            .unwrap()
+            .notes
+            .contains(&TEAM_RULES_MOVED_NOTICE.into()));
+        sync_home_for_migration(&f);
+        assert_eq!(
+            f.setup.load().unwrap().unwrap().personal_rule_history.len(),
+            count
+        );
     }
 
     #[test]
-    fn rulesync_changed_home_edit_is_offered_again_after_refusal() {
-        team_hand_edit(false, false, false, Some(RefusalFollowup::Changed));
+    fn rulesync_background_home_cleanup_records_team_rules_migration() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Team rules\n\nLast synced date.\n\nTeam advice.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        sync_home_for_migration_as(&f, SyncCaller::Background);
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(personal_rules::has_team_rules_moved_history(&f.setup, &manifest).unwrap());
+        assert!(!f.text(CODEX).contains("WENLAN SHARED RULES"));
+    }
+
+    #[test]
+    fn rulesync_home_migration_waits_until_a_legacy_block_is_removed() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Team rules\n\nLast synced date.\n\nTeam advice.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        f.write(CLAUDE, &f.text(CLAUDE).replace(&block, ""));
+        f.write(
+            CODEX,
+            &f.text(CODEX).replace("Team advice.", "My pending edit."),
+        );
+        sync_home_for_migration_as(&f, SyncCaller::Background);
+        assert!(f.text(CODEX).contains("WENLAN SHARED RULES"));
+        let manifest = f.setup.load().unwrap().unwrap();
+        assert!(!personal_rules::has_team_rules_moved_history(&f.setup, &manifest).unwrap());
+    }
+
+    #[test]
+    fn rulesync_home_cleanup_leaves_a_hand_broken_block_and_says_so() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        let block = format!("<!-- WENLAN SHARED RULES {} {} -->\n## Team rules\n\nLast synced date.\n\nTeam advice.\n<!-- END WENLAN SHARED RULES -->\n", "a".repeat(64), "b".repeat(64));
+        f.sync_with(&block);
+        let broken = f
+            .text(CODEX)
+            .replace("<!-- END WENLAN SHARED RULES -->", "<!-- broken end -->");
+        f.write(CODEX, &broken);
+        let result = sync_home_for_migration(&f);
+        assert_eq!(f.text(CODEX), broken);
+        assert_eq!(
+            result
+                .blocked
+                .iter()
+                .filter(|line| line.contains("Team rule markers were changed"))
+                .count(),
+            1
+        );
     }
 
     fn seed_sent_team_edit(
@@ -13609,17 +13798,33 @@ mod tests {
             seed_sent_team_edit(&f, &settings, CODEX, "Use the first checklist.\n", None);
         let (sent, _, second_path) =
             seed_sent_team_edit(&f, &settings, CLAUDE, "Use the second checklist.\n", None);
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        let receipt: rulesync_layers::ProposalReceipt =
+            serde_json::from_value(serde_json::json!({"edit": "first", "proposal": first.clone()}))
+                .unwrap();
+        manifest.shared_rule_proposals.insert(
+            PathBuf::from(CODEX),
+            BTreeMap::from([("first".into(), receipt)]),
+        );
+        f.setup.save(&manifest).unwrap();
         reopen_edits_after_old_host_refusal_at(&f.setup, &settings, &[first]).unwrap();
         let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
         assert!(answers.waiting.contains_key(&refused));
         assert!(!answers.sent_edits.contains_key(&refused));
         assert!(answers.sent_edits.contains_key(&sent));
         assert!(!first_path.exists() && second_path.exists());
+        assert!(f
+            .setup
+            .load()
+            .unwrap()
+            .unwrap()
+            .shared_rule_proposals
+            .is_empty());
     }
 
     #[tokio::test]
     async fn rulesync_literal_0228_upload_refusal_requires_new_confirmation() {
-        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section, APPROVED};
+        use crate::rulesync_layers::tests::{hosted_fixture, APPROVED, REMOTE};
         use axum::{
             body::Body,
             http::{Request, Response, StatusCode},
@@ -13672,47 +13877,130 @@ mod tests {
             .as_ref()
             .expect("host advertises team rules")
             .page_id;
-        let home_sync = |caller| {
-            let root = f.setup.home_files().unwrap();
-            let _lock = f.setup.lock().unwrap();
-            let mut manifest = f.setup.load().unwrap().unwrap();
+        let repo = f.setup.data.join("repo");
+        fs::create_dir(&repo).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "init", "--quiet"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(std::process::Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "remote",
+                "add",
+                "origin",
+                REMOTE
+            ])
+            .status()
+            .unwrap()
+            .success());
+        let key = wenlan_core::rulesync_personal::fingerprint(&repo).unwrap();
+        let checkout_dir = f.setup.data.join("checkouts");
+        fs::create_dir(&checkout_dir).unwrap();
+        let state_path = checkout_dir.join(format!("{key}.json"));
+        fs::write(
+            &state_path,
+            serde_json::to_vec(&serde_json::json!({"format": 1, "checkout": {
+                "repo": repo, "files": {}, "skills": {}, "pending": null, "unresolved": []
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
+        let checkout_sync = || {
+            let state: serde_json::Value =
+                serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+            let mut claude = state["checkout"]["local_claude"]
+                .as_str()
+                .map(str::to_owned);
+            let mut codex = state["checkout"]["local_codex"].as_str().map(str::to_owned);
+            let mut codex_dir_created = state["checkout"]["local_codex_dir_created"]
+                .as_bool()
+                .unwrap_or(false);
+            let mut receipts: BTreeMap<_, _> = if state["checkout"]["shared_rule_proposals"]
+                .is_object()
+            {
+                serde_json::from_value(state["checkout"]["shared_rule_proposals"].clone()).unwrap()
+            } else {
+                BTreeMap::new()
+            };
             let layers = rulesync_team::load_layers(&settings).unwrap();
-            let section = render_fixture_section(&layers[0]);
+            let project = rulesync_team::load_project_layers(&settings).unwrap();
+            assert_eq!(
+                project[0].project.as_ref().unwrap().repo_id.as_deref(),
+                rulesync_team::repo_identity(REMOTE).as_deref()
+            );
+            let authorized = layers
+                .iter()
+                .chain(&project)
+                .map(|layer| (rulesync_layers::key(layer).unwrap(), layer))
+                .collect();
             let mut result = report("Checked the local tool setup");
-            f.setup
-                .sync_member_files(
-                    &root,
-                    &mut manifest,
-                    (&[], caller),
-                    (&settings, &layers),
-                    (
-                        &|target, source| {
-                            fixture_rule_renderer(target, &format!("{section}{source}"))
-                        },
-                        &fixture_skill_renderer,
-                    ),
-                    &mut result,
-                )
-                .unwrap();
+            crate::rulesync_checkout_local::sync(
+                &f.setup,
+                &f.setup.home.join(".codex"),
+                &settings,
+                &repo,
+                &project,
+                &layers,
+                &authorized,
+                &mut claude,
+                &mut codex,
+                &mut codex_dir_created,
+                &mut receipts,
+                &mut result,
+                true,
+                &key,
+            )
+            .unwrap();
+            fs::write(
+                &state_path,
+                serde_json::to_vec(&serde_json::json!({"format": 1, "checkout": {
+                    "repo": repo, "local_claude": claude, "local_codex": codex,
+                    "local_codex_dir_created": codex_dir_created,
+                    "files": {}, "skills": {}, "pending": null, "unresolved": [],
+                    "shared_rule_proposals": receipts
+                }}))
+                .unwrap(),
+            )
+            .unwrap();
             result
         };
-        assert!(home_sync(SyncCaller::Person).blocked.is_empty());
-        f.write(
-            CODEX,
-            &f.text(CODEX)
-                .replace(APPROVED, "Use the refused checklist.\n"),
-        );
-        assert!(home_sync(SyncCaller::Person)
+        assert!(checkout_sync()
+            .blocked
+            .iter()
+            .all(|line| !line.contains("CLAUDE.local.md")));
+        let checkout_file = repo.join("CLAUDE.local.md");
+        // Both the team and the project section carry the approved text; edit
+        // only the team one, whose page is the host's master page.
+        let team_layer = rulesync_team::load_layers(&settings)
+            .unwrap()
+            .into_iter()
+            .find(|layer| layer.project.is_none())
+            .unwrap();
+        let team_section = crate::rulesync_layers::tests::render_fixture_section(&team_layer);
+        let before = fs::read_to_string(&checkout_file).unwrap();
+        assert_eq!(before.matches(&team_section).count(), 1, "{before}");
+        fs::write(
+            &checkout_file,
+            before.replace(
+                &team_section,
+                &team_section.replace(APPROVED, "Use the refused checklist.\n"),
+            ),
+        )
+        .unwrap();
+        assert!(checkout_sync()
             .blocked_codes
             .iter()
             .any(|item| item.code == Code::SharedRuleNeedsConfirm));
         let refused_edit = rulesync_shared_answers::read(&f.setup.data)
             .unwrap()
             .waiting
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
+            .iter()
+            .find(|(_, waiting)| waiting.layer_id == team_layer.id)
+            .map(|(id, _)| id.clone())
+            .expect("an edit waits for the team layer");
         decide_shared_edit_at(
             &f.setup,
             &settings,
@@ -13722,15 +14010,12 @@ mod tests {
             },
         )
         .unwrap();
-        home_sync(SyncCaller::Background);
-        assert!(f
-            .setup
-            .load()
-            .unwrap()
-            .unwrap()
-            .shared_rule_proposals
-            .values()
-            .any(|items| !items.is_empty()));
+        checkout_sync();
+        let checkout_state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        assert!(checkout_state["checkout"]["shared_rule_proposals"]
+            .as_object()
+            .is_some_and(|items| !items.is_empty()));
         let sent = rulesync_shared_answers::read(&f.setup.data).unwrap();
         let refused = sent.sent_edits[&refused_edit].proposal.clone();
         let refused_path = sent.sent_edits[&refused_edit].proposal_path.clone();
@@ -13878,17 +14163,18 @@ mod tests {
             panic!("reconfirmation did not queue a proposal")
         };
         rulesync_team::decide_local_proposal(&settings, &new_proposal, true).unwrap();
-        let delivered = home_sync(SyncCaller::Person);
+        let delivered = checkout_sync();
         assert!(
             !delivered
                 .blocked
                 .iter()
-                .any(|line| line.starts_with(&format!("{CODEX}:"))),
+                .any(|line| line.contains("CLAUDE.local.md")),
             "{delivered:?}"
         );
         let current = rulesync_team::load_layers(&settings).unwrap().remove(0);
-        assert!(f.text(CODEX).contains(&current.revision));
-        assert!(f.text(CODEX).contains("Use the refused checklist."));
+        let content = fs::read_to_string(checkout_file).unwrap();
+        assert!(content.contains(&current.revision));
+        assert!(content.contains("Use the refused checklist."));
         assert!(rulesync_shared_answers::read(&f.setup.data)
             .unwrap()
             .waiting
@@ -13949,579 +14235,6 @@ mod tests {
         assert!(answers.sent_edits.contains_key(&edited));
         assert!(answers.sent_edits.contains_key(&missing));
         assert!(edited_path.exists() && missing_path.exists());
-    }
-
-    #[test]
-    fn rulesync_changed_sent_edit_blocks_only_its_file() {
-        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section, APPROVED};
-        let f = Fixture::new();
-        f.adopt_from_plan();
-        let (settings, _, _) = hosted_fixture(&f.setup.data);
-        let sync = || {
-            let root = f.setup.home_files().unwrap();
-            let _lock = f.setup.lock().unwrap();
-            let mut manifest = f.setup.load().unwrap().unwrap();
-            let layers = rulesync_team::load_layers(&settings).unwrap();
-            let section = render_fixture_section(&layers[0]);
-            let mut result = report("Checked the local tool setup");
-            f.setup
-                .sync_member_files(
-                    &root,
-                    &mut manifest,
-                    (&[], SyncCaller::Person),
-                    (&settings, &layers),
-                    (
-                        &|target, source| {
-                            fixture_rule_renderer(target, &format!("{section}{source}"))
-                        },
-                        &fixture_skill_renderer,
-                    ),
-                    &mut result,
-                )
-                .unwrap();
-            result
-        };
-        assert!(sync().blocked.is_empty());
-        f.write(CODEX, &f.text(CODEX).replace(APPROVED, "First edit.\n"));
-        sync();
-        let id = rulesync_shared_answers::read(&f.setup.data)
-            .unwrap()
-            .waiting
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        decide_shared_edit_at(
-            &f.setup,
-            &settings,
-            wenlan_types::rulesync::SharedEditDecisionRequest { id, send: true },
-        )
-        .unwrap();
-        sync();
-        let latest = f.text(CODEX).replace("First edit.", "Second edit.");
-        f.write(CODEX, &latest);
-        let approved = rulesync_team::update_hosted_rules(
-            &settings,
-            rulesync_team::SPACE,
-            "Use the approved checklist.\nNew approved line.\n",
-        )
-        .unwrap();
-        rulesync_team::decide_local_proposal(&settings, &approved, true).unwrap();
-        let result = sync();
-        assert!(
-            result
-                .blocked
-                .iter()
-                .any(|line| line.contains(CODEX) && line.contains("This section changed again")),
-            "{result:?}"
-        );
-        assert_eq!(
-            result
-                .blocked
-                .iter()
-                .filter(|line| line.starts_with(&format!("{CODEX}:")))
-                .count(),
-            1,
-            "{result:?}"
-        );
-        assert_eq!(f.text(CODEX), latest);
-        assert!(f.text(CLAUDE).contains("New approved line."));
-    }
-
-    #[test]
-    fn rulesync_new_team_revision_refuses_old_confirmation_and_keeps_edit() {
-        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section, APPROVED};
-        let f = Fixture::new();
-        f.adopt_from_plan();
-        let (settings, _, _) = hosted_fixture(&f.setup.data);
-        let sync = || {
-            let root = f.setup.home_files().unwrap();
-            let _lock = f.setup.lock().unwrap();
-            let mut manifest = f.setup.load().unwrap().unwrap();
-            let layers = rulesync_team::load_layers(&settings).unwrap();
-            let section = render_fixture_section(&layers[0]);
-            let mut result = report("Checked the local tool setup");
-            f.setup
-                .sync_member_files(
-                    &root,
-                    &mut manifest,
-                    (&[], SyncCaller::Person),
-                    (&settings, &layers),
-                    (
-                        &|target, source| {
-                            fixture_rule_renderer(target, &format!("{section}{source}"))
-                        },
-                        &fixture_skill_renderer,
-                    ),
-                    &mut result,
-                )
-                .unwrap();
-            result
-        };
-        assert!(sync().blocked.is_empty());
-        let edited = f
-            .text(CODEX)
-            .replace(APPROVED, "Use the revised checklist.\n");
-        f.write(CODEX, &edited);
-        assert!(sync()
-            .blocked_codes
-            .iter()
-            .any(|notice| notice.code == Code::SharedRuleNeedsConfirm));
-        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
-        let id = answers.waiting.keys().next().unwrap().clone();
-        let proposal = rulesync_team::update_hosted_rules(
-            &settings,
-            rulesync_team::SPACE,
-            "Use the approved checklist.\nAnother approved line.\n",
-        )
-        .unwrap();
-        rulesync_team::decide_local_proposal(&settings, &proposal, true).unwrap();
-        let error = decide_shared_edit_at(
-            &f.setup,
-            &settings,
-            wenlan_types::rulesync::SharedEditDecisionRequest {
-                id: id.clone(),
-                send: true,
-            },
-        )
-        .unwrap_err();
-        assert!(
-            matches!(error, ServerError::Structured { status, body } if status == axum::http::StatusCode::CONFLICT && body["code"] == wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE)
-        );
-        assert!(rulesync_shared_answers::read(&f.setup.data)
-            .unwrap()
-            .waiting
-            .contains_key(&id));
-        assert_eq!(f.text(CODEX), edited);
-        let report = sync();
-        assert!(report
-            .blocked_codes
-            .iter()
-            .any(|notice| notice.code == Code::SharedRuleNeedsConfirm));
-        assert!(f
-            .text(CODEX)
-            .contains("Use the revised checklist.\nAnother approved line."));
-        assert!(f
-            .text(CLAUDE)
-            .contains("Use the approved checklist.\nAnother approved line."));
-        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
-        assert_eq!(answers.waiting.len(), 1);
-        let rebased_id = answers.waiting.keys().next().unwrap().clone();
-        assert_ne!(rebased_id, id);
-        assert_eq!(
-            answers.waiting[&rebased_id].markdown,
-            "Use the revised checklist.\nAnother approved line.\n"
-        );
-        decide_shared_edit_at(
-            &f.setup,
-            &settings,
-            wenlan_types::rulesync::SharedEditDecisionRequest {
-                id: rebased_id,
-                send: true,
-            },
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn rulesync_waiting_team_edit_delivers_new_project_section_in_same_file() {
-        use crate::rulesync_layers::tests::{
-            hosted_fixture, render_fixture_section, APPROVED, PROJECT,
-        };
-        let f = Fixture::new();
-        f.adopt_from_plan();
-        let (settings, _, _) = hosted_fixture(&f.setup.data);
-        let sync = || {
-            let root = f.setup.home_files().unwrap();
-            let _lock = f.setup.lock().unwrap();
-            let mut manifest = f.setup.load().unwrap().unwrap();
-            let mut layers = rulesync_team::load_layers(&settings).unwrap();
-            layers.extend(rulesync_team::load_project_layers(&settings).unwrap());
-            let sections = layers
-                .iter()
-                .map(render_fixture_section)
-                .collect::<String>();
-            let mut result = report("Checked the local tool setup");
-            f.setup
-                .sync_member_files(
-                    &root,
-                    &mut manifest,
-                    (&[], SyncCaller::Person),
-                    (&settings, &layers),
-                    (
-                        &|target, source| {
-                            fixture_rule_renderer(target, &format!("{sections}{source}"))
-                        },
-                        &fixture_skill_renderer,
-                    ),
-                    &mut result,
-                )
-                .unwrap();
-            result
-        };
-        assert!(sync().blocked.is_empty());
-        let edited = f
-            .text(CODEX)
-            .replacen(APPROVED, "Use the revised team checklist.\n", 1);
-        f.write(CODEX, &edited);
-        assert!(sync()
-            .blocked_codes
-            .iter()
-            .any(|notice| notice.code == Code::SharedRuleNeedsConfirm));
-        let original_id = rulesync_shared_answers::read(&f.setup.data)
-            .unwrap()
-            .waiting
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        let proposal = rulesync_team::update_hosted_rules(
-            &settings,
-            PROJECT,
-            "Use the approved checklist.\nNew project instruction.\n",
-        )
-        .unwrap();
-        rulesync_team::decide_local_space_proposal(&settings, PROJECT, &proposal, true).unwrap();
-        let report = sync();
-        assert!(report
-            .blocked_codes
-            .iter()
-            .any(|notice| notice.code == Code::SharedRuleNeedsConfirm));
-        assert!(f.text(CODEX).contains("Use the revised team checklist."));
-        assert!(f.text(CODEX).contains("New project instruction."));
-        assert!(f.text(CLAUDE).contains("New project instruction."));
-        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
-        assert_eq!(answers.waiting.len(), 1);
-        assert!(answers.waiting.contains_key(&original_id));
-        assert_eq!(
-            answers.waiting[&original_id].markdown,
-            "Use the revised team checklist.\n"
-        );
-    }
-
-    fn team_hand_edit(accept: bool, decline: bool, stale: bool, old_host: Option<RefusalFollowup>) {
-        use crate::rulesync_layers::tests::{hosted_fixture, render_fixture_section, APPROVED};
-        use wenlan_core::team::{self, CredentialKind};
-
-        let f = Fixture::new();
-        f.adopt_from_plan();
-        let (settings, owner, writer) = hosted_fixture(&f.setup.data);
-        let sync = |caller| {
-            let root = f.setup.home_files().unwrap();
-            let _lock = f.setup.lock().unwrap();
-            let mut manifest = f.setup.load().unwrap().unwrap();
-            let layers = rulesync_team::load_layers(&settings).unwrap();
-            let section = render_fixture_section(&layers[0]);
-            let mut result = report("Checked the local tool setup");
-            f.setup
-                .sync_member_files(
-                    &root,
-                    &mut manifest,
-                    (&[], caller),
-                    (&settings, &layers),
-                    (
-                        &|target, source| {
-                            fixture_rule_renderer(target, &format!("{section}{source}"))
-                        },
-                        &fixture_skill_renderer,
-                    ),
-                    &mut result,
-                )
-                .unwrap();
-            result
-        };
-        assert!(sync(SyncCaller::Person).blocked.is_empty());
-        let approved = f.text(CODEX);
-        let edited = approved.replace(APPROVED, "Use the revised checklist.\n");
-        assert_ne!(approved, edited);
-        f.write(CODEX, &edited);
-        let members = settings.with_file_name(team::TEAM_FILE);
-        let pending = || {
-            rulesync_team::pending_proposals(
-                &members,
-                &settings,
-                rulesync_team::SPACE,
-                &writer.id,
-                CredentialKind::BrowserSession,
-            )
-            .unwrap()
-        };
-        for _ in 0..2 {
-            let report = sync(SyncCaller::Person);
-            assert_eq!(f.text(CODEX), edited);
-            assert!(!f.text(CLAUDE).contains("revised checklist"));
-            assert!(report.proposals.is_empty(), "{report:?}");
-            assert!(
-                report
-                    .blocked_codes
-                    .iter()
-                    .any(|notice| notice.code == Code::SharedRuleNeedsConfirm),
-                "{report:?}"
-            );
-            assert!(pending().is_empty());
-            assert!(
-                report
-                    .blocked
-                    .iter()
-                    .any(|line| line
-                        .contains("Run `wenlan rules shared-edits` in your own terminal")),
-                "{report:?}"
-            );
-        }
-        let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
-        assert_eq!(answers.waiting.len(), 1);
-        let id = answers.waiting.keys().next().unwrap().clone();
-        let request = wenlan_types::rulesync::SharedEditDecisionRequest { id, send: !decline };
-        if stale {
-            f.write(CODEX, &approved);
-            let error = decide_shared_edit_at(&f.setup, &settings, request).unwrap_err();
-            assert!(
-                matches!(error, ServerError::Conflict(message) if message == "This edit is no longer in the file, so nothing was sent.")
-            );
-            assert!(pending().is_empty());
-            assert!(rulesync_shared_answers::read(&f.setup.data)
-                .unwrap()
-                .waiting
-                .is_empty());
-            return;
-        }
-        decide_shared_edit_at(&f.setup, &settings, request.clone()).unwrap();
-        let sent_report = sync(SyncCaller::Background);
-        if !decline {
-            assert_eq!(
-                sent_report
-                    .blocked
-                    .iter()
-                    .filter(|line| line.starts_with(&format!("{CODEX}:")))
-                    .count(),
-                1,
-                "{sent_report:?}"
-            );
-            assert!(
-                !sent_report
-                    .blocked
-                    .iter()
-                    .any(|line| line.contains(&format!("{CODEX}: {CODEX}:"))),
-                "{sent_report:?}"
-            );
-            assert!(
-                sent_report
-                    .blocked
-                    .iter()
-                    .any(|line| line.contains("waiting for the team to accept it")
-                        && line.contains("Nothing more is needed from you")),
-                "{sent_report:?}"
-            );
-        }
-        if let Some(followup) = old_host {
-            assert!(
-                f.setup
-                    .load()
-                    .unwrap()
-                    .unwrap()
-                    .shared_rule_proposals
-                    .values()
-                    .any(|receipts| !receipts.is_empty()),
-                "background sync must record the proposal before refusal"
-            );
-            assert_eq!(pending().len(), 1);
-            let after_background = rulesync_shared_answers::read(&f.setup.data).unwrap();
-            assert!(after_background.answered_edits.is_empty());
-            assert_eq!(after_background.sent_edits.len(), 1);
-            let refused = after_background
-                .sent_edits
-                .values()
-                .next()
-                .unwrap()
-                .proposal
-                .clone();
-            if matches!(followup, RefusalFollowup::Changed) {
-                f.write(CODEX, &edited.replace("revised checklist", "changed again"));
-            }
-            reopen_edits_after_old_host_refusal_at(&f.setup, &settings, &[refused]).unwrap();
-            assert!(f
-                .setup
-                .load()
-                .unwrap()
-                .unwrap()
-                .shared_rule_proposals
-                .is_empty());
-            let answers = rulesync_shared_answers::read(&f.setup.data).unwrap();
-            assert_eq!(
-                answers.waiting.len(),
-                usize::from(!matches!(followup, RefusalFollowup::Changed))
-            );
-            assert!(answers.answered_edits.is_empty());
-            assert!(answers.answers.is_empty());
-            if matches!(followup, RefusalFollowup::Changed) {
-                let report = sync(SyncCaller::Person);
-                assert!(
-                    report
-                        .blocked_codes
-                        .iter()
-                        .any(|notice| notice.code == Code::SharedRuleNeedsConfirm),
-                    "{report:?}"
-                );
-                let next = rulesync_shared_answers::read(&f.setup.data).unwrap();
-                assert_eq!(next.waiting.len(), 1);
-                assert!(next
-                    .waiting
-                    .values()
-                    .next()
-                    .unwrap()
-                    .markdown
-                    .contains("changed again"));
-                return;
-            }
-            assert_eq!(f.text(CODEX), edited);
-            assert!(
-                pending().is_empty(),
-                "the refused proposal must not send after a host upgrade"
-            );
-            if matches!(followup, RefusalFollowup::Decline) {
-                decide_shared_edit_at(
-                    &f.setup,
-                    &settings,
-                    wenlan_types::rulesync::SharedEditDecisionRequest {
-                        id: request.id.clone(),
-                        send: false,
-                    },
-                )
-                .unwrap();
-                let report = sync(SyncCaller::Person);
-                assert_eq!(f.text(CODEX), approved, "{report:?}");
-                return;
-            }
-            let report = sync(SyncCaller::Person);
-            assert!(report
-                .blocked_codes
-                .iter()
-                .any(|notice| notice.code == Code::SharedRuleNeedsConfirm));
-            assert!(pending().is_empty());
-            decide_shared_edit_at(&f.setup, &settings, request).unwrap();
-            assert_eq!(
-                pending().len(),
-                1,
-                "only the person's new confirmation queues a proposal"
-            );
-            if matches!(followup, RefusalFollowup::Reject | RefusalFollowup::Accept) {
-                let proposal = pending().remove(0).id;
-                let accepted = matches!(followup, RefusalFollowup::Accept);
-                rulesync_team::decide_local_proposal(&settings, &proposal, accepted).unwrap();
-                let report = sync(SyncCaller::Person);
-                if accepted {
-                    assert!(report.blocked.is_empty(), "{report:?}");
-                    assert!(f.text(CODEX).contains("Use the revised checklist."));
-                    let approved_layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
-                    assert!(f.text(CODEX).contains(&approved_layer.revision));
-                } else {
-                    assert_eq!(f.text(CODEX), approved, "{report:?}");
-                    assert!(report
-                        .notice_codes
-                        .contains(&Code::SharedRuleRejected.into()));
-                }
-            }
-            return;
-        }
-        assert!(matches!(
-            decide_shared_edit_at(&f.setup, &settings, request),
-            Err(ServerError::Conflict(_))
-        ));
-        if decline {
-            assert!(pending().is_empty());
-            assert!(sync(SyncCaller::Background).notice_codes.is_empty());
-            assert_eq!(f.text(CODEX), edited);
-            let report = sync(SyncCaller::Person);
-            assert_eq!(f.text(CODEX), approved);
-            assert_eq!(report.notice_codes, [Code::SharedRuleRejected.into()]);
-            assert!(pending().is_empty());
-            assert!(rulesync_shared_answers::read(&f.setup.data)
-                .unwrap()
-                .answers
-                .is_empty());
-            f.write(CODEX, &edited);
-            let again = sync(SyncCaller::Person);
-            assert!(again
-                .blocked_codes
-                .iter()
-                .any(|notice| notice.code == Code::SharedRuleNeedsConfirm));
-            assert!(pending().is_empty());
-            return;
-        }
-        let [proposal]: [_; 1] = pending().try_into().unwrap();
-        assert_eq!(proposal.markdown, "Use the revised checklist.\n");
-        fn proposal_kind(
-            folder: &Path,
-            id: &str,
-        ) -> Option<wenlan_core::shared_space::version::AuthorKind> {
-            for entry in std::fs::read_dir(folder).ok()?.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(kind) = proposal_kind(&path, id) {
-                        return Some(kind);
-                    }
-                } else if path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with(id))
-                {
-                    let bytes = std::fs::read(&path).ok()?;
-                    let name = path.file_name()?.to_str()?;
-                    if let Ok(version) = wenlan_core::shared_space::version::parse(name, &bytes) {
-                        return Some(version.meta.author.kind);
-                    }
-                }
-            }
-            None
-        }
-        assert_eq!(
-            proposal_kind(&f.setup.data, &proposal.id),
-            Some(wenlan_core::shared_space::version::AuthorKind::Unknown)
-        );
-        if accept {
-            assert_eq!(proposal.author, owner.id);
-            rulesync_team::decide_local_proposal(&settings, &proposal.id, true).unwrap();
-        } else {
-            rulesync_team::decide_proposal(
-                &members,
-                &settings,
-                rulesync_team::SPACE,
-                &writer.id,
-                CredentialKind::BrowserSession,
-                &proposal.id,
-                false,
-            )
-            .unwrap();
-        }
-        assert!(pending().is_empty());
-        if !accept {
-            assert!(sync(SyncCaller::Background).notice_codes.is_empty());
-            assert_eq!(f.text(CODEX), edited);
-        }
-        let report = sync(SyncCaller::Person);
-        assert!(
-            report.proposals.is_empty() && report.blocked.is_empty(),
-            "{report:?}"
-        );
-        assert!(rulesync_shared_answers::read(&f.setup.data)
-            .unwrap()
-            .answers
-            .is_empty());
-        assert!(rulesync_shared_answers::read(&f.setup.data)
-            .unwrap()
-            .sent_edits
-            .is_empty());
-        if accept {
-            assert!(report.notice_codes.is_empty());
-            assert!(f.text(CODEX).contains("Use the revised checklist."));
-            assert!(f.text(CLAUDE).contains("Use the revised checklist."));
-            assert!(rulesync_team::decide_local_proposal(&settings, &proposal.id, true).is_err());
-        } else {
-            assert_eq!(f.text(CODEX), approved);
-            assert_eq!(report.notice_codes, [Code::SharedRuleRejected.into()]);
-            assert!(report.message.contains("restored the approved rules"));
-            assert!(sync(SyncCaller::Person).notice_codes.is_empty());
-        }
     }
 
     #[test]

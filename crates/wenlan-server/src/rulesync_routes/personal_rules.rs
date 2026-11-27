@@ -31,6 +31,8 @@ use super::*;
 const PLAN_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const MAX_PLANS: usize = 32;
 const HISTORY_DIRECTORY: &str = "rule-history";
+const TEAM_RULES_MOVED_CAUSE: &str = "team-rules-moved";
+const TEAM_RULES_MOVED_SUMMARY: &str = "Team rules moved out of your global tool files. They now appear only in your team's repositories.";
 
 static PLANS: LazyLock<Mutex<BTreeMap<Uuid, HeldPlan>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
@@ -691,10 +693,9 @@ pub(super) async fn apply(
     let generated = crate::skill_grow::general_tool_rules(&state).await?;
     tokio::task::spawn_blocking(move || {
         let setup = rendering_setup()?;
-        let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
         let session = RenderSession::new(&setup.binary);
         setup.apply_plan(&request.plan_id, &generated, merge, &|tool, text| {
-            setup.render_member_rule(&session, tool, text, &layers)
+            setup.render_member_rule(&session, tool, text)
         })
     })
     .await
@@ -737,14 +738,13 @@ pub(super) async fn merge_preview(
     let generated = crate::skill_grow::general_tool_rules(state).await?;
     tokio::task::spawn_blocking(move || {
         let page_plan = PagePlan::Merge(snapshot);
-        let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
         let session = RenderSession::new(&setup.binary);
         let prepared = setup.prepare_page_plan(
             &manifest,
             &page_plan,
             &generated,
             Some(PAGES_PROPOSER.into()),
-            &|tool, text| setup.render_member_rule(&session, tool, text, &layers),
+            &|tool, text| setup.render_member_rule(&session, tool, text),
         )?;
         Ok(Some(remember_plan(
             &setup,
@@ -922,7 +922,6 @@ async fn change_shared_lines(
     }
     tokio::task::spawn_blocking(move || {
         let setup = rendering_setup()?;
-        let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
         let session = RenderSession::new(&setup.binary);
         let change = PageChange {
             snapshot,
@@ -931,7 +930,7 @@ async fn change_shared_lines(
             proposer,
         };
         setup.change_page_rules(&generated, change, &|tool, text| {
-            setup.render_member_rule(&session, tool, text, &layers)
+            setup.render_member_rule(&session, tool, text)
         })
     })
     .await
@@ -1110,7 +1109,6 @@ fn build_plan(
 ) -> Result<PersonalRulePlan> {
     let _lock = setup.lock()?;
     let manifest = setup.load_if_present()?.unwrap_or_else(empty_manifest);
-    let layers = rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
     let session = RenderSession::new(&setup.binary);
     let prepared = setup.prepare_plan(
         &manifest,
@@ -1121,7 +1119,7 @@ fn build_plan(
         },
         generated,
         proposer,
-        &|tool, text| setup.render_member_rule(&session, tool, text, &layers),
+        &|tool, text| setup.render_member_rule(&session, tool, text),
     )?;
     Ok(remember_plan(setup, prepared, edits, restore, None))
 }
@@ -1198,6 +1196,58 @@ fn write_history_files(setup: &Setup, journal: &RuleHistoryJournal) -> Result<()
     }
     root.sync_directory(directory)?;
     root.sync_directory(Path::new(""))?;
+    Ok(())
+}
+
+pub(super) fn has_team_rules_moved_history(setup: &Setup, manifest: &Manifest) -> Result<bool> {
+    for id in &manifest.personal_rule_history {
+        if read_version(setup, manifest, id)?.summary.cause == TEAM_RULES_MOVED_CAUSE {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(super) fn stage_team_rules_moved_history(setup: &Setup, manifest: &mut Manifest) -> Result<()> {
+    settled(manifest)?;
+    let mut versions = Vec::new();
+    if manifest.personal_rule_history.is_empty() {
+        versions.push(snapshot_baseline(
+            manifest,
+            Uuid::new_v4().simple().to_string(),
+        )?);
+    }
+    versions.push(snapshot_version(
+        manifest,
+        PersonalRuleVersionSummary {
+            id: Uuid::new_v4().simple().to_string(),
+            time: Some(chrono::Utc::now().timestamp()),
+            cause: TEAM_RULES_MOVED_CAUSE.into(),
+            description: Some(TEAM_RULES_MOVED_SUMMARY.into()),
+            author: None,
+            proposer: None,
+            confirmer: None,
+            layers: Vec::new(),
+        },
+    )?);
+    let journal = RuleHistoryJournal {
+        files: versions
+            .iter()
+            .map(|version| Ok((version.summary.id.clone(), serde_json::to_vec(version)?)))
+            .collect::<Result<_>>()?,
+        archives: BTreeMap::new(),
+    };
+    manifest.personal_rule_journal = Some(journal.clone());
+    setup.save(manifest)?;
+    if let Err(error) = write_history_files(setup, &journal) {
+        discard_history_journal(setup, manifest)?;
+        return Err(error);
+    }
+    manifest
+        .personal_rule_history
+        .extend(versions.into_iter().map(|version| version.summary.id));
+    manifest.personal_rule_journal = None;
+    setup.save(manifest)?;
     Ok(())
 }
 
@@ -1363,7 +1413,12 @@ fn validate_version(version: &PersonalRuleVersion) -> Result<()> {
     ensure!(
         matches!(
             version.summary.cause.as_str(),
-            "baseline" | "change" | "restore" | MERGE_CAUSE | PAGE_CHANGE_CAUSE
+            "baseline"
+                | "change"
+                | "restore"
+                | MERGE_CAUSE
+                | PAGE_CHANGE_CAUSE
+                | TEAM_RULES_MOVED_CAUSE
         ),
         "Invalid rule history version."
     );
@@ -1436,6 +1491,7 @@ fn snapshot_baseline(manifest: &Manifest, id: String) -> Result<PersonalRuleVers
         PersonalRuleVersionSummary {
             id,
             cause: "baseline".into(),
+            description: None,
             time: None,
             author: None,
             proposer: None,
@@ -1628,6 +1684,7 @@ fn stage_master_history_with_origin(
         PersonalRuleVersionSummary {
             id: id.clone(),
             cause: "change".into(),
+            description: None,
             time: Some(at),
             author: confirmer.clone(),
             proposer,
@@ -1871,6 +1928,7 @@ impl Setup {
             &manifest,
             PersonalRuleVersionSummary {
                 id: next_id.clone(),
+                description: None,
                 cause: if held.pages.as_ref().is_some_and(PagePlan::is_merge) {
                     MERGE_CAUSE
                 } else if held.pages.is_some() {

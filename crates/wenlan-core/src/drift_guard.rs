@@ -9753,6 +9753,7 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_TEST_PARENT_NET_NS",            // test-only renderer network-namespace probe
     "WENLAN_RULESYNC_DOWNLOAD_BASE", // test-only stub base URL for the pinned rulesync download
     "WENLAN_TEST_RULESYNC_BINARY",   // test-only pinned renderer binary for opt-in tests
+    "WENLAN_TEST_CODEX_CHECK_DIR",   // test-only opt-in real Codex check folder
     "WENLAN_TEST_RULESYNC_COPIED_HOME", // test-only copied real-home fixture for opt-in adoption
     "WENLAN_TEST_PERSONAL_REVIEW_ID", // test-only personal file review subprocess card id
     "WENLAN_TEST_PERSONAL_REVIEW_ROOT", // test-only personal file review subprocess root
