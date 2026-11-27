@@ -338,7 +338,7 @@ export const hansActivityStatus = {
   assetDone: {
     memories_one: "已存 {{count}} 条，全部已生成摘要并建立关联",
     memories_other: "已存 {{count}} 条，全部已生成摘要并建立关联",
-    entities: "发现 {{count}} 个，其中 {{confirmed}} 个已收入页面",
+    entities: "发现 {{count}} 个，其中 {{confirmed}} 个已写进页面",
     pages_one: "已写 {{count}} 个页面，全部为最新",
     pages_other: "已写 {{count}} 个页面，全部为最新",
   },
@@ -442,7 +442,7 @@ export const hansActivityStatus = {
     summarize: "生成摘要与标签，让回忆更准确",
     link: "与相关记忆和实体建立关联",
     detect: "你提到的人、项目和工具",
-    confirm: "内容足够充实，可收入页面",
+    confirm: "内容足够充实，可写进页面",
     write: "依据你的来源撰写并更新页面",
   },
   stepState: {
@@ -563,7 +563,7 @@ export const hantActivityStatus = {
   assetDone: {
     memories_one: "已存 {{count}} 則，全部已產生摘要並建立關聯",
     memories_other: "已存 {{count}} 則，全部已產生摘要並建立關聯",
-    entities: "發現 {{count}} 個，其中 {{confirmed}} 個已收入頁面",
+    entities: "發現 {{count}} 個，其中 {{confirmed}} 個已寫進頁面",
     pages_one: "已寫 {{count}} 個頁面，全部為最新",
     pages_other: "已寫 {{count}} 個頁面，全部為最新",
   },
@@ -667,7 +667,7 @@ export const hantActivityStatus = {
     summarize: "產生摘要與標籤，讓回想更準確",
     link: "與相關記憶和實體建立關聯",
     detect: "你提到的人、專案和工具",
-    confirm: "內容足夠充實，可收入頁面",
+    confirm: "內容足夠充實，可寫進頁面",
     write: "依據你的來源撰寫並更新頁面",
   },
   stepState: {

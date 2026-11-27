@@ -319,7 +319,7 @@ describe("ReviewDialog page-target revision card", () => {
 
   it("explains and moves on when a page the card relied on is gone", async () => {
     const onResolve = vi.fn().mockRejectedValue(
-      new Error('HTTP 409: {"error":"page_revision_basis_refused: the change relied on note y, and it was archived"}'),
+      new Error('HTTP 409: {"error":"page_revision_basis_refused: the change relied on page y, and it was archived"}'),
     );
     const dialog = await openDialog(pageItem, { onResolve });
     await within(dialog).findByRole("heading", { name: PAGE_TITLE });

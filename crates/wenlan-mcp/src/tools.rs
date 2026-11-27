@@ -8161,7 +8161,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Move one page into a Space, or into no Space (omit space), so it can cite that Space's notes. Pass expected_version from read_page. Text and sources stay; the reply names sources to drop on the next write_page. Local stdio only.",
+        description = "Move one page into a Space, or into no Space (omit space), so it can cite that Space's pages. Pass expected_version from read_page. Text and sources stay; the reply names sources to drop on the next write_page. Local stdio only.",
         annotations(
             title = "Move page to a Space",
             read_only_hint = false,
@@ -8963,7 +8963,7 @@ impl ServerHandler for WenlanMcpServer {
              What you write here, their other AI tools read later. \
              It is cumulative, so write for any future reader, not just this conversation.\n\n\
              How the pieces fit:\n\
-             - Pages are the result: pages that cite their sources. list_pages shows what exists; \
+             - Pages are the result: each cites its sources. list_pages shows what exists; \
                read_page returns one page in full.\n\
              - capture feeds it: one durable insight per call (a preference, decision, correction, or fact), \
                with the why. What to store and what to skip is spelled out in the capture tool description.\n\
@@ -13988,7 +13988,7 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/api/pages/page_x"))
             .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                "error": "the basis note is archived"
+                "error": "the basis page is archived"
             })))
             .mount(&mock)
             .await;
@@ -14086,14 +14086,14 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/pages/page_b/basis/page_a/confirm"))
             .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                "error": "the basis note moved on: it is now at version 9"
+                "error": "the basis page moved on: it is now at version 9"
             })))
             .mount(&mock)
             .await;
         Mock::given(method("GET"))
             .and(path("/api/pages/page_b/basis/page_a/diff"))
             .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                "error": "the comparison is not available: the basis note was deleted",
+                "error": "the comparison is not available: the basis page was deleted",
                 "reason": "deleted"
             })))
             .mount(&mock)

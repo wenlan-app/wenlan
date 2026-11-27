@@ -81,13 +81,17 @@ and wait for evidence that people need them.
   only when you accept it.
 - **UX-WORDS-1** `shipped` A Wenlan page has one name: "page/pages" in
   English, 頁面 in Traditional Chinese and 页面 in Simplified Chinese. The app
-  never calls it a note, 筆記/笔记, wiki or 文檔/文档, and never calls the
-  collection of pages a wiki (the `/wenlan wiki` command keeps its name). Chinese text says
-  空間/空间, never the English word "Space". "Note" stays only where it means
-  the person's own material or another app's notes (an Obsidian vault, Apple
-  Notes, Zotero, release notes); those keys are listed with a reason in the
-  test. The sidebar section label ("Docs"/文件/文档) is a separate pending
-  decision. Test: `src/i18n/pageNaming.test.ts`.
+  never calls it a note, 筆記/笔记, wiki, 文章 or 文檔/文档, and never calls the
+  collection of pages a wiki (the `/wenlan wiki` command keeps its name).
+  Chinese text says 空間/空间, never the English word "Space". "Note" stays
+  only where it means the person's own material or another app's notes (an
+  Obsidian vault, Apple Notes, Zotero, release notes), and 文章/文档 only for
+  Zotero papers and source-library documents; the test lists those keys, each
+  kept only for that one word, with a reason. The sidebar section label
+  ("Docs"/文件/文档) is a separate pending decision. Test:
+  `src/i18n/pageNaming.test.ts`, which covers the app's copy only; the CLI,
+  MCP tool text, plugins and docs follow the same rule and are reviewed by
+  hand.
   決定（2026-11-26，Qi-Xuan）：Wenlan 的頁一律叫「頁面」，不叫筆記、wiki、文檔；中文裡的 Space 一律寫「空間」。
 
 ## Handoff between AI sessions

@@ -378,7 +378,7 @@ fn open_pull_request(top: &Path, folder: &str, report: &RefreshReport) -> Result
         "commit",
         "--quiet",
         "-m",
-        "docs: keep the pages in step with the code",
+        "docs(wiki): keep the wiki in step with the code",
     ]);
     git(top, &commit)?;
     git(
@@ -433,7 +433,7 @@ fn open_pull_request(top: &Path, folder: &str, report: &RefreshReport) -> Result
         "--head",
         REFRESH_BRANCH,
         "--title",
-        "docs: keep the pages in step with the code",
+        "docs(wiki): keep the wiki in step with the code",
         "--body",
         &pr_body(report),
     ]) {

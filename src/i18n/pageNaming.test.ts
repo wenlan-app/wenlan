@@ -13,85 +13,116 @@ function flatten(value: unknown, prefix = ""): Array<[string, string]> {
   );
 }
 
-// Keys kept on purpose: there "note" / 筆記 is not a Wenlan page.
-const KEPT: Record<string, string> = {
-  // The person's raw material before Wenlan turns it into pages.
-  "askAi.writePages.kinds.note_one": "count of imported notes, beside chats and files",
-  "askAi.writePages.kinds.note_other": "count of imported notes, beside chats and files",
-  "exampleWiki.line": "the example person's notes and chats that became pages",
-  "exampleWiki.title": "title of the example person's own material",
-  "setup.notesFirst.welcome.folder.hint": "files in the person's folder",
-  "librarySync.phoneInbox": "quick notes a phone drops into the inbox",
-  "repoWiki.consent": "pages citing the person's notes are kept out of a repo",
-  "repoWiki.leftOut_one": "pages citing the person's notes are kept out of a repo",
-  "repoWiki.leftOut_other": "pages citing the person's notes are kept out of a repo",
-  "appearance.sample.row3": "sample page title in the appearance preview",
-  // Notes that live in another app (Obsidian vault, Apple Notes, Zotero).
-  "sourceAccess.linkLine1": "Obsidian notes",
-  "sourceAccess.linkDoneBody": "Obsidian notes",
-  "sourceAccess.askTitle": "Obsidian notes",
-  "sourceContainer.vaultWrites": "notes in the person's vault",
-  "sourceContainer.aiVaultHeading": "notes in the person's vault",
-  "sourceContainer.aiFromFile": "notes in the person's vault",
-  "sourceContainer.aiFromDefault": "notes in the person's vault",
-  "sourceContainer.aiVaultDefault": "notes in the person's vault",
-  "sourceContainer.aiPdfNote": "notes in the person's vault",
-  "sourceContainer.suggestTitle": "notes in the person's vault",
-  "sourceContainer.suggestAccepted": "notes in the person's vault",
-  "sourceContainer.suggestStale": "notes in the person's vault",
-  "sourceContainer.suggestFailed": "notes in the person's vault",
-  "trayPanel.noteSuggestions_one": "notes in the person's vault",
-  "trayPanel.noteSuggestions_other": "notes in the person's vault",
-  "sourcePaste.noteTitle": "a note pasted from another app, e.g. Apple Notes",
-  "pdfReader.failed": "Zotero item notes",
-  "pdfReader.originalText": "Zotero item notes",
-  // "note" as a remark, not a page.
-  "sourceAccess.reflections": "the person's remarks on a source",
-  "sourceAccess.reflectionLabel": "the person's remarks on a source",
-  "sourceAccess.addReflection": "the person's remarks on a source",
-  "findSkills.localHint_one": "the person's own remarks added to a skill",
-  "findSkills.localHint_other": "the person's own remarks added to a skill",
-  "aboutWenlan.releaseNotes": "release notes",
-  // A command the person types.
-  "repoWiki.docs.notChecked": "names the /wenlan wiki command",
+type Rule = "note" | "wiki" | "doc";
+// Keys kept on purpose, each only for the word it was kept for: a key kept
+// for "note" is still checked for "wiki", "Space" and 文章/文檔/文档.
+const KEPT: Record<Rule, Record<string, string>> = {
+  note: {
+    // The person's raw material before Wenlan turns it into pages.
+    "askAi.writePages.kinds.note_one": "count of imported notes, beside chats and files",
+    "askAi.writePages.kinds.note_other": "count of imported notes, beside chats and files",
+    "exampleWiki.line": "the example person's notes and chats that became pages",
+    "setup.notesFirst.welcome.folder.hint": "files in the person's folder",
+    "librarySync.phoneInbox": "quick notes a phone drops into the inbox",
+    "repoWiki.consent": "pages citing the person's notes are kept out of a repo",
+    "repoWiki.leftOut_one": "pages citing the person's notes are kept out of a repo",
+    "repoWiki.leftOut_other": "pages citing the person's notes are kept out of a repo",
+    "appearance.sample.row3": "sample page title in the appearance preview",
+    // Notes that live in another app (Obsidian vault, Apple Notes, Zotero).
+    "sourceAccess.linkLine1": "Obsidian notes",
+    "sourceAccess.linkDoneBody": "Obsidian notes",
+    "sourceAccess.askTitle": "Obsidian notes",
+    "sourceContainer.vaultWrites": "notes in the person's vault",
+    "sourceContainer.aiVaultHeading": "notes in the person's vault",
+    "sourceContainer.aiFromFile": "notes in the person's vault",
+    "sourceContainer.aiFromDefault": "notes in the person's vault",
+    "sourceContainer.aiVaultDefault": "notes in the person's vault",
+    "sourceContainer.aiPdfNote": "notes in the person's vault",
+    "sourceContainer.suggestTitle": "notes in the person's vault",
+    "sourceContainer.suggestAccepted": "notes in the person's vault",
+    "sourceContainer.suggestStale": "notes in the person's vault",
+    "sourceContainer.suggestFailed": "notes in the person's vault",
+    "trayPanel.noteSuggestions_one": "notes in the person's vault",
+    "trayPanel.noteSuggestions_other": "notes in the person's vault",
+    "sourcePaste.noteTitle": "a note pasted from another app, e.g. Apple Notes",
+    "pdfReader.failed": "Zotero item notes",
+    "pdfReader.originalText": "Zotero item notes",
+    // "note" as a remark, not a page.
+    "sourceAccess.reflections": "the person's remarks on a source",
+    "sourceAccess.reflectionLabel": "the person's remarks on a source",
+    "sourceAccess.addReflection": "the person's remarks on a source",
+    "findSkills.localHint_one": "the person's own remarks added to a skill",
+    "findSkills.localHint_other": "the person's own remarks added to a skill",
+    "aboutWenlan.releaseNotes": "release notes",
+  },
+  wiki: {
+    "repoWiki.docs.notChecked": "names the /wenlan wiki command",
+  },
+  doc: {
+    // Zotero papers and source-library documents are not Wenlan pages.
+    "zoteroDisconnect.papers": "Zotero papers",
+    "sourceAccess.zoteroHint": "Zotero papers",
+    "zoteroSource.importSelected": "Zotero papers",
+    "zoteroSource.chooseArticles": "Zotero papers",
+    "zoteroSource.loadingArticles": "Zotero papers",
+    "zoteroSource.articlesFailed": "Zotero papers",
+    "zoteroSource.noArticles": "Zotero papers",
+    "zoteroSource.articlesLabel": "Zotero papers",
+    "sourceAccess.pickerFilter": "filter for documents among sources",
+    "sourceLibrary.loadingDocuments": "documents in the source library",
+    "sourceLibrary.documentError": "documents in the source library",
+    "sourceLibrary.retryDocuments": "documents in the source library",
+    "sourceLibrary.document": "documents in the source library",
+    // The Docs kind next to Skills and Rules; its name is a pending decision.
+    "sidebar.pages": "the Docs kind label, pending decision",
+    "pages.overview.title": "reuses the Docs kind label, pending decision",
+    "aboutWenlan.description": "names the Docs kind beside skills and rules",
+  },
 };
+
 
 // 筆記憶 is 筆 (the measure word for memories) + 記憶, not 筆記.
 const ZH_NOTE = /筆記(?!憶)|笔记/;
+const ZH_DOC = /文章|文檔|文档/;
 const LATIN_SPACE = /\bSpaces?\b/;
 const EN_NOTE = /\bnotes?\b/i;
 const WIKI = /\bwikis?\b/i;
 
-function offenders(locale: "en" | "zh-Hans" | "zh-Hant", test: (text: string) => boolean): string[] {
+type Locale = "en" | "zh-Hans" | "zh-Hant";
+const LOCALES: readonly Locale[] = ["en", "zh-Hans", "zh-Hant"];
+
+/** Strings in `locale` that `pattern` matches, minus the keys kept for `rule`. */
+function offenders(locale: Locale, pattern: RegExp, rule?: Rule): string[] {
+  const kept = rule ? KEPT[rule] : {};
   return flatten(resources[locale].translation)
-    .filter(([key, text]) => !(key in KEPT) && test(text))
+    .filter(([key, text]) => !(key in kept) && pattern.test(text))
     .map(([key, text]) => `${key}: ${text}`);
 }
 
 describe("page naming", () => {
   it("UX-WORDS-1 ux_words_1: Chinese calls a page 頁面/页面 and a Space 空間/空间", () => {
     for (const locale of ["zh-Hans", "zh-Hant"] as const) {
-      expect(offenders(locale, text => ZH_NOTE.test(text)), `${locale} 筆記/笔记`).toEqual([]);
-      expect(offenders(locale, text => LATIN_SPACE.test(text)), `${locale} Space`).toEqual([]);
-      expect(offenders(locale, text => WIKI.test(text)), `${locale} wiki`).toEqual([]);
+      expect(offenders(locale, ZH_NOTE, "note"), `${locale} 筆記/笔记`).toEqual([]);
+      expect(offenders(locale, ZH_DOC, "doc"), `${locale} 文章/文檔/文档`).toEqual([]);
+      expect(offenders(locale, LATIN_SPACE), `${locale} Space`).toEqual([]);
+      expect(offenders(locale, WIKI, "wiki"), `${locale} wiki`).toEqual([]);
     }
   });
 
   it("UX-WORDS-1 ux_words_1: English calls a page a page, not a note or a wiki", () => {
-    expect(offenders("en", text => EN_NOTE.test(text)), "en note").toEqual([]);
-    expect(offenders("en", text => WIKI.test(text)), "en wiki").toEqual([]);
+    expect(offenders("en", EN_NOTE, "note"), "en note").toEqual([]);
+    expect(offenders("en", WIKI, "wiki"), "en wiki").toEqual([]);
   });
 
   it("UX-WORDS-1 ux_words_1: every kept key still exists and still needs keeping", () => {
-    const flat = new Map<string, string>(
-      (["en", "zh-Hans", "zh-Hant"] as const).flatMap(locale =>
-        flatten(resources[locale].translation).map(([key, text]): [string, string] => [`${locale}:${key}`, text]),
-      ),
+    const patterns: Record<Rule, RegExp[]> = { note: [EN_NOTE, ZH_NOTE], wiki: [WIKI], doc: [ZH_DOC] };
+    const texts = (key: string) =>
+      LOCALES.map(locale => flatten(resources[locale].translation).find(([k]) => k === key)?.[1] ?? "");
+    const stale = (Object.keys(KEPT) as Rule[]).flatMap(rule =>
+      Object.keys(KEPT[rule])
+        .filter(key => !texts(key).some(text => patterns[rule].some(pattern => pattern.test(text))))
+        .map(key => `${rule}: ${key}`),
     );
-    const stale = Object.keys(KEPT).filter(key => {
-      const texts = ["en", "zh-Hans", "zh-Hant"].map(locale => flat.get(`${locale}:${key}`) ?? "");
-      return !texts.some(text => EN_NOTE.test(text) || ZH_NOTE.test(text) || WIKI.test(text));
-    });
     expect(stale).toEqual([]);
   });
 });
