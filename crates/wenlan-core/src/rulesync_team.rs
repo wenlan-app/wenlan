@@ -745,6 +745,83 @@ pub fn queue_proposal(
     )
 }
 
+/// Retire only the queued version of a tool-file edit refused by an older host.
+/// Removing it before reopening the person's answer prevents a later sync from
+/// sending the same proposal without another confirmation.
+pub fn retire_queued_proposal(
+    settings_path: &Path,
+    layer_id: &str,
+    revision: &str,
+    proposal: &str,
+) -> Result<(), WenlanError> {
+    if proposal.len() != 64 || !proposal.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(validation("invalid queued Rules proposal"));
+    }
+    let file = team::read_team(&team_path(settings_path))?;
+    for (space, _) in team::hosted_spaces(settings_path)? {
+        if let Some(hosted) = hosted_rules_in(&file, settings_path, &space)?.filter(|hosted| {
+            if hosted.project.is_some() {
+                hosted.page_id == layer_id
+            } else {
+                hosted.info.id == layer_id
+            }
+        }) {
+            let owner = hosted_owner(settings_path)?
+                .ok_or_else(|| WenlanError::NotFound("the hosted team owner".into()))?;
+            return remove_queued_proposal(
+                &hosted.folder,
+                &owner,
+                &hosted.page_id,
+                revision,
+                proposal,
+            );
+        }
+    }
+    let (host, share) = shared_space::team_rule_proposal_target(settings_path, layer_id, revision)?;
+    let id = if host.space == SPACE {
+        page_id(layer_id, None)
+    } else {
+        layer_id.to_string()
+    };
+    let folder = shared_space::folder_for(&shared_space::Scope::Space(host.space), &share.folder);
+    remove_queued_proposal(&folder, &share.member_id, &id, revision, proposal)
+}
+
+fn remove_queued_proposal(
+    folder: &Path,
+    member: &str,
+    id: &str,
+    revision: &str,
+    proposal: &str,
+) -> Result<(), WenlanError> {
+    let name = version::version_file_name(proposal);
+    let path = folder
+        .join(version::MEMBERS_DIR)
+        .join(member)
+        .join(version::PROPOSALS_DIR)
+        .join(id)
+        .join(&name);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let queued = version::parse(&name, &bytes)?;
+    if queued.sha != proposal
+        || queued.page.id.as_deref() != Some(id)
+        || queued.meta.author.member != member
+        || queued.meta.author.kind != version::AuthorKind::Unknown
+        || queued.meta.parent.as_deref() != Some(revision)
+        || !queued.meta.proposal
+    {
+        return Err(validation(
+            "queued Rules proposal changed before it could be retired",
+        ));
+    }
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
 pub(crate) fn write_proposal(
     folder: &Path,
     id: &str,

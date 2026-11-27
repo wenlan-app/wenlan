@@ -669,6 +669,82 @@ impl Job<'_> {
         };
         for (path, bytes) in rendered.rules {
             let current = observed.get(&path).unwrap_or(&Snapshot::Absent);
+            if pending_review.contains(&path) && !blocked.contains_key(&path) {
+                let mut answers = crate::rulesync_shared_answers::read(&self.setup.data)?;
+                let full_path = self.directory.join(&path);
+                let old = checkout
+                    .files
+                    .get(&path)
+                    .context("managed checkout file is missing")?;
+                let old_text = text(old)?;
+                let local = text(current)?;
+                let new_text = std::str::from_utf8(&bytes)?;
+                for (id, waiting) in answers.waiting.clone() {
+                    if !waiting.files.contains(&full_path.display().to_string()) {
+                        continue;
+                    }
+                    let Some((key, layer)) = authorized.iter().find(|(_, layer)| {
+                        layer.id == waiting.layer_id && layer.revision != waiting.revision
+                    }) else {
+                        continue;
+                    };
+                    if !rulesync_layers::waiting_in_file(
+                        &waiting,
+                        &full_path.display().to_string(),
+                        &self.settings,
+                        &self.setup.data,
+                        &self.setup.home,
+                    ) {
+                        continue;
+                    }
+                    if rulesync_layers::only_personal(old_text)?
+                        != rulesync_layers::only_personal(local)?
+                    {
+                        continue;
+                    }
+                    let old_blocks = rulesync_layers::blocks(old_text)?;
+                    let local_blocks = rulesync_layers::blocks(local)?;
+                    let new_blocks = rulesync_layers::blocks(new_text)?;
+                    let (Some(base), Some(mine), Some(theirs)) = (
+                        old_blocks.get(key.as_str()),
+                        local_blocks.get(key.as_str()),
+                        new_blocks.get(key.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    let merged = wenlan_core::rulesync_personal::merge_rule_text(
+                        base.body,
+                        mine.body,
+                        theirs.body,
+                    )
+                    .context("The team's rules changed since this edit; check it again.")?;
+                    let rebased = rulesync_layers::replace_block_body(new_text, key, &merged)?;
+                    let updated = with_bytes(current, rebased.into_bytes());
+                    ensure!(
+                        self.root.apply(&full_path, current, &updated, false)?
+                            == ApplyOutcome::Applied,
+                        "checkout rules changed during rebase"
+                    );
+                    let changed_text = text(&updated)?;
+                    let changed_blocks = rulesync_layers::blocks(changed_text)?;
+                    let changed = changed_blocks
+                        .get(key.as_str())
+                        .context("rebased checkout section is missing")?;
+                    let new_id = fingerprint(&(&layer.id, changed.revision, changed.body))?;
+                    let markdown = rulesync_layers::proposed_markdown(layer, changed)?;
+                    answers.waiting.remove(&id);
+                    let mut next_waiting = waiting;
+                    next_waiting.revision = layer.revision.clone();
+                    next_waiting.markdown = markdown;
+                    answers.waiting.insert(new_id, next_waiting);
+                    crate::rulesync_shared_answers::save(&self.setup.data, &answers)?;
+                    checkout
+                        .files
+                        .insert(path.clone(), with_bytes(old, bytes.clone()));
+                    record = self.save(state_path, &record, &checkout)?;
+                    break;
+                }
+            }
             if blocked.contains_key(&path) || pending_review.contains(&path) {
                 continue;
             }
@@ -1007,6 +1083,16 @@ mod tests {
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
 
     #[test]
+    fn rulesync_ordered_rule_roots_are_team_personal_project() {
+        let roots = ordered_rule_roots(
+            Some(PathBuf::from("team")),
+            PathBuf::from("personal"),
+            Some(PathBuf::from("project")),
+        );
+        assert_eq!(roots, ["team", "personal", "project"].map(PathBuf::from));
+    }
+
+    #[test]
     #[ignore = "requires WENLAN_TEST_RULESYNC_BINARY pointing to the pinned renderer"]
     fn rulesync_checkout_claude_and_codex_roots_follow_team_personal_project_order() {
         use crate::rulesync_layers::tests::{hosted_fixture, REMOTE};
@@ -1281,6 +1367,15 @@ mod tests {
 
     #[test]
     fn rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it() {
+        checkout_hand_edit(false);
+    }
+
+    #[test]
+    fn rulesync_checkout_waiting_edit_survives_new_revision() {
+        checkout_hand_edit(true);
+    }
+
+    fn checkout_hand_edit(new_revision: bool) {
         use crate::rulesync_layers::tests::{
             hosted_fixture, render_fixture_section, APPROVED, PROJECT, REMOTE,
         };
@@ -1381,7 +1476,50 @@ mod tests {
         }
         let answers = crate::rulesync_shared_answers::read(&setup.data).unwrap();
         assert_eq!(answers.waiting.len(), 1);
-        let id = answers.waiting.keys().next().unwrap().clone();
+        let mut id = answers.waiting.keys().next().unwrap().clone();
+        let mut final_approved = approved.clone();
+        let mut final_edited = edited.clone();
+        if new_revision {
+            let proposal = rulesync_team::update_hosted_rules(
+                &settings,
+                PROJECT,
+                "Use the approved checklist.\nAnother approved line.\n",
+            )
+            .unwrap();
+            rulesync_team::decide_local_space_proposal(&settings, PROJECT, &proposal, true)
+                .unwrap();
+            let error = crate::rulesync_routes::decide_shared_edit_at(
+                &setup,
+                &settings,
+                wenlan_types::rulesync::SharedEditDecisionRequest {
+                    id: id.clone(),
+                    send: true,
+                },
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, crate::error::ServerError::Conflict(message) if message == "The team's rules changed since this edit; check it again.")
+            );
+            assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+            let report = sync(true);
+            assert_eq!(report.blocked_codes, [Code::SharedRuleNeedsConfirm.into()]);
+            let project = rulesync_team::load_project_layers(&settings)
+                .unwrap()
+                .remove(0);
+            let team = rulesync_team::load_layers(&settings).unwrap().remove(0);
+            final_approved = format!(
+                "{}{}Personal advice.\n",
+                render_fixture_section(&project),
+                render_fixture_section(&team)
+            );
+            final_edited = final_approved.replacen(APPROVED, "Use the checkout checklist.\n", 1);
+            assert_eq!(fs::read_to_string(&file).unwrap(), final_edited);
+            let answers = crate::rulesync_shared_answers::read(&setup.data).unwrap();
+            assert_eq!(answers.waiting.len(), 1);
+            let next_id = answers.waiting.keys().next().unwrap().clone();
+            assert_ne!(next_id, id);
+            id = next_id;
+        }
         crate::rulesync_routes::decide_shared_edit_at(
             &setup,
             &settings,
@@ -1389,7 +1527,14 @@ mod tests {
         )
         .unwrap();
         let [proposal]: [_; 1] = pending().try_into().unwrap();
-        assert_eq!(proposal.markdown, "Use the checkout checklist.\n");
+        assert_eq!(
+            proposal.markdown,
+            if new_revision {
+                "Use the checkout checklist.\nAnother approved line.\n"
+            } else {
+                "Use the checkout checklist.\n"
+            }
+        );
         assert!(rulesync_team::local_proposals(&settings)
             .unwrap()
             .is_empty());
@@ -1404,9 +1549,9 @@ mod tests {
         )
         .unwrap();
         assert!(sync(false).notice_codes.is_empty());
-        assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+        assert_eq!(fs::read_to_string(&file).unwrap(), final_edited);
         let report = sync(true);
-        assert_eq!(fs::read_to_string(&file).unwrap(), approved);
+        assert_eq!(fs::read_to_string(&file).unwrap(), final_approved);
         assert!(
             report.blocked.is_empty() && pending().is_empty(),
             "{report:?}"

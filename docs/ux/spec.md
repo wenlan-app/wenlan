@@ -990,7 +990,7 @@ and wait for evidence that people need them.
   project. The text says "Rules are listed from broadest to most specific. When
   two disagree, follow the later one." An offline member keeps the
   last synced layer and sees its date. A refused sync removes its access and
-  layer. Read holders, AI tools, and tool-file edits can submit proposals.
+  layer. Read holders and AI tools can submit proposals. Tool-file edits can be sent as proposals after the person confirms.
   A person with Write on that Space can decide each proposal once. Shared
   rule text that looks like a credential is refused. A wiki pull request
   carries the bound project's rules and its opted-in team section. Anyone
@@ -1014,13 +1014,17 @@ and wait for evidence that people need them.
   `rulesync_checkout_recovers_then_prunes_revoked_skill_before_a_render_failure`,
   `rulesync_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection`,
   `rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it`,
-  `rulesync_write_holder_applies_their_team_hand_edit_with_one_confirmation`,
+  `rulesync_checkout_waiting_edit_survives_new_revision`,
+  `rulesync_write_holder_applies_their_team_hand_edit_after_person_and_write_holder_confirm`,
   `rulesync_ai_caller_cannot_confirm_a_shared_edit`,
   `rulesync_shared_section_uses_current_precedence`,
-  `rulesync_stale_shared_edit_waiting_is_dropped`,
+  `rulesync_waiting_edit_survives_a_new_team_revision`,
+  `rulesync_new_team_revision_refuses_old_confirmation_and_keeps_edit`,
+  `rulesync_old_host_refusal_returns_edit_to_waiting`,
+  `rulesync_shared_edits_get_does_not_write_answers`,
   `rulesync_declined_shared_edit_restores_approved_lines`,
   `rulesync_declined_shared_edit_restores_approved_lines_on_person_sync`,
-  `rulesync_checkout_claude_and_codex_roots_follow_team_personal_project_order`,
+  `rulesync_ordered_rule_roots_are_team_personal_project`,
   `repo_wiki_legacy_precedence_is_read_and_team_precedes_project`,
   `rulesync_shared_edits_answer_requires_yes_or_no`, and
   `rulesync_shared_edits_refuses_ai_or_pipes_before_request`.

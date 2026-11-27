@@ -257,11 +257,11 @@ fn require_personal_rule_confirmation(
 ) -> Result<()> {
     ensure!(
         !has_ai_identity,
-        "Only you can confirm personal rule changes. Run this from your own terminal outside an AI session."
+        "Only you can confirm team or project rule edits. Run this from your own terminal outside an AI session."
     );
     ensure!(
         stdin_is_terminal && stdout_is_terminal,
-        "Only you can confirm personal rule changes: run this in a terminal and type yes yourself. There is no flag or piped approval."
+        "Only you can confirm team or project rule edits: run this in a terminal and type yes yourself. There is no flag or piped approval."
     );
     Ok(())
 }

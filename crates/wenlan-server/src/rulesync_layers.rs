@@ -213,6 +213,14 @@ fn without<'a>(text: &str, blocks: impl Iterator<Item = Block<'a>>) -> String {
     output
 }
 
+pub(crate) fn replace_block_body(text: &str, key: &str, body: &str) -> Result<String> {
+    let blocks = blocks(text)?;
+    let block = blocks.get(key).context("shared rule section is missing")?;
+    let start = block.range.start + block.header.len();
+    let end = block.range.end - block.footer.len();
+    Ok(format!("{}{}{}", &text[..start], body, &text[end..]))
+}
+
 pub(crate) fn edits<'a>(before: &'a str, after: &'a str) -> Result<Vec<(&'a str, Block<'a>)>> {
     let before = blocks(before)?;
     let after = blocks(after)?;
@@ -357,18 +365,6 @@ pub(crate) fn review_edits(
         let layer = accessible
             .get(key)
             .context("This shared layer is no longer accessible.")?;
-        let stale: Vec<_> = answers
-            .waiting
-            .iter()
-            .filter(|(_, waiting)| {
-                waiting.layer_id == layer.id && waiting.revision != layer.revision
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in stale {
-            answers.waiting.remove(&id);
-            answers.answers.remove(&id);
-        }
         let id = fingerprint(&(&layer.id, change.revision, change.body))?;
         let edit = fingerprint(&(change.revision, change.body))?;
         if let Some(receipt) = receipts.get(key) {
@@ -388,9 +384,12 @@ pub(crate) fn review_edits(
             }
             None => {
                 if change.revision != layer.revision {
-                    answers.waiting.remove(&id);
-                    rulesync_shared_answers::save(data, &answers)?;
-                    bail!("this shared rule edit needs the current approved revision");
+                    ensure!(
+                        answers.waiting.contains_key(&id),
+                        "this shared rule edit needs the current approved revision"
+                    );
+                    needs_confirm = true;
+                    continue;
                 }
                 let markdown = proposed_markdown(layer, &change)?;
                 let path = file.display().to_string();
@@ -607,7 +606,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn rulesync_stale_shared_edit_waiting_is_dropped() {
+    fn rulesync_waiting_edit_survives_a_new_team_revision() {
         let scratch = tempfile::tempdir().unwrap();
         let (settings, _, _) = hosted_fixture(scratch.path());
         let layer = rulesync_team::load_layers(&settings).unwrap().remove(0);
@@ -637,20 +636,25 @@ pub(crate) mod tests {
         let mut newer = layer.clone();
         newer.revision = "a".repeat(64);
         let accessible = BTreeMap::from([(key(&newer).unwrap(), &newer)]);
-        assert!(review_edits(
-            &settings,
-            &accessible,
-            edits(&before, &after).unwrap(),
-            &mut receipts,
-            file,
-            scratch.path(),
-            scratch.path()
-        )
-        .is_err());
-        assert!(rulesync_shared_answers::read(scratch.path())
-            .unwrap()
-            .waiting
-            .is_empty());
+        assert!(matches!(
+            review_edits(
+                &settings,
+                &accessible,
+                edits(&before, &after).unwrap(),
+                &mut receipts,
+                file,
+                scratch.path(),
+                scratch.path()
+            )
+            .unwrap(),
+            SharedReview::NeedsConfirm
+        ));
+        let answers = rulesync_shared_answers::read(scratch.path()).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        assert_eq!(
+            answers.waiting.values().next().unwrap().revision,
+            layer.revision
+        );
     }
 
     #[test]
