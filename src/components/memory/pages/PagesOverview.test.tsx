@@ -400,6 +400,17 @@ describe("PagesOverview reading workspace", () => {
       vi.mocked(listSpaces).mockResolvedValue([]);
     });
 
+    it("does not point a reader to + on a team side where they write in no Space", async () => {
+      const group = { key: "team:t1", team: { id: "t1", name: "Acme" }, hosted: false, owner: false, host: "https://team.example.com", shares: [] };
+      const scope: ScopeState = {
+        teams: [group], team: group, setScope: () => undefined, teamSpaces: new Set(["Product"]),
+        inScope: (name) => name === "Product", teamWritable: [],
+      };
+      renderOverview({ scope });
+      expect(await screen.findByText("Use Search to find a page.")).toBeInTheDocument();
+      expect(screen.queryByText("Use Search to find a page, or select + to start writing.")).toBeNull();
+    });
+
     it("leaves the panel alone when the checklist is not wired", async () => {
       const { container } = renderOverview();
       await waitFor(() => expect(listAgents).toHaveBeenCalled());
