@@ -496,6 +496,10 @@ async fn rulesync_router_rejects_session_on_person_only_routes() {
             "/api/rules/setup/review",
             r#"{"id":"test","action":"dismiss"}"#,
         ),
+        (
+            "/api/rules/setup/shared-edits/decide",
+            r#"{"id":"test","send":true}"#,
+        ),
     ] {
         let request = HttpRequest::builder()
             .method("POST")
@@ -518,6 +522,54 @@ async fn rulesync_router_rejects_session_on_person_only_routes() {
     }
 }
 
+#[tokio::test]
+async fn rulesync_shared_edits_get_does_not_write_answers() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::rulesync_shared_edits_get_does_not_write_answers",
+        &[],
+        scratch.path(),
+    ) {
+        return;
+    }
+    let data = std::path::PathBuf::from(std::env::var_os("WENLAN_DATA_DIR").unwrap());
+    std::fs::create_dir_all(&data).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let key_temp =
+        crate::rulesync_routes::seed_recorded_key_temp_for_shared_edits_get_test().unwrap();
+    let key_temp_bytes = std::fs::read(&key_temp).unwrap();
+    let key_temp_mtime = std::fs::metadata(&key_temp).unwrap().modified().unwrap();
+    let path = data.join("shared-edit-answers.json");
+    let bytes = br#"{"format":1,"waiting":{},"answers":{}}"#;
+    std::fs::write(&path, bytes).unwrap();
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let request = HttpRequest::builder()
+        .uri("/api/rules/setup/shared-edits")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(PERSON_KEY_HEADER, test_key())
+        .body(Body::empty())
+        .unwrap();
+    let response = crate::router::build_router(state())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        before
+    );
+    assert_eq!(std::fs::read(&key_temp).unwrap(), key_temp_bytes);
+    assert_eq!(
+        std::fs::metadata(&key_temp).unwrap().modified().unwrap(),
+        key_temp_mtime
+    );
+}
+
 /// Run one test of this file again in a child process whose data root and
 /// tool-state folder are scratch, so the tool-sync switch never comes from
 /// the machine's real data root. Returns false in the parent after the child
@@ -537,8 +589,9 @@ fn in_isolated_child(test: &str, envs: &[(&str, &str)], scratch: &std::path::Pat
     let child = command.output().unwrap();
     assert!(
         child.status.success(),
-        "{test} {envs:?}: {}",
-        String::from_utf8_lossy(&child.stdout)
+        "{test} {envs:?}: {}{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
     );
     false
 }

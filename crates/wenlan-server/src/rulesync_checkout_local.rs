@@ -900,7 +900,8 @@ mod tests {
     }
 
     #[test]
-    fn rulesync_checkout_write_holder_applies_their_team_hand_edit_with_one_confirmation() {
+    fn rulesync_checkout_write_holder_applies_their_team_hand_edit_after_person_and_write_holder_confirm(
+    ) {
         use wenlan_core::team::{self, CredentialKind};
         let mut f = Fixture::new();
         edit_both(&mut f);

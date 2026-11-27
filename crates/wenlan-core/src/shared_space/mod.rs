@@ -1846,7 +1846,7 @@ fn clear_rule_layer_if_refused(
         remote::SyncError::Refused(_) => {
             clear_team_rule_layer(settings_path, &host.url, &host.key, Some(&host.space))
         }
-        remote::SyncError::Unavailable(_) => Ok(()),
+        remote::SyncError::Unavailable(_) | remote::SyncError::OutdatedHost => Ok(()),
     }
 }
 

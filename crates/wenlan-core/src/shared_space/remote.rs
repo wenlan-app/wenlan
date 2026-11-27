@@ -163,6 +163,8 @@ pub(super) enum SyncError {
     Refused(String),
     #[error("{0}")]
     Unavailable(String),
+    #[error("Your team's Wenlan needs an update before this edit can be sent.")]
+    OutdatedHost,
 }
 
 impl From<String> for SyncError {
@@ -177,6 +179,7 @@ impl SyncError {
             Self::Revoked(_) => 2,
             Self::Refused(_) => 1,
             Self::Unavailable(_) => 0,
+            Self::OutdatedHost => 1,
         }
     }
 }
@@ -188,6 +191,11 @@ fn response_error(url: &str, status: reqwest::StatusCode) -> SyncError {
         reqwest::StatusCode::FORBIDDEN => SyncError::Refused(reason),
         _ => SyncError::Unavailable(reason),
     }
+}
+
+fn proposal_response_error(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        && body.contains("author kind is not person or ai")
 }
 
 /// Who `key` belongs to on the server at `url`.
@@ -498,6 +506,11 @@ pub(super) async fn push(
                 if response.status().is_success() {
                     Ok(())
                 } else if response.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    if proposal_response_error(status, &body) {
+                        return Err(SyncError::OutdatedHost);
+                    }
                     // A version the server cannot take as it is: sending it
                     // again would not change that.
                     log::warn!("[shared_space] the team server did not take {path}");
@@ -571,6 +584,19 @@ pub fn as_error(reason: String) -> WenlanError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_team_host_refusal_has_one_update_line() {
+        let fake_host_body = r#"{"error":"author kind is not person or ai"}"#;
+        assert!(proposal_response_error(
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            fake_host_body
+        ));
+        assert_eq!(
+            SyncError::OutdatedHost.to_string(),
+            "Your team's Wenlan needs an update before this edit can be sent."
+        );
+    }
 
     #[test]
     fn only_private_addresses_may_be_plain_http() {

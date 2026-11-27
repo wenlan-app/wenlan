@@ -325,13 +325,8 @@ async fn shared_edits(
 ) -> Result<Json<Vec<wenlan_types::rulesync::SharedEditWaiting>>, ServerError> {
     require_local_rules_access(&headers)?;
     let waiting = tokio::task::spawn_blocking(|| {
-        let setup = Setup::system()?;
-        let _lock = setup.lock()?;
-        rulesync_layers::refresh_answers(
-            &wenlan_core::shared_space::settings_path(),
-            &setup.data,
-            &setup.home,
-        )
+        let setup = Setup::system_read_only()?;
+        rulesync_shared_answers::read(&setup.data)
     })
     .await
     .map_err(|error| ServerError::Internal(error.to_string()))?
@@ -374,6 +369,22 @@ pub(crate) fn decide_shared_edit_at(
             .into(),
         )
     })?;
+    if request.send {
+        let current = rulesync_team::load_layers(settings)
+            .and_then(|mut layers| {
+                layers.extend(rulesync_team::load_project_layers(settings)?);
+                Ok(layers)
+            })
+            .map_err(|error| ServerError::Conflict(error.to_string()))?;
+        if current
+            .iter()
+            .any(|layer| layer.id == waiting.layer_id && layer.revision != waiting.revision)
+        {
+            return Err(ServerError::Conflict(
+                "The team's rules changed since this edit; check it again.".into(),
+            ));
+        }
+    }
     if request.send
         && !waiting.files.iter().all(|file| {
             rulesync_layers::waiting_in_file(waiting, file, settings, &setup.data, &setup.home)
@@ -420,6 +431,71 @@ pub(crate) fn decide_shared_edit_at(
     rulesync_shared_answers::save(&setup.data, &answers)
         .map_err(|error| ServerError::Conflict(format!("{error:#}")))?;
     Ok(response)
+}
+
+pub(crate) fn reopen_edits_after_old_host_refusal(space: &str) -> Result<()> {
+    let setup = Setup::system()?;
+    reopen_edits_after_old_host_refusal_at(
+        &setup,
+        &wenlan_core::shared_space::settings_path(),
+        space,
+    )
+}
+
+fn reopen_edits_after_old_host_refusal_at(
+    setup: &Setup,
+    settings: &Path,
+    space: &str,
+) -> Result<()> {
+    let _lock = setup.lock()?;
+    let layers = rulesync_team::load_layers(settings)?
+        .into_iter()
+        .chain(rulesync_team::load_project_layers(settings)?);
+    let ids: BTreeSet<_> = layers
+        .filter(|layer| {
+            layer
+                .project
+                .as_ref()
+                .map_or(rulesync_team::SPACE, |project| project.space.as_str())
+                == space
+        })
+        .map(|layer| layer.id)
+        .collect();
+    let mut answers = rulesync_shared_answers::read(&setup.data)?;
+    let restore: Vec<_> = answers
+        .answered_edits
+        .iter()
+        .filter(|(id, _)| matches!(answers.answers.get(*id), Some(Answer::Send { .. })))
+        .filter(|(_, record)| ids.contains(&record.edit.layer_id))
+        .filter(|(_, record)| {
+            record.edit.files.iter().any(|file| {
+                rulesync_layers::waiting_in_file(
+                    &record.edit,
+                    file,
+                    settings,
+                    &setup.data,
+                    &setup.home,
+                )
+            })
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in restore {
+        let record = &answers.answered_edits[&id];
+        if let Some(Answer::Send { proposal }) = answers.answers.get(&id) {
+            rulesync_team::retire_queued_proposal(
+                settings,
+                &record.edit.layer_id,
+                &record.edit.revision,
+                proposal,
+            )?;
+        }
+        if let Some(record) = answers.answered_edits.remove(&id) {
+            answers.answers.remove(&id);
+            answers.waiting.insert(id, record.edit);
+        }
+    }
+    rulesync_shared_answers::save(&setup.data, &answers)
 }
 
 async fn decide_shared_edit(
@@ -1025,6 +1101,25 @@ impl Setup {
         }
         tools
     }
+}
+
+#[cfg(test)]
+pub(crate) fn seed_recorded_key_temp_for_shared_edits_get_test() -> Result<PathBuf> {
+    let setup = Setup::system_read_only()?;
+    std::fs::create_dir_all(&setup.home)?;
+    std::fs::create_dir_all(&setup.data)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&setup.data, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let adoption = discover_adoption(&setup.home)?;
+    let mut manifest = Manifest::new(PersonalMaster::new(&adoption), BTreeMap::new());
+    let temp =
+        key_shares::begin_write(&setup, &mut manifest, Path::new(".claude.json"), Vec::new())?;
+    let path = setup.home.join(temp);
+    std::fs::write(&path, b"recorded temporary key file")?;
+    Ok(path)
 }
 
 pub(crate) fn sync_registry_now() -> Result<RulesSyncReport> {
@@ -1642,6 +1737,13 @@ pub(crate) struct Setup {
 }
 
 impl Setup {
+    fn system_read_only() -> Result<Self> {
+        Ok(Self::new(
+            Self::tool_home()?,
+            wenlan_core::config::data_root().join("rulesync"),
+        ))
+    }
+
     pub(crate) fn system() -> Result<Self> {
         let home = Self::tool_home()?;
         let data = wenlan_core::config::data_root().join("rulesync");
@@ -3485,6 +3587,100 @@ impl Setup {
         Ok(())
     }
 
+    fn rebase_waiting_team_edits(
+        &self,
+        root: &FileRoot,
+        manifest: &mut Manifest,
+        generated: &[String],
+        layers: &[TeamRuleLayer],
+        render_rule: &impl Fn(&str, &str) -> Result<SkillFiles>,
+    ) -> Result<()> {
+        let mut answers = rulesync_shared_answers::read(&self.data)?;
+        let waiting = answers.waiting.clone();
+        for (id, edit) in waiting {
+            let Some(layer) = layers.iter().find(|layer| layer.id == edit.layer_id) else {
+                continue;
+            };
+            let key = rulesync_layers::key(layer)?;
+            for name in &edit.files {
+                let path = Path::new(name);
+                let Some(delivery) = manifest.delivered.get(path) else {
+                    continue;
+                };
+                let Kind::Rule { target, .. } = &delivery.kind else {
+                    continue;
+                };
+                if !rulesync_layers::waiting_in_file(
+                    &edit,
+                    name,
+                    Path::new(""),
+                    &self.data,
+                    &self.home,
+                ) {
+                    continue;
+                }
+                let old = text(&delivery.delivered)?;
+                let current = root.read(path, false)?;
+                let local = text(&current)?;
+                if rulesync_layers::only_personal(old)? != rulesync_layers::only_personal(local)? {
+                    continue;
+                }
+                let source = manifest.master.rule_text(target, generated)?;
+                let rendered = render_rule(target, &source)?;
+                let Some(next) = rendered.get(path) else {
+                    continue;
+                };
+                let next_text = std::str::from_utf8(next)?;
+                if next_text == old {
+                    continue;
+                }
+                let old_blocks = rulesync_layers::blocks(old)?;
+                let local_blocks = rulesync_layers::blocks(local)?;
+                let next_blocks = rulesync_layers::blocks(next_text)?;
+                let (Some(base), Some(mine), Some(theirs)) = (
+                    old_blocks.get(key.as_str()),
+                    local_blocks.get(key.as_str()),
+                    next_blocks.get(key.as_str()),
+                ) else {
+                    continue;
+                };
+                let merged = wenlan_core::rulesync_personal::merge_rule_text(
+                    base.body,
+                    mine.body,
+                    theirs.body,
+                )
+                .context("The team's rules changed since this edit; check it again.")?;
+                let rebased = rulesync_layers::replace_block_body(next_text, &key, &merged)?;
+                let updated = with_bytes(&current, rebased.into_bytes());
+                ensure!(
+                    root.apply(path, &current, &updated, false)? == ApplyOutcome::Applied,
+                    "shared rule file changed during rebase"
+                );
+                let new_block = rulesync_layers::blocks(text(&updated)?)?;
+                let new_block = new_block
+                    .get(key.as_str())
+                    .context("rebased section is missing")?;
+                let markdown = rulesync_layers::proposed_markdown(layer, new_block)?;
+                let new_id = wenlan_core::rulesync_personal::fingerprint(&(
+                    &layer.id,
+                    new_block.revision,
+                    new_block.body,
+                ))?;
+                answers.waiting.remove(&id);
+                let mut moved = edit.clone();
+                moved.revision = layer.revision.clone();
+                moved.markdown = markdown;
+                answers.waiting.insert(new_id, moved);
+                rulesync_shared_answers::save(&self.data, &answers)?;
+                let delivery = manifest.delivered.get_mut(path).expect("checked delivery");
+                delivery.delivered = with_bytes(&delivery.delivered, next.clone());
+                delivery.observed = None;
+                self.save(manifest)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn checkout(
         &self,
         repo: &Path,
@@ -3613,6 +3809,9 @@ impl Setup {
                 manifest
                     .shared_rule_proposals
                     .insert(path.clone(), receipts);
+            }
+            if let Err(error) = &review {
+                return Err(anyhow::anyhow!("{}: {error:#}", path.display()));
             }
             if let Ok(rulesync_layers::SharedReview::Decided {
                 rejected: was_rejected,
@@ -6194,7 +6393,7 @@ fn inspect_rule(
             if waiting {
                 blocked.insert(path.to_owned(), (Code::SharedRuleNeedsConfirm, format!("{}: A team or project rule edit stays only in this file until you send it. Run `wenlan rules shared-edits` in your own terminal to send or decline it.", path.display())));
             } else {
-                blocked.insert(path.to_owned(), (Code::SharedRulePending, "A shared rule edit is still in this file while Wenlan checks its proposal. If you no longer have access, copy any edits you want to keep outside the shared section and sync again.".into()));
+                blocked.insert(path.to_owned(), (Code::SharedRulePending, "A shared rule edit is still in this file while waiting for the person to confirm it. If you no longer have access, copy any edits you want to keep outside the shared section and sync again.".into()));
             }
             return Ok(None);
         }

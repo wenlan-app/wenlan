@@ -1860,6 +1860,31 @@ pub fn spawn_scheduler(
                     person_name.as_deref(),
                 )
                 .await;
+                if runs.iter().any(|(_, run)| {
+                    run.paused.as_deref()
+                        == Some("Your team's Wenlan needs an update before this edit can be sent.")
+                }) {
+                    match wenlan_core::shared_space::shares_at(
+                        &wenlan_core::shared_space::settings_path(),
+                    ) {
+                        Ok(shares) => {
+                            for (scope, share) in shares {
+                                if runs.iter().any(|(key, run)| *key == scope.key() && run.paused.as_deref() == Some("Your team's Wenlan needs an update before this edit can be sent.")) {
+                                    if let Some(host) = share.host {
+                                        if let Err(error) = crate::rulesync_routes::reopen_edits_after_old_host_refusal(&host.space) {
+                                            tracing::warn!("[rulesync] could not keep the refused shared edit waiting: {error:#}");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "[rulesync] could not inspect refused team host: {error}"
+                            )
+                        }
+                    }
+                }
                 // Memories taken from another computer wait for a vector.
                 crate::spaces_routes::wake_embedding_for_memories(
                     runs.iter()
