@@ -123,4 +123,4 @@ case "${path_bin}" in
 esac
 
 # wenlan-mcp-pin: kept in lockstep by scripts/bump-version.sh
-exec npx -y wenlan-mcp@0.22.8 --agent-name "${agent_name}" "$@"
+exec npx -y wenlan-mcp@0.22.9 --agent-name "${agent_name}" "$@"
