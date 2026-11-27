@@ -370,7 +370,9 @@ and wait for evidence that people need them.
 - **UX-WHO-11** `shipped` A citation whose source does not clearly support its
   sentence is still saved, and the page shows it with a visible amber "?"
   beside its number ([2?]), in reading and editing, and says in words "source
-  doesn't clearly say this" when opened. Not-yet-checked citations get no "?".
+  doesn't clearly say this" on the sentence (short form "not confirmed by its
+  source" in the popover, Info and the screen-reader name). Not-yet-checked
+  and historical citations get no "?".
   Public copy never says every sentence has a source. Test
   `UX-WHO-11 shows a visible question mark on an unconfirmed citation`.
   原文：UX 稽核 2026-11（第 4 條，全照建議）：無法驗證的引用照存，但頁面上清楚標出；公開文案不說每句都有出處。

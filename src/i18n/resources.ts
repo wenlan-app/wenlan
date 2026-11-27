@@ -1179,6 +1179,7 @@ const en = {
   },
   citation: {
     chipLabel: "Citation {{number}}: {{source}}",
+    chipLabelUnconfirmed: "Citation {{number}}: {{source}}, not confirmed by its source",
     importedFromZotero: "Imported from Zotero",
     pageLocator: "p. {{page}}",
     viewOriginal: "View original →",
@@ -4875,6 +4876,7 @@ const zhHans = {
   },
   citation: {
     chipLabel: "引用 {{number}}：{{source}}",
+    chipLabelUnconfirmed: "引用 {{number}}：{{source}}，出处未确认",
     importedFromZotero: "从 Zotero 导入",
     pageLocator: "第 {{page}} 页",
     viewOriginal: "查看原文 →",
@@ -8526,6 +8528,7 @@ const zhHant = {
   },
   citation: {
     chipLabel: "引用 {{number}}：{{source}}",
+    chipLabelUnconfirmed: "引用 {{number}}：{{source}}，出處未確認",
     importedFromZotero: "從 Zotero 匯入",
     pageLocator: "第 {{page}} 頁",
     viewOriginal: "檢視原文 →",

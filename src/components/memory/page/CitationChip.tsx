@@ -137,6 +137,7 @@ export default function CitationChip({
   };
 
   const unverified = citation.status === "unverified" || !!citation.historical;
+  const unconfirmed = citation.status === "unverified" && !citation.historical;
 
   return (
     <span
@@ -167,7 +168,7 @@ export default function CitationChip({
         type="button"
         data-status={citation.historical ? "unevaluated" : citation.status}
         data-reference-kind={referenceKind}
-        aria-label={t("citation.chipLabel", { number, source: accessibleSource })}
+        aria-label={t(unconfirmed ? "citation.chipLabelUnconfirmed" : "citation.chipLabel", { number, source: accessibleSource })}
         aria-describedby={open ? popoverId : undefined}
         onPointerDown={(e) => {
           lastPointerType.current = e.pointerType;
@@ -193,7 +194,7 @@ export default function CitationChip({
       >
         <span aria-hidden="true">
           [{number}
-          {citation.status === "unverified" && !citation.historical && (
+          {unconfirmed && (
             <span className="citation-chip__unconfirmed">?</span>
           )}]
         </span>

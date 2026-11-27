@@ -114,6 +114,7 @@ describe("CitationChip", () => {
   it("UX-WHO-11 shows a visible question mark on an unconfirmed citation, and only there", () => {
     const { unmount } = renderChip({ citation: cite({ status: "unverified" }) });
     expect(screen.getByRole("button", { name: /Memory/ })).toHaveTextContent("[1?]");
+    expect(screen.getByRole("button", { name: /Memory/ })).toHaveAccessibleName(/not confirmed by its source$/);
     unmount();
     renderChip({ citation: cite({ status: "verified" }) });
     expect(screen.getByRole("button", { name: /Memory/ })).toHaveTextContent("[1]");

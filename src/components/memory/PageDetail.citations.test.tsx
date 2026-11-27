@@ -138,7 +138,7 @@ describe("PageDetail citations", () => {
     const chip1 = await screen.findByRole("button", { name: /^Citation 1: Memory/ });
     const chip2 = screen.getByRole("button", { name: /^Citation 2: Memory/ });
     expect(chip1).toHaveAccessibleName("Citation 1: Memory: Local-first decision");
-    expect(chip2).toHaveAccessibleName("Citation 2: Memory");
+    expect(chip2).toHaveAccessibleName("Citation 2: Memory, not confirmed by its source");
     expect(chip1).toHaveAttribute("data-status", "verified");
     expect(chip2).toHaveAttribute("data-status", "unverified");
     expect(chip1).toHaveTextContent("[1]");
