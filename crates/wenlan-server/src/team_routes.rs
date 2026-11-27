@@ -122,6 +122,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             crate::route_registry::delete(handle_revoke_member_key),
         )
         .route("/api/team/spaces", post(handle_host_space))
+        .route("/api/team/library/draft", get(library::draft))
+        .route("/api/team/library/spaces", get(library::spaces))
         .route("/api/team/library/terminal", post(library::terminal))
         .route("/api/team/joined/library", get(handle_joined_library))
         .route(

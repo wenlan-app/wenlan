@@ -294,7 +294,7 @@ src/components/memory/SourcesView.tsx	Sync	1
 src/components/memory/SourcesView.tsx	Syncing…	1
 src/components/memory/SourcesView.tsx	This folder can't be read — it may have been moved or renamed.	1
 src/components/memory/SourcesView.tsx	This source can't be read — the folder may have been moved, renamed, or unmounted.	1
-src/components/memory/SourcesView.tsx	Wenlan builds its wiki from the folders and vaults you add here. Point it at a notes folder or an Obsidian vault to lay the first stone.	1
+src/components/memory/SourcesView.tsx	Wenlan builds its pages from the folders and vaults you add here. Point it at a notes folder or an Obsidian vault to lay the first stone.	1
 src/components/memory/SpaceDetail.tsx	Add a description...	2
 src/components/memory/SpaceDetail.tsx	Auto-created by an agent	1
 src/components/memory/SpaceDetail.tsx	Cancel	2

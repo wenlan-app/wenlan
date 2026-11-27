@@ -223,7 +223,8 @@ team:
 
 ```bash
 wenlan team start "Acme" --as "Qi"
-wenlan team share "Product" --everyone
+wenlan team create-space "Product"
+wenlan team publish page <PAGE_ID> --space-id <SPACE_ID>
 wenlan team invite "Amy"
 wenlan team invite "Bo" --access Product:read
 ```
@@ -231,12 +232,15 @@ wenlan team invite "Bo" --access Product:read
 `start` turns the team listener on, now and after restarts, and picks the
 address for invite links (the computer's Tailscale address first, else its
 address on the local network); give another with `--url https://wenlan.example.com`.
-`host` lets the team use a Space: `--everyone` opens it to every member, now
-and later (`--everyone read` for read only); without it only the people given
-it with `--access` can use it. Each `invite` prints an invite link once, such
-as `https://wenlan.example.com/join#wlt_…`. Send it to that person privately.
-The key stays after `#`, so a browser opening the link never sends it to the
-server. Older links without `/join` still work.
+To share a page from an existing personal Space, the person uses the app's
+**Share → With Acme** flow. It creates the team Space as needed and lets the
+person review each page and its cited memories before publishing. From a
+terminal, the person can instead run `create-space`, then `publish page` with
+the destination Space ID; `publish` shows the draft and requires that person
+to type `yes` before anything is published. Each `invite` prints an invite link
+once, such as `https://wenlan.example.com/join#wlt_…`. Send it to that person
+privately. The key stays after `#`, so a browser opening the link never sends
+it to the server. Older links without `/join` still work.
 
 `wenlan team status` shows the team, its Spaces and its people.
 `wenlan team update Amy --access Product` changes what someone can use,

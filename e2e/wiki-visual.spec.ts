@@ -87,7 +87,7 @@ test("Cmd+K event opens the responsive global search instead of focusing a hidde
     await window.__TAURI_INTERNALS__?.invoke("plugin:event|emit", { event: "toggle-spotlight", payload: null });
   });
 
-  const searchInput = page.getByPlaceholder("搜尋筆記、記憶、來源...");
+  const searchInput = page.getByPlaceholder("搜尋頁面、記憶、來源...");
   await expect(searchInput).toBeVisible();
   await expect(searchInput).toBeFocused();
   await expect(page.getByRole("dialog", { name: "搜尋", exact: true })).toHaveAttribute("aria-modal", "true");

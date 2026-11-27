@@ -43,6 +43,22 @@ fn team_subcommands_help_exits_zero() {
 }
 
 #[test]
+fn team_help_points_people_to_publication_commands() {
+    let output = cli().args(["team", "--help"]).output().expect("run wenlan");
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    for line in [
+        "draft         Prepare a private publication draft.",
+        "publish       Review and publish a personal item.",
+        "withdraw      Withdraw a team item and its revisions.",
+        "create-space  Create a team Space for published pages.",
+        "grant         Set a member's team-library access.",
+    ] {
+        assert!(help.contains(line), "missing {line:?} in {help}");
+    }
+}
+
+#[test]
 fn team_add_accepts_repeated_spaces_with_read_suffix() {
     // Parsing succeeds; the run then fails only because no daemon answers.
     let out = cli()
@@ -204,8 +220,135 @@ fn run_with_data(host: &str, data: &std::path::Path, args: &[&str]) -> (bool, St
     )
 }
 
+fn run_with_data_root(
+    host: &str,
+    args: &[&str],
+    data_root: &std::path::Path,
+) -> (bool, String, String) {
+    let output = cli()
+        .env("WENLAN_HOST", host)
+        .env("WENLAN_DATA_DIR", data_root)
+        .args(["--format", "table"])
+        .args(args)
+        .output()
+        .expect("run wenlan");
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 fn served(requests: &std::sync::mpsc::Receiver<(String, String)>) -> Vec<(String, String)> {
     requests.try_iter().collect()
+}
+
+#[test]
+fn team_draft_uses_the_shared_daemon_draft_route() {
+    let data_root = tempfile::tempdir().unwrap();
+    let key = "0123456789abcdef".repeat(4);
+    std::fs::write(
+        wenlan_types::person_key::path_in(data_root.path()),
+        format!("{key}\n"),
+    )
+    .unwrap();
+    let draft = json!({
+        "item": {
+            "original": {"kind":"page","id":"page-1","revision":3},
+            "text": {"title":"Release page","body":"Reviewed body"}
+        },
+        "sources": [{
+            "original": {"kind":"memory","id":"memory-1","revision":2},
+            "text": {"title":"Source","body":"Source body"}
+        }],
+        "omitted_sources": true,
+        "authorship": "human"
+    });
+    let (host, requests) = common::spawn_stub(vec![
+        (
+            "GET /api/health",
+            json!({
+                "status": "ok",
+                "db_initialized": true,
+                "version": "test",
+                "data_root": data_root.path(),
+            })
+            .to_string(),
+        ),
+        (
+            "GET /api/team/library/draft?kind=page&id=page-1",
+            draft.to_string(),
+        ),
+    ]);
+    let (ok, stdout, stderr) = run_with_data_root(
+        &host,
+        &["team", "draft", "page", "page-1"],
+        data_root.path(),
+    );
+    assert!(ok, "{stderr}");
+    let output: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(output["item"]["text"]["title"], "Release page");
+    assert_eq!(output["sources"].as_array().unwrap().len(), 1);
+    assert_eq!(served(&requests).len(), 2);
+}
+
+#[test]
+fn team_draft_restores_specific_missing_memory_error() {
+    let data_root = tempfile::tempdir().unwrap();
+    let key = "0123456789abcdef".repeat(4);
+    std::fs::write(
+        wenlan_types::person_key::path_in(data_root.path()),
+        format!("{key}\n"),
+    )
+    .unwrap();
+    let (host, _requests) = common::spawn_stub(vec![
+        (
+            "GET /api/health",
+            json!({ "status": "ok", "db_initialized": true, "version": "test" }).to_string(),
+        ),
+        (
+            "GET /api/team/library/draft?kind=memory&id=missing-memory",
+            "404:{\"error\":\"Personal memory not found.\"}".to_string(),
+        ),
+    ]);
+    let (ok, _stdout, stderr) = run_with_data_root(
+        &host,
+        &["team", "draft", "memory", "missing-memory"],
+        data_root.path(),
+    );
+    assert!(!ok);
+    assert!(stderr.contains("Personal memory not found."), "{stderr}");
+}
+
+#[test]
+fn team_draft_restores_specific_inactive_page_error() {
+    let data_root = tempfile::tempdir().unwrap();
+    let key = "0123456789abcdef".repeat(4);
+    std::fs::write(
+        wenlan_types::person_key::path_in(data_root.path()),
+        format!("{key}\n"),
+    )
+    .unwrap();
+    let (host, _requests) = common::spawn_stub(vec![
+        (
+            "GET /api/health",
+            json!({ "status": "ok", "db_initialized": true, "version": "test" }).to_string(),
+        ),
+        (
+            "GET /api/team/library/draft?kind=page&id=inactive-page",
+            "422:{\"error\":\"The personal page must be active.\"}".to_string(),
+        ),
+    ]);
+    let (ok, _stdout, stderr) = run_with_data_root(
+        &host,
+        &["team", "draft", "page", "inactive-page"],
+        data_root.path(),
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("The personal page must be active."),
+        "{stderr}"
+    );
 }
 
 #[test]

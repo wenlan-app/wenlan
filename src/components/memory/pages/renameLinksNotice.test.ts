@@ -32,8 +32,8 @@ describe("rename link notice", () => {
   });
 
   it.each([
-    ["zh-Hant", "已更新 2 篇筆記中的連結。 1 篇筆記仍連到舊標題。"],
-    ["zh-Hans", "已更新 2 篇笔记中的链接。 1 篇笔记仍链接到旧标题。"],
+    ["zh-Hant", "已更新 2 個頁面中的連結。 1 個頁面仍連到舊標題。"],
+    ["zh-Hans", "已更新 2 个页面中的链接。 1 个页面仍链接到旧标题。"],
   ])("reads naturally in %s", async (language, expected) => {
     await i18n.changeLanguage(language);
     expect(renameLinksMessage(i18n.t, { ...renamed, links_updated: 2, links_not_updated: 1 })).toBe(expected);

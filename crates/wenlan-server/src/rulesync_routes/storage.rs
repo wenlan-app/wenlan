@@ -530,6 +530,7 @@ fn map_contents<From, To>(
         page_rules: manifest.page_rules,
         legacy_source_following: manifest.legacy_source_following,
         rule_import_notice_pending: manifest.rule_import_notice_pending,
+        team_rules_moved_notice_pending: manifest.team_rules_moved_notice_pending,
         key_skills_notice: manifest.key_skills_notice.clone(),
         key_blobs_to_remove: manifest.key_blobs_to_remove.clone(),
         key_skills_dropped: false,

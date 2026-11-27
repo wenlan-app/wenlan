@@ -393,6 +393,7 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         return match kind {
             crate::shared_space::version::AuthorKind::Person => VersionAuthor::Person,
             crate::shared_space::version::AuthorKind::Ai => VersionAuthor::Ai,
+            crate::shared_space::version::AuthorKind::Unknown => VersionAuthor::Unknown,
         };
     }
     match edited_by {
@@ -400,6 +401,7 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         // sharing the same folder as the same member.
         crate::shared_space::OWN_DEVICE_PERSON => return VersionAuthor::Person,
         crate::shared_space::OWN_DEVICE_AI => return VersionAuthor::Ai,
+        crate::shared_space::OWN_DEVICE_UNKNOWN => return VersionAuthor::Unknown,
         _ => {}
     }
     match edited_by {

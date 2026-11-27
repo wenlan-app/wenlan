@@ -7,6 +7,7 @@ use axum::body::Body;
 use axum::http::{HeaderValue, Request as HttpRequest, StatusCode};
 use std::sync::Arc;
 use tower::ServiceExt;
+use wenlan_core::{db::MemoryDB, events::NoopEmitter};
 use wenlan_types::requests::PERSON_CALLER_VALUE;
 
 fn marked(key: Option<&str>) -> HeaderMap {
@@ -237,6 +238,207 @@ async fn send_with(
         status,
         serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
     )
+}
+
+#[tokio::test]
+async fn team_library_person_only_routes_refuse_ai_and_missing_key() {
+    let preview = r#"{"action":"preview","draft":{"kind":"memory","title":"t","body":"b","authorship":null,"space_id":null,"item_id":null,"expected_revision":null,"memories":[],"private_source":false,"brief":false},"originals":[]}"#;
+    let requests = [
+        (
+            "GET",
+            "/api/team/library/draft?kind=memory&id=memory-1",
+            "{}",
+        ),
+        ("POST", "/api/team/library/terminal", preview),
+        (
+            "POST",
+            "/api/team/library/terminal",
+            r#"{"action":"publish","preview_id":"preview-1"}"#,
+        ),
+    ];
+    for (method, path, body) in requests {
+        let request = |agent: bool| {
+            let mut request = HttpRequest::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE);
+            if agent {
+                request = request.header("x-agent-name", "claude-code");
+            }
+            request.body(Body::from(body)).unwrap()
+        };
+        let response = crate::router::build_router(state())
+            .oneshot(request(true))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "AI {method} {path}"
+        );
+
+        let response = crate::router::build_router(state())
+            .oneshot(request(false))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "missing key {method} {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn team_library_draft_and_spaces_are_routed_person_only() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::team_library_draft_and_spaces_are_routed_person_only",
+        &[("WENLAN_NO_AUTOSTART", "1")],
+        scratch.path(),
+    ) {
+        return;
+    }
+
+    let key = test_key();
+    let team_path = wenlan_core::team::team_path();
+    wenlan_core::team::ensure_owner(&team_path, "Owner").unwrap();
+    let library = wenlan_core::team_library::Library::new(team_path, false);
+    library
+        .create_group(
+            &wenlan_core::team::read_team(&wenlan_core::team::team_path())
+                .unwrap()
+                .members[0]
+                .id,
+            "Product",
+            false,
+        )
+        .unwrap();
+
+    let root = std::path::PathBuf::from(std::env::var("WENLAN_DATA_DIR").unwrap());
+    let db = Arc::new(
+        MemoryDB::new(&root.join("db"), Arc::new(NoopEmitter))
+            .await
+            .unwrap(),
+    );
+    db.create_space("Product", None, false).await.unwrap();
+    db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+        source: "memory".into(),
+        source_id: "memory-1".into(),
+        title: "A cited memory".into(),
+        content: "The source text.".into(),
+        confirmed: Some(true),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let page = wenlan_core::post_write::create_page_with_floor(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "A shareable page".into(),
+            content: "A page body.".into(),
+            summary: None,
+            entity_id: None,
+            space: Some("Product".into()).into(),
+            source_memory_ids: vec!["memory-1".into()],
+            creation_kind: Some("authored".into()),
+            workspace: Some("Product".into()),
+        },
+        "fixture",
+        None,
+        1,
+    )
+    .await
+    .unwrap();
+    db.set_page_citations(
+        &page.id,
+        Some(r#"[{"source_kind":"memory","locator":"wenlan:memory-1@1","historical":false}]"#),
+    )
+    .await
+    .unwrap();
+
+    let state = state();
+    state.write().await.db = Some(db);
+    let app = crate::router::build_router(state);
+    async fn get(
+        app: &crate::router::AppRouter,
+        path: &str,
+        key: Option<&str>,
+        agent: bool,
+    ) -> StatusCode {
+        let mut request = HttpRequest::builder()
+            .method("GET")
+            .uri(path)
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE);
+        if let Some(key) = key {
+            request = request.header(PERSON_KEY_HEADER, key);
+        }
+        if agent {
+            request = request.header("x-agent-name", "claude-code");
+        }
+        app.clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+    let draft_path = format!("/api/team/library/draft?kind=page&id={}", page.id);
+    for path in [draft_path.as_str(), "/api/team/library/spaces"] {
+        assert_eq!(
+            get(&app, path, Some(key), true).await,
+            StatusCode::FORBIDDEN,
+            "AI {path}"
+        );
+        assert_eq!(
+            get(&app, path, None, false).await,
+            StatusCode::FORBIDDEN,
+            "missing key {path}"
+        );
+        assert_eq!(
+            get(&app, path, Some(&"0f".repeat(32)), false).await,
+            StatusCode::FORBIDDEN,
+            "wrong key {path}"
+        );
+        assert_eq!(
+            get(&app, path, Some(key), false).await,
+            StatusCode::OK,
+            "person {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn team_library_person_only_routes_refuse_an_external_bind() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::team_library_person_only_routes_refuse_an_external_bind",
+        &[
+            ("WENLAN_NO_AUTOSTART", "1"),
+            ("WENLAN_BIND_ADDR", "0.0.0.0:17917"),
+        ],
+        scratch.path(),
+    ) {
+        return;
+    }
+    let key = test_key();
+    let app = crate::router::build_router(state());
+    for path in [
+        "/api/team/library/draft?kind=page&id=page-1",
+        "/api/team/library/spaces",
+    ] {
+        let request = HttpRequest::builder()
+            .method("GET")
+            .uri(path)
+            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+            .header(PERSON_KEY_HEADER, key);
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
 }
 
 /// The marker with no key, and with a wrong one, at each door only the
@@ -496,26 +698,83 @@ async fn rulesync_router_rejects_session_on_person_only_routes() {
             "/api/rules/setup/review",
             r#"{"id":"test","action":"dismiss"}"#,
         ),
+        (
+            "/api/rules/setup/shared-edits/decide",
+            r#"{"id":"test","send":true}"#,
+        ),
     ] {
-        let request = HttpRequest::builder()
-            .method("POST")
-            .uri(path)
-            .header("content-type", "application/json")
-            .header(CALLER_HEADER, PERSON_CALLER_VALUE)
-            .header(PERSON_KEY_HEADER, test_key())
-            .header(wenlan_types::SESSION_HEADER, "codex:fixture")
-            .body(Body::from(body))
-            .unwrap();
-        let response = app.clone().oneshot(request).await.unwrap();
-        let bytes = axum::body::to_bytes(response.into_body(), 65536)
-            .await
-            .unwrap();
-        let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(
-            refusal(&answer).contains("only the person using the daemon"),
-            "{path}: {answer}"
-        );
+        for identity in ["session", "agent"] {
+            let mut request = HttpRequest::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+                .header(PERSON_KEY_HEADER, test_key());
+            if identity == "agent" {
+                request = request.header("x-agent-name", "codex");
+            } else {
+                request = request.header(wenlan_types::SESSION_HEADER, "codex:fixture");
+            }
+            let request = request.body(Body::from(body)).unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), 65536)
+                .await
+                .unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                refusal(&answer).contains("only the person using the daemon"),
+                "{path}: {answer}"
+            );
+        }
     }
+}
+
+#[tokio::test]
+async fn rulesync_shared_edits_get_does_not_write_answers() {
+    let scratch = tempfile::tempdir().unwrap();
+    if !in_isolated_child(
+        "person_key::person_key_test::rulesync_shared_edits_get_does_not_write_answers",
+        &[],
+        scratch.path(),
+    ) {
+        return;
+    }
+    let data = std::path::PathBuf::from(std::env::var_os("WENLAN_DATA_DIR").unwrap());
+    std::fs::create_dir_all(&data).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let key_temp =
+        crate::rulesync_routes::seed_recorded_key_temp_for_shared_edits_get_test().unwrap();
+    let key_temp_bytes = std::fs::read(&key_temp).unwrap();
+    let key_temp_mtime = std::fs::metadata(&key_temp).unwrap().modified().unwrap();
+    let path = data.join("shared-edit-answers.json");
+    let bytes = br#"{"format":1,"waiting":{},"answers":{}}"#;
+    std::fs::write(&path, bytes).unwrap();
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let request = HttpRequest::builder()
+        .uri("/api/rules/setup/shared-edits")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
+        .header(PERSON_KEY_HEADER, test_key())
+        .body(Body::empty())
+        .unwrap();
+    let response = crate::router::build_router(state())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        before
+    );
+    assert_eq!(std::fs::read(&key_temp).unwrap(), key_temp_bytes);
+    assert_eq!(
+        std::fs::metadata(&key_temp).unwrap().modified().unwrap(),
+        key_temp_mtime
+    );
 }
 
 /// Run one test of this file again in a child process whose data root and
@@ -537,8 +796,9 @@ fn in_isolated_child(test: &str, envs: &[(&str, &str)], scratch: &std::path::Pat
     let child = command.output().unwrap();
     assert!(
         child.status.success(),
-        "{test} {envs:?}: {}",
-        String::from_utf8_lossy(&child.stdout)
+        "{test} {envs:?}: {}{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
     );
     false
 }

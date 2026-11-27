@@ -3988,6 +3988,74 @@ pub async fn team_joined_page(
         .await
 }
 
+/// Builds the personal publication draft on the daemon, shared with the CLI.
+#[tauri::command]
+pub async fn team_library_draft(
+    state: tauri::State<'_, State>,
+    kind: wenlan_types::team_library::TeamItemKind,
+    id: String,
+) -> Result<wenlan_types::team_library::TeamDraft, String> {
+    daemon_client(&state)
+        .await
+        .team_library_draft(kind, &id)
+        .await
+}
+
+/// Lists the team-library Spaces available to the person choosing a publish
+/// destination. This is a read, but it remains person-only because the local
+/// daemon must not expose the host library to an AI caller.
+#[tauri::command]
+pub async fn team_library_spaces(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<wenlan_types::team_library::TeamGroup>, String> {
+    daemon_client(&state).await.team_library_spaces().await
+}
+
+/// The person reviewed the exact text and selected personal sources in the app.
+#[tauri::command]
+pub async fn team_library_preview(
+    state: tauri::State<'_, State>,
+    draft: wenlan_types::team_library::TeamPublication,
+    originals: Vec<wenlan_types::team_library::TeamOriginal>,
+) -> Result<wenlan_types::team_library::TeamTerminalReply, String> {
+    daemon_client(&state)
+        .await
+        .team_library_terminal(&wenlan_types::team_library::TeamTerminalAction::Preview {
+            draft,
+            originals,
+        })
+        .await
+}
+
+/// Publishes a preview after the person's explicit confirmation click.
+#[tauri::command]
+pub async fn team_library_publish(
+    state: tauri::State<'_, State>,
+    preview_id: String,
+) -> Result<wenlan_types::team_library::TeamTerminalReply, String> {
+    daemon_client(&state)
+        .await
+        .team_library_terminal(&wenlan_types::team_library::TeamTerminalAction::Publish {
+            preview_id,
+        })
+        .await
+}
+
+/// Creates a team-library Space after the person's explicit app action.
+#[tauri::command]
+pub async fn team_library_create_space(
+    state: tauri::State<'_, State>,
+    name: String,
+    restricted: bool,
+) -> Result<wenlan_types::team_library::TeamTerminalReply, String> {
+    daemon_client(&state)
+        .await
+        .team_library_terminal(
+            &wenlan_types::team_library::TeamTerminalAction::CreateSpace { name, restricted },
+        )
+        .await
+}
+
 /// Reads a join code: the server's Spaces this person can use.
 #[tauri::command]
 pub async fn team_join(

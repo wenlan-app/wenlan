@@ -223,6 +223,9 @@ pub struct SharedSyncRun {
     /// folder carries on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused: Option<String>,
+    /// Proposal versions refused by the host during this pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused_proposals: Vec<String>,
     /// Why it stopped part way, when something else failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,

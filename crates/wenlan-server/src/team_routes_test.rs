@@ -195,6 +195,130 @@ async fn with_daemon(mut fixture: Fixture) -> (Fixture, Arc<wenlan_core::db::Mem
     (fixture, db)
 }
 
+#[tokio::test]
+async fn team_library_draft_builds_cited_memories_and_marks_omitted_sources() {
+    let (_fixture, db) = fixture_with_daemon().await;
+    db.upsert_documents(vec![
+        wenlan_core::sources::RawDocument {
+            source: "memory".into(),
+            source_id: "memory-1".into(),
+            title: "First memory".into(),
+            content: "First source text".into(),
+            confirmed: Some(true),
+            ..Default::default()
+        },
+        wenlan_core::sources::RawDocument {
+            source: "memory".into(),
+            source_id: "memory-2".into(),
+            title: "Second memory".into(),
+            content: "Second source text".into(),
+            confirmed: Some(true),
+            ..Default::default()
+        },
+    ])
+    .await
+    .unwrap();
+    let page = wenlan_core::post_write::create_page_with_floor(
+        &db,
+        wenlan_types::requests::CreateConceptRequest {
+            title: "Shareable page".into(),
+            content: "A page with [1] and [2].".into(),
+            summary: None,
+            entity_id: None,
+            space: Some("Design".into()).into(),
+            source_memory_ids: vec!["memory-1".into(), "memory-2".into()],
+            creation_kind: Some("distilled".into()),
+            workspace: Some("Design".into()),
+        },
+        "fixture",
+        None,
+        1,
+    )
+    .await
+    .unwrap();
+    let citations = serde_json::json!([
+        {"occurrence":1,"marker":1,"source_kind":"memory","locator":"wenlan:memory-1@1","score":1.0,"status":"verified","historical":false},
+        {"occurrence":2,"marker":2,"source_kind":"memory","locator":"memory-2@1","score":1.0,"status":"verified","historical":false},
+        {"occurrence":3,"marker":3,"source_kind":"external_url","locator":"https://example.com/source","score":0.0,"status":"unevaluated","historical":false}
+    ])
+    .to_string();
+    db.set_page_citations(&page.id, Some(&citations))
+        .await
+        .unwrap();
+
+    let draft = library::build_draft(
+        &db,
+        wenlan_types::team_library::TeamItemKind::Page,
+        &page.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(draft.item.original.id, page.id);
+    assert_eq!(
+        draft
+            .sources
+            .iter()
+            .map(|source| source.original.id.as_str())
+            .collect::<Vec<_>>(),
+        ["memory-1", "memory-2"]
+    );
+    assert!(draft.omitted_sources);
+    assert_eq!(
+        draft.authorship,
+        Some(wenlan_types::team_library::TeamAuthorship::Ai)
+    );
+}
+
+#[tokio::test]
+async fn team_library_create_space_is_idempotent_for_the_same_group() {
+    let (mut fixture, db) = fixture_with_daemon().await;
+    fixture.set_hosted_mode(HostedMode::Migrated);
+    team::ensure_owner(&fixture.state.team_path, "Owner").unwrap();
+    let host = fixture.state.library.as_ref().unwrap().clone();
+    let first = library::terminal_action(
+        &host,
+        &fixture.state,
+        &db,
+        wenlan_types::team_library::TeamTerminalAction::CreateSpace {
+            name: "Roadmap".into(),
+            restricted: false,
+        },
+    )
+    .await
+    .unwrap();
+    let second = library::terminal_action(
+        &host,
+        &fixture.state,
+        &db,
+        wenlan_types::team_library::TeamTerminalAction::CreateSpace {
+            name: "Roadmap".into(),
+            restricted: false,
+        },
+    )
+    .await
+    .unwrap();
+    let wenlan_types::team_library::TeamTerminalReply::Space { space: first } = first else {
+        panic!("expected first Space");
+    };
+    let wenlan_types::team_library::TeamTerminalReply::Space { space: second } = second else {
+        panic!("expected retry Space");
+    };
+    assert_eq!(first, second);
+    assert!(matches!(
+        library::terminal_action(
+            &host,
+            &fixture.state,
+            &db,
+            wenlan_types::team_library::TeamTerminalAction::CreateSpace {
+                name: "Roadmap".into(),
+                restricted: true,
+            },
+        )
+        .await,
+        Err(wenlan_core::team_library::LibraryError::Conflict(_))
+    ));
+}
+
 async fn create_folder_test_page(
     db: &wenlan_core::db::MemoryDB,
     title: &str,
@@ -234,6 +358,7 @@ async fn sync_hosted_test_folder(
             knowledge_path: None,
             member_id: None,
             host: None,
+            rules_edit_proposals: &[],
         },
     )
     .await

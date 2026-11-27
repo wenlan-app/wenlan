@@ -230,7 +230,6 @@ impl Setup {
             self.check_adoption_home(home)?;
         }
         let session = RenderSession::new(&self.binary);
-        let layers = std::cell::OnceCell::new();
         self.apply_share(
             &request.approval.token,
             keys,
@@ -238,17 +237,7 @@ impl Setup {
             generated,
             person_confirmed,
             (
-                |target: &str, source: &str| {
-                    let layers = match layers.get() {
-                        Some(layers) => layers,
-                        None => {
-                            let settings = wenlan_core::shared_space::settings_path();
-                            let loaded = rulesync_team::load_layers(&settings)?;
-                            layers.get_or_init(|| loaded)
-                        }
-                    };
-                    self.render_member_rule(&session, target, source, layers)
-                },
+                |target: &str, source: &str| self.render_member_rule(&session, target, source),
                 |renderer: &str, skills: &SkillPackages| {
                     self.render_skills(&session, renderer, skills)
                 },
@@ -341,7 +330,7 @@ impl Setup {
         if delivery_pending {
             // Deliver saved rules before moving the approved lines.
             // Its receipt checks still protect local edits in each tool.
-            let pullback = inspect(&self.home, &root, &manifest)?;
+            let pullback = inspect(&self.home, &self.data, &root, &manifest)?;
             let blocked = pullback
                 .blocked
                 .into_keys()

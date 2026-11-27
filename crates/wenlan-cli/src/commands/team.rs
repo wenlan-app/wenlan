@@ -446,7 +446,7 @@ async fn start(
         if firewall.is_some_and(|firewall| !firewall.open) {
             println!("Windows Firewall is keeping other computers out. In the Wenlan app, open Settings › Team and choose Allow.");
         }
-        println!("Next: wenlan team share <SPACE> --everyone, then wenlan team invite <NAME>");
+        println!("Next: wenlan team invite <NAME>, then share from the app (Share → \"With <team>\") or run wenlan team create-space <NAME> and wenlan team publish page <ID> --space-id <ID>.");
     })
 }
 
@@ -654,7 +654,7 @@ fn print_own_team(status: &TeamStatus) {
         println!("Invite links use: {url}");
     }
     if status.spaces.is_empty() {
-        println!("Hosted Spaces: none (wenlan team share <SPACE>)");
+        println!("Hosted Spaces: none (share from the app: Share → \"With <team>\", or run wenlan team create-space <NAME> then wenlan team publish page <ID> --space-id <ID>)");
     } else {
         println!("Hosted Spaces: {}", status.spaces.join(", "));
     }
@@ -737,8 +737,7 @@ fn print_key(
                 }
                 if spaces.is_empty() {
                     println!(
-                        "No Spaces are open to them yet. Open one to everyone: wenlan team share <SPACE> --everyone. Or to them: wenlan team update \"{}\" --access <SPACE>",
-                        issued.member.name
+                        "No Spaces are open to them yet. Share from the app: Share → \"With <team>\", or run wenlan team create-space <NAME> then wenlan team publish page <ID> --space-id <ID>.",
                     );
                 } else {
                     println!("They can use: {}", access_list(&spaces));

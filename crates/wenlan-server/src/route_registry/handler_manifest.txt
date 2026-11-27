@@ -382,6 +382,8 @@ main|delete|/api/team/members/{id}/keys/{key}|wenlan_server::team_routes::handle
 main|get|/api/team/my-tools|wenlan_server::team_routes::handle_my_tools
 main|delete|/api/team/my-tools/{id}|wenlan_server::team_routes::handle_remove_my_tool
 main|post|/api/team/spaces|wenlan_server::team_routes::handle_host_space
+main|get|/api/team/library/draft|wenlan_server::team_routes::library::draft
+main|get|/api/team/library/spaces|wenlan_server::team_routes::library::spaces
 main|post|/api/team/library/terminal|wenlan_server::team_routes::library::terminal
 main|get|/api/team/joined/library|wenlan_server::team_routes::handle_joined_library
 main|get|/api/team/joined/{team_id}/pages/{page_id}|wenlan_server::team_routes::handle_joined_page
@@ -404,6 +406,8 @@ main|post|/api/rules/setup/share|wenlan_server::rulesync_routes::share_items
 main|post|/api/rules/setup/share/preview|wenlan_server::rulesync_routes::share_preview
 main|post|/api/rules/setup/restore|wenlan_server::rulesync_routes::restore
 main|post|/api/rules/setup/skill-updates|wenlan_server::rulesync_routes::skill_updates
+main|get|/api/rules/setup/shared-edits|wenlan_server::rulesync_routes::shared_edits
+main|post|/api/rules/setup/shared-edits/decide|wenlan_server::rulesync_routes::decide_shared_edit
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
 main|post|/api/rules/personal/show|wenlan_server::rulesync_routes::personal_rules::show
 main|post|/api/rules/personal/propose|wenlan_server::rulesync_routes::personal_rules::propose

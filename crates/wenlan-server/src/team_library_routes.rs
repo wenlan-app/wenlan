@@ -2,7 +2,7 @@
 //! The authenticated team library surface. It never routes a miss to the
 //! host's personal retrieval or pages endpoints.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,10 +21,10 @@ use wenlan_core::team_library::{
 use wenlan_mcp::tools::team_library as tools;
 use wenlan_types::team::{TeamAccess, TeamPerson, TeamRole};
 use wenlan_types::team_library::{
-    TeamAuthorship, TeamGroup, TeamGroupCreate, TeamItem, TeamItemKind, TeamLibraryGrant,
-    TeamOriginal, TeamPublication, TeamPublicationConfirm, TeamPublicationPreview,
-    TeamPublicationReceipt, TeamTerminalAction, TeamTerminalReply, TeamToolKeyCreate,
-    TeamToolKeyReceipt, TeamToolScope,
+    TeamAuthorship, TeamDraft, TeamDraftOriginal, TeamGroup, TeamGroupCreate, TeamItem,
+    TeamItemKind, TeamLibraryGrant, TeamOriginal, TeamPublication, TeamPublicationConfirm,
+    TeamPublicationPreview, TeamPublicationReceipt, TeamTerminalAction, TeamTerminalReply,
+    TeamText, TeamToolKeyCreate, TeamToolKeyReceipt, TeamToolScope,
 };
 
 use super::TeamState;
@@ -55,6 +55,12 @@ struct Pending {
     preview: TeamPublicationPreview,
     originals: Vec<TeamOriginal>,
     created: Instant,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DraftQuery {
+    kind: TeamItemKind,
+    id: String,
 }
 
 const REVIEW_TTL: Duration = Duration::from_secs(5 * 60);
@@ -145,6 +151,7 @@ impl Host {
                         let authorship = matching.map(|head| match head.meta.author.kind {
                             version::AuthorKind::Person => TeamAuthorship::Human,
                             version::AuthorKind::Ai => TeamAuthorship::Ai,
+                            version::AuthorKind::Unknown => TeamAuthorship::Unknown,
                         });
                         let legacy = matching
                             .filter(|head| {
@@ -909,6 +916,221 @@ pub(super) async fn terminal(
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+/// Builds the personal publication draft used by both the CLI and the app.
+/// The person gate is deliberately kept at the HTTP boundary: this helper
+/// only reads the local database and has no publish capability.
+pub(super) async fn draft(
+    State(shared): State<crate::state::SharedState>,
+    headers: HeaderMap,
+    Query(query): Query<DraftQuery>,
+) -> Response {
+    let mut response = if !matches!(
+        crate::security::bind_scope_from_env(),
+        crate::security::BindScope::Unset | crate::security::BindScope::Loopback
+    ) || !crate::memory_routes::caller_is_person(&headers)
+    {
+        MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Use the team host's own terminal to prepare this publication.",
+        )
+        .into_response()
+    } else {
+        let db = shared.read().await.db.clone();
+        match db {
+            Some(db) => match build_draft(&db, query.kind, &query.id).await {
+                Ok(draft) => Json(draft).into_response(),
+                Err(error) => draft_failure(query.kind, error).into_response(),
+            },
+            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/// Lists the hosted library groups for the person who is choosing a team
+/// destination. This is deliberately separate from `TeamStatus.everyone`,
+/// whose legacy entries do not carry library-group IDs.
+pub(super) async fn spaces(
+    State(shared): State<crate::state::SharedState>,
+    headers: HeaderMap,
+) -> Response {
+    use std::sync::OnceLock;
+    static HOST: OnceLock<Host> = OnceLock::new();
+
+    let allowed = matches!(
+        crate::security::bind_scope_from_env(),
+        crate::security::BindScope::Unset | crate::security::BindScope::Loopback
+    ) && crate::memory_routes::caller_is_person(&headers);
+    let mut response = if !allowed {
+        MemberResponse::problem(
+            StatusCode::FORBIDDEN,
+            "Use the team host's own terminal to read its Spaces.",
+        )
+        .into_response()
+    } else {
+        let db = shared.read().await.db.clone();
+        match db {
+            Some(db) => {
+                let team_path = team::team_path();
+                let host = HOST.get_or_init(|| {
+                    Host::new(&team_path, wenlan_core::team_library::memories_enabled())
+                });
+                let state = TeamState {
+                    team_path,
+                    db: Some(db),
+                    settings_path: wenlan_core::shared_space::settings_path(),
+                    library: None,
+                    daemon_url: String::new(),
+                    #[cfg(test)]
+                    in_process_daemon: { None },
+                    mcp: Arc::default(),
+                    sessions: Arc::default(),
+                    auth: Arc::default(),
+                    device: Arc::default(),
+                    cloud: None,
+                };
+                match async {
+                    let owner = host.library.owner()?;
+                    let file = team::read_team(&state.team_path)?;
+                    let member = file
+                        .members
+                        .iter()
+                        .find(|member| member.id == owner)
+                        .ok_or(LibraryError::Denied)?;
+                    Ok::<_, LibraryError>(host.reader(&state, member).await?.info().spaces)
+                }
+                .await
+                {
+                    Ok(spaces) => Json(spaces).into_response(),
+                    Err(error) => failure(error).into_response(),
+                }
+            }
+            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn draft_failure(kind: TeamItemKind, error: LibraryError) -> MemberResponse {
+    match error {
+        LibraryError::Absent => {
+            let message = match kind {
+                TeamItemKind::Memory => "Personal memory not found.",
+                TeamItemKind::Page => "page not found",
+            };
+            MemberResponse::problem(StatusCode::NOT_FOUND, message)
+        }
+        error => failure(error),
+    }
+}
+
+pub(super) async fn build_draft(
+    db: &wenlan_core::db::MemoryDB,
+    kind: TeamItemKind,
+    id: &str,
+) -> Result<TeamDraft, LibraryError> {
+    if !version::is_safe_id(id) {
+        return Err(LibraryError::Invalid("Use a Wenlan item ID."));
+    }
+    match kind {
+        TeamItemKind::Memory => {
+            let memory = db
+                .get_memory_detail(id)
+                .await?
+                .filter(|memory| memory.supersede_mode != "evicted" && !memory.pending_revision)
+                .ok_or(LibraryError::Absent)?;
+            Ok(TeamDraft {
+                item: draft_memory(memory),
+                sources: Vec::new(),
+                omitted_sources: false,
+                authorship: None,
+            })
+        }
+        TeamItemKind::Page => {
+            let page = db.get_page(id).await?.ok_or(LibraryError::Absent)?;
+            if page.status != "active" {
+                return Err(LibraryError::Invalid("The personal page must be active."));
+            }
+            let mut source_ids: BTreeSet<String> = page.source_memory_ids.into_iter().collect();
+            let mut omitted_sources = false;
+            for citation in page
+                .citations
+                .iter()
+                .filter(|citation| !citation.historical)
+            {
+                if citation.source_kind == "memory" {
+                    let locator = citation
+                        .locator
+                        .strip_prefix("wenlan:")
+                        .unwrap_or(&citation.locator);
+                    let source_id = locator.split_once('@').map_or(locator, |(id, _)| id);
+                    source_ids.insert(source_id.to_owned());
+                } else {
+                    omitted_sources = true;
+                }
+            }
+            if source_ids.len() > 32 {
+                return Err(LibraryError::Invalid(
+                    "This page has more than 32 personal sources. Review a shorter draft.",
+                ));
+            }
+            let mut sources = Vec::new();
+            for source_id in source_ids {
+                if version::is_safe_id(&source_id) {
+                    if let Some(memory) = db.get_memory_detail(&source_id).await?.filter(|memory| {
+                        memory.supersede_mode != "evicted" && !memory.pending_revision
+                    }) {
+                        sources.push(draft_memory(memory));
+                        continue;
+                    }
+                }
+                omitted_sources = true;
+            }
+            let authorship = match page.creation_kind.as_str() {
+                "authored" if page.user_edited => Some(TeamAuthorship::Human),
+                "distilled" => Some(TeamAuthorship::Ai),
+                _ => None,
+            };
+            Ok(TeamDraft {
+                item: TeamDraftOriginal {
+                    original: TeamOriginal {
+                        kind: TeamItemKind::Page,
+                        id: page.id,
+                        revision: page.version,
+                    },
+                    text: TeamText {
+                        title: page.title,
+                        body: wenlan_core::team_library::draft_page_body(&page.content),
+                    },
+                },
+                sources,
+                omitted_sources,
+                authorship,
+            })
+        }
+    }
+}
+
+fn draft_memory(memory: wenlan_types::memory::MemoryItem) -> TeamDraftOriginal {
+    TeamDraftOriginal {
+        original: TeamOriginal {
+            kind: TeamItemKind::Memory,
+            id: memory.source_id,
+            revision: memory.version,
+        },
+        text: TeamText {
+            title: memory.title,
+            body: memory.content,
+        },
+    }
 }
 
 pub(super) async fn terminal_action(

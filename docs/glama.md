@@ -21,7 +21,7 @@ The image runs the real published `wenlan-mcp` 0.19.3 binary over stdio as a
 non-root user. `initialize` and `tools/list` are served locally, without API keys
 or a daemon. The default origin is an unused container-loopback port, so the
 inspection does not connect to a user's installed daemon. No host directories,
-wiki pages, credentials, or ports need to be mounted or exposed.
+pages, credentials, or ports need to be mounted or exposed.
 
 This image establishes MCP discovery only. Tool calls that read or write wiki
 data require a reachable Wenlan daemon. For those calls, pass an explicit origin,

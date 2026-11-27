@@ -178,6 +178,19 @@ fn page_id(team_id: &str, project: Option<&TeamRulesProject>) -> String {
     format!("{ID_PREFIX}{}", version::sha256_hex(scope.as_bytes()))
 }
 
+/// Whether a project Rules layer was published by the server represented by a team layer.
+/// Project IDs are derived from the server ID and bound Space ID, so this keeps the server
+/// association without exposing a server URL or credential in the layer.
+pub fn project_layer_belongs_to_team(
+    team_layer: &TeamRuleLayer,
+    project_layer: &TeamRuleLayer,
+) -> bool {
+    project_layer
+        .project
+        .as_ref()
+        .is_some_and(|project| project_layer.id == page_id(&team_layer.id, Some(project)))
+}
+
 /// The stable origin identifier can cross the team boundary without a URL or credentials.
 pub fn repo_identity(remote: &str) -> Option<String> {
     if let Some(slug) = repo_wiki::github_slug(remote) {
@@ -703,7 +716,17 @@ pub fn queue_proposal(
     layer_id: &str,
     revision: &str,
     markdown: &str,
+    kind: version::AuthorKind,
 ) -> Result<String, WenlanError> {
+    let (folder, id, member) = proposal_target(settings_path, layer_id, revision)?;
+    write_proposal(&folder, &id, &member, kind, revision, markdown, &now())
+}
+
+fn proposal_target(
+    settings_path: &Path,
+    layer_id: &str,
+    revision: &str,
+) -> Result<(PathBuf, String, String), WenlanError> {
     let file = team::read_team(&team_path(settings_path))?;
     for (space, _) in team::hosted_spaces(settings_path)? {
         if let Some(hosted) = hosted_rules_in(&file, settings_path, &space)?.filter(|hosted| {
@@ -715,15 +738,7 @@ pub fn queue_proposal(
         }) {
             let owner = hosted_owner(settings_path)?
                 .ok_or_else(|| WenlanError::NotFound("the hosted team owner".into()))?;
-            return write_proposal(
-                &hosted.folder,
-                &hosted.page_id,
-                &owner,
-                version::AuthorKind::Ai,
-                revision,
-                markdown,
-                &now(),
-            );
+            return Ok((hosted.folder, hosted.page_id, owner));
         }
     }
     let (host, share) = shared_space::team_rule_proposal_target(settings_path, layer_id, revision)?;
@@ -733,15 +748,87 @@ pub fn queue_proposal(
         layer_id.to_string()
     };
     let folder = shared_space::folder_for(&shared_space::Scope::Space(host.space), &share.folder);
-    write_proposal(
-        &folder,
-        &id,
-        &share.member_id,
-        version::AuthorKind::Ai,
-        revision,
-        markdown,
-        &now(),
-    )
+    Ok((folder, id, share.member_id))
+}
+
+/// The queued file is recorded with the answer so a revoked layer can still
+/// retire its proposal after a refusal or local file removal.
+pub fn queued_proposal_path(
+    settings_path: &Path,
+    layer_id: &str,
+    revision: &str,
+    proposal: &str,
+) -> Result<PathBuf, WenlanError> {
+    if proposal.len() != 64 || !proposal.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(validation("invalid queued Rules proposal"));
+    }
+    let (folder, id, member) = proposal_target(settings_path, layer_id, revision)?;
+    Ok(folder
+        .join(version::MEMBERS_DIR)
+        .join(member)
+        .join(version::PROPOSALS_DIR)
+        .join(id)
+        .join(version::version_file_name(proposal)))
+}
+
+/// Retire the exact queued version even when its layer is no longer granted.
+pub fn retire_queued_proposal_at(
+    path: &Path,
+    revision: &str,
+    proposal: &str,
+) -> Result<(), WenlanError> {
+    let name = version::version_file_name(proposal);
+    let id = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|id| id.to_str())
+        .filter(|id| version::is_safe_id(id))
+        .ok_or_else(|| validation("invalid queued Rules proposal path"))?;
+    let member = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(|member| member.to_str())
+        .filter(|member| version::is_safe_id(member))
+        .ok_or_else(|| validation("invalid queued Rules proposal path"))?;
+    if path.file_name().and_then(|name| name.to_str()) != Some(name.as_str())
+        || path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            != Some(version::PROPOSALS_DIR)
+        || path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            != Some(version::MEMBERS_DIR)
+    {
+        return Err(validation("invalid queued Rules proposal path"));
+    }
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let queued = version::parse(&name, &bytes)?;
+    if queued.sha != proposal
+        || queued.page.id.as_deref() != Some(id)
+        || queued.meta.author.member != member
+        || queued.meta.author.kind != version::AuthorKind::Unknown
+        || queued.meta.parent.as_deref() != Some(revision)
+        || !queued.meta.proposal
+    {
+        return Err(validation(
+            "queued Rules proposal changed before it could be retired",
+        ));
+    }
+    std::fs::remove_file(path)?;
+    Ok(())
 }
 
 pub(crate) fn write_proposal(

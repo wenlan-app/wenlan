@@ -28,7 +28,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use wenlan_types::team::{TeamAccess, TeamFileList, TeamMe};
 
-use super::{version, HostLink, SPACE_FILE};
+use super::{version, HostLink, OUTDATED_HOST_EDIT_MESSAGE, SPACE_FILE};
 use crate::error::WenlanError;
 use crate::rulesync_team::{self, TeamRuleLayer};
 
@@ -181,6 +181,8 @@ pub(super) enum SyncError {
     Refused(String),
     #[error("{0}")]
     Unavailable(String),
+    #[error("{OUTDATED_HOST_EDIT_MESSAGE}")]
+    OutdatedHost(Vec<String>),
 }
 
 impl From<String> for SyncError {
@@ -195,6 +197,7 @@ impl SyncError {
             Self::Revoked(_) => 2,
             Self::Refused(_) => 1,
             Self::Unavailable(_) => 0,
+            Self::OutdatedHost(_) => 1,
         }
     }
 }
@@ -206,6 +209,10 @@ fn response_error(url: &str, status: reqwest::StatusCode) -> SyncError {
         reqwest::StatusCode::FORBIDDEN => SyncError::Refused(reason),
         _ => SyncError::Unavailable(reason),
     }
+}
+
+fn proposal_response_error(is_proposal: bool, status: reqwest::StatusCode, _body: &str) -> bool {
+    is_proposal && status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
 }
 
 /// Who `key` belongs to on the server at `url`.
@@ -466,6 +473,7 @@ pub(super) async fn push(
     folder: &Path,
     member: &str,
     listed: &TeamFileList,
+    rules_edit_proposals: &[String],
 ) -> Result<u32, SyncError> {
     if listed.access == TeamAccess::Read && listed.rules.is_none() {
         return Ok(0);
@@ -518,10 +526,15 @@ pub(super) async fn push(
             !have.contains(version::version_key(path))
         })
         .collect();
+    let rules_page = listed.rules.as_ref().map(|rules| rules.page_id.clone());
+    let rules_edit_proposals: HashSet<&str> =
+        rules_edit_proposals.iter().map(String::as_str).collect();
     let sent: Vec<Result<(), SyncError>> = futures::stream::iter(missing)
         .map(|(path, page, local)| {
             let client = client.clone();
             let url = url.clone();
+            let rules_page = rules_page.clone();
+            let rules_edit_proposals = &rules_edit_proposals;
             async move {
                 let bytes = std::fs::read(&local).map_err(|error| error.to_string())?;
                 if bytes.len() > MAX_VERSION_BYTES {
@@ -547,6 +560,23 @@ pub(super) async fn push(
                 if response.status().is_success() {
                     Ok(())
                 } else if response.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    if proposal_response_error(
+                        path.split('/').nth(2) == Some(version::PROPOSALS_DIR)
+                            && rulesync_team::is_master_page(&page)
+                            && rules_page.as_deref() == Some(page.as_str())
+                            && version::version_sha(&name)
+                                .is_some_and(|id| rules_edit_proposals.contains(id)),
+                        status,
+                        &body,
+                    ) {
+                        let id = version::version_sha(&name)
+                            .expect("queued proposal has a version id")
+                            .to_owned();
+                        log::warn!("[shared_space] proposal {id} refused with status {status}");
+                        return Err(SyncError::OutdatedHost(vec![id]));
+                    }
                     // A version the server cannot take as it is: sending it
                     // again would not change that.
                     log::warn!("[shared_space] the team server did not take {path}");
@@ -560,14 +590,33 @@ pub(super) async fn push(
         .collect()
         .await;
     let count = sent.len() as u32;
-    if let Some(error) = sent
-        .into_iter()
-        .filter_map(Result::err)
-        .max_by_key(SyncError::priority)
-    {
+    if let Some(error) = upload_failure(sent) {
         return Err(error);
     }
     Ok(count)
+}
+
+fn upload_failure(sent: Vec<Result<(), SyncError>>) -> Option<SyncError> {
+    let mut refused = Vec::new();
+    let mut other = Vec::new();
+    for error in sent.into_iter().filter_map(Result::err) {
+        match error {
+            SyncError::OutdatedHost(ids) => refused.extend(ids),
+            error => other.push(error),
+        }
+    }
+    if let Some(index) = other
+        .iter()
+        .position(|error| matches!(error, SyncError::Revoked(_)))
+    {
+        return Some(other.swap_remove(index));
+    }
+    if !refused.is_empty() {
+        refused.sort();
+        refused.dedup();
+        return Some(SyncError::OutdatedHost(refused));
+    }
+    other.into_iter().max_by_key(SyncError::priority)
 }
 
 /// This member's version files in the copy: (path as the server lists it,
@@ -620,6 +669,152 @@ pub fn as_error(reason: String) -> WenlanError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_team_host_refusal_has_one_update_line() {
+        let fake_host_body = "The Rules operation could not be completed.";
+        assert!(proposal_response_error(
+            true,
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            fake_host_body
+        ));
+        assert!(!proposal_response_error(
+            true,
+            reqwest::StatusCode::BAD_REQUEST,
+            fake_host_body
+        ));
+        assert!(!proposal_response_error(
+            false,
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            fake_host_body
+        ));
+        assert_eq!(
+            SyncError::OutdatedHost(vec!["a".repeat(64)]).to_string(),
+            OUTDATED_HOST_EDIT_MESSAGE
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_page_proposal_422_does_not_claim_a_rules_host_update() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let scratch = tempfile::tempdir().unwrap();
+        let folder = scratch.path();
+        let member = "test-member";
+        let page = "ordinary-page";
+        let (id, _) = version::write_file(
+            folder,
+            member,
+            version::PROPOSALS_DIR,
+            page,
+            "ordinary proposal",
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            let bytes = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.contains(&format!("/versions/{page}/{id}.wlv")));
+            let body = "The Rules operation could not be completed.";
+            let response = format!(
+                "HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let listed = TeamFileList {
+            access: TeamAccess::Write,
+            files: Vec::new(),
+            deleted_pages: Vec::new(),
+            refused_changes: Vec::new(),
+            rules: None,
+        };
+        let result = push(
+            &HostLink {
+                key: "fake-key".into(),
+                url,
+                space: "Team".into(),
+                space_id: None,
+            },
+            folder,
+            member,
+            &listed,
+            &[],
+        )
+        .await;
+        host.await.unwrap();
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn page_path_rules_proposal_422_does_not_pause_without_a_sent_edit() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use wenlan_types::team::{TeamInfo, TeamRulesManifest};
+        let scratch = tempfile::tempdir().unwrap();
+        let page = format!("team-rules-{}", "a".repeat(64));
+        let (id, _) = version::write_file(
+            scratch.path(),
+            "member",
+            version::PROPOSALS_DIR,
+            &page,
+            "page path proposal",
+        )
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requested_page = page.clone();
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            let bytes = stream.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..bytes])
+                .contains(&format!("/versions/{requested_page}/{id}.wlv")));
+            stream.write_all(b"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let listed = TeamFileList {
+            access: TeamAccess::Read,
+            files: Vec::new(),
+            deleted_pages: Vec::new(),
+            refused_changes: Vec::new(),
+            rules: Some(TeamRulesManifest {
+                team: TeamInfo {
+                    id: "team".into(),
+                    name: None,
+                },
+                page_id: page,
+                file: String::new(),
+                project: None,
+                skills: Vec::new(),
+                proposal_decisions: Default::default(),
+            }),
+        };
+        let result = push(
+            &HostLink {
+                key: "fake-key".into(),
+                url,
+                space: "Team".into(),
+                space_id: None,
+            },
+            scratch.path(),
+            "member",
+            &listed,
+            &[],
+        )
+        .await;
+        host.await.unwrap();
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[test]
+    fn revoked_key_wins_over_a_concurrent_rules_refusal() {
+        let sent = vec![
+            Err(SyncError::OutdatedHost(vec!["a".repeat(64)])),
+            Err(SyncError::Revoked("the key no longer works".into())),
+        ];
+        assert!(matches!(upload_failure(sent), Some(SyncError::Revoked(_))));
+    }
 
     #[test]
     fn only_private_addresses_may_be_plain_http() {

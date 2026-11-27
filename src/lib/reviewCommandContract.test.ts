@@ -87,6 +87,13 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "team_firewall_allow",
   "team_remember_membership",
   "team_forget_membership",
+  // Sharing to the team library needs a real team server too, and must
+  // never pretend a page was published.
+  "team_library_draft",
+  "team_library_spaces",
+  "team_library_preview",
+  "team_library_publish",
+  "team_library_create_space",
   "join_team_space",
   "share_page",
   "share_library",

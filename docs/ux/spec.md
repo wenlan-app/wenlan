@@ -79,6 +79,21 @@ and wait for evidence that people need them.
   make it yours. Only yours counts as decided.
 - **Proposal**: a change the AI suggests to one of your sentences. It lands
   only when you accept it.
+- **UX-WORDS-1** `shipped` A Wenlan page has one name: "page/pages" in
+  English, 頁面 in Traditional Chinese and 页面 in Simplified Chinese. The app
+  never calls it a note, 筆記/笔记, wiki, 文章 or 文檔/文档, and never calls the
+  collection of pages a wiki (the `/wenlan wiki` command keeps its name).
+  Chinese text says 空間/空间, never the English word "Space". "Note" stays
+  only where it means the person's own material or another app's notes (an
+  Obsidian vault, Apple Notes, Zotero, release notes), and 文章/文档 only for
+  Zotero papers and source-library documents; the test lists those keys, each
+  kept only for that one word, with a reason. "Docs"/文件/文档 stays only as
+  the kind of page next to Skills and Rules (sidebar section, README banner),
+  never as another word for page (decided 2026-11-27). Test:
+  `src/i18n/pageNaming.test.ts`, which covers the app's copy only; the CLI,
+  MCP tool text, plugins and docs follow the same rule and are reviewed by
+  hand.
+  決定（2026-11-26，Qi-Xuan）：Wenlan 的頁一律叫「頁面」，不叫筆記、wiki、文檔；中文裡的 Space 一律寫「空間」。
 
 ## Team member view
 
@@ -359,6 +374,16 @@ and wait for evidence that people need them.
 - **UX-WHO-5** `shipped` An unverified source can't be hidden and can't look
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
+
+- **UX-WHO-11** `shipped` A citation whose source does not clearly support its
+  sentence is still saved, and the page shows it with a visible amber "?"
+  beside its number ([2?]), in reading and editing, and says in words "source
+  doesn't clearly say this" on the sentence (short form "not confirmed by its
+  source" in the popover, Info and the screen-reader name). Not-yet-checked
+  and historical citations get no "?".
+  Public copy never says every sentence has a source. Test
+  `UX-WHO-11 shows a visible question mark on an unconfirmed citation`.
+  原文：UX 稽核 2026-11（第 4 條，全照建議）：無法驗證的引用照存，但頁面上清楚標出；公開文案不說每句都有出處。
 
 - **UX-WHO-6** `shipped` Opening a sentence shows the lines of the
   conversation it came from: who said each one and when, at most three, each
@@ -861,6 +886,33 @@ and wait for evidence that people need them.
 
 ## AI tools follow how you work
 
+## Sharing pages with a team
+
+- **UX-SHARE-1** `shipped` On the computer running a team's server, Share on a
+  page offers 「和團隊共用」 ("With the team"). On the web it offers only the
+  team path; a folder share stays desktop-only. The dialog names the page and
+  team in the person's language and never shows an internal id or path.
+- **UX-SHARE-2** `shipped` Before a page goes to a team, the person sees the
+  server's preview text, can choose the whole team or one team Space, and sees
+  every cited personal memory unchecked. Unticked memories are sent as private
+  sources. The page is not published while the preview is loading or stale.
+- **UX-SHARE-3** `shipped` Sharing a Space first creates a team Space with the
+  same name, then lets the person tick pages and sends each selected page
+  through the same review window. Next opens one page, Skip leaves it alone,
+  and each Publish is a separate person action; the flow ends with a short done
+  line.
+- **UX-SHARE-4** `shipped` Creating a Space from the team side creates it in
+  the team library with the person-only CreateSpace action; it does not first
+  create or host a private Space.
+- **UX-SHARE-5** `shipped` Each page in a Space share has its own review state:
+  cited memories start unchecked, the destination picker lists the current
+  team-library Spaces, and a retry of the same CreateSpace action resumes the
+  existing group instead of creating a collision. A completed walk reports
+  published and skipped page counts.
+- **UX-SHARE-6** `shipped` Team-sharing failures are short, localized messages
+  about reachability, permission or a changed page. They never show daemon
+  routes, filesystem paths or internal IDs.
+
 - **UX-SKILL-1** `shipped` When library-derived skills are on, the ask comes
   once for the whole library: the first non-private Space with grounded
   candidates shows it at the top of its page above the Brief. The flat,
@@ -1021,6 +1073,11 @@ and wait for evidence that people need them.
   part (from Wenlan's own note, not the file's date); a tool is shown as
   covered by another file only while that file holds the part. It
   says what is in the file, not that the AI followed it.
+  Team rules no longer go in these global tool files. On the first person-run
+  sync after this change, including a background sync, Wenlan removes old team
+  sections once, keeps every other line, records the move in rule history, and
+  says so once. A
+  section whose markers were changed stays in place with a reason.
   A rule is written into these files, and into the files of UX-SKILL-6, as
   words to read and nothing else: a word starting with `@` is written with
   `&#64;`, the marks of an HTML comment with `&lt;!--` and `--&gt;`, and
@@ -1034,6 +1091,9 @@ and wait for evidence that people need them.
   atomic write.
   A symlink needs explicit adoption. The opt-in writer places rules and skills
   by default.
+  Tests `rulesync_home_files_never_receive_team_rules`,
+  `rulesync_home_team_blocks_are_removed_once_and_recorded`, and
+  `rulesync_home_cleanup_leaves_a_hand_broken_block_and_says_so`.
   原文：「為啥要外掛？直接把我們的規則同步過去工具，工具就會讀啊？」（2026-11-15 23:28Z）；「要有信心，馬上就要做了」（2026-11-17 05:01Z）。寫入工具檔案的補充（2026-11-17，審查發現）：規則只當文字寫入，`@` 與 HTML 註解改寫、看不見的字元拿掉；英文字句待 Qi-Xuan 確認。
 - **UX-SKILL-9** `shipped` In a Space shared with teammates, each person's
   "How I work" page stays on their own computer and is not sent to the
@@ -1045,26 +1105,130 @@ and wait for evidence that people need them.
   renders approved project skills from those Spaces. Shared skills have a
   plain name and description and Markdown or text files. A refused sync
   removes the revoked project's rules and skills from that directory.
-  The text states that project rules come first,
-  followed by team rules and personal rules. An offline member keeps the
+  The member's team rules go only to local copies of repositories bound to
+  that team's Spaces. A matching checkout gets team sections, then that
+  repository's project sections. Claude Code reads them from
+  `CLAUDE.local.md`. Codex reads them from `.codex/config.toml` only when the
+  person already trusts that checkout in Codex. Wenlan never trusts it for
+  them; otherwise it says Codex will not get the rules there. Wenlan leaves a
+  Codex config it did not write alone and explains why. These local files go
+  in the repository's Git exclude list, not `.gitignore`. Other tools do not
+  yet get team rules in each repository.
+  Rules are listed from broadest to most specific: team, then personal, then
+  project. The text says "Rules are listed from broadest to most specific. When
+  two disagree, follow the later one." An offline member keeps the
   last synced layer and sees its date. A refused sync removes its access and
-  layer. Read holders, AI tools, and tool-file edits can submit proposals.
+  layer. Read holders and AI tools can submit proposals. Tool-file edits can be sent as proposals after the person confirms.
   A person with Write on that Space can decide each proposal once. Shared
   rule text that looks like a credential is refused. A wiki pull request
   carries the bound project's rules and its opted-in team section. Anyone
   with repository read access can read that copy (UX-SKILL-7).
-  A hand edit in a team or project section becomes a proposal to that
-  Space's Write holders. The tool file keeps the edit while it waits for a
-  decision. If the editor holds Write, they can apply it with one
-  confirmation. If a Write holder rejects it, the next sync the person
-  starts restores the approved lines and shows a notice.
+  A team or project edit found in a tool file stays only in that file until
+  the person confirms once with `wenlan rules shared-edits` in their own
+  terminal. An AI tool cannot confirm. A confirmed edit goes to the Space's
+  Write holders as a proposal whose author is recorded as unknown, because
+  Wenlan cannot tell who edited the file. Declining puts the approved lines
+  back at the next sync the person starts, like a rejection.
+  This confirmation stops AI tools that only claim to be the person. Like every
+  person-only action, a program running under the same account that deliberately
+  reads Wenlan's key file can still act as the person; see the person key's limits.
+  A confirmed preference that names a repository in its Space waits for the
+  person's `shared-edits` confirmation before it is proposed to that
+  repository's project rules. A preference that does not name the repository
+  stays in the person's own rules. A local repository path is changed to the
+  repository name in the proposed rule. A preference with no Space still goes
+  into the person's own rules; a Space without bound project rules also uses
+  personal rules. Claude Code reads `CLAUDE.local.md` after the personal file, so its
+  team rules come after personal rules across those files.
+  原文：「決定（2026-11-26，Qi-Xuan 核可的計畫）：團隊規則只放進團隊的倉庫，不再放進全域工具檔。」
   原文：「我們這改動包含團隊了嗎？」「可以下個 PR 繼續開搞」（2026-11-15 23:30Z）。
   原文：「除了介面都做完」（2026-11-20 08:15Z）；「不只是 by 項目，還有 by team 層級的設計」（2026-11-20 08:01Z）。英文字句待 Qi-Xuan 確認。
+  決定（2026-11-26，Qi-Xuan 核可的計畫）：順序 團隊→個人→專案；工具檔裡的團隊或專案修改要本人確認一次才送出。英文字句待 Qi-Xuan 確認。
   Tests `rulesync_team_uses_space_grants_and_retains_only_approved_offline_layers`,
   `rulesync_checkout_recovers_then_prunes_revoked_skill_before_a_render_failure`,
-  `rulesync_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection`,
+  `rulesync_checkout_team_hand_edit_waits_for_a_write_holder_and_restores_on_rejection`,
   `rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it`,
-  and `rulesync_write_holder_applies_their_team_hand_edit_with_one_confirmation`.
+  `rulesync_checkout_waiting_edit_survives_new_revision`,
+  `rulesync_checkout_write_holder_applies_their_team_hand_edit_after_person_and_write_holder_confirm`,
+  `rulesync_router_rejects_session_on_person_only_routes`,
+  `rulesync_shared_section_uses_current_precedence`,
+  `rulesync_waiting_edit_survives_a_new_team_revision`,
+  `rulesync_checkout_new_team_revision_refuses_old_confirmation_and_keeps_edit`,
+  `rulesync_checkout_old_host_refusal_returns_edit_to_waiting`,
+  `rulesync_checkout_refused_edit_can_be_declined_after_receipt`,
+  `rulesync_checkout_refused_edit_can_be_reconfirmed_then_rejected`,
+  `rulesync_checkout_changed_edit_is_offered_again_after_refusal`,
+  `page_path_rules_proposal_422_does_not_pause_without_a_sent_edit`,
+  `revoked_key_wins_over_a_concurrent_rules_refusal`,
+  `rulesync_checkout_changed_sent_edit_blocks_only_its_file`,
+  `rulesync_checkout_sent_edit_survives_changed_or_missing_file`,
+  `rulesync_checkout_waiting_edit_rebases_only_on_person_sync`,
+  `rulesync_refusal_retires_changed_or_removed_edits_without_reopening_them`,
+  `rulesync_refusal_reopens_only_the_refused_proposal_in_a_space`,
+  `rulesync_literal_0228_upload_refusal_requires_new_confirmation`,
+  `rulesync_refresh_reconciles_team_decisions_and_revoked_layers`,
+  `rulesync_background_refresh_keeps_confirmed_proposals_after_edits_or_missing_files`,
+  `rulesync_checkout_waiting_team_edit_delivers_new_project_section_in_same_file`,
+  `rulesync_shared_edits_get_does_not_write_answers`,
+  `rulesync_declined_shared_edit_restores_approved_lines`,
+  `rulesync_checkout_declined_shared_edit_restores_approved_lines_on_person_sync`,
+  `rulesync_checkout_stale_shared_edit_cannot_be_sent`,
+  `checkout_local_files_get_team_and_project_rules_in_a_matching_repo`,
+  `checkout_local_files_skip_a_repo_of_no_team_project`,
+  `checkout_codex_config_written_only_when_trusted`,
+  `checkout_codex_config_refuses_a_file_that_is_not_wenlans`,
+  `checkout_codex_config_refuses_a_tracked_wenlan_header`,
+  `checkout_local_files_keep_the_persons_own_lines`,
+  `checkout_local_files_removed_after_access_is_revoked`,
+  `rulesync_checkout_one_revoked_project_is_removed_before_render_failure`,
+  `rulesync_checkout_prunes_one_revoked_project_with_another_edit_waiting`,
+  `rulesync_checkout_broken_claude_marker_does_not_block_codex_revocation`,
+  `rulesync_checkout_non_utf8_claude_does_not_block_codex_revocation`,
+  `rulesync_checkout_revocation_finds_the_real_codex_key_and_keeps_own_lines`,
+  `rulesync_checkout_revocation_refuses_a_key_spelling_hidden_by_personal_text`,
+  `rulesync_checkout_failed_proposal_retirement_keeps_sent_edit_retryable`,
+  `rulesync_checkout_broken_wrapper_during_rebase_does_not_block_codex`,
+  `rulesync_checkout_rebase_merges_identical_waiting_edits_from_two_repos`,
+  `rulesync_home_migration_waits_until_a_legacy_block_is_removed`,
+  `rulesync_checkout_codex_quoted_edit_stays_waiting_for_confirmation`,
+  `rulesync_checkout_refusal_reopens_only_live_files`,
+  `rulesync_checkout_rebase_error_in_one_file_allows_other_file_to_update`,
+  `rulesync_checkout_codex_rebase_checks_trust_and_tracking_first`,
+  `rulesync_background_home_cleanup_records_team_rules_migration`,
+  `rulesync_checkout_revocation_saves_hand_edits_and_removes_local_rules`,
+  `rulesync_checkout_codex_own_settings_survive_a_settled_team_edit`,
+  `rulesync_checkout_local_revocation_survives_a_render_failure`,
+  `checkout_local_block_hand_edit_is_kept_and_reported`,
+  `checkout_local_files_without_a_receipt_are_left_for_review`,
+  `checkout_local_exclude_uses_the_linked_worktree_common_dir`,
+  `rulesync_checkout_does_not_load_team_for_an_unmatched_origin`,
+  `rulesync_checkout_team_rules_are_scoped_to_matching_server`,
+  `checkout_local_tracked_files_are_refused_without_changes`,
+  `checkout_local_negated_ignore_refuses_both_files`,
+  `checkout_local_written_files_are_not_staged_by_git_add_all`,
+  `checkout_codex_special_rule_text_round_trips_and_revokes`,
+  `codex_trust_reader_round_trips_windows_style_project_paths`,
+  `rulesync_home_sync_with_real_team_layers_never_writes_a_team_block`,
+  `checkout_local_deleted_claude_rules_are_restored_without_a_shared_edit_notice`,
+  `checkout_local_deleted_codex_file_is_restored_without_a_shared_edit_notice`,
+  `checkout_local_crlf_claude_file_keeps_line_endings_and_one_block`,
+  `rulesync_home_global_crlf_survives_team_block_cleanup`,
+  `rulesync_home_edited_legacy_block_is_left_without_shared_edit_notice`,
+  `checkout_codex_trust_on_main_checkout_applies_to_linked_worktree`,
+  `checkout_codex_global_instructions_prevent_project_instructions`,
+  `history_list_uses_plain_label_for_team_rules_move`,
+  `repo_preference_goes_to_that_repos_project_rules`,
+  `repo_preference_duplicate_project_bullet_creates_no_waiting_edit`,
+  `preference_in_a_team_repo_that_does_not_name_the_repo_stays_personal`,
+  `repo_preference_with_an_absolute_path_is_refused`,
+  `preference_without_a_space_still_goes_to_personal_rules`,
+  `preference_in_a_space_without_project_rules_is_unchanged`,
+  `checkout_codex_files_for_a_real_codex_run` (ignored unless explicitly run),
+  `rulesync_ordered_rule_roots_are_team_personal_project`,
+  `rulesync_checkout_claude_and_codex_roots_follow_team_personal_project_order` (ignored unless explicitly run),
+  `repo_wiki_legacy_precedence_is_read_and_team_precedes_project`,
+  `rulesync_shared_edits_answer_requires_yes_or_no`, and
+  `rulesync_shared_edits_refuses_ai_or_pipes_before_request`.
 - **UX-SKILL-10** `shipped` A rule the person writes themselves counts at
   once, with no model and no accept. On a page in a folder named Rules (規則,
   规则; any depth, any app language), each top-level bullet the person wrote is
@@ -1097,7 +1261,9 @@ and wait for evidence that people need them.
   Sharing a matched overlay edit in that review keeps the rest of the
   overlay local. If one save changes a known overlay and other rules, the
   tool file keeps the edits and asks the person to sync each layer separately.
-  Team and project edits follow UX-SKILL-9.
+  Team and project edits stay in the tool file until the person uses
+  `wenlan rules shared-edits` in their own terminal to send or decline them
+  (UX-SKILL-9).
   With personal-rule plans, an AI-proposed personal rule or change
   confirmed for its exact text counts as the person's for that version
   (UX-SKILL-14). After the move, the person's change to an every-Space rule

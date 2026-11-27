@@ -172,7 +172,7 @@ export default function SpaceDetail({
           onKeep: () => confirmMutation.mutate(),
           onReviewAll,
           onOpenGraph: onOpenGraph ? () => onOpenGraph(space.name) : undefined,
-          onShare: web ? undefined : () => setSharing(true),
+          onShare: () => setSharing(true),
           onCreatePage: () => onCreatePage?.(space.name),
           onSaveIdentity: async ({ name, description }) => {
             await renameMutation.mutateAsync({ newName: name, description });
@@ -197,7 +197,7 @@ export default function SpaceDetail({
         onSelectPage={onSelectPage}
         shares={shares.data}
       />
-      {!web && sharing && (
+      {sharing && (
         <ShareDialog
           kind="space"
           target={space.name}

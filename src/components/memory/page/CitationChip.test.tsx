@@ -111,6 +111,15 @@ describe("CitationChip", () => {
     );
   });
 
+  it("UX-WHO-11 shows a visible question mark on an unconfirmed citation, and only there", () => {
+    const { unmount } = renderChip({ citation: cite({ status: "unverified" }) });
+    expect(screen.getByRole("button", { name: /Memory/ })).toHaveTextContent("[1?]");
+    expect(screen.getByRole("button", { name: /Memory/ })).toHaveAccessibleName(/not confirmed by its source$/);
+    unmount();
+    renderChip({ citation: cite({ status: "verified" }) });
+    expect(screen.getByRole("button", { name: /Memory/ })).toHaveTextContent("[1]");
+  });
+
   it("keeps unchecked citations clickable and labels them without claiming a verdict", () => {
     renderChip({ citation: cite({ status: "unevaluated" }) });
     const chip = screen.getByRole("button", { name: /Memory/ });
@@ -283,7 +292,7 @@ describe("CitationChip", () => {
   it("pages unverified status in the popover", () => {
     renderChip({ citation: cite({ status: "unverified" }) });
     fireEvent.focus(screen.getByRole("button", { name: /Memory/ }));
-    expect(screen.getByText(/unverified/i)).toBeInTheDocument();
+    expect(screen.getByText(/not confirmed by its source/i)).toBeInTheDocument();
   });
 
   it("UX-WHO-9: the card opens with whether the source was checked and who wrote the sentence", () => {
@@ -302,7 +311,7 @@ describe("CitationChip", () => {
     fireEvent.focus(screen.getByRole("button", { name: /Memory/ }));
     const line = document.querySelector("[data-citation-check]");
     expect(line?.getAttribute("data-status")).toBe("unverified");
-    expect(line?.textContent).toBe("not confirmed by text matching · Written by Codex");
+    expect(line?.textContent).toBe("source doesn’t clearly say this · Written by Codex");
     expect(line?.textContent).not.toContain("✓");
   });
 

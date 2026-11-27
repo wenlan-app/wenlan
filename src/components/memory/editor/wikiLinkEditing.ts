@@ -397,7 +397,7 @@ export function createWikiLinkEditing(
           : selection.from < range.tokenTo && selection.to > range.tokenFrom);
         const target = range.target;
         const kind = target.kind === "citation" ? (target.citation.source_kind === "memory" ? "memory" : "source") : target.kind;
-        const unverified = target.kind === "citation" && target.citation.status === "unverified";
+        const unverified = target.kind === "citation" && target.citation.status === "unverified" && !target.citation.historical;
         const unevaluated = target.kind === "citation" && target.citation.status === "unevaluated";
         const typeLabel = currentContext.labels?.[kind] ?? kind;
         const href = target.kind === "page" ? `#concept:${target.id}` : target.kind === "memory" ? `#memory:${target.id}` : `#citation:${target.citation.occurrence}`;

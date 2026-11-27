@@ -527,6 +527,8 @@ jobs:
               - 'crates/wenlan-core/src/home_bin.rs'
               # The person key file is `0600` on Unix (`cfg(unix)`).
               - 'crates/wenlan-core/src/person_key.rs'
+              # The shared-edits answers test sets the data folder to `0700` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-server/src/person_key_test.rs'
               - 'crates/wenlan-core/src/repo_wiki_test.rs'
               - 'crates/wenlan-core/src/community_grouping.rs'
               - 'crates/wenlan-core/src/community_partition.rs'
@@ -717,6 +719,8 @@ jobs:
               - 'crates/wenlan-core/src/home_bin.rs'
               # The person key file is `0600` on Unix (`cfg(unix)`).
               - 'crates/wenlan-core/src/person_key.rs'
+              # The shared-edits answers test sets the data folder to `0700` on Unix (`cfg(unix)`).
+              - 'crates/wenlan-server/src/person_key_test.rs'
               - 'crates/wenlan-core/src/repo_wiki_test.rs'
               - 'crates/wenlan-core/src/db/m5_page_size_snapshot.rs'
               # A code basis may not follow a symlink out of its repository;

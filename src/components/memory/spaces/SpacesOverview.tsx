@@ -7,7 +7,7 @@ import {
   deleteSpace,
   listSpaces,
   reorderSpace,
-  teamHostSpace,
+  teamLibraryCreateSpace,
   toggleSpaceStarred,
   updateSpace,
   type Space,
@@ -20,7 +20,7 @@ import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
 import { useScope } from "../team/scope";
 import { PeopleIcon } from "../sharing/SharedWithLine";
 import { SHARES_KEY, groupTeamSpaces, teamLabel, useShares } from "../sharing/sharing";
-import { TEAM_KEY } from "../sharing/team";
+import { TEAM_KEY, TEAM_LIBRARY_SPACES_KEY, useTeamLibrarySpaces } from "../sharing/team";
 import { ConfirmedSpaces } from "./ConfirmedSpaces";
 import { SpaceEditor } from "./SpaceEditor";
 import { SuggestedSpaces } from "./SuggestedSpaces";
@@ -95,6 +95,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const shares = useShares();
   const joinedLibrary = useJoinedTeamLibrary();
   const scope = useScope();
+  const teamLibraryQuery = useTeamLibrarySpaces({ enabled: Boolean(scope.team?.hosted) });
   const pagesQuery = useQuery({
     queryKey: ["spaces-page-counts"],
     queryFn: listAllActivePages,
@@ -122,13 +123,13 @@ export function SpacesOverview(props: SpacesOverviewProps) {
 
   const execute = async (action: SpaceRowAction, key: string): Promise<boolean> => {
     try {
-      // The owner of a team whose server is elsewhere: the server makes the
-      // Space, and this computer follows it (made here under the server's
-      // name, never into a private Space of the same name).
-      if (action.kind === "create" && scope.team?.owner && !scope.team.hosted) {
-        await teamHostSpace(action.value.name);
+      // A team-side Space belongs to the team library, whether the server is
+      // this computer or elsewhere. It must not first become a private Space.
+      if (action.kind === "create" && scope.team?.owner) {
+        await teamLibraryCreateSpace(action.value.name, false);
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
+          queryClient.invalidateQueries({ queryKey: TEAM_LIBRARY_SPACES_KEY }),
           queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
         ]);
         setCreating(false);
@@ -137,15 +138,6 @@ export function SpacesOverview(props: SpacesOverviewProps) {
       await runAction(action);
       switch (action.kind) {
         case "create":
-          // Made on a team's side, by the team's owner: the new Space is the
-          // team's at once, as a page started there is.
-          if (scope.team?.hosted) {
-            await teamHostSpace(action.value.name);
-            await Promise.all([
-              queryClient.invalidateQueries({ queryKey: TEAM_KEY }),
-              queryClient.invalidateQueries({ queryKey: SHARES_KEY }),
-            ]);
-          }
           setCreating(false);
           break;
         case "delete":
@@ -197,6 +189,9 @@ export function SpacesOverview(props: SpacesOverviewProps) {
   const hasFilter = filter.trim().length > 0;
   const noResults = hasFilter && suggested.length === 0 && confirmed.length === 0;
   const pendingCreate = pendingIds.includes("create");
+  const teamLibrarySpaces = (teamLibraryQuery.data ?? []).filter((space) =>
+    space.name.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()),
+  );
 
   return (
     <div className="spaces-overview">
@@ -311,6 +306,23 @@ export function SpacesOverview(props: SpacesOverviewProps) {
           />
             </div>
           ))}
+          {scope.team?.hosted && teamLibrarySpaces.length > 0 ? (
+            <div className="spaces-team-group">
+              <h2 className="spaces-group-title">{teamLabel(t, scope.team.team)}</h2>
+              <div className="spaces-rows" aria-label={props.labels.confirmedHeading}>
+                {teamLibrarySpaces.map((space) => (
+                  <button
+                    key={space.id}
+                    type="button"
+                    className="spaces-quiet-action"
+                    onClick={() => props.onSelectSpace(space.name)}
+                  >
+                    {space.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {/* A narrow window has no room for it in the header row. */}
           {!web && !scope.team && (
             <button type="button" className="spaces-join-row spaces-quiet-action" onClick={() => setJoining(true)}>

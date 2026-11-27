@@ -20,7 +20,6 @@ use super::{
 use crate::rulesync_apply::{FileMode, FileRoot, Snapshot};
 use crate::state::SharedState;
 use wenlan_core::rulesync_renderer::RenderSession;
-use wenlan_core::rulesync_team;
 
 use wenlan_core::rulesync_personal::enabled;
 
@@ -67,14 +66,12 @@ impl RulesWatch {
                 let Some(generated) = generated else {
                     return Ok(());
                 };
-                let layers =
-                    rulesync_team::load_layers(&wenlan_core::shared_space::settings_path())?;
                 let session = RenderSession::new(&setup.binary);
                 setup.watch_delivery(
                     root,
                     manifest,
                     &generated,
-                    |target, source| setup.render_member_rule(&session, target, source, &layers),
+                    |target, source| setup.render_member_rule(&session, target, source),
                     |target, skills| setup.render_skills(&session, target, skills),
                 )
             });
@@ -178,7 +175,7 @@ impl RulesWatch {
         for path in changed {
             let current = self.rules[path].content.clone();
             if let Some(draft) =
-                inspect_rule(path, &manifest.delivered[path], current, &mut blocked)
+                inspect_rule(data, path, &manifest.delivered[path], current, &mut blocked)
                     .context("inspect delivered rule edit")?
             {
                 drafts.push(draft);

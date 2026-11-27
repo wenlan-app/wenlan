@@ -186,7 +186,7 @@ async fn run_personal_history(
                         item.id,
                         item.time
                             .map_or_else(|| "time unknown".into(), |t| format!("{t}")),
-                        item.cause,
+                        personal_history_cause(&item.cause),
                         item.layers
                             .iter()
                             .map(personal_layer_label)
@@ -213,6 +213,13 @@ async fn run_personal_history(
             print!("{}", personal_rule_plan(&plan));
             confirm_and_apply_personal_plan(client, &plan).await
         }
+    }
+}
+
+fn personal_history_cause(cause: &str) -> &str {
+    match cause {
+        "team-rules-moved" => "Team rules moved",
+        other => other,
     }
 }
 
@@ -266,6 +273,32 @@ fn require_personal_rule_confirmation(
     Ok(())
 }
 
+fn after_shared_edit_gate<T>(
+    has_ai_identity: bool,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+    request: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    require_shared_edit_confirmation(has_ai_identity, stdin_is_terminal, stdout_is_terminal)?;
+    request()
+}
+
+fn require_shared_edit_confirmation(
+    has_ai_identity: bool,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> Result<()> {
+    ensure!(
+        !has_ai_identity,
+        "Only you can confirm team or project rule edits. Run this from your own terminal outside an AI session."
+    );
+    ensure!(
+        stdin_is_terminal && stdout_is_terminal,
+        "Only you can confirm team or project rule edits: run this in a terminal and type yes yourself. There is no flag or piped approval."
+    );
+    Ok(())
+}
+
 fn person_types_yes(
     input: &mut dyn io::BufRead,
     output: &mut dyn io::Write,
@@ -296,6 +329,74 @@ fn person_rule_answer(
         "no" if can_decline => Some(false),
         _ => None,
     })
+}
+
+fn shared_edit_answer(
+    input: &mut dyn io::BufRead,
+    output: &mut dyn io::Write,
+    layer_name: &str,
+) -> Result<Option<bool>> {
+    write!(output, "Send this edit to {layer_name} for review? Type yes to send, no to discard it (the next sync puts the approved lines back), or press Enter to decide later: ")?;
+    output.flush()?;
+    let mut answer = String::new();
+    input.read_line(&mut answer)?;
+    Ok(match answer.trim().to_ascii_lowercase().as_str() {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    })
+}
+
+async fn run_shared_edits(client: &WenlanClient) -> Result<()> {
+    let waiting = client.shared_rule_edits().await?;
+    if waiting.is_empty() {
+        println!("No team or project rule edits are waiting.");
+        return Ok(());
+    }
+    for edit in waiting {
+        println!("\n{}", edit.layer_name);
+        for file in &edit.files {
+            println!("  {file}");
+        }
+        println!("\n{}", edit.markdown);
+        let Some(send) =
+            shared_edit_answer(&mut io::stdin().lock(), &mut io::stdout(), &edit.layer_name)?
+        else {
+            continue;
+        };
+        let decision = client
+            .decide_shared_rule_edit(&wenlan_types::rulesync::SharedEditDecisionRequest {
+                id: edit.id,
+                send,
+            })
+            .await;
+        if shared_edit_decision_or_continue(decision)?.is_none() {
+            continue;
+        }
+        println!(
+            "{}",
+            if send {
+                "Sent for review."
+            } else {
+                "Declined. The next sync you start puts the approved lines back."
+            }
+        );
+    }
+    Ok(())
+}
+
+fn shared_edit_decision_or_continue<T>(decision: Result<T>) -> Result<Option<T>> {
+    match decision {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.is::<crate::client::SharedEditStaleRevision>() => {
+            println!(
+                "{}",
+                wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE
+            );
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn read_personal_rule_edits(
@@ -474,6 +575,8 @@ fn personal_rule_version(version: &wenlan_types::personal_rules::PersonalRuleVer
 
 #[derive(Debug, Subcommand)]
 pub enum RulesSetupCmd {
+    /// Confirm or decline edits to team and project rule sections.
+    SharedEdits,
     /// Turn on personal tool sync for this data root.
     On,
     /// Turn off personal tool sync without restoring files.
@@ -597,6 +700,15 @@ async fn run_inner(
         println!("Tool sync is {}.", if on { "on" } else { "off" });
         return Ok(());
     }
+    if matches!(command, RulesSetupCmd::SharedEdits) {
+        let client = after_shared_edit_gate(
+            agent_name.is_some() || session.session.is_some(),
+            io::stdin().is_terminal(),
+            io::stdout().is_terminal(),
+            || WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref()),
+        )?;
+        return run_shared_edits(&client).await;
+    }
     if matches!(command, RulesSetupCmd::Adopt { dry_run: true, .. }) {
         if rulesync_personal::enabled() {
             if let Ok(client) =
@@ -675,6 +787,7 @@ async fn run_inner(
 
     let client = WenlanClient::for_local_rules_with_identity(agent_name, session.session.as_ref())?;
     let report = match command {
+        RulesSetupCmd::SharedEdits => unreachable!(),
         RulesSetupCmd::On | RulesSetupCmd::Off => unreachable!(),
         RulesSetupCmd::Adopt {
             confirm: confirmed, ..
@@ -2013,6 +2126,15 @@ mod tests {
     };
 
     #[test]
+    fn history_list_uses_plain_label_for_team_rules_move() {
+        assert_eq!(
+            personal_history_cause("team-rules-moved"),
+            "Team rules moved"
+        );
+        assert_eq!(personal_history_cause("sync"), "sync");
+    }
+
+    #[test]
     fn personal_rule_proposal_reads_multiple_explicit_layers_as_one_edit_set() {
         let dir = tempfile::tempdir().unwrap();
         let shared = dir.path().join("shared.md");
@@ -2096,6 +2218,8 @@ mod tests {
 
     #[test]
     fn personal_rule_apply_refuses_ai_identity_and_piped_input_or_output() {
+        assert_eq!(require_personal_rule_confirmation(true, true, true).unwrap_err().to_string(), "Only you can confirm personal rule changes. Run this from your own terminal outside an AI session.");
+        assert_eq!(require_personal_rule_confirmation(false, false, true).unwrap_err().to_string(), "Only you can confirm personal rule changes: run this in a terminal and type yes yourself. There is no flag or piped approval.");
         assert!(require_personal_rule_confirmation(true, true, true).is_err());
         assert!(require_personal_rule_confirmation(false, false, true).is_err());
         assert!(require_personal_rule_confirmation(false, true, false).is_err());
@@ -2123,6 +2247,79 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn rulesync_shared_edits_answer_requires_yes_or_no() {
+        for (typed, expected) in [
+            ("yes\n", Some(true)),
+            ("NO\n", Some(false)),
+            ("\n", None),
+            ("y\n", None),
+        ] {
+            let mut output = Vec::new();
+            assert_eq!(
+                shared_edit_answer(&mut typed.as_bytes(), &mut output, "Design").unwrap(),
+                expected
+            );
+            assert_eq!(String::from_utf8(output).unwrap(), "Send this edit to Design for review? Type yes to send, no to discard it (the next sync puts the approved lines back), or press Enter to decide later: ");
+        }
+    }
+
+    #[test]
+    fn rulesync_shared_edits_refuses_ai_or_pipes_before_request() {
+        assert_eq!(require_shared_edit_confirmation(true, true, true).unwrap_err().to_string(), "Only you can confirm team or project rule edits. Run this from your own terminal outside an AI session.");
+        assert_eq!(require_shared_edit_confirmation(false, false, true).unwrap_err().to_string(), "Only you can confirm team or project rule edits: run this in a terminal and type yes yourself. There is no flag or piped approval.");
+        for (ai, stdin, stdout) in [
+            (true, true, true),
+            (false, false, true),
+            (false, true, false),
+        ] {
+            let mut requested = false;
+            assert!(after_shared_edit_gate(ai, stdin, stdout, || {
+                requested = true;
+                Ok(())
+            })
+            .is_err());
+            assert!(!requested);
+        }
+    }
+
+    #[test]
+    fn rulesync_shared_edits_continues_after_stale_revision() {
+        let decisions = [Err(crate::client::SharedEditStaleRevision.into()), Ok(())];
+        let mut completed = 0;
+        for decision in decisions {
+            if shared_edit_decision_or_continue(decision)
+                .unwrap()
+                .is_none()
+            {
+                continue;
+            }
+            completed += 1;
+        }
+        assert_eq!(completed, 1);
+        assert!(crate::client::shared_edit_stale_revision(
+            &serde_json::json!({
+                "code": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE,
+                "error": "wording may change"
+            })
+            .to_string()
+        ));
+        assert!(!crate::client::shared_edit_stale_revision(
+            &serde_json::json!({
+                "error": wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE
+            })
+            .to_string()
+        ));
+        assert!(shared_edit_decision_or_continue::<()>(Err(anyhow::anyhow!(
+            wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE
+        )))
+        .is_err());
+        assert!(
+            shared_edit_decision_or_continue::<()>(Err(anyhow::anyhow!("different failure")))
+                .is_err()
+        );
     }
 
     #[test]

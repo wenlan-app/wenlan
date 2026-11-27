@@ -22,7 +22,7 @@ codex plugin add wenlan@7xuanlu-wenlan
 Start a new Codex thread after installing so the skills and MCP server load.
 Then type `$wenlan` (or the exact form `$wenlan:wenlan`) to check that Wenlan
 works, or `$wenlan` followed by what you want in plain words, such as
-`$wenlan open my note on the release plan` or `$wenlan lint`. Saving, looking
+`$wenlan open my page on the release plan` or `$wenlan lint`. Saving, looking
 things up, catching up and ending a session also have their own skills:
 `/capture <memory>`, `/recall <query>`, `/brief`, and `/handoff`.
 

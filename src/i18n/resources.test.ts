@@ -19,15 +19,15 @@ describe("translation resources", () => {
 
   it("names archive and restore the same way in every locale, and tells it apart from delete", () => {
     const copies = supportedAppLocales.map(locale => resources[locale].translation);
-    expect(copies.map(copy => copy.pageDetail.archivePage)).toEqual(["Archive page", "归档笔记", "封存筆記"]);
-    expect(copies.map(copy => copy.pages.archive.title)).toEqual(["Archived pages", "已归档笔记", "已封存筆記"]);
-    expect(copies.map(copy => copy.pages.archive.restore)).toEqual(["Restore page", "恢复笔记", "還原筆記"]);
+    expect(copies.map(copy => copy.pageDetail.archivePage)).toEqual(["Archive page", "归档页面", "封存頁面"]);
+    expect(copies.map(copy => copy.pages.archive.title)).toEqual(["Archived pages", "已归档页面", "已封存頁面"]);
+    expect(copies.map(copy => copy.pages.archive.restore)).toEqual(["Restore page", "恢复页面", "還原頁面"]);
     // The confirmation names the real place to restore from.
     copies.forEach(copy => expect(copy.pageDetail.archiveConfirm).toContain(copy.pages.archive.title));
     expect(copies.map(copy => copy.pageDetail.deleteConfirm)).toEqual([
       "Permanently delete this page? This cannot be undone.",
-      "永久删除此笔记？此操作无法撤销。",
-      "永久刪除此筆記？此操作無法復原。",
+      "永久删除此页面？此操作无法撤销。",
+      "永久刪除此頁面？此操作無法復原。",
     ]);
     const english = JSON.stringify(resources.en.translation.pages.archive);
     expect(english).not.toMatch(/\bnotes?\b/i);
@@ -107,8 +107,8 @@ describe("translation resources", () => {
   it("explains the page-review requirement before rename in every locale", () => {
     expect(supportedAppLocales.map((locale) => resources[locale].translation.pageDetail.renameReviewRequired)).toEqual([
       "Review this page before renaming it.",
-      "请先复核此笔记，再进行重命名。",
-      "請先覆核此筆記，再進行重新命名。",
+      "请先复核此页面，再进行重命名。",
+      "請先覆核此頁面，再進行重新命名。",
     ]);
   });
 
@@ -272,8 +272,8 @@ describe("translation resources", () => {
     ]);
     expect(editors.map((editor) => editor.openExisting)).toEqual([
       "Open existing",
-      "打开现有笔记",
-      "開啟現有筆記",
+      "打开现有页面",
+      "開啟現有頁面",
     ]);
   });
 
@@ -448,8 +448,8 @@ describe("translation resources", () => {
     // Then all supported locales provide the approved copy
     expect(overviewResources.map((overview) => overview.pages)).toEqual([
       "Pages",
-      "笔记",
-      "筆記",
+      "页面",
+      "頁面",
     ]);
     expect(overviewResources.map((overview) => overview.memories)).toEqual([
       "Memories",

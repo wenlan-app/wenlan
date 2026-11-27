@@ -2,7 +2,7 @@
 name: capture
 description: >
   Save a memory to Wenlan in flow, or save something from this conversation as
-  one note when the user asks for a note. Use proactively when the user states
+  one page when the user asks for a page. Use proactively when the user states
   a preference, makes a decision, corrects you, or shares a durable fact.
   Invoked as `/capture <content>`.
 argument-hint: "<content>"
@@ -51,22 +51,23 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 "$W" spaces add <space>
 ```
 
-## Memory or note
+## Memory or page
 
-Default to one memory. Save a note instead only when the user asks for one in
-their own words: "save this as a note", "write this up", "存成筆記",
-"寫成一篇筆記", or `/capture` text that starts with "note:". Proactive
-captures are always memories; never create a note on your own initiative, and
-never save the same thing as both a memory and a note in one turn. Turning many
-memories into notes is a different job: that is `$wenlan steep`.
+Default to one memory. Save a page instead only when the user asks for one in
+their own words: "save this as a page", "save this as a note", "write this up",
+"存成頁面", "存成筆記", "寫成一頁", or `/capture` text that starts with "page:" or
+"note:". Proactive captures are always memories; never create a page on your
+own initiative, and never save the same thing as both a memory and a page in
+one turn. Turning many memories into pages is a different job: that is
+`$wenlan steep`.
 
-To save a note, follow "Save a note" below and skip the memory steps.
+To save a page, follow "Save a page" below and skip the memory steps.
 
 ## A diagram you drew
 
 A diagram, map, chart or HTML page you made in this conversation (an ASCII
 drawing in your reply too) is kept with `keep_original`, never captured as a
-memory or rewritten as a note. Pass `structure` and `session`. When to keep one
+memory or rewritten as a page. Pass `structure` and `session`. When to keep one
 without being asked is in that tool's description.
 
 ## Something from another app or the web
@@ -81,7 +82,7 @@ the original, capture the insight as a memory instead. Save only what the user
 asked to keep; never copy a whole inbox or channel.
 
 The saved copy does not update on its own. When the original changes and the
-user wants Wenlan to follow, save it again with the same link; notes built on
+user wants Wenlan to follow, save it again with the same link; pages built on
 it are then marked for refresh. Report the link and the Space the result names.
 
 ## How to invoke
@@ -131,7 +132,7 @@ decision *also* implies a preference, but `decision` is more specific.
 Pick the single most important named thing in the content: a person,
 project, tool, place. Use the exact full name, and say what it is in
 `entity_type`. Example: "Alice Chen prefers TDD because…" →
-`entity="Alice Chen", entity_type="person"`. A name the wiki already knows
+`entity="Alice Chen", entity_type="person"`. A name Wenlan already knows
 links; a new name is created and linked. If the content has no named anchor,
 omit both.
 
@@ -172,14 +173,14 @@ For a durable named entity explicitly established by the user, `create_entity`
 may also be used alone when its stable id is needed. Its `Entity <id> ready`
 result does not imply that a new row was created.
 
-## Save a note
+## Save a page
 
 1. Resolve the Space exactly as above.
-2. New note: call `write_page` with a short noun-phrase `title`, the note as
+2. New page: call `write_page` with a short noun-phrase `title`, the page as
    Markdown `content` written from this conversation, and `space` when it is
-   non-empty. `source_memory_ids` are optional; pass them only when the note
+   non-empty. `source_memory_ids` are optional; pass them only when the page
    is built from memories you can name by id.
-3. Updating a note the user named: confirm the exact title with `list_pages`
+3. Updating a page the user named: confirm the exact title with `list_pages`
    for the Space (never fuzzy-match), call `read_page`, keep `page.version`
    and `page.source_memory_ids`, edit the current body, then call
    `write_page` with `page_id`, the edited `content`, `expected_version` set
@@ -188,7 +189,7 @@ result does not imply that a new row was created.
    again and redo the edit once. A refusal that the user wrote or edited the
    page, or a `gated` result, means it is protected: stop and tell the user it
    is waiting for their review, not that it was saved.
-5. Report the note's title and the path or id the result returns.
+5. Report the page's title and the path or id the result returns.
 
 ## What to capture, what to skip, how to write it
 
@@ -200,7 +201,7 @@ wording. Follow it as written; do not keep a second copy here.
 ## When to use
 
 - User explicitly says "remember this", "save that", "capture this".
-- User asks to save something from this conversation as a note.
+- User asks to save something from this conversation as a page.
 - User asks to keep an email, page, thread, or article you read elsewhere:
   `save_source`, as above.
 - User states a durable preference / decision / correction proactively (no

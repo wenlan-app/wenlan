@@ -17,6 +17,14 @@
 }
 .citation-chip[aria-describedby] { background: var(--mem-indigo-bg); }
 .citation-chip--unevaluated { border: 1px dashed var(--mem-text-tertiary); }
+/* UX-WHO-11: an unconfirmed citation carries a visible mark, not only a
+   border hue, so a reader sees it without hovering. */
+.citation-chip__unconfirmed,
+.cm-citation-link.reference-link--unverified::after {
+  color: var(--mem-accent-amber);
+  font-weight: 600;
+}
+.cm-citation-link.reference-link--unverified::after { content: "?"; }
 
 .reference-link > svg {
   display: inline-block;

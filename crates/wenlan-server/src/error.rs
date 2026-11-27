@@ -132,6 +132,11 @@ impl From<wenlan_core::WenlanError> for ServerError {
             wenlan_core::WenlanError::AgentDisabled(msg) => ServerError::AgentDisabled(msg),
             wenlan_core::WenlanError::Conflict(msg) => ServerError::Conflict(msg),
             wenlan_core::WenlanError::Validation(msg) => ServerError::ValidationError(msg),
+            wenlan_core::WenlanError::TeamRulesProposalRefused { .. } => {
+                ServerError::ValidationError(
+                    wenlan_core::shared_space::OUTDATED_HOST_EDIT_MESSAGE.into(),
+                )
+            }
             wenlan_core::WenlanError::NotFound(msg) => ServerError::NotFound(msg),
             other => ServerError::Internal(other.to_string()),
         }

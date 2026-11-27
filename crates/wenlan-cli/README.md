@@ -661,6 +661,14 @@ Arguments:
 
 - `<ID>`: The rule's id, as `wenlan rules` prints it.
 
+#### `wenlan rules shared-edits`
+
+Confirm or decline edits to team and project rule sections.
+
+```text
+wenlan rules shared-edits [OPTIONS]
+```
+
 #### `wenlan rules on`
 
 Turn on personal tool sync for this data root.
@@ -901,7 +909,14 @@ Arguments:
 
 ### `wenlan team`
 
-Work with a team: start one here, invite people, or join with an invite link (start, share, invite, join, status, leave, update, remove, new-key, stop).
+Work with a team: start one here, invite people, or join with an invite link.
+
+Publication commands:
+  draft         Prepare a private publication draft.
+  publish       Review and publish a personal item.
+  withdraw      Withdraw a team item and its revisions.
+  create-space  Create a team Space for published pages.
+  grant         Set a member's team-library access.
 
 ```text
 wenlan team [OPTIONS] <COMMAND>
@@ -1458,7 +1473,7 @@ Options:
 
 #### `wenlan sources save`
 
-Save one document read elsewhere (an email, a Notion or Drive page, a Slack thread, an article) with its link, so notes cite the original. Text comes from --file or stdin. Saving the same link again replaces the saved copy; Wenlan does not re-fetch the original.
+Save one document read elsewhere (an email, a Notion or Drive page, a Slack thread, an article) with its link, so pages cite the original. Text comes from --file or stdin. Saving the same link again replaces the saved copy; Wenlan does not re-fetch the original.
 
 ```text
 wenlan sources save [OPTIONS] --url <URL> --title <TITLE>
@@ -1590,7 +1605,7 @@ Options:
 
 - `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
 - `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
-- `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
+- `--daily <HOUR|off>`: Bring the pages up to date by itself every day after this local hour (0-23), or `off`.
 - `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
 - `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
 - `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours and GitHub does not let you push to it.
@@ -1655,7 +1670,7 @@ Options:
 
 #### `wenlan repo rules-team`
 
-Include one team Rules layer in future wiki pull requests, or turn it off.
+Include one team Rules layer in future page pull requests, or turn it off.
 
 ```text
 wenlan repo rules-team [OPTIONS] <TEAM>
@@ -1700,7 +1715,7 @@ Arguments:
 
 #### `wenlan repo refresh`
 
-Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
+Check the pages folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
 
 ```text
 wenlan repo refresh [OPTIONS]

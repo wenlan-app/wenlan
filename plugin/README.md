@@ -1,6 +1,6 @@
 # Wenlan
 
-Docs, skills and rules your AI tools keep current and work from. Each doc links to its sources. Open source, and works with your existing Obsidian vault.
+Docs, skills and rules your AI tools keep current and work from. Each page links to its sources. Open source, and works with your existing Obsidian vault.
 
 Wenlan is local-first. Memories, pages, and session notes live on your machine under `~/.wenlan`, served by a small local daemon. Nothing in this plugin is stored by Anthropic or by the plugin itself.
 
@@ -44,7 +44,7 @@ The MCP runner picks a binary in this order: the `WENLAN_MCP_DEV_BIN` environmen
 ## Where your data lives
 
 ```text
-~/.wenlan/pages/               wiki pages distilled from memories (Markdown)
+~/.wenlan/pages/               pages distilled from memories (Markdown)
 ~/.wenlan/sessions/            older session logs by date (Markdown; no longer written)
 ~/.wenlan/sessions/_status/    current per-project goals and last-handoff timestamp
 ~/.wenlan/bin/                 installed binaries
@@ -75,7 +75,7 @@ The daemon stays the single writer and storage owner. The connected AI handles o
 
 - `/wenlan [what you want]` - the front door: say what you want, or type it bare for status and setup
 - `/brief [topic]` - load the Brief for the current Space (optional; not a boot step)
-- `/capture <x>` - save one durable memory in flow, or this conversation as one note on request
+- `/capture <x>` - save one durable memory in flow, or this conversation as one page on request
 - `/recall <q>` - search local memory
 - `/handoff` - end of session: update the Brief
 - `/how-i-work` - read this Space's approved rules before choosing an approach

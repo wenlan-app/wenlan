@@ -49,6 +49,12 @@ async fn checkout(
 #[derive(Default, Serialize, Deserialize)]
 struct Checkout {
     repo: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_claude: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_codex: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    local_codex_dir_created: bool,
     files: BTreeMap<PathBuf, Snapshot>,
     skills: BTreeMap<PathBuf, SkillDelivery>,
     pending: Option<PendingDelivery>,
@@ -80,6 +86,91 @@ fn read_checkout(bytes: &[u8]) -> Result<Checkout> {
         UnsupportedRulesyncState
     );
     Ok(stored.checkout)
+}
+
+pub(crate) fn clear_refused_receipts(data: &Path, proposal_ids: &[String]) -> Result<()> {
+    let directory = data.join("checkouts");
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    let root = FileRoot::open(data)?;
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        let path = Path::new("checkouts").join(entry.file_name());
+        let seen = match root.read(&path, false) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("[rulesync] skipping unreadable checkout receipt during proposal refusal: {}: {error:#}", path.display());
+                continue;
+            }
+        };
+        let mut checkout = match text(&seen).and_then(|source| read_checkout(source.as_bytes())) {
+            Ok(checkout) => checkout,
+            Err(error) => {
+                tracing::warn!("[rulesync] skipping incompatible checkout receipt during proposal refusal: {}: {error:#}", path.display());
+                continue;
+            }
+        };
+        let before = checkout.shared_rule_proposals.clone();
+        for receipts in checkout.shared_rule_proposals.values_mut() {
+            receipts.retain(|_, receipt| !proposal_ids.contains(&receipt.proposal));
+        }
+        checkout
+            .shared_rule_proposals
+            .retain(|_, receipts| !receipts.is_empty());
+        if checkout.shared_rule_proposals != before {
+            let next = with_bytes(
+                &seen,
+                serde_json::to_vec(&CheckoutRecord {
+                    format: CHECKOUT_FORMAT,
+                    checkout,
+                })?,
+            );
+            ensure!(
+                root.apply(&path, &seen, &next, false)? == ApplyOutcome::Applied,
+                "checkout receipt changed during refusal recovery"
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn local_recorded_path(data: &Path, relative: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut parts = relative.components();
+    if parts.next()?.as_os_str() != "checkouts" {
+        return None;
+    }
+    let key = parts.next()?.as_os_str().to_str()?;
+    if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    if parts.next()?.as_os_str() != "local" {
+        return None;
+    }
+    let file = parts.as_path();
+    if file != Path::new("CLAUDE.local.md") && file != Path::new(".codex/config.toml") {
+        return None;
+    }
+    let root = FileRoot::open(data).ok()?;
+    let state = root
+        .read(&Path::new("checkouts").join(format!("{key}.json")), false)
+        .ok()?;
+    let Snapshot::File { bytes, .. } = state else {
+        return None;
+    };
+    let checkout = read_checkout(&bytes).ok()?;
+    if fingerprint(&checkout.repo).ok()?.as_str() != key {
+        return None;
+    }
+    let repo = checkout.repo.canonicalize().ok()?;
+    Some((repo, file.to_path_buf()))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,6 +251,17 @@ impl Checkout {
 struct RenderedCheckout {
     rules: BTreeMap<PathBuf, Vec<u8>>,
     skills: BTreeMap<PathBuf, ProjectSkillFile>,
+}
+
+fn ordered_rule_roots(
+    team: Option<PathBuf>,
+    personal: PathBuf,
+    project: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    team.into_iter()
+        .chain(std::iter::once(personal))
+        .chain(project)
+        .collect()
 }
 
 struct ProjectSkillFile {
@@ -326,6 +428,20 @@ pub(crate) fn refresh(
     }
 }
 
+fn team_layers_for_projects(
+    teams: Vec<TeamRuleLayer>,
+    projects: &[TeamRuleLayer],
+) -> Vec<TeamRuleLayer> {
+    teams
+        .into_iter()
+        .filter(|team| {
+            projects
+                .iter()
+                .any(|project| rulesync_team::project_layer_belongs_to_team(team, project))
+        })
+        .collect()
+}
+
 fn refresh_entries(
     setup: &Setup,
     session: &rulesync_renderer::RenderSession<'_>,
@@ -466,11 +582,13 @@ impl Job<'_> {
                         == Some(&id)
                 })
                 .collect::<Vec<_>>(),
-            None => Vec::new(),
+            _ => Vec::new(),
         };
         let teams = match master {
-            Some(_) => rulesync_team::load_layers(&self.settings)?,
-            None => Vec::new(),
+            Some(_) if !project.is_empty() => {
+                team_layers_for_projects(rulesync_team::load_layers(&self.settings)?, &project)
+            }
+            _ => Vec::new(),
         };
         let skills = ProjectSkills::from_layers(&project)?;
         let authorized: BTreeMap<_, _> = project
@@ -567,6 +685,50 @@ impl Job<'_> {
                 result.written.push(path.display().to_string());
             }
         }
+        let local_key = state_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .context("invalid checkout key")?;
+        let has_repo = !checkout.repo.as_os_str().is_empty();
+        let local_revoked = project.is_empty() && has_repo;
+        if has_repo {
+            let cleanup = if local_revoked {
+                crate::rulesync_checkout_local::sync(
+                    self.setup,
+                    &crate::rulesync_checkout_local::codex_home(&self.setup.home),
+                    &self.settings,
+                    &checkout.repo,
+                    &project,
+                    &teams,
+                    &authorized,
+                    &mut checkout.local_claude,
+                    &mut checkout.local_codex,
+                    &mut checkout.local_codex_dir_created,
+                    &mut checkout.shared_rule_proposals,
+                    &mut result,
+                    self.can_restore_rejection,
+                    local_key,
+                )
+            } else {
+                crate::rulesync_checkout_local::prune_inaccessible(
+                    self.setup,
+                    &checkout.repo,
+                    local_key,
+                    &authorized,
+                    &mut checkout.local_claude,
+                    &mut checkout.local_codex,
+                    &mut checkout.shared_rule_proposals,
+                    &mut result,
+                )
+            };
+            record = self.save(state_path, &record, &checkout)?;
+            if let Err(error) = cleanup {
+                result.block(
+                    Code::CheckoutNeedsReview,
+                    format!("Checkout local revocation: {error:#}"),
+                );
+            }
+        }
         let Some(master) = master else {
             report_blocks(&mut result, blocked);
             return Ok(result);
@@ -605,7 +767,14 @@ impl Job<'_> {
                             &authorized,
                             edits,
                             receipts,
+                            &self.directory.join(path),
+                            &self.setup.data,
+                            &self.setup.home,
                         ) {
+                            Ok(rulesync_layers::SharedReview::NeedsConfirm) => {
+                                pending_review.insert(path.clone());
+                                result.block(Code::SharedRuleNeedsConfirm, format!("{}: This edit is waiting for you to confirm it. Run `wenlan rules shared-edits` in your own terminal to send or decline it.", path.display()));
+                            }
                             Ok(rulesync_layers::SharedReview::Pending) => {
                                 pending_review.insert(path.clone());
                                 result.block(Code::SharedRulePending, format!("{}: A shared rule edit is still in this file while its proposal is reviewed.", path.display()));
@@ -651,6 +820,85 @@ impl Job<'_> {
         };
         for (path, bytes) in rendered.rules {
             let current = observed.get(&path).unwrap_or(&Snapshot::Absent);
+            if self.can_restore_rejection
+                && pending_review.contains(&path)
+                && !blocked.contains_key(&path)
+            {
+                let mut answers = crate::rulesync_shared_answers::read(&self.setup.data)?;
+                let full_path = self.directory.join(&path);
+                let old = checkout
+                    .files
+                    .get(&path)
+                    .context("managed checkout file is missing")?;
+                let old_text = text(old)?;
+                let local = text(current)?;
+                let new_text = std::str::from_utf8(&bytes)?;
+                for (id, waiting) in answers.waiting.clone() {
+                    if !waiting.files.contains(&full_path.display().to_string()) {
+                        continue;
+                    }
+                    let Some((key, layer)) = authorized.iter().find(|(_, layer)| {
+                        layer.id == waiting.layer_id && layer.revision != waiting.revision
+                    }) else {
+                        continue;
+                    };
+                    if !rulesync_layers::waiting_in_file(
+                        &waiting,
+                        &full_path.display().to_string(),
+                        &self.settings,
+                        &self.setup.data,
+                        &self.setup.home,
+                    ) {
+                        continue;
+                    }
+                    if rulesync_layers::only_personal(old_text)?
+                        != rulesync_layers::only_personal(local)?
+                    {
+                        continue;
+                    }
+                    let old_blocks = rulesync_layers::blocks(old_text)?;
+                    let local_blocks = rulesync_layers::blocks(local)?;
+                    let new_blocks = rulesync_layers::blocks(new_text)?;
+                    let (Some(base), Some(mine), Some(theirs)) = (
+                        old_blocks.get(key.as_str()),
+                        local_blocks.get(key.as_str()),
+                        new_blocks.get(key.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    let merged = wenlan_core::rulesync_personal::merge_rule_text(
+                        base.body,
+                        mine.body,
+                        theirs.body,
+                    )
+                    .context(wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_MESSAGE)?;
+                    let rebased = rulesync_layers::replace_block_body(new_text, key, &merged)?;
+                    let updated = with_bytes(current, rebased.into_bytes());
+                    ensure!(
+                        self.root.apply(&full_path, current, &updated, false)?
+                            == ApplyOutcome::Applied,
+                        "checkout rules changed during rebase"
+                    );
+                    let changed_text = text(&updated)?;
+                    let changed_blocks = rulesync_layers::blocks(changed_text)?;
+                    let changed = changed_blocks
+                        .get(key.as_str())
+                        .context("rebased checkout section is missing")?;
+                    let new_id = fingerprint(&(&layer.id, changed.revision, changed.body))?;
+                    let markdown = rulesync_layers::proposed_markdown(layer, changed)?;
+                    answers.waiting.remove(&id);
+                    let mut next_waiting = waiting;
+                    next_waiting.revision = layer.revision.clone();
+                    next_waiting.markdown = markdown;
+                    answers.waiting.insert(new_id, next_waiting);
+                    crate::rulesync_shared_answers::save(&self.setup.data, &answers)?;
+                    checkout
+                        .files
+                        .insert(path.clone(), with_bytes(old, bytes.clone()));
+                    record = self.save(state_path, &record, &checkout)?;
+                    break;
+                }
+            }
             if blocked.contains_key(&path) || pending_review.contains(&path) {
                 continue;
             }
@@ -721,7 +969,33 @@ impl Job<'_> {
                 result.written.push(path.display().to_string());
             }
         }
+        let local = (!local_revoked).then(|| {
+            crate::rulesync_checkout_local::sync(
+                self.setup,
+                &crate::rulesync_checkout_local::codex_home(&self.setup.home),
+                &self.settings,
+                &checkout.repo,
+                &project,
+                &teams,
+                &authorized,
+                &mut checkout.local_claude,
+                &mut checkout.local_codex,
+                &mut checkout.local_codex_dir_created,
+                &mut checkout.shared_rule_proposals,
+                &mut result,
+                self.can_restore_rejection,
+                local_key,
+            )
+        });
+        self.save(state_path, &record, &checkout)?;
+        if let Some(Err(error)) = local {
+            result.block(
+                Code::CheckoutNeedsReview,
+                format!("Checkout local files: {error:#}"),
+            );
+        }
         report_blocks(&mut result, blocked);
+        rulesync_layers::refresh_answers(&self.settings, &self.setup.data, &self.setup.home)?;
         Ok(result)
     }
 
@@ -935,15 +1209,19 @@ impl Job<'_> {
         for target in ["claudecode", "codexcli"] {
             let stage = rulesync_renderer::new_stage(&self.setup.data)?;
             let output = stage.path().join("output");
-            let mut roots = Vec::new();
-            for (prefix, layers) in [("Project", project), ("Team", teams)] {
-                if !layers.is_empty() {
-                    let input = stage.path().join(prefix.to_ascii_lowercase());
-                    rulesync_layers::stage(&input, prefix, layers)?;
-                    roots.push(input);
-                }
+            // Broadest first: team, then personal, then project.
+            let team_root = if !teams.is_empty() {
+                let input = stage.path().join("team");
+                rulesync_layers::stage(&input, "Team", teams)?;
+                Some(input)
+            } else {
+                None
+            };
+            let project_root = stage.path().join("project");
+            if !project.is_empty() {
+                rulesync_layers::stage(&project_root, "Project", project)?;
             }
-            skills.stage(&stage.path().join("project"))?;
+            skills.stage(&project_root)?;
             let personal = stage.path().join("personal");
             let mut source = master.rule_text(target, generated)?;
             if target == "claudecode" {
@@ -955,7 +1233,11 @@ impl Job<'_> {
                 )?;
             }
             write_root_rule(&personal, &source)?;
-            roots.push(personal);
+            let roots = ordered_rule_roots(
+                team_root,
+                personal,
+                (!project.is_empty()).then_some(project_root),
+            );
             std::fs::create_dir(&output)?;
             self.session.render(
                 stage.path(),
@@ -978,6 +1260,280 @@ impl Job<'_> {
 mod tests {
     use super::*;
     use wenlan_types::team::{TeamProjectSkill, TeamProjectSkillFile};
+
+    #[test]
+    fn rulesync_checkout_team_rules_are_scoped_to_matching_server() {
+        use std::{fs, process::Command};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        fs::create_dir_all(setup.home.join(".codex")).unwrap();
+        fs::create_dir_all(&setup.data).unwrap();
+        let repo = scratch.path().join("checkout");
+        fs::create_dir(&repo).unwrap();
+        assert!(Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "init", "--quiet"])
+            .status()
+            .unwrap()
+            .success());
+        fs::write(
+            setup.home.join(".codex/config.toml"),
+            crate::rulesync_checkout_local::trust_config(&repo.display().to_string()),
+        )
+        .unwrap();
+        let make_team = |id: &str, markdown: &str| TeamRuleLayer {
+            id: id.into(),
+            name: id.into(),
+            markdown: markdown.into(),
+            revision: "a".repeat(64),
+            synced_at: String::new(),
+            project: None,
+            skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
+        };
+        let make_project = |team_id: &str, space_id: &str, repo_id: &str| TeamRuleLayer {
+            id: format!(
+                "{}{}",
+                "team-rules-",
+                wenlan_core::shared_space::version::sha256_hex(
+                    format!("{team_id}\n{space_id}").as_bytes()
+                )
+            ),
+            name: format!("{team_id} project"),
+            markdown: "Project rules".into(),
+            revision: "b".repeat(64),
+            synced_at: String::new(),
+            project: Some(wenlan_types::team::TeamRulesProject {
+                space: space_id.into(),
+                space_id: space_id.into(),
+                repo_id: Some(repo_id.into()),
+            }),
+            skills: Vec::new(),
+            proposal_decisions: BTreeMap::new(),
+        };
+        let first = make_team("first-server", "FIRST_TEAM_RULE");
+        let second = make_team("second-server", "SECOND_TEAM_RULE");
+        let matching = make_project("first-server", "first-space", "repo-identity");
+        let matching_projects = vec![matching];
+        let selected = team_layers_for_projects(vec![first, second], &matching_projects);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].markdown, "FIRST_TEAM_RULE");
+        assert!(!selected
+            .iter()
+            .any(|layer| layer.markdown.contains("SECOND_TEAM_RULE")));
+
+        let authorized: BTreeMap<_, _> = selected
+            .iter()
+            .chain(&matching_projects)
+            .map(|layer| (rulesync_layers::key(layer).unwrap(), layer))
+            .collect();
+        let mut claude = None;
+        let mut codex = None;
+        let mut codex_dir_created = false;
+        let mut receipts = BTreeMap::new();
+        let key = fingerprint(&repo).unwrap();
+        let mut result = report("checkout");
+        crate::rulesync_checkout_local::sync(
+            &setup,
+            &setup.home.join(".codex"),
+            &scratch.path().join("settings.json"),
+            &repo,
+            &matching_projects,
+            &selected,
+            &authorized,
+            &mut claude,
+            &mut codex,
+            &mut codex_dir_created,
+            &mut receipts,
+            &mut result,
+            true,
+            &key,
+        )
+        .unwrap();
+        let claude = fs::read_to_string(repo.join("CLAUDE.local.md")).unwrap();
+        let codex = fs::read_to_string(repo.join(".codex/config.toml")).unwrap();
+        for content in [&claude, &codex] {
+            assert!(content.contains("FIRST_TEAM_RULE"), "{content}");
+            assert!(!content.contains("SECOND_TEAM_RULE"), "{content}");
+        }
+    }
+
+    #[test]
+    fn rulesync_checkout_does_not_load_team_for_an_unmatched_origin() {
+        use crate::rulesync_layers::tests::hosted_fixture;
+        use std::{fs, process::Command};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, _, _) = hosted_fixture(&setup.data);
+        let repo = scratch.path().join("unmatched");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/other/repo.git",
+            ],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let key = fingerprint(&repo).unwrap();
+        let state_path = PathBuf::from(format!("checkouts/{key}.json"));
+        let directory = PathBuf::from(format!("checkouts/{key}/rules"));
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings,
+            root: &root,
+            directory: &directory,
+            can_restore_rejection: true,
+        };
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let report = job
+            .run_using(
+                &state_path,
+                Snapshot::Absent,
+                Checkout {
+                    repo: repo.clone(),
+                    ..Checkout::default()
+                },
+                Some(&master),
+                |project, team, _, _| {
+                    assert!(project.is_empty() && team.is_empty());
+                    Ok(RenderedCheckout::default())
+                },
+            )
+            .unwrap();
+        assert!(report.blocked.is_empty(), "{report:?}");
+        assert!(!repo.join("CLAUDE.local.md").exists());
+        assert!(!repo.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn rulesync_ordered_rule_roots_are_team_personal_project() {
+        let roots = ordered_rule_roots(
+            Some(PathBuf::from("team")),
+            PathBuf::from("personal"),
+            Some(PathBuf::from("project")),
+        );
+        assert_eq!(roots, ["team", "personal", "project"].map(PathBuf::from));
+    }
+
+    #[test]
+    #[ignore = "requires WENLAN_TEST_RULESYNC_BINARY pointing to the pinned renderer"]
+    fn rulesync_checkout_claude_and_codex_roots_follow_team_personal_project_order() {
+        use crate::rulesync_layers::tests::{hosted_fixture, REMOTE};
+        use std::{fs, process::Command};
+        assert_eq!(std::env::var("WENLAN_NO_AUTOSTART").as_deref(), Ok("1"));
+        let binary = PathBuf::from(std::env::var_os("WENLAN_TEST_RULESYNC_BINARY").unwrap());
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary,
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, _, _) = hosted_fixture(&setup.data);
+        let repo = scratch.path().join("checkout");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &["remote", "add", "origin", REMOTE],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let directory = Path::new("checkouts/render/rules");
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings,
+            root: &root,
+            directory,
+            can_restore_rejection: true,
+        };
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let report = job
+            .run_using(
+                Path::new("checkouts/render.json"),
+                Snapshot::Absent,
+                Checkout {
+                    repo,
+                    ..Checkout::default()
+                },
+                Some(&master),
+                |project, teams, _, master| {
+                    assert_eq!(project.len(), 1);
+                    assert_eq!(teams.len(), 1);
+                    let mut project = project.to_vec();
+                    project[0].skills.push(TeamProjectSkill {
+                        name: "checked-procedure".into(),
+                        files: vec![TeamProjectSkillFile {
+                            path: "SKILL.md".into(),
+                            text: "---\nname: checked-procedure\ndescription: Checked procedure.\n---\nExpected skill\n".into(),
+                        }],
+                    });
+                    let skills = ProjectSkills::from_layers(&project)?;
+                    job.render(
+                        &project,
+                        teams,
+                        &skills,
+                        master,
+                        &["Personal instruction.".into()],
+                    )
+                },
+            )
+            .unwrap();
+        assert!(
+            report
+                .blocked
+                .iter()
+                .all(|line| line.contains("until you trust this repository in Codex")),
+            "{report:?}"
+        );
+        for file in ["CLAUDE.md", "AGENTS.md"] {
+            let output = fs::read_to_string(setup.data.join(directory).join(file)).unwrap();
+            println!("----- rendered {file} -----\n{output}----- end {file} -----");
+            let team = output.find("Team rules for").unwrap();
+            let personal = output.find("Personal instruction.").unwrap();
+            let project = output.find("Project rules for").unwrap();
+            assert!(team < personal && personal < project, "{file}: {output}");
+            assert!(output.contains("Rules are listed from broadest to most specific. When two disagree, follow the later one."));
+        }
+        assert!(setup
+            .data
+            .join(directory)
+            .join(".agents/skills/checked-procedure/SKILL.md")
+            .is_file());
+    }
 
     #[cfg(not(windows))]
     #[test]
@@ -1164,6 +1720,141 @@ mod tests {
 
     #[test]
     fn rulesync_checkout_project_hand_edit_survives_sync_until_a_writer_rejects_it() {
+        checkout_hand_edit(false, false, false);
+    }
+
+    #[test]
+    fn rulesync_checkout_waiting_edit_survives_new_revision() {
+        checkout_hand_edit(true, false, false);
+    }
+
+    #[test]
+    fn rulesync_checkout_local_revocation_survives_a_render_failure() {
+        checkout_hand_edit(false, true, false);
+    }
+
+    #[test]
+    fn rulesync_checkout_refused_edit_can_be_declined_after_receipt() {
+        checkout_hand_edit(false, false, true);
+    }
+
+    #[test]
+    fn rulesync_checkout_one_revoked_project_is_removed_before_render_failure() {
+        use crate::rulesync_layers::tests::{hosted_fixture, PROJECT, REMOTE};
+        use std::{fs, process::Command};
+        use wenlan_core::{shared_space, team};
+        let scratch = tempfile::tempdir().unwrap();
+        let setup = Setup {
+            home: scratch.path().join("home"),
+            data: scratch.path().join("data"),
+            binary: PathBuf::from("unused"),
+        };
+        fs::create_dir(&setup.home).unwrap();
+        fs::create_dir(&setup.data).unwrap();
+        let (settings, owner, _) = hosted_fixture(&setup.data);
+        let other = "Another project";
+        let scope = shared_space::Scope::Space(other.into());
+        let folder = team::new_hosted_folder(&settings);
+        shared_space::join_at(&settings, &scope, &folder, "Owner").unwrap();
+        shared_space::update_share(&settings, &scope, |share| share.hosted = true).unwrap();
+        shared_space::ensure_space_file(
+            &folder,
+            &scope,
+            other,
+            &shared_space::SpaceMember {
+                id: owner.id,
+                name: owner.name,
+            },
+        )
+        .unwrap();
+        fs::write(setup.data.join("repo-wiki.json"), serde_json::to_vec(&serde_json::json!({"bindings": [
+            {"space": PROJECT, "repo_root": scratch.path().join("repo"), "folder": "wiki", "remote_url": REMOTE},
+            {"space": other, "repo_root": scratch.path().join("repo"), "folder": "other-wiki", "remote_url": REMOTE}
+        ]})).unwrap()).unwrap();
+        let proposal =
+            rulesync_team::update_hosted_rules(&settings, other, "Other project instruction.\n")
+                .unwrap();
+        rulesync_team::decide_local_space_proposal(&settings, other, &proposal, true).unwrap();
+        let repo = scratch.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &["remote", "add", "origin", REMOTE],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        fs::create_dir(setup.home.join(".codex")).unwrap();
+        fs::write(
+            setup.home.join(".codex/config.toml"),
+            crate::rulesync_checkout_local::trust_config(&repo.display().to_string()),
+        )
+        .unwrap();
+        let root = setup.data_files().unwrap();
+        let session = rulesync_renderer::RenderSession::new(&setup.binary);
+        let job = Job {
+            setup: &setup,
+            session: &session,
+            settings: settings.clone(),
+            root: &root,
+            directory: Path::new("checkouts/example/rules"),
+            can_restore_rejection: true,
+        };
+        let state_path = Path::new("checkouts/example.json");
+        let master =
+            PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let state = Snapshot::Absent;
+        let checkout = Checkout {
+            repo: repo.clone(),
+            ..Checkout::default()
+        };
+        job.run_using(
+            state_path,
+            state,
+            checkout,
+            Some(&master),
+            |projects, _, _, _| {
+                assert_eq!(projects.len(), 2);
+                Ok(RenderedCheckout::default())
+            },
+        )
+        .unwrap();
+        let revoked = rulesync_team::load_project_layers(&settings)
+            .unwrap()
+            .into_iter()
+            .find(|layer| layer.project.as_ref().is_some_and(|p| p.space == other))
+            .unwrap();
+        let revoked_key = rulesync_layers::key(&revoked).unwrap();
+        let retained = rulesync_team::load_project_layers(&settings)
+            .unwrap()
+            .into_iter()
+            .find(|layer| layer.project.as_ref().is_some_and(|p| p.space == PROJECT))
+            .unwrap();
+        let retained_key = rulesync_layers::key(&retained).unwrap();
+        shared_space::leave_at(&settings, &scope).unwrap();
+        let state = root.read(state_path, false).unwrap();
+        let checkout = read_checkout(text(&state).unwrap().as_bytes()).unwrap();
+        let result = job
+            .run_using(state_path, state, checkout, Some(&master), |_, _, _, _| {
+                anyhow::bail!("deliberate render failure")
+            })
+            .unwrap();
+        assert!(result
+            .blocked
+            .iter()
+            .any(|line| line.contains("deliberate render failure")));
+        for name in ["CLAUDE.local.md", ".codex/config.toml"] {
+            let content = fs::read_to_string(repo.join(name)).unwrap();
+            assert!(!content.contains(&revoked_key));
+            assert!(content.contains(&retained_key));
+        }
+    }
+
+    fn checkout_hand_edit(new_revision: bool, fail_revoked_render: bool, refusal: bool) {
         use crate::rulesync_layers::tests::{
             hosted_fixture, render_fixture_section, APPROVED, PROJECT, REMOTE,
         };
@@ -1192,6 +1883,12 @@ mod tests {
                 .unwrap()
                 .success());
         }
+        fs::create_dir(setup.home.join(".codex")).unwrap();
+        fs::write(
+            setup.home.join(".codex/config.toml"),
+            crate::rulesync_checkout_local::trust_config(&repo.display().to_string()),
+        )
+        .unwrap();
         let root = setup.data_files().unwrap();
         let session = rulesync_renderer::RenderSession::new(&setup.binary);
         let directory = Path::new("checkouts/example/rules");
@@ -1207,6 +1904,7 @@ mod tests {
         let rule = Path::new("AGENTS.md");
         let master =
             PersonalMaster::new(&rulesync_personal::discover_adoption(&setup.home).unwrap());
+        let fail_render = std::cell::Cell::new(false);
         let sync = |can_restore_rejection| {
             let state = root.read(state_path, false).unwrap();
             let checkout = if state == Snapshot::Absent {
@@ -1224,6 +1922,9 @@ mod tests {
                     checkout,
                     Some(&master),
                     |projects, teams, _, _| {
+                        if fail_render.get() {
+                            anyhow::bail!("deliberate render failure");
+                        }
                         assert_eq!(projects.len(), 1);
                         let body = format!(
                             "{}{}Personal advice.\n",
@@ -1259,11 +1960,137 @@ mod tests {
             let report = sync(true);
             assert_eq!(fs::read_to_string(&file).unwrap(), edited);
             assert!(report.proposals.is_empty());
-            assert_eq!(report.blocked_codes, [Code::SharedRulePending.into()]);
-            assert_eq!(pending().len(), 1);
+            assert_eq!(report.blocked_codes, [Code::SharedRuleNeedsConfirm.into()]);
+            assert!(
+                report
+                    .blocked
+                    .iter()
+                    .any(|line| line.contains("This edit is waiting for you to confirm it.")),
+                "{report:?}"
+            );
+            assert!(pending().is_empty());
         }
+        let answers = crate::rulesync_shared_answers::read(&setup.data).unwrap();
+        assert_eq!(answers.waiting.len(), 1);
+        let mut id = answers.waiting.keys().next().unwrap().clone();
+        let mut final_approved = approved.clone();
+        let mut final_edited = edited.clone();
+        if new_revision {
+            let proposal = rulesync_team::update_hosted_rules(
+                &settings,
+                PROJECT,
+                "Use the approved checklist.\nAnother approved line.\n",
+            )
+            .unwrap();
+            rulesync_team::decide_local_space_proposal(&settings, PROJECT, &proposal, true)
+                .unwrap();
+            let error = crate::rulesync_routes::decide_shared_edit_at(
+                &setup,
+                &settings,
+                wenlan_types::rulesync::SharedEditDecisionRequest {
+                    id: id.clone(),
+                    send: true,
+                },
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, crate::error::ServerError::Structured { status, body } if status == axum::http::StatusCode::CONFLICT && body["code"] == wenlan_types::rulesync::SHARED_EDIT_STALE_REVISION_CODE)
+            );
+            assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+            let background = sync(false);
+            assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+            assert!(background
+                .blocked_codes
+                .contains(&Code::SharedRuleNeedsConfirm.into()));
+            let report = sync(true);
+            assert_eq!(report.blocked_codes, [Code::SharedRuleNeedsConfirm.into()]);
+            let project = rulesync_team::load_project_layers(&settings)
+                .unwrap()
+                .remove(0);
+            let team = rulesync_team::load_layers(&settings).unwrap().remove(0);
+            final_approved = format!(
+                "{}{}Personal advice.\n",
+                render_fixture_section(&project),
+                render_fixture_section(&team)
+            );
+            final_edited = final_approved.replacen(APPROVED, "Use the checkout checklist.\n", 1);
+            assert_eq!(fs::read_to_string(&file).unwrap(), final_edited);
+            let answers = crate::rulesync_shared_answers::read(&setup.data).unwrap();
+            assert_eq!(answers.waiting.len(), 1);
+            let next_id = answers.waiting.keys().next().unwrap().clone();
+            assert_ne!(next_id, id);
+            id = next_id;
+        }
+        crate::rulesync_routes::decide_shared_edit_at(
+            &setup,
+            &settings,
+            wenlan_types::rulesync::SharedEditDecisionRequest {
+                id: id.clone(),
+                send: true,
+            },
+        )
+        .unwrap();
         let [proposal]: [_; 1] = pending().try_into().unwrap();
-        assert_eq!(proposal.markdown, "Use the checkout checklist.\n");
+        if refusal {
+            let background = sync(false);
+            assert!(background
+                .blocked_codes
+                .contains(&Code::SharedRulePending.into()));
+            let malformed = setup
+                .data
+                .join("checkouts")
+                .join(format!("{}.json", "0".repeat(64)));
+            fs::write(&malformed, b"{}").unwrap();
+            let queued = crate::rulesync_shared_answers::read(&setup.data)
+                .unwrap()
+                .sent_edits[&id]
+                .proposal_path
+                .clone();
+            let state = root.read(state_path, false).unwrap();
+            let receipt = read_checkout(text(&state).unwrap().as_bytes()).unwrap();
+            assert!(receipt
+                .shared_rule_proposals
+                .values()
+                .any(|items| !items.is_empty()));
+            crate::rulesync_routes::reopen_edits_after_old_host_refusal_at(
+                &setup,
+                &settings,
+                std::slice::from_ref(&proposal.id),
+            )
+            .unwrap();
+            assert_eq!(fs::read(&malformed).unwrap(), b"{}");
+            assert!(!queued.exists());
+            assert!(crate::rulesync_shared_answers::read(&setup.data)
+                .unwrap()
+                .waiting
+                .contains_key(&id));
+            let state = root.read(state_path, false).unwrap();
+            assert!(read_checkout(text(&state).unwrap().as_bytes())
+                .unwrap()
+                .shared_rule_proposals
+                .is_empty());
+            crate::rulesync_routes::decide_shared_edit_at(
+                &setup,
+                &settings,
+                wenlan_types::rulesync::SharedEditDecisionRequest { id, send: false },
+            )
+            .unwrap();
+            let report = sync(true);
+            assert_eq!(
+                fs::read_to_string(&file).unwrap(),
+                final_approved,
+                "{report:?}"
+            );
+            return;
+        }
+        assert_eq!(
+            proposal.markdown,
+            if new_revision {
+                "Use the checkout checklist.\nAnother approved line.\n"
+            } else {
+                "Use the checkout checklist.\n"
+            }
+        );
         assert!(rulesync_team::local_proposals(&settings)
             .unwrap()
             .is_empty());
@@ -1278,15 +2105,38 @@ mod tests {
         )
         .unwrap();
         assert!(sync(false).notice_codes.is_empty());
-        assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+        assert_eq!(fs::read_to_string(&file).unwrap(), final_edited);
         let report = sync(true);
-        assert_eq!(fs::read_to_string(&file).unwrap(), approved);
+        assert_eq!(fs::read_to_string(&file).unwrap(), final_approved);
         assert!(
             report.blocked.is_empty() && pending().is_empty(),
             "{report:?}"
         );
         assert_eq!(report.notice_codes, [Code::SharedRuleRejected.into()]);
         assert!(sync(true).notice_codes.is_empty());
+        if fail_revoked_render {
+            assert!(repo.join("CLAUDE.local.md").exists());
+            assert!(repo.join(".codex/config.toml").exists());
+            assert!(Command::new("git")
+                .current_dir(&repo)
+                .args([
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "https://github.com/fixture/other.git"
+                ])
+                .status()
+                .unwrap()
+                .success());
+            fail_render.set(true);
+            let report = sync(true);
+            assert!(report
+                .blocked
+                .iter()
+                .any(|line| line.contains("deliberate render failure")));
+            assert!(!repo.join("CLAUDE.local.md").exists());
+            assert!(!repo.join(".codex/config.toml").exists());
+        }
     }
 
     #[test]

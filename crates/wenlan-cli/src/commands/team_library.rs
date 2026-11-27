@@ -5,12 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde::Serialize;
 use wenlan_types::team::TeamAccess;
 use wenlan_types::team_library::{
-    TeamAuthorship, TeamItemKind, TeamOriginal, TeamPublication, TeamTerminalAction,
-    TeamTerminalReply, TeamText,
+    TeamDraft, TeamItemKind, TeamPublication, TeamTerminalAction, TeamTerminalReply, TeamText,
 };
 
 use crate::client::WenlanClient;
@@ -59,131 +58,21 @@ pub struct PublishArgs {
     redactions: Option<PathBuf>,
 }
 
-#[derive(Serialize)]
-struct Original {
-    original: TeamOriginal,
-    text: TeamText,
-}
-
-#[derive(Serialize)]
-struct Draft {
-    item: Original,
-    sources: Vec<Original>,
-    omitted_sources: bool,
-    authorship: Option<TeamAuthorship>,
-}
-
 fn print_json(value: &impl Serialize) -> Result<()> {
     println!("{}", crate::commands::rulesync::terminal_json(value)?);
     Ok(())
 }
 
-fn safe_id(id: &str) -> Result<()> {
-    ensure!(
-        wenlan_core::shared_space::version::is_safe_id(id),
-        "Use a Wenlan item ID."
-    );
-    Ok(())
-}
-
-async fn prepare(client: &WenlanClient, kind: OriginalKind, id: &str) -> Result<Draft> {
+async fn prepare(client: &WenlanClient, kind: OriginalKind, id: &str) -> Result<TeamDraft> {
     ensure!(
         client.is_local(),
         "Prepare the draft against your personal Wenlan on this computer."
     );
-    safe_id(id)?;
-    match kind {
-        OriginalKind::Memory => {
-            let item = client
-                .get_memory_detail(id)
-                .await?
-                .memory
-                .and_then(personal_memory)
-                .ok_or_else(|| anyhow!("Personal memory not found."))?;
-            Ok(Draft {
-                item,
-                sources: Vec::new(),
-                omitted_sources: false,
-                authorship: None,
-            })
-        }
-        OriginalKind::Page => {
-            let page = client.read_page(id).await?.page.page;
-            ensure!(page.status == "active", "The personal page must be active.");
-            let mut source_ids: BTreeSet<String> = page.source_memory_ids.iter().cloned().collect();
-            let mut omitted_sources = false;
-            for citation in page
-                .citations
-                .iter()
-                .filter(|citation| !citation.historical)
-            {
-                if citation.source_kind == "memory" {
-                    let locator = citation
-                        .locator
-                        .strip_prefix("wenlan:")
-                        .unwrap_or(&citation.locator);
-                    let id = locator.split_once('@').map_or(locator, |(id, _)| id);
-                    source_ids.insert(id.into());
-                } else {
-                    omitted_sources = true;
-                }
-            }
-            ensure!(
-                source_ids.len() <= 32,
-                "This page has more than 32 personal sources. Review a shorter draft."
-            );
-            let mut sources = Vec::new();
-            for id in source_ids {
-                if safe_id(&id).is_ok() {
-                    let found = client
-                        .get_memory_detail(&id)
-                        .await?
-                        .memory
-                        .and_then(personal_memory);
-                    if let Some(source) = found {
-                        sources.push(source);
-                        continue;
-                    }
-                }
-                omitted_sources = true;
-            }
-            let authorship = match page.creation_kind.as_str() {
-                "authored" if page.user_edited => Some(TeamAuthorship::Human),
-                "distilled" => Some(TeamAuthorship::Ai),
-                _ => None,
-            };
-            Ok(Draft {
-                item: Original {
-                    original: TeamOriginal {
-                        kind: TeamItemKind::Page,
-                        id: page.id,
-                        revision: page.version,
-                    },
-                    text: TeamText {
-                        title: page.title,
-                        body: wenlan_core::team_library::draft_page_body(&page.content),
-                    },
-                },
-                sources,
-                omitted_sources,
-                authorship,
-            })
-        }
-    }
-}
-
-fn personal_memory(memory: wenlan_types::memory::MemoryItem) -> Option<Original> {
-    (memory.supersede_mode != "evicted" && !memory.pending_revision).then_some(Original {
-        original: TeamOriginal {
-            kind: TeamItemKind::Memory,
-            id: memory.source_id,
-            revision: memory.version,
-        },
-        text: TeamText {
-            title: memory.title,
-            body: memory.content,
-        },
-    })
+    let kind = match kind {
+        OriginalKind::Page => TeamItemKind::Page,
+        OriginalKind::Memory => TeamItemKind::Memory,
+    };
+    client.team_library_draft(kind, id).await
 }
 
 pub(super) async fn draft(client: &WenlanClient, kind: OriginalKind, id: &str) -> Result<()> {

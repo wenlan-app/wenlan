@@ -58,6 +58,7 @@ impl Member {
                 knowledge_path: None,
                 member_id: None,
                 host: None,
+                rules_edit_proposals: &[],
             },
         ))
         .await
@@ -75,6 +76,7 @@ impl Member {
                 knowledge_path: None,
                 member_id: None,
                 host: None,
+                rules_edit_proposals: &[],
             },
         ))
         .await
@@ -96,6 +98,7 @@ impl Member {
                 knowledge_path: None,
                 member_id: Some(member_id),
                 host: None,
+                rules_edit_proposals: &[],
             },
         ))
         .await
@@ -103,7 +106,7 @@ impl Member {
 
     /// Every automatic pass, by scope key.
     async fn auto_all(&self, person_name: Option<&str>) -> Vec<(String, SharedSyncRun)> {
-        sync_shared_spaces(&self.db, &self.settings(), None, person_name).await
+        sync_shared_spaces(&self.db, &self.settings(), None, person_name, &[]).await
     }
 
     async fn write(&self, title: &str, content: &str, space: WriteSpaceTarget) -> String {
@@ -171,7 +174,7 @@ impl Member {
 
     /// The daemon's pass of every shared Space, as the scheduler runs it.
     async fn auto(&self) -> SharedSyncRun {
-        sync_shared_spaces(&self.db, &self.settings(), None, None)
+        sync_shared_spaces(&self.db, &self.settings(), None, None, &[])
             .await
             .into_iter()
             .find(|(space, _)| space == SPACE)
@@ -1523,6 +1526,7 @@ impl Member {
                 knowledge_path: None,
                 member_id,
                 host: None,
+                rules_edit_proposals: &[],
             },
         ))
         .await

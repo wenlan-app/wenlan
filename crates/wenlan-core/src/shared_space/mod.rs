@@ -91,6 +91,9 @@ mod member_import;
 mod memories;
 mod merge;
 pub mod remote;
+
+pub const OUTDATED_HOST_EDIT_MESSAGE: &str =
+    "The team's Wenlan couldn't take this edit; it may need updating.";
 mod review;
 pub mod rewrite;
 pub mod version;
@@ -121,12 +124,14 @@ pub const SETTINGS_FILE: &str = "shared-spaces.json";
 /// then `:` and their member id.
 pub const SHARED_PERSON: &str = "shared_person";
 pub const SHARED_AI: &str = "shared_ai";
+pub const SHARED_UNKNOWN: &str = "shared_unknown";
 
 /// `page_history.edited_by` of a version this person wrote on another of
 /// their own computers (the same member id): their own sentences, and
 /// their own AI tool's, never another member's.
 pub const OWN_DEVICE_PERSON: &str = "own_device";
 pub const OWN_DEVICE_AI: &str = "own_device_ai";
+pub const OWN_DEVICE_UNKNOWN: &str = "own_device_unknown";
 
 /// The key the library's pass and what it last held are kept under.
 pub const LIBRARY_KEY: &str = "library:";
@@ -165,6 +170,7 @@ pub fn shared_writer(edited_by: &str) -> Option<(AuthorKind, &str)> {
     let kind = match kind {
         SHARED_PERSON => AuthorKind::Person,
         SHARED_AI => AuthorKind::Ai,
+        SHARED_UNKNOWN => AuthorKind::Unknown,
         _ => return None,
     };
     version::is_safe_id(member).then_some((kind, member))
@@ -178,6 +184,7 @@ pub fn writer_edited_by(author: &Author, me: &str) -> String {
         return match author.kind {
             AuthorKind::Person => OWN_DEVICE_PERSON,
             AuthorKind::Ai => OWN_DEVICE_AI,
+            AuthorKind::Unknown => OWN_DEVICE_UNKNOWN,
         }
         .to_string();
     }
@@ -189,6 +196,7 @@ pub fn shared_edited_by(author: &Author) -> String {
     let kind = match author.kind {
         AuthorKind::Person => SHARED_PERSON,
         AuthorKind::Ai => SHARED_AI,
+        AuthorKind::Unknown => SHARED_UNKNOWN,
     };
     format!("{kind}:{}", author.member)
 }
@@ -1315,8 +1323,36 @@ fn space_run(settings_path: &Path, key: &str) -> Arc<SpaceRun> {
 /// How a pass ended.
 enum Outcome {
     Done(SharedSyncCounts),
-    Paused(String),
+    Paused(SyncPause),
     Failed(String),
+}
+
+#[derive(Clone)]
+struct SyncPause {
+    reason: String,
+    refused_proposals: Vec<String>,
+}
+
+impl From<String> for SyncPause {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            refused_proposals: Vec::new(),
+        }
+    }
+}
+
+impl From<remote::SyncError> for SyncPause {
+    fn from(error: remote::SyncError) -> Self {
+        let refused_proposals = match &error {
+            remote::SyncError::OutdatedHost(ids) => ids.clone(),
+            _ => Vec::new(),
+        };
+        Self {
+            reason: error.to_string(),
+            refused_proposals,
+        }
+    }
 }
 
 /// Keeps `outcome` as the Space's last pass. A pause or a failure is logged
@@ -1351,18 +1387,20 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 at,
                 counts,
                 paused: None,
+                refused_proposals: Vec::new(),
                 error: None,
                 held_back,
             }
         }
-        Outcome::Paused(reason) => {
-            if before.as_ref().and_then(|run| run.paused.as_ref()) != Some(&reason) {
-                log::warn!("[shared_space] {space} paused: {reason}");
+        Outcome::Paused(pause) => {
+            if before.as_ref().and_then(|run| run.paused.as_ref()) != Some(&pause.reason) {
+                log::warn!("[shared_space] {space} paused: {}", pause.reason);
             }
             SharedSyncRun {
                 at,
                 counts: SharedSyncCounts::default(),
-                paused: Some(reason),
+                paused: Some(pause.reason),
+                refused_proposals: pause.refused_proposals,
                 error: None,
                 held_back: None,
             }
@@ -1375,6 +1413,7 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
                 at,
                 counts: SharedSyncCounts::default(),
                 paused: None,
+                refused_proposals: Vec::new(),
                 error: Some(error),
                 held_back: None,
             }
@@ -1579,6 +1618,8 @@ pub struct SyncTarget<'a> {
     /// Sync through this team server; `folder` is then this Wenlan's copy of
     /// its folder ([`remote::mirror_folder`]).
     pub host: Option<HostLink>,
+    /// Confirmed tool-file proposal versions eligible for refusal recovery.
+    pub rules_edit_proposals: &'a [String],
 }
 
 /// One sync pass of `target.scope` with its folder (see the module docs),
@@ -1701,6 +1742,7 @@ pub async fn sync_space(
             target.settings_path,
             target.knowledge_path,
             false,
+            target.rules_edit_proposals,
         )
         .await
     }
@@ -1710,9 +1752,16 @@ pub async fn sync_space(
             finish(&run, &key, Outcome::Done(counts));
             Ok(counts)
         }
-        Ok(Err(reason)) => {
-            finish(&run, &key, Outcome::Paused(reason.clone()));
-            Err(WenlanError::Validation(reason))
+        Ok(Err(pause)) => {
+            let error = if pause.refused_proposals.is_empty() {
+                WenlanError::Validation(pause.reason.clone())
+            } else {
+                WenlanError::TeamRulesProposalRefused {
+                    proposal_ids: pause.refused_proposals.clone(),
+                }
+            };
+            finish(&run, &key, Outcome::Paused(pause));
+            Err(error)
         }
         Err(error) => {
             finish(&run, &key, Outcome::Failed(error.to_string()));
@@ -1733,7 +1782,8 @@ async fn run_pass(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
     automatic: bool,
-) -> Result<Result<SharedSyncCounts, String>, WenlanError> {
+    rules_edit_proposals: &[String],
+) -> Result<Result<SharedSyncCounts, SyncPause>, WenlanError> {
     let folder = folder_for(scope, &settings.folder);
     if matches!(scope, Scope::Library) {
         // Two computers that each started a library in the same folder
@@ -1767,7 +1817,7 @@ async fn run_pass(
         Some(host) => match remote::pull(&host, &folder).await {
             Err(reason) => {
                 clear_rule_layer_if_refused(settings_path, &host, &reason)?;
-                return Ok(Err(reason.to_string()));
+                return Ok(Err(reason.into()));
             }
             Ok((listed, layer)) => {
                 remember_team_rule_pull(settings_path, scope, &host, layer)?;
@@ -1785,7 +1835,7 @@ async fn run_pass(
     };
     if automatic {
         if let Err(reason) = ready(db, scope, &settings).await {
-            return Ok(Err(reason));
+            return Ok(Err(reason.into()));
         }
     }
     if settings.hosted {
@@ -1821,9 +1871,17 @@ async fn run_pass(
         library::main_jobs(db, settings_path, &settings, &counts).await;
     }
     if let Some((host, listed)) = listed {
-        if let Err(reason) = remote::push(&host, &folder, &settings.member_id, &listed).await {
+        if let Err(reason) = remote::push(
+            &host,
+            &folder,
+            &settings.member_id,
+            &listed,
+            rules_edit_proposals,
+        )
+        .await
+        {
             clear_rule_layer_if_refused(settings_path, &host, &reason)?;
-            return Ok(Err(reason.to_string()));
+            return Ok(Err(reason.into()));
         }
     }
     Ok(Ok(counts))
@@ -1841,7 +1899,7 @@ fn clear_rule_layer_if_refused(
         remote::SyncError::Refused(_) => {
             clear_team_rule_layer(settings_path, &host.url, &host.key, Some(&host.space))
         }
-        remote::SyncError::Unavailable(_) => Ok(()),
+        remote::SyncError::Unavailable(_) | remote::SyncError::OutdatedHost(_) => Ok(()),
     }
 }
 
@@ -1902,6 +1960,7 @@ pub async fn sync_shared_spaces(
     settings_path: &Path,
     knowledge_path: Option<&Path>,
     person_name: Option<&str>,
+    rules_edit_proposals: &[String],
 ) -> Vec<(String, SharedSyncRun)> {
     follow::follow_teams(db, settings_path).await;
     let shares = match shares_at(settings_path) {
@@ -1944,12 +2003,21 @@ pub async fn sync_shared_spaces(
                 Err(error) => log::warn!("[shared_space] {key}: name not changed: {error}"),
             }
         }
-        let outcome =
-            match run_pass(db, &scope, settings, settings_path, knowledge_path, true).await {
-                Ok(Ok(counts)) => Outcome::Done(counts),
-                Ok(Err(reason)) => Outcome::Paused(reason),
-                Err(error) => Outcome::Failed(error.to_string()),
-            };
+        let outcome = match run_pass(
+            db,
+            &scope,
+            settings,
+            settings_path,
+            knowledge_path,
+            true,
+            rules_edit_proposals,
+        )
+        .await
+        {
+            Ok(Ok(counts)) => Outcome::Done(counts),
+            Ok(Err(reason)) => Outcome::Paused(reason),
+            Err(error) => Outcome::Failed(error.to_string()),
+        };
         out.push((key.clone(), finish(&run, &key, outcome)));
     }
     out
@@ -4191,6 +4259,7 @@ async fn local_author(db: &MemoryDB, page: &Page, member: &str) -> Result<Author
                 })
             })
             .and_then(|entry| entry.get("agent")?.as_str().map(str::to_string)),
+        AuthorKind::Unknown => None,
     };
     Ok(Author {
         member: member.to_string(),

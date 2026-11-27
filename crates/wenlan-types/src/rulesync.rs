@@ -12,6 +12,27 @@ pub const SYNC_COMMAND: &str = "wenlan rules status --sync";
 pub const TO_REVIEW_COMMAND: &str = "wenlan rules review";
 pub const RESTORE_COMMAND: &str = "wenlan rules restore";
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedEditWaiting {
+    pub id: String,
+    pub layer_name: String,
+    pub files: Vec<String>,
+    pub markdown: String,
+    pub first_seen: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedEditDecisionRequest {
+    pub id: String,
+    pub send: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SharedEditDecision {
+    Send { proposal: String },
+    Decline,
+}
+
 /// Localizable setup diagnostics. Legacy terminal copy is carried separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +113,7 @@ pub enum RulesSetupCode {
     RuleEncoding,
     SharedRuleChanged,
     SharedRulePending,
+    SharedRuleNeedsConfirm,
     SharedRuleRejected,
     MixedRuleLayers,
     RuleCompareFailed,
@@ -599,3 +621,6 @@ pub struct ProjectTeamRulesRequest {
 pub struct SharedRulesProposalRequest {
     pub markdown: String,
 }
+/// A confirmed shared edit is based on a superseded approved revision.
+pub const SHARED_EDIT_STALE_REVISION_CODE: &str = "shared_edit_stale_revision";
+pub const SHARED_EDIT_STALE_REVISION_MESSAGE: &str = "The team's rules changed since this edit. Run `wenlan rules sync`, then confirm it again with `wenlan rules shared-edits`.";
