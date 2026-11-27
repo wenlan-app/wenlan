@@ -246,10 +246,10 @@ fn ux_skill_14_the_tools_say_only_when_the_person_asked() {
     }
 }
 
-/// UX-SKILL-14: `add_rule` says it saves a personal rule, and that team and
-/// project rules come from the Space's Rules page or a proposal there.
+/// UX-SKILL-14: `add_rule` says a rule saved for a Space reaches its connected
+/// repositories as a project rule, and team rules come from the Rules page.
 #[test]
-fn ux_skill_14_add_rule_says_it_saves_a_personal_rule() {
+fn ux_skill_14_add_rule_says_where_a_saved_rule_goes() {
     let tools = server("http://127.0.0.1:1".into(), TransportMode::Stdio)
         .tool_router
         .list_all();
@@ -258,25 +258,17 @@ fn ux_skill_14_add_rule_says_it_saves_a_personal_rule() {
         .find(|tool| tool.name == "add_rule")
         .and_then(|tool| tool.description.as_deref())
         .unwrap_or_default();
+    for said in [
+        "Save one of the user's own working rules",
+        "goes into AGENTS.md, as a project rule, in each repository connected to that Space",
+        "Rules a team approves come only from the Space's Rules page",
+        "from a proposal approved there",
+    ] {
+        assert!(description.contains(said), "{said}: {description}");
+    }
+    // Never says it is not a project rule: in the repository it is one.
     assert!(
-        description.contains("Save one PERSONAL working rule"),
-        "{description}"
-    );
-    assert!(
-        description.contains("not a team or project rule"),
-        "{description}"
-    );
-    assert!(
-        description.contains("Team and project rules come only from the Space's Rules page"),
-        "{description}"
-    );
-    assert!(
-        description.contains("from a proposal approved there"),
-        "{description}"
-    );
-    // Truthful about where a Space's rule goes: a connected repository too.
-    assert!(
-        description.contains("a repository connected to that Space"),
+        !description.contains("not a team or project rule"),
         "{description}"
     );
 }

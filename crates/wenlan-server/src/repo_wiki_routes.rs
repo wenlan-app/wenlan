@@ -1232,10 +1232,7 @@ pub(crate) async fn publish_space(
     let now = chrono::Utc::now().timestamp();
     let mut rules = crate::skill_grow::project_rules(db, page_root, space).await;
     let mut team_rules = Vec::new();
-    let mut sources = repo_wiki::RuleSources {
-        space: binding.space.clone(),
-        ..repo_wiki::RuleSources::default()
-    };
+    let mut sources = repo_wiki::RuleSources::default();
     if rulesync {
         let settings = shared_space::settings_path();
         if shared_space::share_settings_at(&settings, &shared_space::Scope::Space(space.into()))?
@@ -1247,7 +1244,7 @@ pub(crate) async fn publish_space(
         }
         if let Some(layer) = rulesync_team::hosted_project_layer(&settings, space)? {
             rules = Some(markdown_rules(&layer.markdown));
-            sources.project_line = Some(layer.source_line("Project"));
+            sources.project_line = layer.source_line("Project");
         }
         let space = project_rule_space(db, space).await?;
         if let Some(selected) = db
@@ -1260,8 +1257,7 @@ pub(crate) async fn publish_space(
                 .find(|layer| layer.id == selected)
             {
                 team_rules = markdown_rules(&layer.markdown);
-                sources.team_name = Some(layer.name.clone());
-                sources.team_line = Some(layer.source_line("Team"));
+                sources.team_line = layer.source_line("Team");
             }
         }
     }

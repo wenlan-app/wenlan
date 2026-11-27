@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use wenlan_types::repo_wiki::{ProjectRuleProposal, RepoWikiBinding};
 
 use super::{
-    agents_block, git, imports_agents, is_rules_heading, project_heading, run, sha256_hex,
-    RuleSources, AGENTS_END, AGENTS_START, CLAUDE_IMPORT, RULES_HEADING,
+    agents_block, git, imports_agents, is_rules_heading, run, sha256_hex, RuleSources, AGENTS_END,
+    AGENTS_START, CLAUDE_IMPORT, PROJECT_HEADING, RULES_HEADING,
 };
 use crate::error::WenlanError;
 use crate::rulesync_personal::{
@@ -24,24 +24,14 @@ use crate::skill_grow::tool_file_text;
 const ROOT_AGENTS: &str = "AGENTS.md";
 const ROOT_CLAUDE: &str = "CLAUDE.md";
 const TARGETS: &[&str] = &["codexcli", "claudecode", "copilot"];
-/// Renderer input heading for the team section, and the heading of earlier
-/// releases; the published block names the team ([`team_heading`]).
+/// The team section heading. It names no team: the repository may be
+/// public, and the team's name stays in Wenlan.
 const TEAM_HEADING: &str = "## Team rules";
-const TEAM_HEADING_FOR: &str = "## Team rules for ";
+/// A heading naming the team, written by no release but read back.
+const NAMED_TEAM_HEADING: &str = "## Team rules for ";
 
 fn is_team_heading(line: &str) -> bool {
-    line == TEAM_HEADING || line.starts_with(TEAM_HEADING_FOR)
-}
-
-fn team_heading(sources: &RuleSources) -> String {
-    match sources
-        .team_name
-        .as_deref()
-        .filter(|name| !name.trim().is_empty())
-    {
-        Some(name) => format!("{TEAM_HEADING_FOR}{}", tool_file_text(name)),
-        None => TEAM_HEADING.to_owned(),
-    }
+    line == TEAM_HEADING || line.starts_with(NAMED_TEAM_HEADING)
 }
 const MAX_RULE_FILE: u64 = 256 * 1024;
 
@@ -1085,7 +1075,7 @@ fn block(
     if body.is_empty() && team.is_empty() && folder.is_none() && !keep_marker {
         return Ok(None);
     }
-    let mut block = agents_block(folder, &[], Some(publisher), &sources.space);
+    let mut block = agents_block(folder, &[], Some(publisher));
     block.truncate(block.len() - AGENTS_END.len());
     if !body.is_empty() || !team.is_empty() {
         if folder.is_some() {
@@ -1093,21 +1083,12 @@ fn block(
         }
         block.push_str(RULE_PRECEDENCE);
         block.push_str("\n\n");
-        let team_source = sources.team_line.clone().or_else(|| {
-            let name = sources.team_name.as_deref()?;
-            Some(crate::rulesync_team::rules_source_line(
-                "Team", "Team", name, None, None,
-            ))
-        });
-        let project_source = sources.project_line.clone().unwrap_or_else(|| {
-            crate::rulesync_team::rules_source_line("Project", "Space", &sources.space, None, None)
-        });
         for (heading, source, section) in [
-            (team_heading(sources), team_source, team),
-            (project_heading(&sources.space), Some(project_source), body),
+            (TEAM_HEADING, &sources.team_line, team),
+            (PROJECT_HEADING, &sources.project_line, body),
         ] {
             if !section.is_empty() {
-                block.push_str(&heading);
+                block.push_str(heading);
                 block.push_str("\n\n");
                 if let Some(source) = source {
                     block.push_str(&tool_file_text(&source));

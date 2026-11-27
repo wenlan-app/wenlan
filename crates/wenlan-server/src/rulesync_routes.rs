@@ -14247,7 +14247,6 @@ mod tests {
             markdown: "Use the retained checklist.".into(),
             revision: "b".repeat(64),
             synced_at: String::new(),
-            approved_by: None,
             approved_at: None,
             project: None,
             skills: Vec::new(),

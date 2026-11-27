@@ -36,9 +36,6 @@ pub struct TeamRuleLayer {
     pub skills: Vec<TeamProjectSkill>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub proposal_decisions: BTreeMap<String, bool>,
-    /// The team member name of whoever approved this version, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approved_by: Option<String>,
     /// When this version was approved (the version's own timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<String>,
@@ -289,49 +286,25 @@ fn metadata(
     }
 }
 
-/// The one line that says where a block of rules comes from: its layer, the
-/// Space or team it belongs to, who approved it and when. Parts Wenlan does
-/// not know are left out.
-pub fn rules_source_line(
-    layer: &str,
-    owner: &str,
-    name: &str,
-    approved_by: Option<&str>,
-    approved_at: Option<&str>,
-) -> String {
-    let text = crate::skill_grow::tool_file_text;
-    let mut parts = vec![format!("{layer} rules")];
-    let name = text(name);
-    if !name.trim().is_empty() {
-        parts.push(format!("{owner} {}", name.trim()));
-    }
-    if let Some(who) = approved_by.map(text).filter(|who| !who.trim().is_empty()) {
-        parts.push(format!("approved by {who}"));
-    }
-    if let Some(date) = approved_at.map(|at| text(at.get(..10).unwrap_or(at))) {
-        parts.push(date);
-    }
-    parts.join(" · ")
+/// The one line under a rules heading in a file Wenlan writes: the layer
+/// and the day its version was approved, for example
+/// `Project rules · approved 2026-11-27`. It names no Space, team or person,
+/// since the file may be committed to a public repository; those names stay
+/// in Wenlan. `None` when the day is not known.
+pub fn rules_source_line(layer: &str, approved_at: Option<&str>) -> Option<String> {
+    let at = approved_at?.trim();
+    let date = at.get(..10)?;
+    let plain = date.bytes().enumerate().all(|(index, byte)| match index {
+        4 | 7 => byte == b'-',
+        _ => byte.is_ascii_digit(),
+    });
+    plain.then(|| format!("{layer} rules · approved {date}"))
 }
 
 impl TeamRuleLayer {
-    /// The Space a project layer belongs to, or the team's name.
-    pub fn owner_name(&self) -> (&'static str, &str) {
-        match &self.project {
-            Some(project) => ("Space", &project.space),
-            None => ("Team", &self.name),
-        }
-    }
-
-    pub fn source_line(&self, layer: &str) -> String {
-        let (owner, name) = self.owner_name();
-        rules_source_line(
-            layer,
-            owner,
-            name,
-            self.approved_by.as_deref(),
-            self.approved_at.as_deref(),
-        )
+    /// [`rules_source_line`] for this layer's approved version.
+    pub fn source_line(&self, layer: &str) -> Option<String> {
+        rules_source_line(layer, self.approved_at.as_deref())
     }
 }
 
@@ -344,8 +317,6 @@ struct HostedRules {
     page_id: String,
     folder: PathBuf,
     project: Option<TeamRulesProject>,
-    /// Member names by id, to say who approved a version.
-    names: BTreeMap<String, String>,
 }
 
 fn hosted_rules(
@@ -397,11 +368,6 @@ fn hosted_rules_in(
         info,
         folder,
         project,
-        names: file
-            .members
-            .iter()
-            .map(|member| (member.id.clone(), member.name.clone()))
-            .collect(),
     }))
 }
 
@@ -453,12 +419,7 @@ impl HostedRules {
             rules,
             rules.meta.ts.clone(),
             self.skills(settings_path)?,
-            self.approver(rules),
         )
-    }
-
-    fn approver(&self, rules: &version::PageVersion) -> Option<String> {
-        self.names.get(&rules.meta.author.member).cloned()
     }
 
     fn lock(&self) -> Result<File, WenlanError> {
@@ -573,7 +534,6 @@ fn hosted_manifest_for(
         return Ok(None);
     };
     Ok(Some(TeamRulesManifest {
-        approved_by: hosted.approver(rules),
         skills: hosted.skills(settings_path)?,
         file: hosted.file_path(rules),
         proposal_decisions: member
@@ -669,13 +629,9 @@ fn layer(
     rules: &version::PageVersion,
     synced_at: String,
     skills: Vec<TeamProjectSkill>,
-    approved_by: Option<String>,
 ) -> Result<TeamRuleLayer, WenlanError> {
     let name = info.name.as_deref().unwrap_or("Team");
     check_markdown(name)?;
-    if let Some(approver) = &approved_by {
-        check_markdown(approver)?;
-    }
     Ok(TeamRuleLayer {
         id: if project.is_some() {
             page_id(&info.id, project.as_ref())
@@ -689,7 +645,6 @@ fn layer(
         project,
         skills,
         proposal_decisions: BTreeMap::new(),
-        approved_by,
         approved_at: Some(rules.meta.ts.clone()),
     })
 }
@@ -771,7 +726,6 @@ pub(crate) fn pulled_layer(
         &rules,
         now(),
         manifest.skills.clone(),
-        manifest.approved_by.clone(),
     )?;
     if !manifest.proposal_decisions.keys().all(|id| is_sha(id)) {
         return Err(validation("invalid team Rules proposal decision"));

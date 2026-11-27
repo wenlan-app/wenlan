@@ -6,10 +6,7 @@ const SPACE: &str = "private fixture Space";
 const PUBLISHER: &str = "fixture-keeper";
 
 fn sources() -> RuleSources {
-    RuleSources {
-        space: SPACE.into(),
-        ..RuleSources::default()
-    }
+    RuleSources::default()
 }
 
 #[test]
@@ -21,7 +18,7 @@ fn repo_wiki_legacy_precedence_is_read_and_team_precedes_project() {
     assert!(result.contains(RULE_PRECEDENCE));
     assert!(!result.contains(LEGACY_RULE_PRECEDENCE));
     let team = result.find(TEAM_HEADING).unwrap();
-    let project = result.find(&project_heading(SPACE)).unwrap();
+    let project = result.find(&format!("{PROJECT_HEADING}\n")).unwrap();
     assert!(team < project, "{result}");
     assert!(!result.contains(RULES_HEADING), "{result}");
 }
@@ -186,11 +183,13 @@ fn squash_landed_bytes_identify_a_teammate_edit_and_only_approved_content_fans_o
         assert!(agents.starts_with(hand));
         assert_eq!(agents.matches("Use the existing runtime.").count(), 1);
         assert!(agents.contains(super::super::RULES_HINT));
-        // UX-SKILL-7: the project heading names the Space, with its source line.
+        // UX-SKILL-7: the heading names no Space; with no approval day
+        // known there is no source line under it.
+        assert!(!agents.contains(SPACE), "{agents}");
         assert!(
-            agents.replace("\r\n", "\n").contains(&format!(
-                "## Project rules for {SPACE}\n\nProject rules · Space {SPACE}\n\n"
-            )),
+            agents
+                .replace("\r\n", "\n")
+                .contains("## Project rules\n\n- "),
             "{agents}"
         );
         assert!(scratch.body(&commit, ROOT_CLAUDE).starts_with(claude));
@@ -472,12 +471,7 @@ fn a_local_unpushed_candidate_needs_delivery_evidence_before_matching_a_squash()
 #[test]
 fn inline_markers_are_hand_text_and_a_foreign_block_is_kept() {
     let comment = format!("Explain `{AGENTS_START}` and `{AGENTS_END}` here.\n");
-    let foreign = agents_block(
-        None,
-        &["A teammate's rule.".into()],
-        Some("another-keeper"),
-        SPACE,
-    );
+    let foreign = agents_block(None, &["A teammate's rule.".into()], Some("another-keeper"));
     let scratch = Scratch::new(&[(ROOT_AGENTS, &comment), (COPILOT, &foreign)]);
     assert!(parts(&comment).unwrap().block.is_empty());
     let base = scratch.head();
@@ -502,20 +496,16 @@ fn inline_markers_are_hand_text_and_a_foreign_block_is_kept() {
 }
 
 /// UX-SKILL-7: with no `CLAUDE.md` in the repository, the pull request adds
-/// one holding only the import, and the block with its named headings and
-/// source lines goes into `AGENTS.md`.
+/// one holding only the import, and the block goes into `AGENTS.md` with
+/// plain headings and lines that give only the layer and the approval day.
 #[test]
 fn ux_skill_7_missing_claude_md_gets_only_the_import() {
     let scratch = Scratch::new(&[]);
     let base = scratch.head();
     let (master, generated) = rules(&["Run unit tests."]);
     let sources = RuleSources {
-        space: SPACE.into(),
-        team_name: Some("Fixture Team".into()),
-        team_line: Some("Team rules · Team Fixture Team · approved by Amy · 2026-11-27".into()),
-        project_line: Some(
-            "Project rules · Space private fixture Space · approved by Bo · 2026-11-26".into(),
-        ),
+        team_line: Some("Team rules · approved 2026-11-27".into()),
+        project_line: Some("Project rules · approved 2026-11-26".into()),
     };
     let team = format!("{TEAM_HEADING}\n\n- Team line.\n{RULES_HEADING}\n\n- Run unit tests.\n");
     let generated = generated
@@ -540,19 +530,20 @@ fn ux_skill_7_missing_claude_md_gets_only_the_import() {
     assert_eq!(scratch.body(&commit, ROOT_CLAUDE), "@AGENTS.md\n");
     let agents = scratch.body(&commit, ROOT_AGENTS);
     assert!(
-        agents.contains(
-            "## Team rules for Fixture Team\n\nTeam rules · Team Fixture Team · approved by Amy · 2026-11-27\n\n- Team line.\n"
-        ),
+        agents.contains("## Team rules\n\nTeam rules · approved 2026-11-27\n\n- Team line.\n"),
         "{agents}"
     );
     assert!(
-        agents.contains(&format!(
-            "## Project rules for {SPACE}\n\nProject rules · Space {SPACE} · approved by Bo · 2026-11-26\n\n- Run unit tests.\n"
-        )),
+        agents.contains(
+            "## Project rules\n\nProject rules · approved 2026-11-26\n\n- Run unit tests.\n"
+        ),
         "{agents}"
     );
-    // A teammate edit in the named team section is still read back.
+    assert!(!agents.contains(SPACE), "{agents}");
     assert_eq!(team_rules_in(&agents).unwrap(), ["- Team line."]);
+    // A block whose team heading named the team is still read back.
+    let named = agents.replace("## Team rules\n", "## Team rules for Fixture Team\n");
+    assert_eq!(team_rules_in(&named).unwrap(), ["- Team line."]);
 }
 
 /// UX-SKILL-7: a `CLAUDE.md` that held only Wenlan's block becomes the
@@ -584,5 +575,5 @@ fn ux_skill_7_block_only_claude_md_becomes_the_import() {
     assert_eq!(scratch.body(&commit, ROOT_CLAUDE), "@AGENTS.md\r\n");
     assert!(scratch
         .body(&commit, ROOT_AGENTS)
-        .contains(&project_heading(SPACE)));
+        .contains(&format!("{PROJECT_HEADING}\n")));
 }

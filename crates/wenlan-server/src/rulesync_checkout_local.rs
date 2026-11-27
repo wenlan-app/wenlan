@@ -1205,7 +1205,6 @@ mod tests {
             markdown: "- WENLAN_TEAM_CHECK_TOKEN".into(),
             revision: "a".repeat(64),
             synced_at: "2026-11-26".into(),
-            approved_by: None,
             approved_at: None,
             project: None,
             skills: Vec::new(),
@@ -1217,7 +1216,6 @@ mod tests {
             markdown: "- WENLAN_PROJECT_CHECK_TOKEN".into(),
             revision: "b".repeat(64),
             synced_at: "2026-11-26".into(),
-            approved_by: None,
             approved_at: None,
             project: Some(wenlan_types::team::TeamRulesProject {
                 space: "Codex check".into(),

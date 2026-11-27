@@ -1291,7 +1291,6 @@ mod tests {
             markdown: markdown.into(),
             revision: "a".repeat(64),
             synced_at: String::new(),
-            approved_by: None,
             approved_at: None,
             project: None,
             skills: Vec::new(),
@@ -1309,7 +1308,6 @@ mod tests {
             markdown: "Project rules".into(),
             revision: "b".repeat(64),
             synced_at: String::new(),
-            approved_by: None,
             approved_at: None,
             project: Some(wenlan_types::team::TeamRulesProject {
                 space: space_id.into(),
@@ -2151,7 +2149,6 @@ mod tests {
             markdown: String::new(),
             revision: String::new(),
             synced_at: String::new(),
-            approved_by: None,
             approved_at: None,
             project: None,
             skills: vec![TeamProjectSkill {
