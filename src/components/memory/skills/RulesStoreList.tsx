@@ -16,20 +16,27 @@ export interface RuleGroup { readonly heading: string | null; readonly body: str
 /** Splits rule text at its `##` headings. Generated comments and the file's
  *  own `#` title are not rules, so they are left out. */
 export function ruleGroups(text: string): RuleGroup[] {
-  const lines = text.replace(/<!--[\s\S]*?(?:-->|$)/g, "").split("\n");
-  const groups: { heading: string | null; lines: string[] }[] = [{ heading: null, lines: [] }];
+  const lines = text.replace(/\r\n?/g, "\n").replace(/<!--[\s\S]*?(?:-->|$)/g, "").split("\n");
+  const groups: { heading: string | null; lines: string[]; rules: number }[] = [{ heading: null, lines: [], rules: 0 }];
+  let fence: string | null = null;
   for (const line of lines) {
+    const current = groups[groups.length - 1];
+    // Inside a fenced code block every line is text: no headings, no rules.
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence) {
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      current.lines.push(line);
+      continue;
+    }
+    if (marker) { fence = marker; current.lines.push(line); continue; }
     if (/^#\s/.test(line)) continue;
     const heading = /^##\s+(.*)$/.exec(line);
-    if (heading) groups.push({ heading: heading[1].trim(), lines: [] });
-    else groups[groups.length - 1].lines.push(line);
+    if (heading) { groups.push({ heading: heading[1].trim(), lines: [], rules: 0 }); continue; }
+    current.lines.push(line);
+    if (/^\s*[-*]\s+\S/.test(line)) current.rules += 1;
   }
   return groups
-    .map(({ heading, lines: body }) => ({
-      heading,
-      body: body.join("\n").trim(),
-      rules: body.filter((line) => /^\s*[-*]\s+\S/.test(line)).length,
-    }))
+    .map(({ heading, lines: body, rules }) => ({ heading, body: body.join("\n").trim(), rules }))
     .filter((group) => group.body.length > 0);
 }
 

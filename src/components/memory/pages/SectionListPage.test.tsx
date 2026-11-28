@@ -472,9 +472,10 @@ describe("rules every tool gets on the Rules page", () => {
     shared: "<!-- Generated from AGENTS.md -->\n# AGENTS.md\n\n## Working together\n\n- Act on a clear request.\n- Ask only when it matters, see [the guide](https://example.com).\n\n## Evidence\n\n- Read the source first.\n",
     tools: [{ tool: "claude-code", text: "\n- Keep replies short.\n" }, { tool: "cursor", text: "<!-- generated -->\n" }],
   };
-  function mockRules(store = overview, delivery: unknown[] = []) {
+  function mockRules(store: unknown = overview, delivery: unknown[] = [], status: RulesSetupStatus = synced) {
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === "rules_setup_status") return synced;
+      if (command === "rules_setup_status") return status;
+      if (command === "rules_setup_personal_overview" && store instanceof Error) throw store;
       if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
       if (command === "rules_setup_skill_updates") return [];
       if (command === "rules_setup_personal_overview") return store;
@@ -515,6 +516,22 @@ describe("rules every tool gets on the Rules page", () => {
     expect(screen.queryByRole("region", { name: "Rules every tool gets" })).toBeNull();
   });
 
+  it("keeps listing stored rules after a restore turns delivery off", async () => {
+    active.mockResolvedValue([]);
+    mockRules(overview, [], { ...synced, adopted: false, in_sync: false });
+    setup({ section: "rules" });
+    expect(await screen.findByRole("region", { name: "Rules every tool gets" })).toHaveTextContent("Act on a clear request.");
+    expect(screen.queryByText("No rules yet")).toBeNull();
+  });
+
+  it("never says No rules yet beside a failed rules load", async () => {
+    active.mockResolvedValue([]);
+    mockRules(new Error("offline"));
+    setup({ section: "rules" });
+    expect(await screen.findByText("Couldn't load the rules every tool gets.")).toBeInTheDocument();
+    expect(screen.queryByText("No rules yet")).toBeNull();
+  });
+
   it("does not show the store list on Skills", async () => {
     mockRules();
     setup({ section: "skills" });
@@ -543,5 +560,10 @@ describe("rule count from the shared store", () => {
     expect(storeRuleCount({ shared: "# T\n\n## A\n\n- one\n- two\n\nNot a rule.\n\n## B\n\n* three\n", tools: [{ tool: "codex", text: "<!-- x -->\n- four\n" }] })).toBe(4);
     expect(storeRuleCount({ shared: "<!-- generated -->\n", tools: [] })).toBe(0);
     expect(storeRuleCount(undefined)).toBe(0);
+    const { ruleGroups } = await import("../skills/RulesStoreList");
+    const fenced = ruleGroups("## Setup\r\n\r\n- Run the script.\r\n\r\n```sh\r\n# install first\r\n## not a heading\r\n- not a rule\r\n```\r\n\r\n## After\r\n\r\n- Check it.\r\n");
+    expect(fenced.map((group) => [group.heading, group.rules])).toEqual([["Setup", 1], ["After", 1]]);
+    expect(fenced[0].body).toContain("# install first");
+    expect(fenced[0].body).toContain("## not a heading");
   });
 });

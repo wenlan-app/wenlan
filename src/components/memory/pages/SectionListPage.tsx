@@ -81,8 +81,13 @@ export function SectionListPage({
   const skillUpdates = useRulesSkillUpdates(section === "skills" && !!rulesSetup?.adopted);
   // The rules every tool gets live in the shared store, not in pages, so the
   // Rules page shows them too; otherwise it reads "no rules" while every tool has some.
-  const showStore = section === "rules" && !!rulesSetup?.adopted;
-  const storeHasRules = overviewHasRules(useRulesOverview(showStore).data) && showStore;
+  // Stored rules stay visible after a restore turns delivery off: the store
+  // still holds them, and the sidebar counts them.
+  const showStore = section === "rules" && !!rulesSetup;
+  const overview = useRulesOverview(showStore);
+  const storeHasRules = showStore && overviewHasRules(overview.data);
+  // "No rules yet" waits for the overview, and never sits beside its load error.
+  const storeSettledEmpty = !showStore || (overview.isSuccess && !storeHasRules);
   const pinnedPages = usePinnedPages();
   const sections = useSectionPages(true);
   const folders = useKnowledgeFolders();
@@ -278,7 +283,7 @@ export function SectionListPage({
   // there is no corresponding Skills page in the library.
   const pageBackedUpdates = new Set(rows.filter((page) => page.status === "active").map((page) => page.title));
   const localUpdates = [...(skillUpdates ?? [])].filter((name) => !pageBackedUpdates.has(name));
-  const empty = sections.loaded && rows.length === 0 && folderCards.length === 0 && localUpdates.length === 0 && !storeHasRules;
+  const empty = sections.loaded && rows.length === 0 && folderCards.length === 0 && localUpdates.length === 0 && storeSettledEmpty;
   const menuItems = !canWrite ? [] : [
     ...(section === "docs" && !member ? ["folder" as const] : []),
     // A team member's browser has no skills of its own to hold: the entry
