@@ -345,6 +345,7 @@ const WEB_WRITE_TOOL_NAMES: &[&str] = &[
     "get_page_sources",
     "read_space_rules",
     "report_space_rule_use",
+    "read_personal_rules",
     "read_page",
     "list_pages",
     "capture",
@@ -358,6 +359,8 @@ const WEB_WRITE_TOOL_NAMES: &[&str] = &[
 /// Local-only tools whose HTTP-transport block the web-write profile lifts.
 /// `write_page` is not listed: only its refresh branch is blocked, inline.
 const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &[
+    // Read-only: the person's own web AI app reads their working rules.
+    "read_personal_rules",
     "forget",
     "rename_page",
     "delete_page",
@@ -367,7 +370,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &[
 /// Web-write tools a hosted team member never sees or calls. The daemon's
 /// `PATCH /api/brief` takes its Space from the request body and is not in the
 /// team actor's `MCP_CALLS`, so member write grants are not enforced there yet.
-const TEAM_MEMBER_WITHHELD_TOOL_NAMES: &[&str] = &["update_brief", "handoff"];
+/// `read_personal_rules` is the owner's own rules, never a member's to read.
+const TEAM_MEMBER_WITHHELD_TOOL_NAMES: &[&str] =
+    &["update_brief", "handoff", "read_personal_rules"];
 /// Ceiling for the summed length of every visible stdio tool description:
 /// the total measured by `scripts/measure-mcp-surface.py` when the 30-tool
 /// surface was cut, plus ten percent, raised by 450 for `page_code_basis` and
@@ -387,7 +392,7 @@ const DESCRIPTION_BUDGET_CHARS: usize = 23225;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources, read_space_rules.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
-    "This tool is not available in the web-write profile. Allowed tools: brief, recall, get_page_sources, read_space_rules, report_space_rule_use, read_page, list_pages, capture, write_page, rename_page, forget, delete_page, update_brief, handoff.";
+    "This tool is not available in the web-write profile. Allowed tools: brief, recall, get_page_sources, read_space_rules, report_space_rule_use, read_personal_rules, read_page, list_pages, capture, write_page, rename_page, forget, delete_page, update_brief, handoff.";
 const WEB_WRITE_SPACE_REFUSAL_MESSAGE: &str =
     "Nothing was changed: this item was not found in the Space this connection is limited to.";
 const WEB_WRITE_BAD_ID_MESSAGE: &str =
@@ -8594,6 +8599,7 @@ fn query_surface_description(name: &str, allows_writes: bool) -> String {
 /// basis tools, "local stdio only"). Tools not listed keep their own text.
 fn web_write_description(name: &str) -> Option<&'static str> {
     Some(match name {
+        "read_personal_rules" => "Read the person's own working rules, which they want every AI tool to follow. Pass layer {\"kind\":\"shared\"} for the rules shared by all tools, or {\"kind\":\"tool\",\"tool\":NAME} for one tool's own lines. Read-only; changes are made by the person in Wenlan.",
         "update_brief" => "Update the connected Space Brief only when the user asks to record current project status. Read brief first, then replace its summary or add, edit, move, gate, or complete items using the returned brief_version and item versions. Conflicts are reported without overwriting newer changes. Reuse operation_id when retrying the same update. Writes only reach the Space this connection is limited to.",
         "write_page" => "Create or refresh a page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required), or pass page_id to refresh that page in place, which keeps its id and version history. Never delete_page and recreate a page to refresh it. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user to accept. To change a page's title at the user's explicit request, use rename_page; a refresh keeps the existing title. `minor: true` marks a small edit. Writes only reach the Space this connection is limited to.",
         "rename_page" => "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest read_page result; the version prevents renaming a page that changed since it was read. This keeps the page id and content and updates [[links]] to it. Do not call this to refresh content; write_page keeps an existing title when refreshing.",
@@ -8706,7 +8712,12 @@ impl WenlanMcpServer {
                 }
             }
             ToolProfile::WebWrite => {
-                tools.retain(|tool| WEB_WRITE_TOOL_NAMES.contains(&tool.name.as_ref()));
+                let personal = self.owner_web_reads_personal_rules();
+                tools.retain(|tool| {
+                    let name = tool.name.as_ref();
+                    WEB_WRITE_TOOL_NAMES.contains(&name)
+                        && (name != "read_personal_rules" || personal)
+                });
                 for tool in &mut tools {
                     let name = tool.name.as_ref();
                     if QUERY_ONLY_TOOL_NAMES.contains(&name) {
@@ -8737,6 +8748,16 @@ impl WenlanMcpServer {
         tools
     }
 
+    /// The person's own rules belong to no Space, so only the owner's
+    /// whole-library web connection reads them: never a team member, and
+    /// never a connection pinned or locked to one Space.
+    pub(crate) fn owner_web_reads_personal_rules(&self) -> bool {
+        self.tool_profile == ToolProfile::WebWrite
+            && self.agent_identity.team_member().is_none()
+            && self.space_pin.is_none()
+            && !crate::lock_state::is_locked()
+    }
+
     /// Refuse a `LOCAL_ONLY_TOOL_NAMES` tool reaching this server over HTTP.
     /// Unlike `visible_tools()`, which only hides the name from `list_tools`,
     /// this is consulted by `call_tool` before dispatch, so a name added to
@@ -8744,7 +8765,8 @@ impl WenlanMcpServer {
     /// rather than merely unlisted.
     fn local_only_refusal(&self, name: &str) -> Option<CallToolResult> {
         let lifted = self.tool_profile == ToolProfile::WebWrite
-            && WEB_WRITE_LIFTED_TOOL_NAMES.contains(&name);
+            && WEB_WRITE_LIFTED_TOOL_NAMES.contains(&name)
+            && (name != "read_personal_rules" || self.owner_web_reads_personal_rules());
         (self.transport == TransportMode::Http && LOCAL_ONLY_TOOL_NAMES.contains(&name) && !lifted)
             .then(|| {
                 CallToolResult::error(vec![ContentBlock::text(
@@ -8926,8 +8948,8 @@ impl ServerHandler for WenlanMcpServer {
                     "Wenlan gives this app access to the user's connected knowledge library, and the user has allowed it to write. \
                      Use brief for a user-requested Space overview, recall for a targeted search, \
                      get_page_sources to inspect supporting sources, read_space_rules to consult approved Space rules, \
-                     report_space_rule_use to record a changed plan, and list_pages and read_page \
-                     to browse and read pages. To write: capture saves one durable fact, preference, or decision \
+                     report_space_rule_use to record a changed plan, read_personal_rules to read the person's own working rules, \
+                     and list_pages and read_page to browse and read pages. To write: capture saves one durable fact, preference, or decision \
                      the user asked to keep; handoff records where the work stands in the Space Brief (update_brief is the older form of the same write); \
                      write_page creates a page or refreshes one; rename_page changes a page title; \
                      forget removes a memory and delete_page archives a page. \
@@ -10003,7 +10025,7 @@ mod tests {
 
     // ===== web-write profile =====
 
-    const WEB_WRITE_EXPECTED_TOOLS: [&str; 14] = [
+    const WEB_WRITE_EXPECTED_TOOLS: [&str; 15] = [
         "brief",
         "capture",
         "delete_page",
@@ -10012,6 +10034,7 @@ mod tests {
         "handoff",
         "list_pages",
         "read_page",
+        "read_personal_rules",
         "read_space_rules",
         "recall",
         "rename_page",
@@ -10145,6 +10168,7 @@ mod tests {
             make_server_with_profile(TransportMode::Http, "web-ai", None, ToolProfile::WebWrite);
         for name in LOCAL_ONLY_TOOL_NAMES {
             let lifted = [
+                "read_personal_rules",
                 "forget",
                 "rename_page",
                 "delete_page",
@@ -10158,7 +10182,7 @@ mod tests {
                 "web-write local-only gate for {name}"
             );
         }
-        assert_eq!(WEB_WRITE_LIFTED_TOOL_NAMES.len(), 5);
+        assert_eq!(WEB_WRITE_LIFTED_TOOL_NAMES.len(), 6);
 
         // Every other profile keeps refusing all of them over HTTP.
         for profile in [ToolProfile::Standard, ToolProfile::QueryOnly] {

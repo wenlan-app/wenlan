@@ -56,9 +56,12 @@ export const WRITE_SCOPE = 'wenlan:write';
  * sets it; it is never in REQUEST_HEADERS, so a client cannot supply it.
  */
 export const ACCESS_HEADER = 'x-wenlan-access';
-const QUERY_TOOLS = new Set(['brief', 'recall', 'get_page_sources']);
+/** Read-only tools any grant may call. Must match the MCP server's query-only profile. */
+export const QUERY_TOOLS = new Set(['brief', 'recall', 'get_page_sources', 'read_space_rules']);
 /** Extra tools a write grant may call, beyond QUERY_TOOLS. */
-export const WEB_WRITE_TOOLS = new Set(['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff']);
+export const WEB_WRITE_TOOLS = new Set(['report_space_rule_use', 'read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff']);
+/** The owner's own working rules: read-only, and only for a whole-library write grant. */
+export const OWNER_READ_TOOLS = new Set(['read_personal_rules']);
 const REQUEST_HEADERS = ['accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
 const RESPONSE_HEADERS = ['content-type', 'mcp-session-id', 'mcp-protocol-version'];
 const MAX_BODY_BYTES = 64 * 1024;
@@ -380,7 +383,8 @@ function allowedRpc(bytes: Uint8Array, space: string, write = false): boolean {
     if (!rpc || Array.isArray(rpc) || rpc.jsonrpc !== '2.0') return false;
     if (['initialize', 'notifications/initialized', 'ping', 'tools/list'].includes(rpc.method)) return true;
     const name = rpc.params?.name;
-    if (rpc.method !== 'tools/call' || !(QUERY_TOOLS.has(name) || (write && WEB_WRITE_TOOLS.has(name)))) return false;
+    const owner = write && space === WHOLE_LIBRARY_SPACE && OWNER_READ_TOOLS.has(name);
+    if (rpc.method !== 'tools/call' || !(QUERY_TOOLS.has(name) || (write && WEB_WRITE_TOOLS.has(name)) || owner)) return false;
     const args = rpc.params.arguments ?? {};
     if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
     for (const key of ['space', 'domain']) {

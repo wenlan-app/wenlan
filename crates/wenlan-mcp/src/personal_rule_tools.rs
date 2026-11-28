@@ -104,7 +104,9 @@ impl WenlanMcpServer {
         &self,
         params: ReadPersonalRulesParams,
     ) -> Result<CallToolResult, McpError> {
-        if self.transport != super::TransportMode::Stdio {
+        // Reading is also open to the owner's own whole-library web AI app,
+        // so cloud sessions follow the same rules.
+        if self.transport != super::TransportMode::Stdio && !self.owner_web_reads_personal_rules() {
             return Err(McpError::invalid_params(
                 "Personal rules are available only through local stdio MCP.",
                 None,
@@ -403,6 +405,70 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(mock.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_owners_web_ai_app_can_read_but_not_propose() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/rules/personal/show"))
+            .and(body_json(serde_json::json!({"layer":{"kind":"shared"}})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "layer":{"kind":"shared"},
+                "text":"Lead with the answer.",
+                "origins":[null],
+                "affected_tools":["claudecode"]
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let web = server(&mock.uri(), TransportMode::Http)
+            .with_tool_profile(crate::tools::ToolProfile::WebWrite);
+        let result = web
+            .read_personal_rules_impl(ReadPersonalRulesParams {
+                layer: PersonalRuleLayerParam::Shared,
+            })
+            .await
+            .unwrap();
+        let value: PersonalRuleShow =
+            serde_json::from_value(result.structured_content.unwrap()).unwrap();
+        assert_eq!(value.text, "Lead with the answer.");
+        // Proposing stays local: the person confirms on their own computer.
+        let proposal = web
+            .propose_personal_rules_impl(ProposePersonalRulesParams {
+                edits: vec![],
+                merge_pages: false,
+            })
+            .await;
+        assert!(proposal.is_err());
+        // A web connection limited to one Space never reads them.
+        let pinned = server(&mock.uri(), TransportMode::Http)
+            .with_tool_profile(crate::tools::ToolProfile::WebWrite)
+            .with_space_pin("Design".into());
+        assert!(!pinned
+            .visible_tools()
+            .iter()
+            .any(|tool| tool.name == "read_personal_rules"));
+        assert!(pinned.local_only_refusal("read_personal_rules").is_some());
+        assert!(pinned
+            .read_personal_rules_impl(ReadPersonalRulesParams {
+                layer: PersonalRuleLayerParam::Shared,
+            })
+            .await
+            .is_err());
+        // Other remote profiles keep refusing the read before any request.
+        for profile in [
+            crate::tools::ToolProfile::Standard,
+            crate::tools::ToolProfile::QueryOnly,
+        ] {
+            let read = server(&mock.uri(), TransportMode::Http)
+                .with_tool_profile(profile)
+                .read_personal_rules_impl(ReadPersonalRulesParams {
+                    layer: PersonalRuleLayerParam::Shared,
+                })
+                .await;
+            assert!(read.is_err(), "{profile:?}");
+        }
     }
 
     #[test]

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { forwardQuery, isWriteGrant, isWriteToolCall, routeDenial, TOOL_UNAVAILABLE_TEXT, tunnelOrigin, WEB_WRITE_TOOLS, WHOLE_LIBRARY_SPACE, type QueryGrant, type ConnectorRoute } from '../src/proxy.ts';
+import { readFileSync } from 'node:fs';
+import { forwardQuery, isWriteGrant, isWriteToolCall, OWNER_READ_TOOLS, QUERY_TOOLS, routeDenial, TOOL_UNAVAILABLE_TEXT, tunnelOrigin, WEB_WRITE_TOOLS, WHOLE_LIBRARY_SPACE, type QueryGrant, type ConnectorRoute } from '../src/proxy.ts';
 
+const QUERY = ['brief', 'recall', 'get_page_sources', 'read_space_rules'];
 const publicOrigin = 'https://relay.example';
 const now = 1_000;
 const grant: QueryGrant = {
@@ -159,7 +161,7 @@ test('only query tools and authorized Space are accepted', async () => {
     assert.equal((await forwardQuery(req, grant, state.options)).status, 403);
     assert.equal(state.calls.length, 0);
   }
-  for (const name of ['brief', 'recall', 'get_page_sources']) {
+  for (const name of QUERY) {
     assert.equal((await forwardQuery(request('tools/call', { space: 'shared' }, name), grant, setup().options)).status, 200);
   }
 });
@@ -175,7 +177,7 @@ test('a whole-library grant lets the model name any Space, a named grant keeps s
   };
   for (const args of [{ query: 'decision' }, {}, { space: 'work' }, { space: 'other' }, { domain: 'x' },
     { space: 'work', domain: 'x' }, { space: '' }, { space: '*' }, { space: null }, { query: 'decision', space: 'Uncategorized' }]) {
-    for (const name of ['brief', 'recall', 'get_page_sources']) {
+    for (const name of QUERY) {
       assert.deepEqual(await status(args, whole, name), { status: 200, forwarded: 1 }, JSON.stringify(args));
     }
   }
@@ -279,7 +281,7 @@ test('authorization-store latency cannot dispatch a credential that expired whil
 });
 
 const writeGrant: QueryGrant = { ...grant, scopes: ['wenlan:query', 'wenlan:write'] };
-const WRITE_TOOLS = ['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff'];
+const WRITE_TOOLS = ['report_space_rule_use', 'read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff'];
 
 test('a write grant is one that also carries wenlan:write, and still needs wenlan:query', async () => {
   assert.deepEqual([...WEB_WRITE_TOOLS].sort(), [...WRITE_TOOLS].sort());
@@ -291,7 +293,7 @@ test('a write grant is one that also carries wenlan:write, and still needs wenla
   assert.equal(state.loads, 0);
 });
 
-test('query grants keep exactly the three query tools; write grants add the web write tools', async () => {
+test('query grants keep exactly the query tools; write grants add the web write tools', async () => {
   const statusOf = async (as: QueryGrant, name: string, args: object = {}, selected = route) => {
     const state = setup(selected);
     const response = await forwardQuery(request('tools/call', args, name), as, state.options);
@@ -301,7 +303,7 @@ test('query grants keep exactly the three query tools; write grants add the web 
     assert.deepEqual(await statusOf(grant, name), { status: 403, forwarded: 0 }, `query grant: ${name}`);
     assert.deepEqual(await statusOf(writeGrant, name), { status: 200, forwarded: 1 }, `write grant: ${name}`);
   }
-  for (const name of ['brief', 'recall', 'get_page_sources']) {
+  for (const name of QUERY) {
     assert.deepEqual(await statusOf(writeGrant, name), { status: 200, forwarded: 1 }, name);
   }
   // Nothing else opens up, including near-miss and admin-looking names.
@@ -333,7 +335,7 @@ test('write tool calls are told apart from query tools and protocol methods', ()
   const call = (name: unknown) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } });
   for (const name of WRITE_TOOLS) assert.equal(isWriteToolCall(bytes(call(name))), true, name);
   assert.equal(isWriteToolCall(bytes(call('unknown_tool'))), true, 'anything outside the query set counts');
-  for (const name of ['brief', 'recall', 'get_page_sources']) assert.equal(isWriteToolCall(bytes(call(name))), false, name);
+  for (const name of QUERY) assert.equal(isWriteToolCall(bytes(call(name))), false, name);
   for (const value of [call(5), call(undefined), { jsonrpc: '2.0', id: 1, method: 'tools/list' },
     { jsonrpc: '2.0', id: 1, method: 'initialize' }, [call('capture')], null, 'not json', '', '\u0000']) {
     assert.equal(isWriteToolCall(bytes(value)), false, JSON.stringify(value));
@@ -372,4 +374,35 @@ test('only a write grant gets x-wenlan-access, and a client can never supply it'
   const refused = setup();
   assert.equal((await forwardQuery(spoofed('capture'), grant, refused.options)).status, 403);
   assert.equal(refused.calls.length, 0);
+});
+
+// The relay must let through exactly what the MCP server's web profiles list,
+// or a tool the AI app sees answers 403 (read_space_rules did, 2026-11-28).
+test('relay tool lists match the MCP server profiles', () => {
+  const source = readFileSync(new URL('../../crates/wenlan-mcp/src/tools.rs', import.meta.url), 'utf8');
+  const list = (name: string) => {
+    const body = source.match(new RegExp(`const ${name}: &\\[&str\\] = &\\[([^\\]]*)\\]`))?.[1];
+    assert.ok(body, name);
+    return [...body.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
+  };
+  assert.deepEqual([...QUERY_TOOLS].sort(), list('QUERY_ONLY_TOOL_NAMES'));
+  assert.deepEqual([...QUERY_TOOLS, ...WEB_WRITE_TOOLS, ...OWNER_READ_TOOLS].sort(), list('WEB_WRITE_TOOL_NAMES'));
+});
+
+test('personal rules are read only through a whole-library write grant', async () => {
+  const statusOf = async (as: QueryGrant, selected: ConnectorRoute, args: object = { layer: { kind: 'shared' } }) => {
+    const state = setup(selected);
+    const response = await forwardQuery(request('tools/call', args, 'read_personal_rules'), as, state.options);
+    return { status: response.status, forwarded: state.calls.length };
+  };
+  const wholeRoute = { ...route, space: WHOLE_LIBRARY_SPACE };
+  const wholeWrite = { ...grant, scopes: ['wenlan:query', 'wenlan:write'], space: WHOLE_LIBRARY_SPACE };
+  assert.deepEqual(await statusOf(wholeWrite, wholeRoute), { status: 200, forwarded: 1 });
+  // A query-only grant, or a grant limited to one Space, never reads them.
+  assert.deepEqual(await statusOf({ ...wholeWrite, scopes: ['wenlan:query'] }, wholeRoute), { status: 403, forwarded: 0 });
+  assert.deepEqual(await statusOf({ ...grant, scopes: ['wenlan:query', 'wenlan:write'] }, route), { status: 403, forwarded: 0 });
+  // Writing them stays on the person's computer.
+  const state = setup(wholeRoute);
+  assert.equal((await forwardQuery(request('tools/call', {}, 'propose_personal_rules'), wholeWrite, state.options)).status, 403);
+  assert.equal(isWriteToolCall(new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'read_personal_rules', arguments: {} } }))), true);
 });
