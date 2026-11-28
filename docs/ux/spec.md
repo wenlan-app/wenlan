@@ -1024,6 +1024,21 @@ and wait for evidence that people need them.
   check their wording, and does not name the Space. Lines used in every
   Space are the person's habits and never go into a repository. Nothing
   reaches the repository until the person merges.
+  The rules sit under the heading "Project rules", and the team section,
+  when there is one, under "Team rules". The files in the repository name
+  no Space, team or person; those names stay in Wenlan. When Wenlan knows
+  the day a section's version was approved, one line under its heading
+  says the layer and that day ("Project rules · approved 2026-11-27");
+  otherwise there is no such line. Headings of earlier blocks are still
+  read back. Wenlan's part goes in `AGENTS.md`. A repository
+  with no `CLAUDE.md` gets one that holds only the line `@AGENTS.md`, so
+  Claude Code reads the same part; a `CLAUDE.md` that already has that line
+  gets no copy, and one that held nothing but Wenlan's part becomes that
+  line. Only a `CLAUDE.md` with the person's own text and no such line keeps
+  a copy beside that text. Wenlan never writes a `CLAUDE.md` that holds only
+  its part. A linked `AGENTS.md` is left alone, with `CLAUDE.md`: writing
+  through the link could lose the rules or change a file outside the
+  repository; a linked `CLAUDE.md` is left alone too.
   原文：「空間如果是 repo，那就直接對應上了」（2026-11-15 22:26Z）；「原本說就會寫 wiki folders 這點也要看要不要一起修改？」（2026-11-15 22:51Z）。「照 Astra 做」（2026-11-20 選擇卡：每條不附來源，整段加一行提示用 read_space_rules 查；PR 說明不寫空間名）；英文字句待 Qi-Xuan 確認。
   With the opt-in rulesync writer (pending acceptance), the Space also
   renders project instructions for the supported tools through the wiki
@@ -1371,6 +1386,12 @@ and wait for evidence that people need them.
   saved, it counts at once, with no model and no accept. They ask in an AI
   tool on this computer ("save this as a rule: ...", which the tool does with
   `add_rule`) or type `wenlan rules add "<rule>"`; both do the same thing.
+  Either way it is the person's own rule. `add_rule` says that a rule saved
+  for a Space also goes into `AGENTS.md`, as a project rule, in each
+  repository connected to that Space (UX-SKILL-7), unless the Space shares
+  its rules with a team, when the team's approved rules go there instead,
+  and that rules a team approves come only from the Space's Rules page or a proposal approved
+  there.
   The rule is kept as one line on a page named "Rules I saved", one per
   Space and one for every Space, and the person's AI tools are told it from
   then on: `wenlan rules`, `read_space_rules`, and the files of UX-SKILL-6

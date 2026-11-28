@@ -36,6 +36,9 @@ pub struct TeamRuleLayer {
     pub skills: Vec<TeamProjectSkill>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub proposal_decisions: BTreeMap<String, bool>,
+    /// When this version was approved (the version's own timestamp).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -280,6 +283,28 @@ fn metadata(
         decides: None,
         device: None,
         stay: None,
+    }
+}
+
+/// The one line under a rules heading in a file Wenlan writes: the layer
+/// and the day its version was approved, for example
+/// `Project rules · approved 2026-11-27`. It names no Space, team or person,
+/// since the file may be committed to a public repository; those names stay
+/// in Wenlan. `None` when the day is not known.
+pub fn rules_source_line(layer: &str, approved_at: Option<&str>) -> Option<String> {
+    let at = approved_at?.trim();
+    let date = at.get(..10)?;
+    let plain = date.bytes().enumerate().all(|(index, byte)| match index {
+        4 | 7 => byte == b'-',
+        _ => byte.is_ascii_digit(),
+    });
+    plain.then(|| format!("{layer} rules · approved {date}"))
+}
+
+impl TeamRuleLayer {
+    /// [`rules_source_line`] for this layer's approved version.
+    pub fn source_line(&self, layer: &str) -> Option<String> {
+        rules_source_line(layer, self.approved_at.as_deref())
     }
 }
 
@@ -620,6 +645,7 @@ fn layer(
         project,
         skills,
         proposal_decisions: BTreeMap::new(),
+        approved_at: Some(rules.meta.ts.clone()),
     })
 }
 

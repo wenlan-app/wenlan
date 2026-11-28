@@ -1049,7 +1049,7 @@ fn agents_block(folder: Option<&str>, rules: &[String], publisher: Option<&str>)
         if folder.is_some() {
             block.push('\n');
         }
-        block.push_str(&format!("{RULES_HEADING}\n\n"));
+        block.push_str(&format!("{PROJECT_HEADING}\n\n"));
         for rule in rules {
             block.push_str(&format!("- {rule}\n"));
         }
@@ -1070,7 +1070,18 @@ fn block_rules(rules: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The project rules heading. It names no Space: the repository may be
+/// public, and the Space's name stays in Wenlan.
+const PROJECT_HEADING: &str = "## Project rules";
+/// The project rules heading earlier releases wrote; still read back.
 const RULES_HEADING: &str = "## Rules for this project";
+/// A heading naming the Space, written by no release but read back.
+const NAMED_PROJECT_HEADING: &str = "## Project rules for ";
+
+/// Whether `line` heads the project rules in Wenlan's block.
+fn is_rules_heading(line: &str) -> bool {
+    line == PROJECT_HEADING || line == RULES_HEADING || line.starts_with(NAMED_PROJECT_HEADING)
+}
 
 /// The line under the rules: they carry no sources in the repository, and an
 /// AI tool connected to the Space can ask Wenlan for them. Not a bullet, so
@@ -1095,7 +1106,7 @@ fn block_lines(text: &str) -> Option<Vec<&str>> {
 
 /// Whether Wenlan's block in `text` carries project rules.
 fn block_holds_rules(text: &str) -> bool {
-    block_lines(text).is_some_and(|lines| lines.contains(&RULES_HEADING))
+    block_lines(text).is_some_and(|lines| lines.iter().any(|line| is_rules_heading(line)))
 }
 
 /// The rules Wenlan's block in `text` carries: the bullet lines under its
@@ -1106,7 +1117,7 @@ fn block_rule_lines(text: &str) -> Vec<String> {
     };
     lines
         .iter()
-        .skip_while(|line| **line != RULES_HEADING)
+        .skip_while(|line| !is_rules_heading(line))
         .skip(1)
         .take_while(|line| !line.starts_with("## "))
         .filter_map(|line| line.strip_prefix("- "))
@@ -1171,21 +1182,62 @@ fn upsert_block(text: &str, block: &str) -> String {
     format!("{}{eol}{eol}{block}{eol}", text.trim_end())
 }
 
-/// Keep Wenlan's block in `AGENTS.md` (created when missing) and in an
-/// existing `CLAUDE.md` that does not already import `AGENTS.md`. `folder`
-/// is the wiki folder when the repository holds one; without it the block
-/// carries the rules alone. With no folder and no rules left, the block is
-/// taken out, and an `AGENTS.md` that held nothing else goes with it.
+/// The line that makes Claude Code read `AGENTS.md`.
+const CLAUDE_IMPORT: &str = "@AGENTS.md";
+
+/// Whether a `CLAUDE.md` already imports `AGENTS.md` on a line of its own.
+fn imports_agents(text: &str) -> bool {
+    text.lines().any(|line| line.trim() == CLAUDE_IMPORT)
+}
+
+/// What `CLAUDE.md` should hold so Claude Code reads Wenlan's block in
+/// `AGENTS.md`: `None` leaves the file as it is. A missing file, or one that
+/// held nothing but Wenlan's block, becomes the import line alone; Wenlan
+/// never writes a `CLAUDE.md` that holds only its block. A file that already
+/// imports `AGENTS.md` loses any old block of Wenlan's. A file with the
+/// person's own text and no import keeps the block beside that text.
+fn claude_file_for(current: Option<&str>, block: &str) -> Option<String> {
+    let Some(current) = current else {
+        return Some(format!("{CLAUDE_IMPORT}\n"));
+    };
+    let hand = remove_block(current);
+    if imports_agents(&hand) {
+        return (hand != current).then_some(hand);
+    }
+    if hand.trim().is_empty() {
+        return Some(format!("{CLAUDE_IMPORT}{}", line_ending(current)));
+    }
+    let next = upsert_block(current, block);
+    (next != current).then_some(next)
+}
+
+/// Keep Wenlan's block in `AGENTS.md` (created when missing), and a
+/// `CLAUDE.md` that reads it ([`claude_file_for`]). `folder` is the wiki
+/// folder when the repository holds one; without it the block carries the
+/// rules alone. With no folder and no rules left, the block is taken out,
+/// and an `AGENTS.md` that held nothing else goes with it.
 fn maintain_agent_files(
     worktree: &Path,
     folder: Option<&str>,
     rules: &[String],
     publisher: &str,
 ) -> Result<Vec<&'static str>, WenlanError> {
+    let agents = worktree.join("AGENTS.md");
+    let claude = worktree.join("CLAUDE.md");
+    // A linked `AGENTS.md` may point at `CLAUDE.md` or outside the
+    // repository; writing through it could lose the rules or change another
+    // file. Wenlan leaves both files alone and says so.
+    if is_link(&agents) {
+        log::warn!("[repo_wiki] AGENTS.md is a link; Wenlan leaves it and CLAUDE.md alone");
+        return Ok(Vec::new());
+    }
     if folder.is_none() && block_rules(rules).is_empty() {
         let mut touched = Vec::new();
         for name in ["AGENTS.md", "CLAUDE.md"] {
             let path = worktree.join(name);
+            if is_link(&path) {
+                continue;
+            }
             let Ok(current) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -1204,17 +1256,28 @@ fn maintain_agent_files(
     }
     let block = agents_block(folder, rules, Some(publisher));
     let mut touched = vec!["AGENTS.md"];
-    let agents = worktree.join("AGENTS.md");
     let current = std::fs::read_to_string(&agents).unwrap_or_default();
     std::fs::write(&agents, upsert_block(&current, &block))?;
-    let claude = worktree.join("CLAUDE.md");
-    if let Ok(current) = std::fs::read_to_string(&claude) {
-        if !current.contains("@AGENTS.md") {
-            std::fs::write(&claude, upsert_block(&current, &block))?;
-            touched.push("CLAUDE.md");
-        }
+    // A linked `CLAUDE.md` (often to `AGENTS.md` itself) already reads the
+    // block; writing through the link would overwrite what it points at.
+    if is_link(&claude) {
+        return Ok(touched);
+    }
+    let current = match std::fs::read_to_string(&claude) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if let Some(next) = claude_file_for(current.as_deref(), &block) {
+        std::fs::write(&claude, next)?;
+        touched.push("CLAUDE.md");
     }
     Ok(touched)
+}
+
+/// Whether `path` is a symbolic link (a missing path is not).
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
 }
 
 /// `text` with the files the export rewrites on every publish marked
@@ -1953,6 +2016,8 @@ struct PrBody<'a> {
     rules: usize,
     /// Every project rule was removed in Wenlan, and this takes them out.
     rules_removed: bool,
+    /// `AGENTS.md` is a link, so Wenlan left it and `CLAUDE.md` unchanged.
+    agents_linked: bool,
     project_paths: &'a [String],
     project_adoptions: &'a [String],
     team_rules: bool,
@@ -1972,6 +2037,7 @@ fn pr_body_for_test(binding: &RepoWikiBinding, fixes: Vec<&RepoDocFix>) -> Strin
         kept: 0,
         rules: 0,
         rules_removed: false,
+        agents_linked: false,
         project_paths: &[],
         project_adoptions: &[],
         team_rules: false,
@@ -1990,6 +2056,7 @@ fn pr_body(body: PrBody<'_>) -> String {
         kept,
         rules,
         rules_removed,
+        agents_linked,
         project_paths,
         project_adoptions,
         team_rules,
@@ -2002,15 +2069,22 @@ fn pr_body(body: PrBody<'_>) -> String {
     let mut out = String::from("Written by [Wenlan](https://wenlan.app).");
     if pages > 0 {
         out.push_str(&format!(
-            " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on. \
-             `AGENTS.md` points coding agents at it.",
+            " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on.{}",
             plural(pages),
-            binding.folder
+            binding.folder,
+            if agents_linked {
+                ""
+            } else {
+                " `AGENTS.md` points coding agents at it."
+            }
         ));
+    }
+    if agents_linked {
+        out.push_str(" `AGENTS.md` is a link, so Wenlan left it and `CLAUDE.md` unchanged.");
     }
     if rules > 0 {
         out.push_str(&format!(
-            "{}`AGENTS.md` {} {rules} project rule{} under \"Rules for this project\", from \
+            "{}`AGENTS.md` {} {rules} project rule{} under \"Project rules\", from \
              notes approved in Wenlan. Check their wording before merging: they come from notes, \
              not from the code.",
             if pages > 0 { "\n\n" } else { " " },
@@ -2245,7 +2319,16 @@ pub fn frontmatter_origin_id(text: &str) -> Option<&str> {
 /// taken back into Wenlan first (`input.taken_back`), and files people
 /// changed on the open wiki branch are kept as they are.
 pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
-    publish_inner(input, None, &[])
+    publish_inner(input, None, &[], &RuleSources::default())
+}
+
+/// The one-line sources ([`crate::rulesync_team::rules_source_line`]) shown
+/// under the team and project headings; a missing one leaves the heading
+/// alone.
+#[derive(Clone, Debug, Default)]
+pub struct RuleSources {
+    pub team_line: Option<String>,
+    pub project_line: Option<String>,
 }
 
 /// Publish with the pinned, project-mode rulesync renderer. The bound Space
@@ -2255,11 +2338,12 @@ pub fn publish_with_project_rules(
     input: PublishInput<'_>,
     store: &Path,
     team: &[String],
+    sources: &RuleSources,
 ) -> Result<Published, WenlanError> {
     let mut project = project_rules::Project::open(store, input.binding)?;
     project.check_links(Path::new(&input.binding.repo_root))?;
     project.check_links(&input.worktree)?;
-    publish_inner(input, Some((store, &mut project)), team)
+    publish_inner(input, Some((store, &mut project)), team, sources)
 }
 
 pub fn project_rule_proposals_at(
@@ -2292,6 +2376,7 @@ fn publish_inner(
     input: PublishInput<'_>,
     mut project: Option<(&Path, &mut project_rules::Project)>,
     team: &[String],
+    sources: &RuleSources,
 ) -> Result<Published, WenlanError> {
     let binding = input.binding;
     let waiting = std::cell::Cell::new(0);
@@ -2571,6 +2656,7 @@ fn publish_inner(
             &rules,
             binding.take_over,
             published_before,
+            sources,
         )?;
         Some((revision, plan))
     } else {
@@ -2707,6 +2793,7 @@ fn publish_inner(
             .join(crate::repo_wiki_ci::CODE_FILE)
             .is_file();
     let writes_block = export || rules_given || rules_to_take_out;
+    let agents_linked = project.is_none() && is_link(&input.worktree.join("AGENTS.md"));
     if writes_block && project.is_none() {
         maintain_agent_files(
             &input.worktree,
@@ -2874,12 +2961,13 @@ fn publish_inner(
         left_out: input.left_out,
         waiting: waiting.get(),
         kept: kept.get(),
-        rules: if writes_block {
+        rules: if writes_block && !agents_linked {
             rules.len().min(AGENTS_BLOCK_MAX_RULES)
         } else {
             0
         },
-        rules_removed: rules_to_take_out && !unchanged,
+        rules_removed: rules_to_take_out && !unchanged && !agents_linked,
+        agents_linked: agents_linked && writes_block,
         project_paths: &project_paths,
         project_adoptions: project_plan
             .as_ref()

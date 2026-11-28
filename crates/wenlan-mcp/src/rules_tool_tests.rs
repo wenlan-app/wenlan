@@ -246,6 +246,34 @@ fn ux_skill_14_the_tools_say_only_when_the_person_asked() {
     }
 }
 
+/// UX-SKILL-14: `add_rule` says a rule saved for a Space reaches its connected
+/// repositories as a project rule, and team rules come from the Rules page.
+#[test]
+fn ux_skill_14_add_rule_says_where_a_saved_rule_goes() {
+    let tools = server("http://127.0.0.1:1".into(), TransportMode::Stdio)
+        .tool_router
+        .list_all();
+    let description = tools
+        .iter()
+        .find(|tool| tool.name == "add_rule")
+        .and_then(|tool| tool.description.as_deref())
+        .unwrap_or_default();
+    for said in [
+        "Save one of the user's own working rules.",
+        "goes into AGENTS.md, as a project rule, in each repository linked to that Space",
+        "unless the Space shares its rules with a team: then the team's approved rules go there instead",
+        "Team rules come only from the Rules page",
+        "a proposal approved there",
+    ] {
+        assert!(description.contains(said), "{said}: {description}");
+    }
+    // Never says it is not a project rule: in the repository it is one.
+    assert!(
+        !description.contains("not a team or project rule"),
+        "{description}"
+    );
+}
+
 /// UX-SKILL-14: an AI tool reading the rules is told a saved rule was
 /// saved, and from where, never that the person wrote it.
 #[test]

@@ -10,7 +10,10 @@ use std::process::Stdio;
 use serde::{Deserialize, Serialize};
 use wenlan_types::repo_wiki::{ProjectRuleProposal, RepoWikiBinding};
 
-use super::{agents_block, git, run, sha256_hex, AGENTS_END, AGENTS_START, RULES_HEADING};
+use super::{
+    agents_block, git, imports_agents, is_rules_heading, run, sha256_hex, RuleSources, AGENTS_END,
+    AGENTS_START, CLAUDE_IMPORT, PROJECT_HEADING, RULES_HEADING,
+};
 use crate::error::WenlanError;
 use crate::rulesync_personal::{
     describe_change, fingerprint, reject_secret_lines, write_named_root_rule, write_root_rule,
@@ -21,7 +24,15 @@ use crate::skill_grow::tool_file_text;
 const ROOT_AGENTS: &str = "AGENTS.md";
 const ROOT_CLAUDE: &str = "CLAUDE.md";
 const TARGETS: &[&str] = &["codexcli", "claudecode", "copilot"];
+/// The team section heading. It names no team: the repository may be
+/// public, and the team's name stays in Wenlan.
 const TEAM_HEADING: &str = "## Team rules";
+/// A heading naming the team, written by no release but read back.
+const NAMED_TEAM_HEADING: &str = "## Team rules for ";
+
+fn is_team_heading(line: &str) -> bool {
+    line == TEAM_HEADING || line.starts_with(NAMED_TEAM_HEADING)
+}
 const MAX_RULE_FILE: u64 = 256 * 1024;
 
 type Result<T> = std::result::Result<T, WenlanError>;
@@ -832,10 +843,10 @@ fn team_rules_in(text: &str) -> Result<Vec<&str>> {
     Ok(parts(text)?
         .block
         .lines()
-        .skip_while(|line| *line != TEAM_HEADING)
+        .skip_while(|line| !is_team_heading(line))
         .skip(1)
         .take_while(|line| !line.starts_with("## ") && *line != super::RULES_HINT)
-        .filter(|line| !line.trim().is_empty() && *line != AGENTS_END)
+        .filter(|line| line.starts_with("- "))
         .collect())
 }
 
@@ -917,6 +928,7 @@ impl Plan {
 }
 
 impl Observed {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn plan(
         self,
         staged: &StagedRules,
@@ -925,23 +937,34 @@ impl Observed {
         approved: &[String],
         take_over: bool,
         previously_published: bool,
+        sources: &RuleSources,
     ) -> Result<Plan> {
         let approved = approved_texts(approved)?;
         let mut plan = Plan {
             files: BTreeMap::new(),
             adopted: Vec::new(),
         };
-        let claude_imports_agents = self
-            .files
-            .get(ROOT_CLAUDE)
-            .is_some_and(|file| file.current.lines().any(|line| line.trim() == "@AGENTS.md"));
+        // `AGENTS.md` sorts before `CLAUDE.md`, so this is known in time.
+        let mut agents_has_block = false;
         for (path, file) in self.files {
             let staged_text = staged.get(&path);
             let parsed = parts(&file.current)?;
             let root = path == ROOT_AGENTS;
             let legacy =
                 !parsed.block.is_empty() && matches!(path.as_str(), ROOT_AGENTS | ROOT_CLAUDE);
-            if !(staged_text.is_some() || file.tracked || legacy || (root && folder.is_some())) {
+            let hand = parsed.hand();
+            // A `CLAUDE.md` with none of the person's own text, missing
+            // included, reads `AGENTS.md` instead of holding a block copy.
+            let claude_import = path == ROOT_CLAUDE
+                && !imports_agents(&hand)
+                && hand.trim().is_empty()
+                && agents_has_block;
+            if !(staged_text.is_some()
+                || file.tracked
+                || legacy
+                || claude_import
+                || (root && folder.is_some()))
+            {
                 continue;
             }
             if !parsed.block.is_empty() && !take_over {
@@ -964,15 +987,27 @@ impl Observed {
             {
                 return Err(conflict(format!("project rules file {path:?} has untracked managed rules; reconcile them with the Space before publishing")));
             }
-            let rendered = if path == ROOT_CLAUDE && claude_imports_agents {
+            let rendered = if path == ROOT_CLAUDE && imports_agents(&hand) {
                 None
             } else {
                 staged_text
             };
             let wiki = root.then_some(folder).flatten();
             let keep_marker = root && !staged.is_empty();
-            let body = block(rendered, &parsed.hand(), wiki, keep_marker, publisher)?;
-            let next = merge_block(&file.current, &parsed, body.as_deref(), file.seen.is_some());
+            let body = if claude_import {
+                None
+            } else {
+                block(rendered, &hand, wiki, keep_marker, publisher, sources)?
+            };
+            agents_has_block |= root && body.is_some();
+            let next = if claude_import {
+                Some(format!(
+                    "{CLAUDE_IMPORT}{}",
+                    super::line_ending(&file.current)
+                ))
+            } else {
+                merge_block(&file.current, &parsed, body.as_deref(), file.seen.is_some())
+            };
             let change = (next.as_deref() != file.seen.as_ref().map(|_| file.current.as_str()))
                 .then_some(next);
             if change.is_some() && parsed.block.is_empty() && file.seen.is_some() && body.is_some()
@@ -998,6 +1033,7 @@ fn block(
     folder: Option<&str>,
     keep_marker: bool,
     publisher: &str,
+    sources: &RuleSources,
 ) -> Result<Option<String>> {
     let mut body = String::new();
     let mut team = String::new();
@@ -1007,11 +1043,11 @@ fn block(
         let mut seen = BTreeSet::new();
         let mut section = None;
         for line in rendered.lines().filter(|line| !line.trim().is_empty()) {
-            if line == RULES_HEADING {
+            if is_rules_heading(line) {
                 section = Some(false);
                 continue;
             }
-            if line == TEAM_HEADING {
+            if is_team_heading(line) {
                 section = Some(true);
                 continue;
             }
@@ -1047,10 +1083,17 @@ fn block(
         }
         block.push_str(RULE_PRECEDENCE);
         block.push_str("\n\n");
-        for (heading, section) in [(TEAM_HEADING, team), (RULES_HEADING, body)] {
+        for (heading, source, section) in [
+            (TEAM_HEADING, &sources.team_line, team),
+            (PROJECT_HEADING, &sources.project_line, body),
+        ] {
             if !section.is_empty() {
                 block.push_str(heading);
                 block.push_str("\n\n");
+                if let Some(source) = source {
+                    block.push_str(&tool_file_text(source));
+                    block.push_str("\n\n");
+                }
                 block.push_str(&section);
                 block.push('\n');
             }
