@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.22.10](https://github.com/wenlan-app/wenlan/compare/v0.22.9...v0.22.10) (2026-11-28)
+
+
+### Features
+
+* **rules:** AGENTS.md-first repo rules with a CLAUDE.md import, plain layer headings, and a truthful add_rule description ([#1413](https://github.com/wenlan-app/wenlan/issues/1413)) ([415802a](https://github.com/wenlan-app/wenlan/commit/415802a64fc13eb9a76699ae2a17686e648fe314))
+* **team:** give team-library Spaces their own Rules pages, reviewed on the team host ([#1416](https://github.com/wenlan-app/wenlan/issues/1416)) ([9f33c14](https://github.com/wenlan-app/wenlan/commit/9f33c1429fa7327619cd14357534d247d2aaaf7e))
+
+
+### Bug Fixes
+
+* **app:** polish team reading after share-to-team ([#1414](https://github.com/wenlan-app/wenlan/issues/1414)) ([588cb74](https://github.com/wenlan-app/wenlan/commit/588cb74c308cff30564a7c332cbe70eec1d9dce0))
+
 ## [0.22.9](https://github.com/wenlan-app/wenlan/compare/v0.22.8...v0.22.9) (2026-11-27)
 
 
