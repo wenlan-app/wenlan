@@ -56,9 +56,10 @@ export const WRITE_SCOPE = 'wenlan:write';
  * sets it; it is never in REQUEST_HEADERS, so a client cannot supply it.
  */
 export const ACCESS_HEADER = 'x-wenlan-access';
-const QUERY_TOOLS = new Set(['brief', 'recall', 'get_page_sources']);
+/** Read-only tools any grant may call. Must match the MCP server's query-only profile. */
+export const QUERY_TOOLS = new Set(['brief', 'recall', 'get_page_sources', 'read_space_rules']);
 /** Extra tools a write grant may call, beyond QUERY_TOOLS. */
-export const WEB_WRITE_TOOLS = new Set(['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff']);
+export const WEB_WRITE_TOOLS = new Set(['report_space_rule_use', 'read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page', 'update_brief', 'handoff']);
 const REQUEST_HEADERS = ['accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
 const RESPONSE_HEADERS = ['content-type', 'mcp-session-id', 'mcp-protocol-version'];
 const MAX_BODY_BYTES = 64 * 1024;
