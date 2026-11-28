@@ -23,7 +23,8 @@ use wenlan_core::rulesync_rule_plan::{
 use wenlan_types::personal_rules::{
     PersonalRuleApplyRequest, PersonalRuleEdit, PersonalRuleLayer, PersonalRuleLayerOrigins,
     PersonalRuleOrigin, PersonalRulePlan, PersonalRuleProposeRequest, PersonalRuleShow,
-    PersonalRuleShowRequest, PersonalRuleVersion, PersonalRuleVersionSummary,
+    PersonalRuleShowRequest, PersonalRuleToolText, PersonalRuleVersion, PersonalRuleVersionSummary,
+    PersonalRulesOverview,
 };
 
 use super::*;
@@ -621,6 +622,54 @@ pub(super) async fn show(
     .map_err(|error| ServerError::Internal(error.to_string()))?
     .map(Json)
     .map_err(server_error)
+}
+
+pub(super) async fn overview(
+    headers: HeaderMap,
+) -> Result<Json<PersonalRulesOverview>, ServerError> {
+    require_local_reader(&headers)?;
+    tokio::task::spawn_blocking(move || {
+        let setup = Setup::system()?;
+        let manifest = setup.load_if_present()?.unwrap_or_else(empty_manifest);
+        anyhow::Ok(rules_overview(&manifest))
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(server_error)
+}
+
+/// Shared rules plus each tool's own lines, in the order the tools are known.
+/// A tool whose own lines are only a generated comment is left out.
+fn rules_overview(manifest: &Manifest) -> PersonalRulesOverview {
+    let master = materialize_confirmed_tool_overrides(manifest);
+    let tools = PERSONAL_TARGETS
+        .iter()
+        .filter_map(|target| {
+            let text = master.overlays.get(target.id)?;
+            has_readable_lines(text).then(|| PersonalRuleToolText {
+                tool: target.agent.to_owned(),
+                text: text.clone(),
+            })
+        })
+        .collect();
+    PersonalRulesOverview {
+        shared: master.shared.clone(),
+        tools,
+    }
+}
+
+fn has_readable_lines(text: &str) -> bool {
+    let mut rest = text;
+    let mut visible = String::new();
+    while let Some(start) = rest.find("<!--") {
+        visible.push_str(&rest[..start]);
+        rest = rest[start..]
+            .find("-->")
+            .map_or("", |end| &rest[start + end + 3..]);
+    }
+    visible.push_str(rest);
+    !visible.trim().is_empty()
 }
 
 pub(super) async fn propose(

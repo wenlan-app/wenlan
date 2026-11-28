@@ -466,6 +466,12 @@ pub async fn global_routes_enforce_scope_contracts() {
         ),
         (
             Method::Get,
+            "/api/rules/personal/overview",
+            "/api/rules/personal/overview",
+            None,
+        ),
+        (
+            Method::Get,
             "/api/rules/personal/history/missing",
             "/api/rules/personal/history/{id}",
             None,

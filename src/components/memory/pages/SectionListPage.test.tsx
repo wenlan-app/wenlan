@@ -462,3 +462,86 @@ describe("section list page", () => {
     expect(within(second).getByText("Never promise a date")).toBeInTheDocument();
   });
 });
+
+describe("rules every tool gets on the Rules page", () => {
+  const synced: RulesSetupStatus = {
+    enabled: true, adopted: true, can_adopt: true, can_restore: true, in_sync: true, proposals: [], review_tools: {},
+    tools: [{ id: "codex", name: "Codex", state: "up_to_date", counts: { rules: 4, skills: 0, commands: 0, subagents: 0, mcp: 0 } }],
+  };
+  const overview = {
+    shared: "<!-- Generated from AGENTS.md -->\n# AGENTS.md\n\n## Working together\n\n- Act on a clear request.\n- Ask only when it matters, see [the guide](https://example.com).\n\n## Evidence\n\n- Read the source first.\n",
+    tools: [{ tool: "claude-code", text: "\n- Keep replies short.\n" }, { tool: "cursor", text: "<!-- generated -->\n" }],
+  };
+  function mockRules(store = overview, delivery: unknown[] = []) {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return synced;
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "rules_setup_personal_overview") return store;
+      if (command === "get_rules_delivery") return { tools: delivery };
+      return undefined;
+    });
+  }
+
+  it("lists the shared rules by heading and each tool's own lines, read-only, instead of No rules yet", async () => {
+    active.mockResolvedValue([]);
+    mockRules();
+    setup({ section: "rules" });
+    const store = await screen.findByRole("region", { name: "Rules every tool gets" });
+    const groups = [...store.querySelectorAll("details > summary")].map((summary) => summary.textContent);
+    expect(groups).toEqual(["Working together2 rules", "Evidence1 rule", "Only for Claude Code1 rule"]);
+    expect(store).toHaveTextContent("Act on a clear request.");
+    expect(store).not.toHaveTextContent(/Generated|AGENTS\.md|Cursor/);
+    expect(within(store).queryByRole("link")).toBeNull();
+    expect(within(store).queryByRole("textbox")).toBeNull();
+    expect(within(store).queryByRole("button")).toBeNull();
+    expect(screen.queryByText("No rules yet")).toBeNull();
+    expect(screen.queryByText("Rules on pages")).toBeNull();
+  });
+
+  it("labels page rules separately when the store and pages both hold rules", async () => {
+    mockRules();
+    setup({ section: "rules" });
+    expect(await screen.findByRole("region", { name: "Rules every tool gets" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Rules on pages" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Git rules/ })).toBeInTheDocument();
+  });
+
+  it("still says No rules yet when the store is empty", async () => {
+    active.mockResolvedValue([]);
+    mockRules({ shared: "<!-- generated -->\n", tools: [] });
+    setup({ section: "rules" });
+    expect(await screen.findByText("No rules yet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Rules every tool gets" })).toBeNull();
+  });
+
+  it("does not show the store list on Skills", async () => {
+    mockRules();
+    setup({ section: "skills" });
+    await screen.findByTestId("rules-tools");
+    expect(screen.queryByRole("region", { name: "Rules every tool gets" })).toBeNull();
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "rules_setup_personal_overview")).toBe(false);
+  });
+
+  it("names other connections by their display names and keeps Sync now quiet when all is current", async () => {
+    const row = (id: string, display_name = id) => ({ id, display_name, connected: true, method: "mcp", state: "on_request", rule_count: 0 });
+    mockRules(overview, [{ ...row("codex", "Codex"), method: "file", state: "delivered", rule_count: 4 }, row("kimi"), row("cursor-vscode")]);
+    setup({ section: "rules" });
+    const header = await screen.findByTestId("rules-tools");
+    await userEvent.click(await within(header).findByRole("button", { name: "+2 other connections" }));
+    const others = header.querySelector(".rules-tools-other-list");
+    expect(others).toHaveTextContent("Kimi");
+    expect(others).toHaveTextContent("Cursor (VS Code)");
+    expect(others).not.toHaveTextContent(/kimi|cursor-vscode/);
+    expect(screen.getByRole("button", { name: "Sync now" })).toHaveClass("settings-control-button-sm");
+  });
+});
+
+describe("rule count from the shared store", () => {
+  it("counts each rule every tool gets, plus each tool's own lines", async () => {
+    const { storeRuleCount } = await import("../skills/RulesStoreList");
+    expect(storeRuleCount({ shared: "# T\n\n## A\n\n- one\n- two\n\nNot a rule.\n\n## B\n\n* three\n", tools: [{ tool: "codex", text: "<!-- x -->\n- four\n" }] })).toBe(4);
+    expect(storeRuleCount({ shared: "<!-- generated -->\n", tools: [] })).toBe(0);
+    expect(storeRuleCount(undefined)).toBe(0);
+  });
+});

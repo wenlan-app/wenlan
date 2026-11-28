@@ -114,7 +114,9 @@ function EnabledRulesSetupSettings({ status, skillUpdates, onSkills }: { readonl
               </li>;
             })}</ul>)}
           {status.adopted && <div className="rules-setup-actions">
+            {/* Everything is current: Sync stays available but quiet. */}
             <Button type="button" disabled={busy}
+              {...(status.in_sync && tools.length > 0 && problems.length === 0 ? { variant: "ghost" as const, size: "sm" as const } : {})}
               onClick={() => void run(syncRulesSetup, t("rulesSetup.syncDone"))}>{t("rulesSetup.sync")}</Button>
           </div>}
         </div>

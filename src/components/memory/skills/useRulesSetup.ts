@@ -8,6 +8,7 @@ const STATUS = ["rules-setup-status"] as const;
 const REVIEW = ["rules-setup-review"] as const;
 const SKILL_UPDATES = ["rules-setup-skill-updates"] as const;
 export const RULES_DELIVERY_QUERY_KEY = ["rules-delivery"] as const;
+export const RULES_OVERVIEW_QUERY_KEY = ["rules-setup", "personal-overview"] as const;
 
 export function useRulesSetup(enabled = true): RulesSetupStatus | undefined {
   const example = useExampleWikiActive();
@@ -53,6 +54,7 @@ export async function refreshRulesSetup(client: QueryClient, refreshSkills = fal
     client.invalidateQueries({ queryKey: STATUS }),
     client.invalidateQueries({ queryKey: REVIEW }),
     client.invalidateQueries({ queryKey: RULES_DELIVERY_QUERY_KEY }),
+    client.invalidateQueries({ queryKey: RULES_OVERVIEW_QUERY_KEY }),
     ...(refreshSkills ? [client.invalidateQueries({ queryKey: SKILL_UPDATES })] : []),
   ]);
 }

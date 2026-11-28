@@ -99,6 +99,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/personal/show", post(personal_rules::show))
         .route("/api/rules/personal/propose", post(personal_rules::propose))
         .route(
+            "/api/rules/personal/overview",
+            get(personal_rules::overview),
+        )
+        .route(
             "/api/rules/personal/merge-pages",
             get(personal_rules::preview_merge_pages).post(personal_rules::decline_merge_pages),
         )

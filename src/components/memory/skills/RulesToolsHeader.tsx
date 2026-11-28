@@ -42,6 +42,11 @@ const MANAGED_NAMES: Readonly<Record<string, string>> = {
 export function toolDisplayName(id: string): string {
   return MANAGED_NAMES[id] ?? id;
 }
+/** Tools Wenlan connects to but doesn't write into; some report only a raw id. */
+const OTHER_NAMES: Readonly<Record<string, string>> = { kimi: "Kimi", "cursor-vscode": "Cursor (VS Code)", "claude-desktop": "Claude Desktop" };
+function otherConnectionName(id: string, shown: string): string {
+  return OTHER_NAMES[id.toLowerCase()] ?? OTHER_NAMES[shown.toLowerCase()] ?? shown;
+}
 export function internalClient(id: string): boolean {
   return /:[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(id) || /(?:-mcp-client|-loop)$/i.test(id)
     || ["wenlan-setup", "wenlan-cli", "wenlan", "web-ai", "remote-mcp"].includes(id.toLowerCase());
@@ -279,7 +284,7 @@ export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, ski
             {shown.map((item) => <li key={item.tool.id}><ToolChip shown={item} review={pendingToolIds.has(item.tool.id)} onReview={onReview} onSkills={onSkills} /></li>)}
           </ul>
           {others.length > 0 && <button type="button" className="rules-tools-other" aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>{t("howIWork.tools.otherConnections", { count: others.length })}</button>}
-          {showOthers && <><p className="rules-tools-other-note">{t("howIWork.tools.otherConnectionsNote")}</p><ul className="rules-tools-other-list">{others.map(({ tool }) => <li key={tool.id}>{rulesSetupName(tool.display_name)}</li>)}</ul></>}
+          {showOthers && <><p className="rules-tools-other-note">{t("howIWork.tools.otherConnectionsNote")}</p><ul className="rules-tools-other-list">{others.map(({ tool }) => <li key={tool.id}>{otherConnectionName(tool.id, rulesSetupName(tool.display_name))}</li>)}</ul></>}
         </div>
       ))}
       {setup?.rule_import_finished && <p className="rules-setup-status" role="status">{t("rulesSetup.ruleImportFinished")}</p>}

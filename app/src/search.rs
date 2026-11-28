@@ -4373,6 +4373,16 @@ pub async fn rules_setup_review_list(
 }
 
 #[tauri::command]
+pub async fn rules_setup_personal_overview(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::personal_rules::PersonalRulesOverview, String> {
+    daemon_client(&state)
+        .await
+        .get_json_as_person("/api/rules/personal/overview")
+        .await
+}
+
+#[tauri::command]
 pub async fn rules_setup_apply_personal_plan(
     state: tauri::State<'_, State>,
     plan_id: String,

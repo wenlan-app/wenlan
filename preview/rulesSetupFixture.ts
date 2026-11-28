@@ -126,6 +126,10 @@ export function createRulesSetupFixture() {
         };
         return status;
       }
+      case "rules_setup_personal_overview": return adopted ? {
+        shared: "# AGENTS.md\n\n## Working together\n\n- Act on a clear request and carry it through.\n- Ask only when missing information changes a costly decision.\n\n## Evidence\n\n- Read the source before claiming how it works.\n- Verify the change where it matters.\n",
+        tools: [{ tool: "claude-code", text: "\n- Keep replies short.\n" }],
+      } : { shared: "", tools: [] };
       case "rules_setup_review_list": return { items: items.filter((item) => !resolved.has(item.id)), review_tools: reviewTools };
       case "rules_setup_skill_review": {
         const request = args?.request as { id: string; action: string };

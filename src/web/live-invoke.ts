@@ -1490,6 +1490,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   rules_setup_sync: () => post("/api/rules/setup/sync", {}, AS_PERSON),
   rules_setup_skill_updates: () => post("/api/rules/setup/skill-updates", {}, AS_PERSON),
   rules_setup_review_list: () => get("/api/rules/setup/review", AS_PERSON),
+  rules_setup_personal_overview: () => get("/api/rules/personal/overview", AS_PERSON),
   rules_setup_skill_review: (a) => post("/api/skills/registry/review", a.request, AS_PERSON),
   rules_setup_settings_apply: (a) => post("/api/rules/setup/settings/apply", { token: a.token }, AS_PERSON),
   rules_setup_dismiss_update: (a) => post("/api/rules/setup/review/dismiss-update", { id: a.id }, AS_PERSON),

@@ -1873,3 +1873,45 @@ fn confirmed_personal_tool_rule_survives_setup_restore() {
     assert!(restored.master.unenrolled_overlays.contains(CLAUDE_RULES));
     assert!(restored.personal_rule_journal.is_none());
 }
+
+#[test]
+fn rules_overview_lists_shared_rules_and_each_tools_own_lines() {
+    let fixture = adopted_fixture();
+    let mut manifest = fixture.setup.load().unwrap().unwrap();
+    manifest
+        .master
+        .overlays
+        .insert("claudecode".into(), "\n- Claude only line.\n".into());
+    manifest.master.overlays.insert(
+        "codexcli".into(),
+        "<!-- Generated from somewhere. -->\n\n".into(),
+    );
+    manifest.master.overlays.remove("cursor");
+    let overview = rules_overview(&manifest);
+    assert_eq!(overview.shared, manifest.master.shared);
+    assert!(overview.shared.contains("One rule."), "{}", overview.shared);
+    let tools: Vec<_> = overview
+        .tools
+        .iter()
+        .map(|tool| tool.tool.as_str())
+        .collect();
+    assert!(tools.contains(&"claude-code"), "{tools:?}");
+    assert!(
+        !tools.contains(&"codex"),
+        "a generated comment is not a rule: {tools:?}"
+    );
+    let claude = overview
+        .tools
+        .iter()
+        .find(|tool| tool.tool == "claude-code")
+        .unwrap();
+    assert_eq!(claude.text, "\n- Claude only line.\n");
+}
+
+#[test]
+fn readable_lines_ignore_generated_comments() {
+    assert!(!has_readable_lines("<!-- a -->\n\n<!-- b -->\n"));
+    assert!(!has_readable_lines("  \n"));
+    assert!(has_readable_lines("<!-- a -->\n- Keep this.\n"));
+    assert!(!has_readable_lines("<!-- unclosed"));
+}

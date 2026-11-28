@@ -117,6 +117,7 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/rules/setup/sync"),
         (Method::Post, "/api/rules/personal/show"),
         (Method::Post, "/api/rules/personal/propose"),
+        (Method::Get, "/api/rules/personal/overview"),
         (Method::Get, "/api/rules/personal/merge-pages"),
         (Method::Post, "/api/rules/personal/merge-pages"),
         (Method::Get, "/api/rules/personal/plan/{id}"),
