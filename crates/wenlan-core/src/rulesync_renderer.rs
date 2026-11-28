@@ -280,14 +280,35 @@ fn render_staged(
 
 const INVALID_FRONTMATTER: &[u8] = b"Invalid frontmatter in ";
 
+/// Linux and macOS report "text file busy" (ETXTBSY) for 26.
+const TEXT_FILE_BUSY: i32 = 26;
+
+/// Spawn the just-staged renderer. Another thread of this process can fork a
+/// child while the staged copy is still open for writing; that child holds the
+/// write handle until it execs, and launching the copy meanwhile fails with
+/// "text file busy". The condition clears on its own within milliseconds, so
+/// retry only that error until a short deadline.
+fn spawn_staged(command: &mut Command) -> io::Result<std::process::Child> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match command.spawn() {
+            Err(error)
+                if cfg!(unix)
+                    && error.raw_os_error() == Some(TEXT_FILE_BUSY)
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}
+
 fn run_generate(command: &mut Command, features: &[&str]) -> Result<()> {
     // Only recognize the pin's package diagnostic. The renderer and the
     // sandbox launcher can both exit nonzero, and their text stays private.
-    let mut child = command
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("launch the staged rulesync renderer")?;
+    command.stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = spawn_staged(command).context("launch the staged rulesync renderer")?;
     let mut diagnostic = Vec::new();
     let mut stderr = child.stderr.take().context("read renderer diagnostics")?;
     let read = (&mut stderr)
@@ -711,6 +732,36 @@ mod tests {
     use std::ffi::OsStr;
 
     const RENDERER_CHILD_MODE: &str = "WENLAN_TEST_RENDERER_CHILD_MODE";
+
+    /// A staged copy still open for writing elsewhere (as a concurrently
+    /// forked child holds it) cannot be launched yet; the launch waits for
+    /// the handle to close instead of failing the whole render.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rulesync_renderer_launch_waits_out_a_busy_staged_copy() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("renderer");
+        let mut writer = File::create(&path).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        writer.flush().unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let error = Command::new(&path).spawn().unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(TEXT_FILE_BUSY), "{error}");
+
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(writer);
+        });
+        let status = spawn_staged(&mut Command::new(&path))
+            .expect("launch after the write handle closes")
+            .wait()
+            .unwrap();
+        assert!(status.success());
+        release.join().unwrap();
+    }
 
     fn stub_server(
         body: &'static [u8],

@@ -12,6 +12,7 @@ import { ConfirmDialog } from "../../ConfirmDialog";
 import { Button } from "../settings/primitives";
 import { refreshRulesSetup } from "./useRulesSetup";
 import { RulesSetupDiff } from "./RulesSetupDiff";
+import { toolDisplayName } from "./RulesToolsHeader";
 import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice } from "./rulesSetupText";
 import "./rulesSetup.css";
 
@@ -174,7 +175,7 @@ export function PersonalRuleReview({ plan }: { readonly plan: PersonalRulePlan }
     setBusy(true);
     setFailed(false);
     try {
-      if (apply) await applyPersonalRulePlan(plan.id);
+      if (apply) await applyPersonalRulePlan(plan);
       else await declinePageRuleMerge(plan.id);
     } catch {
       setFailed(true);
@@ -186,6 +187,7 @@ export function PersonalRuleReview({ plan }: { readonly plan: PersonalRulePlan }
 
   return <article className="rules-setup-review" aria-labelledby={heading}>
     <h2 id={heading}>{move ? t("rulesSetup.movePageRules", { count: move.rule_count }) : t("rulesSetup.reviewPersonalRule")}</h2>
+    {plan.proposer && <p>{t("rulesSetup.proposedBy", { agent: toolDisplayName(plan.proposer) })}</p>}
     {move?.excludes_space_only && <p>{t("rulesSetup.keepSpaceRules")}</p>}
     {plan.changes.map(({ diff }, index) => diff && <RulesSetupDiff key={index} diff={diff} />)}
     {!!move?.excluded.length && <>
@@ -199,7 +201,7 @@ export function PersonalRuleReview({ plan }: { readonly plan: PersonalRulePlan }
       <Button type="button" variant="primary" disabled={busy || !!plan.blocked_tools.length} onClick={() => void answer(true)}>
         {t(move ? "rulesSetup.moveRules" : "rulesSetup.applyPersonalRule")}
       </Button>
-      {move && <Button type="button" disabled={busy} onClick={() => void answer(false)}>{t("rulesSetup.keepPageRules")}</Button>}
+      <Button type="button" disabled={busy} onClick={() => void answer(false)}>{t(move ? "rulesSetup.keepPageRules" : "rulesSetup.no")}</Button>
     </div>
     {failed && <p className="rules-setup-note" role="alert">{t("rulesSetup.changeFailed")}</p>}
   </article>;
@@ -291,7 +293,7 @@ function OtherReviewCard({ item, toolName, busy, onChoice }: {
         : t("rulesSetup.proposalFor", { name: item.proposal.name })}</h2>
       {item.kind === "settings" && (item.answers.length ? <SettingsChanges plan={item.plan} />
         : <p>{t("rulesSetup.previewFailed")}</p>)}
-      {item.kind === "skill_update" && item.update.status.state === "available" && <p>{item.update.status.revision}</p>}
+      {item.kind === "skill_update" && item.update.status.state === "available" && <><p>{item.update.status.revision}</p><p>{t("rulesSetup.dismissUpdateExplanation")}</p></>}
       {proposal?.files.map((file) => file.text !== null && (
         <RulesSetupDiff key={file.path} diff={addedTextDiff(file.text.trimEnd().split("\n"))} />
       ))}

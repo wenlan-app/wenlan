@@ -229,6 +229,7 @@ async fn confirm_and_apply_personal_plan(
 ) -> Result<()> {
     let request = wenlan_types::personal_rules::PersonalRuleApplyRequest {
         plan_id: plan.id.clone(),
+        expected_plan: Some(plan.clone()),
     };
     let accepted = if plan.page_merge.is_some() {
         let answer =

@@ -6,6 +6,7 @@ import IdentityCard from "./IdentityCard";
 import { PrimaryNavigation, SIDEBAR_RECENT_LISTED } from "./navigation/PrimaryNavigation";
 import { sectionCounts, useRecentSectionPages, useSectionPages } from "./pages/useSectionPages";
 import { howIWorkPageTitle } from "./skills/howIWorkModel";
+import { storeRuleCount, useRulesOverview } from "./skills/RulesStoreList";
 import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import { SearchEntry } from "./SearchEntry";
 import ActivityStatus from "./activity/ActivityStatus";
@@ -106,6 +107,11 @@ export default function Sidebar({
   const storedPins = usePinnedPages();
   const pinnedPages = useMemo(() => storedPins.map((pinned) => ({ ...pinned, title: howIWorkPageTitle(pinned, t) })), [storedPins, t]);
   const sections = useSectionPages();
+  // Rules every tool gets live in the shared store, not in pages; count them
+  // too so the sidebar never reads 0 while every tool has rules.
+  const storeRules = storeRuleCount(useRulesOverview(!teamMember).data);
+  const counts = sectionCounts(sections);
+  if (counts.rules !== undefined) counts.rules += storeRules;
   const recentPages = useRecentSectionPages(sections.pages, SIDEBAR_RECENT_LISTED, sections.sectionOf)
     .map((recent) => ({ ...recent, title: howIWorkPageTitle(recent.page, t) }));
   const asideRef = useRef<HTMLElement>(null);
@@ -195,7 +201,7 @@ export default function Sidebar({
               counted: (label, count) => t("sidebar.sectionCount", { label, count }),
               unpin: (title) => t("sidebar.unpinNamed", { title }),
             }}
-            counts={sectionCounts(sections)}
+            counts={counts}
             recentPages={recentPages}
             pinnedPages={pinnedPages}
             activePinnedPageId={activePageId}

@@ -99,6 +99,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/rules/personal/show", post(personal_rules::show))
         .route("/api/rules/personal/propose", post(personal_rules::propose))
         .route(
+            "/api/rules/personal/overview",
+            get(personal_rules::overview),
+        )
+        .route(
             "/api/rules/personal/merge-pages",
             get(personal_rules::preview_merge_pages).post(personal_rules::decline_merge_pages),
         )
@@ -824,9 +828,21 @@ pub(crate) fn tool_for_path(path: &Path) -> Option<&'static PersonalTarget> {
     if path == Path::new(".claude.json") || path == Path::new(".mcp.json") {
         return personal_target("claudecode");
     }
-    PERSONAL_TARGETS.iter().find(|target| {
-        path.starts_with(target.folder()) || target.skill_roots().any(|root| path.starts_with(root))
-    })
+    PERSONAL_TARGETS
+        .iter()
+        .filter_map(|target| {
+            std::iter::once(target.folder())
+                .chain(target.skill_roots().map(Path::new))
+                .filter(|root| path.starts_with(root))
+                .map(|root| root.components().count())
+                .max()
+                .map(|specificity| (specificity, target))
+        })
+        .fold(None, |best, candidate| match best {
+            Some((specificity, _)) if specificity >= candidate.0 => best,
+            _ => Some(candidate),
+        })
+        .map(|(_, target)| target)
 }
 
 fn adoption_with_settings_token(adoption: &str, settings: &str) -> Result<String> {
@@ -1122,7 +1138,7 @@ impl Setup {
             manifest.team_rules_moved_notice_pending = false;
             self.save(&manifest)?;
         }
-        status.waiting_plans = personal_rules::pending_page_plans(self)
+        status.waiting_plans = personal_rules::pending_page_plans(self)?
             .into_iter()
             .map(|plan| wenlan_types::rulesync::WaitingRulePlan {
                 id: plan.id,
@@ -1512,9 +1528,33 @@ fn deliveries_match_master(manifest: &Manifest) -> bool {
             return true;
         };
         let Some([shared_end, _]) = authored_ends else {
-            return manifest.master.shared_rule_text(target).is_empty();
+            return legacy_delivery_matches(
+                base,
+                &manifest.master.base_rule_text(target, &[]),
+                target,
+            );
         };
         base.get(..*shared_end) == Some(manifest.master.shared_rule_text(target).as_str())
+    })
+}
+
+/// A legacy delivery recorded no layer ends, so compare it with the whole
+/// authored text (shared rules plus this tool's own lines). Only the
+/// generated "How I work" section may follow it. A shared rule removed from
+/// the end therefore still counts as a change to sync.
+fn legacy_delivery_matches(base: &str, authored: &str, target: &str) -> bool {
+    let header =
+        "<!-- Managed by Wenlan. Use wenlan rules status --sync to collect local edits. -->\n\n";
+    let (base, authored) = if matches!(target, "codexcli" | "codex") {
+        (
+            base.strip_prefix(header).unwrap_or(base),
+            authored.strip_prefix(header).unwrap_or(authored),
+        )
+    } else {
+        (base, authored)
+    };
+    base.strip_prefix(authored).is_some_and(|rest| {
+        rest.is_empty() || rest.trim_start_matches('\n').starts_with("## How I work\n")
     })
 }
 
@@ -6814,6 +6854,138 @@ fn append_skipped_tools(report: &mut RulesSyncReport, skipped: &[String]) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn legacy_delivery_checks_shared_text_after_codex_header() {
+        let header = "<!-- Managed by Wenlan. Use wenlan rules status --sync to collect local edits. -->\n\n";
+        assert!(legacy_delivery_matches(
+            &format!("{header}Shared\nOverlay\n"),
+            "Shared\nOverlay\n",
+            "codexcli"
+        ));
+        assert!(legacy_delivery_matches(
+            "Shared\nOverlay\n\n## How I work\n\n- line\n",
+            "Shared\nOverlay\n",
+            "geminicli"
+        ));
+        assert!(!legacy_delivery_matches(
+            &format!("{header}Changed\nOverlay\n"),
+            "Shared\nOverlay\n",
+            "codexcli"
+        ));
+    }
+
+    #[test]
+    fn legacy_delivery_with_a_removed_trailing_shared_rule_needs_sync() {
+        assert!(!legacy_delivery_matches(
+            "Keep\nRemoved\n",
+            "Keep\n",
+            "claudecode"
+        ));
+        assert!(!legacy_delivery_matches(
+            "Keep\nRemoved\nOverlay\n",
+            "Keep\nOverlay\n",
+            "geminicli"
+        ));
+    }
+
+    #[test]
+    fn nested_tool_folder_wins_over_parent() {
+        assert_eq!(
+            tool_for_path(Path::new(".gemini/GEMINI.md")).unwrap().id,
+            "geminicli"
+        );
+        assert_eq!(
+            tool_for_path(Path::new(".gemini/config/GEMINI.md"))
+                .unwrap()
+                .id,
+            "antigravity-ide"
+        );
+    }
+
+    #[test]
+    fn legacy_manifest_status_checks_recorded_shared_text() {
+        let f = Fixture::new();
+        f.adopt_from_plan();
+        f.sync_with("");
+        let mut manifest = f.setup.load().unwrap().unwrap();
+        for delivery in manifest.delivered.values_mut() {
+            if let Kind::Rule {
+                target,
+                base,
+                authored_ends,
+                ..
+            } = &mut delivery.kind
+            {
+                *authored_ends = None;
+                let header = "<!-- Managed by Wenlan. Use wenlan rules status --sync to collect local edits. -->\n\n";
+                if target == "codexcli" && !base.starts_with(header) {
+                    *base = format!("{header}{base}");
+                }
+            }
+        }
+        f.setup.save(&manifest).unwrap();
+        let status = f.setup.status().unwrap();
+        assert!(status.in_sync, "{status:?}");
+        assert!(!status
+            .notes
+            .iter()
+            .any(|note| note.contains("not delivered to every managed tool")));
+        let rule = manifest
+            .delivered
+            .values_mut()
+            .find_map(|delivery| match &mut delivery.kind {
+                Kind::Rule { base, .. } => Some(base),
+                _ => None,
+            })
+            .unwrap();
+        *rule = "Different rules.\n".into();
+        f.setup.save(&manifest).unwrap();
+        assert!(!f.setup.status().unwrap().in_sync);
+    }
+
+    #[test]
+    fn status_counts_gemini_and_antigravity_deliveries_separately() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.setup.home.join(".gemini/config")).unwrap();
+        f.write(".gemini/GEMINI.md", "Gemini instruction.\n");
+        f.write(
+            ".gemini/config/GEMINI.md",
+            "Antigravity instruction.\nAnother instruction.\n",
+        );
+        f.adopt_from_plan();
+        f.sync_with("");
+        let status = f.setup.status().unwrap();
+        let gemini = status
+            .tools
+            .iter()
+            .find(|row| row.tool.id == "gemini-cli")
+            .unwrap();
+        let antigravity = status
+            .tools
+            .iter()
+            .find(|row| row.tool.id == "antigravity")
+            .unwrap();
+        assert_eq!(gemini.state, RulesToolState::UpToDate);
+        assert_eq!(antigravity.state, RulesToolState::UpToDate);
+        let manifest = f.setup.load().unwrap().unwrap();
+        for (path, row) in [
+            (".gemini/GEMINI.md", gemini),
+            (".gemini/config/GEMINI.md", antigravity),
+        ] {
+            let Kind::Rule { source, .. } = &manifest.delivered[Path::new(path)].kind else {
+                panic!("missing rule delivery")
+            };
+            let count = source
+                .lines()
+                .filter(|line| {
+                    !line.trim().is_empty() && !line.trim_start().starts_with(['#', '<'])
+                })
+                .count();
+            assert!(count > 0);
+            assert_eq!(row.counts.rules, count);
+        }
+    }
+
     const SHARED: &str = "# Shared\n\nOne rule.\nSecond rule.\n";
     pub(super) const SHARED_RULES: &str = ".agents/AGENTS.md";
     pub(super) const CLAUDE: &str = ".claude/CLAUDE.md";
@@ -6872,6 +7044,12 @@ mod tests {
             let data = _temp.path().join("data");
             fs::create_dir(&home).unwrap();
             fs::create_dir(&data).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                // The daemon creates its data folder private (`Setup::lock`).
+                fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
+            }
             Self {
                 setup: Setup {
                     home,

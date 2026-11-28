@@ -13,8 +13,8 @@ import { useTeamAccess } from "../../../web/teamAccess";
 import { pinPage, unpinPage, usePinnedPages } from "../navigation/pinnedPages";
 import { HOW_I_WORK_QUERY_KEYS, howIWorkPageTitle } from "../skills/howIWorkModel";
 import { SpaceRulesAsk } from "../skills/SpaceRulesAsk";
-import { RulesToolsHeader } from "../skills/RulesToolsHeader";
 import { RulesSetupSettings } from "../skills/RulesSetupSettings";
+import { overviewHasRules, RulesStoreList, useRulesOverview } from "../skills/RulesStoreList";
 import { useRulesSetup, useRulesSkillUpdates } from "../skills/useRulesSetup";
 import { useScope } from "../team/scope";
 import { archivePageFromList, canArchivePage } from "./archiveWikiPage";
@@ -79,6 +79,15 @@ export function SectionListPage({
   const scope = useScope();
   const rulesSetup = useRulesSetup(section !== "docs" && !member);
   const skillUpdates = useRulesSkillUpdates(section === "skills" && !!rulesSetup?.adopted);
+  // The rules every tool gets live in the shared store, not in pages, so the
+  // Rules page shows them too; otherwise it reads "no rules" while every tool has some.
+  // Stored rules stay visible after a restore turns delivery off: the store
+  // still holds them, and the sidebar counts them.
+  const showStore = section === "rules" && !!rulesSetup;
+  const overview = useRulesOverview(showStore);
+  const storeHasRules = showStore && overviewHasRules(overview.data);
+  // "No rules yet" waits for the overview, and never sits beside its load error.
+  const storeSettledEmpty = !showStore || (overview.isSuccess && !storeHasRules);
   const pinnedPages = usePinnedPages();
   const sections = useSectionPages(true);
   const folders = useKnowledgeFolders();
@@ -274,7 +283,7 @@ export function SectionListPage({
   // there is no corresponding Skills page in the library.
   const pageBackedUpdates = new Set(rows.filter((page) => page.status === "active").map((page) => page.title));
   const localUpdates = [...(skillUpdates ?? [])].filter((name) => !pageBackedUpdates.has(name));
-  const empty = sections.loaded && rows.length === 0 && folderCards.length === 0 && localUpdates.length === 0;
+  const empty = sections.loaded && rows.length === 0 && folderCards.length === 0 && localUpdates.length === 0 && storeSettledEmpty;
   const menuItems = !canWrite ? [] : [
     ...(section === "docs" && !member ? ["folder" as const] : []),
     // A team member's browser has no skills of its own to hold: the entry
@@ -333,8 +342,7 @@ export function SectionListPage({
         )}
       </header>
 
-      {rulesSetup && (section === "rules" ? <RulesSetupSettings />
-        : <RulesToolsHeader delivers setupOnly skillUpdates={skillUpdates?.size} />)}
+      {rulesSetup && <RulesSetupSettings skillUpdates={section === "skills" ? skillUpdates?.size : undefined} onSkills={section === "skills"} />}
       {section === "docs" && folder === null && !exampleWiki && <SpaceFoldersPrompt noteCount={sections.loaded ? sections.pages.length : null} />}
       {pending.map((item) => <SpaceRulesAsk key={item.space_id} space={{ id: item.space_id, name: item.space_name }} onOpenPage={onOpenPageId} variant="pending" />)}
 
@@ -359,6 +367,7 @@ export function SectionListPage({
         </div>
       ) : (
         <>
+          {showStore && <RulesStoreList />}
           {folderCards.length > 0 && (
             <>
               <h2 className="section-list-label" id={`${id}-folders`}>{t("pages.folders.title")}</h2>
@@ -377,7 +386,8 @@ export function SectionListPage({
           {(rows.length > 0 || localUpdates.length > 0) && (
             <>
               {section === "docs" && <h2 className="section-list-label" id={`${id}-pages`}>{t("sections.pages")}</h2>}
-              <ul className="section-list-pages" aria-labelledby={section === "docs" ? `${id}-pages` : `${id}-title`}>
+              {storeHasRules && <h2 className="section-list-label" id={`${id}-pages`}>{t("rulesSetup.store.pageRules")}</h2>}
+              <ul className="section-list-pages" aria-labelledby={section === "docs" || storeHasRules ? `${id}-pages` : `${id}-title`}>
                 {rows.map((page) => {
                   const draft = page.status === "draft";
                   const newVersion = page.status === "active" && skillUpdates?.has(page.title);

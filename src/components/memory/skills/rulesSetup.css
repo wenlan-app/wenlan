@@ -127,6 +127,7 @@
   margin: 4px 0 0;
   list-style: none;
 }
+.rules-setup-status-summary { margin: 4px 0 0; }
 .rules-setup-plan-list li {
   display: flex;
   flex-wrap: wrap;
@@ -153,4 +154,46 @@
 
 .rules-setup-status-panel > .rules-setup-actions {
   margin-top: 8px;
+}
+
+/* Read-only list of the rules every tool gets (the shared store). */
+.rules-store { display: grid; gap: 6px; margin: 0 0 12px; }
+.rules-store .section-list-label { margin-top: 0; }
+.rules-store-hint { margin: 0 0 4px; word-break: keep-all; overflow-wrap: anywhere; color: var(--mem-text-secondary); font: 13px/1.5 var(--mem-font-body); }
+.rules-store-group { border-radius: var(--mem-r-10); background: var(--mem-hover); }
+.rules-store-group > summary {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 11px 16px; cursor: pointer; list-style: none;
+  color: var(--mem-text); font: 500 14px/1.4 var(--mem-font-body);
+}
+.rules-store-group > summary::-webkit-details-marker { display: none; }
+.rules-store-group > summary::before {
+  content: ""; flex: none; align-self: center; width: 6px; height: 6px;
+  border-right: 1.5px solid var(--mem-text-secondary); border-bottom: 1.5px solid var(--mem-text-secondary);
+  transform: rotate(-45deg); transition: transform 120ms ease;
+}
+.rules-store-group[open] > summary::before { transform: rotate(45deg); }
+.rules-store-group > summary:hover { background: var(--mem-hover-strong); border-radius: var(--mem-r-10); }
+.rules-store-group > summary:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; border-radius: var(--mem-r-10); }
+.rules-store-group-title { min-width: 0; overflow-wrap: anywhere; }
+.rules-store-group-count { flex: none; margin-left: auto; color: var(--mem-text-secondary); font: 13px var(--mem-font-body); font-variant-numeric: tabular-nums; }
+.rules-store-body {
+  padding: 0 16px 12px 32px; color: var(--mem-text); font: 14px/1.6 var(--mem-font-body);
+  overflow-wrap: anywhere;
+}
+.rules-store-body > :first-child { margin-top: 0; }
+.rules-store-body > :last-child { margin-bottom: 0; }
+.rules-store-body ul, .rules-store-body ol { margin: 4px 0; padding-left: 18px; }
+.rules-store-body ul { list-style: disc; }
+.rules-store-body ol { list-style: decimal; }
+.rules-store-body li::marker { color: var(--mem-text-secondary); }
+.rules-store-body li + li { margin-top: 4px; }
+.rules-store-body h3 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; color: var(--mem-text-secondary); }
+.rules-store-body p { margin: 6px 0; }
+.rules-store-body code { font-size: 12.5px; padding: 1px 4px; border-radius: var(--mem-r-4); background: var(--mem-hover-strong); }
+.rules-store-body pre { overflow-x: auto; }
+.rules-store-link { text-decoration: underline dotted; }
+@media (max-width: 600px) {
+  .rules-store-group > summary { padding: 10px 12px; }
+  .rules-store-body { padding: 0 12px 10px 24px; }
 }

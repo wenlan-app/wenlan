@@ -414,6 +414,7 @@ main|post|/api/rules/setup/shared-edits/decide|wenlan_server::rulesync_routes::d
 main|post|/api/rules/setup/sync|wenlan_server::rulesync_routes::sync
 main|post|/api/rules/personal/show|wenlan_server::rulesync_routes::personal_rules::show
 main|post|/api/rules/personal/propose|wenlan_server::rulesync_routes::personal_rules::propose
+main|get|/api/rules/personal/overview|wenlan_server::rulesync_routes::personal_rules::overview
 main|get|/api/rules/personal/merge-pages|wenlan_server::rulesync_routes::personal_rules::preview_merge_pages
 main|post|/api/rules/personal/merge-pages|wenlan_server::rulesync_routes::personal_rules::decline_merge_pages
 main|get|/api/rules/personal/plan/{id}|wenlan_server::rulesync_routes::personal_rules::plan

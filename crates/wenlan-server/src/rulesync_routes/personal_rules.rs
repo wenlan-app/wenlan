@@ -10,8 +10,8 @@ pub(crate) use pages::{
 };
 use pages::{PagePlan, MERGE_CAUSE, PAGES_PROPOSER, PAGE_CHANGE_CAUSE};
 
-use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use axum::extract::Path as RoutePath;
 use serde::Serialize;
@@ -23,25 +23,26 @@ use wenlan_core::rulesync_rule_plan::{
 use wenlan_types::personal_rules::{
     PersonalRuleApplyRequest, PersonalRuleEdit, PersonalRuleLayer, PersonalRuleLayerOrigins,
     PersonalRuleOrigin, PersonalRulePlan, PersonalRuleProposeRequest, PersonalRuleShow,
-    PersonalRuleShowRequest, PersonalRuleVersion, PersonalRuleVersionSummary,
+    PersonalRuleShowRequest, PersonalRuleToolText, PersonalRuleVersion, PersonalRuleVersionSummary,
+    PersonalRulesOverview,
 };
 
 use super::*;
 
-const PLAN_LIFETIME: Duration = Duration::from_secs(5 * 60);
+const PLAN_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_PLANS: usize = 32;
 const HISTORY_DIRECTORY: &str = "rule-history";
 const TEAM_RULES_MOVED_CAUSE: &str = "team-rules-moved";
 const TEAM_RULES_MOVED_SUMMARY: &str = "Team rules moved out of your global tool files. They now appear only in your team's repositories.";
 
-static PLANS: LazyLock<Mutex<BTreeMap<Uuid, HeldPlan>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static PLANS_LOCK: Mutex<()> = Mutex::new(());
+const PLANS_FILE: &str = "personal-plans.json";
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HeldPlan {
     home: PathBuf,
     data: PathBuf,
-    created: Instant,
     response: PersonalRulePlan,
     edits: Vec<PersonalRuleEdit>,
     signature: String,
@@ -623,6 +624,54 @@ pub(super) async fn show(
     .map_err(server_error)
 }
 
+pub(super) async fn overview(
+    headers: HeaderMap,
+) -> Result<Json<PersonalRulesOverview>, ServerError> {
+    require_local_reader(&headers)?;
+    tokio::task::spawn_blocking(move || {
+        let setup = Setup::system()?;
+        let manifest = setup.load_if_present()?.unwrap_or_else(empty_manifest);
+        anyhow::Ok(rules_overview(&manifest))
+    })
+    .await
+    .map_err(|error| ServerError::Internal(error.to_string()))?
+    .map(Json)
+    .map_err(server_error)
+}
+
+/// Shared rules plus each tool's own lines, in the order the tools are known.
+/// A tool whose own lines are only a generated comment is left out.
+fn rules_overview(manifest: &Manifest) -> PersonalRulesOverview {
+    let master = materialize_confirmed_tool_overrides(manifest);
+    let tools = PERSONAL_TARGETS
+        .iter()
+        .filter_map(|target| {
+            let text = master.overlays.get(target.id)?;
+            has_readable_lines(text).then(|| PersonalRuleToolText {
+                tool: target.agent.to_owned(),
+                text: text.clone(),
+            })
+        })
+        .collect();
+    PersonalRulesOverview {
+        shared: master.shared.clone(),
+        tools,
+    }
+}
+
+fn has_readable_lines(text: &str) -> bool {
+    let mut rest = text;
+    let mut visible = String::new();
+    while let Some(start) = rest.find("<!--") {
+        visible.push_str(&rest[..start]);
+        rest = rest[start..]
+            .find("-->")
+            .map_or("", |end| &rest[start + end + 3..]);
+    }
+    visible.push_str(rest);
+    !visible.trim().is_empty()
+}
+
 pub(super) async fn propose(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -694,9 +743,13 @@ pub(super) async fn apply(
     tokio::task::spawn_blocking(move || {
         let setup = rendering_setup()?;
         let session = RenderSession::new(&setup.binary);
-        setup.apply_plan(&request.plan_id, &generated, merge, &|tool, text| {
-            setup.render_member_rule(&session, tool, text)
-        })
+        setup.apply_plan(
+            &request.plan_id,
+            request.expected_plan.as_ref(),
+            &generated,
+            merge,
+            &|tool, text| setup.render_member_rule(&session, tool, text),
+        )
     })
     .await
     .map_err(|error| ServerError::Internal(error.to_string()))?
@@ -737,6 +790,7 @@ pub(super) async fn merge_preview(
     // Bound to the same lines the apply reads before the move.
     let generated = crate::skill_grow::general_tool_rules(state).await?;
     tokio::task::spawn_blocking(move || {
+        let _lock = setup.lock()?;
         let page_plan = PagePlan::Merge(snapshot);
         let session = RenderSession::new(&setup.binary);
         let prepared = setup.prepare_page_plan(
@@ -752,7 +806,8 @@ pub(super) async fn merge_preview(
             Vec::new(),
             None,
             Some(page_plan),
-        )))
+            false,
+        )?))
     })
     .await
     .map_err(|error| ServerError::Internal(error.to_string()))?
@@ -766,6 +821,12 @@ pub(super) async fn decline_merge_pages(
 ) -> Result<Json<()>, ServerError> {
     require_local_person(&headers)?;
     let _serial = crate::skill_grow::SKILLS_MUTATION_LOCK.lock().await;
+    let setup = pages_setup().map_err(server_error)?;
+    let held = find_plan(&setup, &request.plan_id, false).map_err(server_error)?;
+    if !held.pages.as_ref().is_some_and(PagePlan::is_merge) {
+        find_plan(&setup, &request.plan_id, true).map_err(server_error)?;
+        return Ok(Json(()));
+    }
     let snapshot = crate::skill_grow::page_rules::merge_snapshot(&state).await?;
     tokio::task::spawn_blocking(move || {
         let setup = pages_setup()?;
@@ -818,18 +879,10 @@ impl Setup {
     }
 }
 
-pub(super) fn pending_page_plans(setup: &Setup) -> Vec<PersonalRulePlan> {
-    let mut plans = PLANS.lock().unwrap_or_else(|error| error.into_inner());
-    plans.retain(|_, plan| plan.created.elapsed() < PLAN_LIFETIME);
-    plans
-        .values()
-        .filter(|plan| {
-            plan.data == setup.data
-                && plan.home == setup.home
-                && matches!(plan.pages, Some(PagePlan::Change { .. }))
-        })
-        .map(|plan| plan.response.clone())
-        .collect()
+pub(super) fn pending_page_plans(setup: &Setup) -> Result<Vec<PersonalRulePlan>> {
+    let _guard = PLANS_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let (plans, _) = load_plans(setup)?;
+    Ok(plans.values().map(|plan| plan.response.clone()).collect())
 }
 
 /// After the move, a tool's save or removal of a rule used in every Space
@@ -967,7 +1020,7 @@ impl Setup {
         if prepared.plan.changes.is_empty() {
             return Ok(None);
         }
-        let plan = remember_plan(self, prepared, Vec::new(), None, Some(pages));
+        let plan = remember_plan(self, prepared, Vec::new(), None, Some(pages), confirmed)?;
         if confirmed {
             let held = find_plan(self, &plan.id, true)?;
             self.commit_rule_plan(&held, generated, render)
@@ -1039,43 +1092,89 @@ fn fresh_plan_id(id: &str) -> Result<Uuid> {
     Uuid::parse_str(id).context("This plan has expired. Propose the change again.")
 }
 
+fn load_plans(setup: &Setup) -> Result<(BTreeMap<String, HeldPlan>, Snapshot)> {
+    if !setup.data.try_exists()? {
+        return Ok((BTreeMap::new(), Snapshot::Absent));
+    }
+    let root = setup.data_files()?.with_private_directories();
+    let path = Path::new(PLANS_FILE);
+    let mut seen = root.read_private(path, None)?;
+    let mut plans: BTreeMap<String, HeldPlan> = match &seen {
+        Snapshot::Absent => BTreeMap::new(),
+        Snapshot::File { bytes, .. } => {
+            serde_json::from_slice(bytes).context("Invalid personal rule plans")?
+        }
+        _ => bail!("Invalid personal rule plans file"),
+    };
+    let now = chrono::Utc::now().timestamp();
+    let before = plans.len();
+    plans.retain(|id, plan| {
+        plan.home == setup.home
+            && plan.data == setup.data
+            && plan.response.id == *id
+            && fresh_plan_id(id).is_ok_and(|parsed| parsed.simple().to_string() == *id)
+            && plan.response.expires_at > now
+    });
+    if plans.len() != before {
+        let next = Snapshot::file(serde_json::to_vec(&plans)?);
+        ensure!(
+            root.apply(path, &seen, &next, false)? == ApplyOutcome::Applied,
+            "Personal rule plans changed while removing expired plans"
+        );
+        root.sync_directory(Path::new(""))?;
+        seen = next;
+    }
+    Ok((plans, seen))
+}
+
+fn save_plans(setup: &Setup, plans: &BTreeMap<String, HeldPlan>, seen: &Snapshot) -> Result<()> {
+    let root = setup.data_files()?.with_private_directories();
+    let path = Path::new(PLANS_FILE);
+    let next = Snapshot::file(serde_json::to_vec(plans)?);
+    ensure!(
+        root.apply(path, seen, &next, false)? == ApplyOutcome::Applied,
+        "Personal rule plans changed while saving"
+    );
+    root.sync_directory(Path::new(""))?;
+    Ok(())
+}
+
 fn remember_plan(
     setup: &Setup,
     mut prepared: Prepared,
     edits: Vec<PersonalRuleEdit>,
     restore: Option<PersonalRuleVersion>,
     pages: Option<PagePlan>,
-) -> PersonalRulePlan {
+    confirmed: bool,
+) -> Result<PersonalRulePlan> {
     let id = Uuid::new_v4();
     prepared.plan.id = id.simple().to_string();
     prepared.plan.expires_at = chrono::Utc::now().timestamp() + PLAN_LIFETIME.as_secs() as i64;
     let response = prepared.plan;
-    let mut plans = PLANS.lock().unwrap_or_else(|error| error.into_inner());
-    plans.retain(|_, plan| plan.created.elapsed() < PLAN_LIFETIME);
+    let _guard = PLANS_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let (mut plans, seen) = load_plans(setup)?;
     if pages.as_ref().is_some_and(PagePlan::is_merge) {
-        if let Some(plan) = plans.values().find(|plan| {
-            plan.home == setup.home
-                && plan.data == setup.data
-                && plan.signature == prepared.signature
-        }) {
-            return plan.response.clone();
-        }
-    }
-    if plans.len() >= MAX_PLANS {
-        if let Some(oldest) = plans
-            .iter()
-            .min_by_key(|(_, plan)| plan.created)
-            .map(|(id, _)| *id)
+        if let Some(plan) = plans
+            .values()
+            .find(|plan| plan.signature == prepared.signature)
         {
-            plans.remove(&oldest);
+            return Ok(plan.response.clone());
         }
+        // Only the newest page move can still apply: an older offer was made
+        // from page text that has since changed, so it must not linger.
+        plans.retain(|_, plan| !plan.pages.as_ref().is_some_and(PagePlan::is_merge));
     }
+    // The person already confirmed this change: a queue full of AI
+    // proposals must not stop their own edit.
+    ensure!(
+        confirmed || plans.len() < MAX_PLANS,
+        "Too many personal rule plans are waiting. Review or decline one first."
+    );
     plans.insert(
-        id,
+        id.simple().to_string(),
         HeldPlan {
             home: setup.home.clone(),
             data: setup.data.clone(),
-            created: Instant::now(),
             response: response.clone(),
             edits,
             signature: prepared.signature,
@@ -1083,21 +1182,23 @@ fn remember_plan(
             pages,
         },
     );
-    response
+    save_plans(setup, &plans, &seen)?;
+    Ok(response)
 }
 
 fn find_plan(setup: &Setup, id: &str, consume: bool) -> Result<HeldPlan> {
-    let id = fresh_plan_id(id)?;
-    let mut plans = PLANS.lock().unwrap_or_else(|error| error.into_inner());
-    plans.retain(|_, plan| plan.created.elapsed() < PLAN_LIFETIME);
+    let id = fresh_plan_id(id)?.simple().to_string();
+    let _guard = PLANS_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let (mut plans, seen) = load_plans(setup)?;
     let held = plans
         .get(&id)
-        .filter(|held| held.home == setup.home && held.data == setup.data)
+        .cloned()
         .context("This plan has expired. Propose the change again.")?;
-    if !consume {
-        return Ok(held.clone());
+    if consume {
+        plans.remove(&id);
+        save_plans(setup, &plans, &seen)?;
     }
-    Ok(plans.remove(&id).expect("the matching plan is present"))
+    Ok(held)
 }
 
 fn build_plan(
@@ -1121,7 +1222,7 @@ fn build_plan(
         proposer,
         &|tool, text| setup.render_member_rule(&session, tool, text),
     )?;
-    Ok(remember_plan(setup, prepared, edits, restore, None))
+    remember_plan(setup, prepared, edits, restore, None, false)
 }
 
 /// History files are written before the manifest checkpoint. This intent is
@@ -1855,12 +1956,13 @@ impl Setup {
         generated: &[String],
         render: &impl Fn(&str, &str) -> Result<SkillFiles>,
     ) -> Result<PersonalRuleVersion> {
-        self.apply_plan(id, generated, None, render)
+        self.apply_plan(id, None, generated, None, render)
     }
 
     fn apply_plan(
         &self,
         id: &str,
+        expected: Option<&PersonalRulePlan>,
         generated: &[String],
         current_merge: Option<PageRuleSnapshot>,
         render: &impl Fn(&str, &str) -> Result<SkillFiles>,
@@ -1868,6 +1970,12 @@ impl Setup {
         let _lock = self.lock()?;
         // A plan is consumed even when it is stale or a write is refused.
         let mut held = find_plan(self, id, true)?;
+        // Bind the yes to the plan the person was shown, not to whatever the
+        // plan file holds under that id now.
+        ensure!(
+            expected.is_none_or(|expected| *expected == held.response),
+            "The change waiting is not the one you reviewed. Review it again."
+        );
         if held.pages.as_ref().is_some_and(PagePlan::is_merge) {
             held.pages = Some(PagePlan::Merge(
                 current_merge.context("Preview the page rules again.")?,
@@ -1906,6 +2014,14 @@ impl Setup {
         ensure!(
             prepared.signature == held.signature,
             "The rules or tool files changed after the preview. Propose the change again."
+        );
+        ensure!(
+            prepared.plan.changes == held.response.changes
+                && prepared.plan.proposer == held.response.proposer
+                && prepared.plan.blocked_tools == held.response.blocked_tools
+                && prepared.plan.unmanaged_tools == held.response.unmanaged_tools
+                && prepared.plan.page_merge == held.response.page_merge,
+            "The plan changed after it was shown. Propose the change again."
         );
         ensure!(
             prepared.plan.blocked_tools.is_empty(),

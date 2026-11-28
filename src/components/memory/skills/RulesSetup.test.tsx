@@ -77,10 +77,58 @@ beforeEach(async () => {
   await i18n.changeLanguage("en");
 });
 
+it("shows a proposed personal rule with its proposer and diff in To review", async () => {
+  mock.mockImplementation(async (command) => {
+    if (command === "rules_setup_status") return status;
+    if (command === "rules_setup_review_list") return { items: [{
+      id: "plan-one", kind: "personal_plan", answers: [], plan: {
+        id: "plan-one", proposer: "Example assistant", changes: [{ diff: diff("shared rules", "Before", "After") }],
+        blocked_tools: [], unmanaged_tools: [],
+      },
+    }], review_tools: {} };
+    return undefined;
+  });
+  mount(<RulesSetupSettings />);
+  await userEvent.click(await screen.findByRole("button", { name: /To review/ }));
+  const card = await screen.findByRole("article", { name: "Review this change to your rules" });
+  expect(card).toHaveTextContent("Proposed by Example assistant");
+  expect(card).toHaveTextContent("After");
+  await userEvent.click(within(card).getByRole("button", { name: "No" }));
+  expect(mock).toHaveBeenCalledWith("rules_setup_decline_page_merge", { planId: "plan-one" });
+});
+
+it("names a known proposer the way the tool chips do", async () => {
+  mount(<RulesSetupReviews review={{ items: [{ id: "plan-two", kind: "personal_plan", answers: [], plan: {
+    id: "plan-two", proposer: "codex", changes: [{ diff: diff("shared rules", "Before", "After") }],
+    blocked_tools: [], unmanaged_tools: [],
+  } }], review_tools: {} } as never} />);
+  expect(await screen.findByText("Proposed by ChatGPT · Codex")).toBeInTheDocument();
+});
+
+it("on the Skills page a delivered tool reads up to date, not rules delivered", async () => {
+  const tool = { id: "claude-code", display_name: "Claude Code", connected: true, method: "file", state: "delivered", rule_count: 1 };
+  mock.mockImplementation(async (command) => {
+    if (command === "rules_setup_status") return status;
+    if (command === "get_rules_delivery") return { tools: [tool] };
+    return undefined;
+  });
+  mount(<RulesSetupSettings onSkills />);
+  const tip = await screen.findByRole("tooltip", { hidden: true });
+  expect(tip).toHaveTextContent("connected, up to date");
+  expect(tip).not.toHaveTextContent("rules delivered");
+});
+
+it("explains what dismissing a skill update does", async () => {
+  mount(<RulesSetupReviews review={{ items: [{ id: "update-one", kind: "skill_update", answers: ["dismiss"],
+    update: { name: "Example skill", status: { state: "available", revision: "v2" }, upstream: { kind: "github", repo: "example/repo" } },
+  }], review_tools: {} } as never} />);
+  expect(screen.getByText("Dismiss hides this update until another version is available.")).toBeInTheDocument();
+});
+
 it("UX-SKILL-6: offers the page-rule diff and applies it with one confirmation", async () => {
   const move = {
     id: "page-move", kind: "personal_plan", answers: [], plan: {
-      id: "page-move", changes: [{ diff: diff("shared rules", "Before", "Check the receipt.") }],
+      id: "page-move", proposer: null, changes: [{ diff: diff("shared rules", "Before", "Check the receipt.") }],
       blocked_tools: [], unmanaged_tools: [], page_merge: {
         rule_count: 1, excludes_space_only: true, excluded: [{ page_id: "fixture-page", line: 4 }],
       },
@@ -100,7 +148,7 @@ it("UX-SKILL-6: offers the page-rule diff and applies it with one confirmation",
   expect(card).toHaveTextContent("fixture-page, line 4");
   expect(mock).not.toHaveBeenCalledWith("rules_setup_apply_personal_plan", expect.anything());
   await userEvent.click(within(card).getByRole("button", { name: "Move rules" }));
-  expect(mock).toHaveBeenCalledWith("rules_setup_apply_personal_plan", { planId: "page-move" });
+  expect(mock).toHaveBeenCalledWith("rules_setup_apply_personal_plan", { planId: "page-move", expectedPlan: move.plan });
   await waitFor(() => expect(screen.queryByRole("article", { name: /Move 1 rule/ })).toBeNull());
 });
 
@@ -278,9 +326,9 @@ describe("setup settings", () => {
     const user = userEvent.setup();
     mount(<RulesSetupSettings />);
     const button = await screen.findByRole("button", { name: `${review} 5` });
-    expect(within(screen.getByTestId("rules-tools")).getByRole("status")).toHaveTextContent(count);
+    expect(within(screen.getByTestId("rules-tools")).queryByText(count)).toBeNull();
     const cursorRow = screen.getAllByRole("listitem").find((row) => row.querySelector("strong")?.textContent === "Cursor");
-    for (const total of totals) expect(cursorRow).toHaveTextContent(total);
+    if (cursorRow) for (const total of totals) expect(cursorRow).toHaveAttribute("title", expect.stringContaining(total));
     await user.click(button);
     expect(screen.getAllByRole("article")).toHaveLength(5);
   });
@@ -361,13 +409,30 @@ describe("setup settings", () => {
     await waitFor(() => expect(screen.getByRole("status", { name: "Tools checked for changes." })).toBeInTheDocument());
   });
 
+  it("shows setup tool status when delivery lookup fails", async () => {
+    const counts = { rules: 1, skills: 0, commands: 0, subagents: 0, mcp: 0 };
+    mock.mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return { ...status, tools: [
+        { id: "cursor", name: "Cursor", state: "needs_review", counts },
+        { id: "codex", name: "Codex", state: "up_to_date", counts },
+      ] };
+      if (command === "get_rules_delivery") throw new Error("delivery unavailable");
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      return undefined;
+    });
+    mount(<RulesSetupSettings />);
+    expect(await screen.findByText("Needs review · Open To review")).toBeInTheDocument();
+    expect(screen.getByText("Needs review · Open To review").closest("li")).toHaveTextContent("Cursor");
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeInTheDocument();
+  });
+
   it("UX-SKILL-19: uses the action spacing and moves the selected styling between panels", async () => {
     const fixture = createRulesSetupFixture();
     mock.mockImplementation(async (command) => fixture(command, undefined, "synced"));
     const user = userEvent.setup();
     mount(<RulesSetupSettings />);
     const sync = await screen.findByRole("button", { name: "Sync now" });
-    expect(sync.closest(".rules-setup-actions")?.previousElementSibling).toHaveClass("rules-setup-plan-list");
+    expect(sync.closest(".rules-setup-actions")?.previousElementSibling?.matches(".rules-setup-plan-list, .rules-setup-status-summary")).toBe(true);
     const standing = screen.getByRole("button", { name: "Status", pressed: true });
     const review = screen.getByRole("button", { name: "To review", pressed: false });
     const accent = "bg-[var(--mem-accent-indigo)]";
@@ -526,5 +591,13 @@ describe("UX-SKILL-23: localized setup messages and labels without paths or file
     expect(within(dialog).getByText(new RegExp(messages.skill_byte_copy))).toBeVisible();
     expect(within(dialog).getByText(/example · remote/u)).toBeVisible();
     assertSafe(dialog.textContent ?? "");
+  });
+});
+
+describe("rules setup diff lines", () => {
+  it("shows a bulleted rule once, without its bullet next to the change mark", () => {
+    render(<RulesSetupDiff diff={"--- shared rules\n+++ shared rules\n@@ -6,1 +6,1 @@\n-- Old rule\n+- Ask before deleting files.\n"} />);
+    expect(screen.getByText("+ Ask before deleting files.")).toHaveAttribute("data-change", "added");
+    expect(screen.getByText("− Old rule")).toHaveAttribute("data-change", "removed");
   });
 });

@@ -931,6 +931,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/rules/setup/sync` | main | no | not_applicable | `none` | — | local tool setup receipt with local file diffs |
 | `POST` | `/api/rules/personal/show` | main | no | not_applicable | `none` | — | local personal master text and line origins; no Page records |
 | `POST` | `/api/rules/personal/propose` | main | no | not_applicable | `none` | — | local personal master and submitted rule edit preview; no Page records |
+| `GET` | `/api/rules/personal/overview` | main | no | not_applicable | `none` | — | local shared rules and each tool's own lines, read-only; no Page records |
 | `GET` | `/api/rules/personal/merge-pages` | main | yes | automatic | `none` | merge_preview | private preview of approved every-Space rules through the eligible page reader |
 | `POST` | `/api/rules/personal/merge-pages` | main | no | not_applicable | `none` | — | person declines the local move offer; response contains no page text |
 | `GET` | `/api/rules/personal/plan/{id}` | main | yes | automatic | `none` | personal_rules::plan | private in-memory preview can contain an eligible page's rules |

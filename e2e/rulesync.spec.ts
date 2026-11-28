@@ -25,8 +25,13 @@ test("UX-SKILL-25 Bring in shows settings in the same confirmation, then Status 
   await expect(dialog.getByText("+ [mcp_servers.calendar]")).toBeVisible();
   await expect(dialog).not.toContainText("config.toml");
   await dialog.getByRole("button", { name: "Bring in" }).click();
-  await expect(setup.getByRole("button", { name: "Bring in" })).toHaveCount(0);
-  await expect(setup.getByText("Up to date").first()).toBeVisible();
+  // Brought in: Restore appears. OpenCode is still not managed, so its row
+  // says so and Bring in stays offered for it.
+  await expect(setup.getByRole("button", { name: "Restore" })).toBeVisible();
+  await expect(setup.locator(".rules-setup-plan-list").getByRole("listitem").filter({ hasText: "OpenCode" }))
+    .toContainText("Not managed · Use Bring in to manage this tool");
+  await expect(setup.locator(".rules-setup-plan-list").getByRole("listitem").filter({ hasText: "Claude Code" })).toHaveCount(0);
+  await expect(setup.getByRole("button", { name: "Bring in" })).toBeVisible();
   await expect(setup.getByRole("button", { name: "Sync now" })).toBeVisible();
 
   await setup.getByRole("button", { name: "Restore" }).click();
@@ -40,7 +45,7 @@ test("UX-SKILL-25 a review chip opens every kind in the shared queue", async ({ 
   const errors = collectBrowserErrors(page);
   const setup = await openSetup(page, "merged");
   await expect(setup.getByRole("button", { name: /To review\s*5/ })).toBeVisible();
-  await expect(setup.getByText("Needs review", { exact: true })).toBeVisible();
+  await expect(setup.getByText("Needs review · Open To review", { exact: true })).toBeVisible();
   await setup.getByRole("button", { name: "Cursor needs review" }).click();
   await expect(setup.getByRole("article")).toHaveCount(5);
   await expect(setup.getByRole("heading", { name: "Skill proposal for summarize" })).toBeVisible();

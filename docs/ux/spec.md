@@ -1366,6 +1366,9 @@ and wait for evidence that people need them.
   Team and project edits stay in the tool file until the person uses
   `wenlan rules shared-edits` in their own terminal to send or decline them
   (UX-SKILL-9).
+  Personal-rule plans remain available for 24 hours across daemon restarts.
+  Shared, tool-only and page plans appear in To review with their diff and
+  proposer; only the person may apply or decline them. A stale plan is refused.
   With personal-rule plans, an AI-proposed personal rule or change
   confirmed for its exact text counts as the person's for that version
   (UX-SKILL-14). After the move, the person's change to an every-Space rule
@@ -1393,16 +1396,20 @@ and wait for evidence that people need them.
   in the tool's own file, only "connected" for a tool that gets the rules
   when it asks Wenlan, and a short plain line when the rules were not
   delivered (not yet, too long for the tool, or a file Wenlan cannot
-  change). Following the owner's 2026-11-18 approval of sketch
-  rules-page-v2, this is one row, "Used in" and a small chip per tool with
-  its logo in its brand colour (the theme's text colour where that colour
-  would not read; a short badge when Wenlan has no logo) and a mark that
-  differs in shape as well as colour: a check for delivered, a hollow ring
-  for connected only, an exclamation mark when not delivered. Hovering,
-  focusing or clicking a chip shows that sentence, and once delivered how
-  many rules the tool holds across all Spaces and when. A rule carries no tag; only a decision or a pitfall says what it
+  change). The Rules and Skills headers show managed personal targets as
+  small chips. A problem carries a warning mark; a healthy chip has no check.
+  A quiet expandable link lists other connected clients, excluding internal
+  identifiers. The shared Rules and Skills status reports one up-to-date line
+  with the number of connected managed tools when all are current. Otherwise
+  it lists only problem tools with the next action; nonzero counts are available
+  on hover and zero counts are hidden. Last check and Sync now remain available.
+  Change counts stay in the review tab. Skill update offers
+  explain that dismissal hides the offered version. Hovering, focusing or
+  clicking a chip shows its state and, once delivered, how many rules the
+  tool holds across all Spaces and when. A rule carries no tag; only a decision or a pitfall says what it
   is. A page whose rules are for its own Space only, a stopped page and
-  a `#not-for-ai-tools` page say "connected" for every connected tool. A
+  a `#not-for-ai-tools` page say "connected" for healthy tools while still
+  warning about delivery problems. A
   tool that is not connected is not listed. It says connected and delivered
   only, never that the AI follows the rules, and shows no file path. Rules
   the AI drew from pages that nobody answered yet stay in a box of their
@@ -1411,7 +1418,9 @@ and wait for evidence that people need them.
   (UX-SKILL-1).
   The opt-in writer uses its delivery record for the status. When rulesync
   has no output for a connected tool, the status is "not written, reads via
-  MCP."
+  MCP." Older delivery records without authored offsets count as current when
+  their recorded shared text matches, including after a Codex managed header.
+  Nested tool folders are attributed to the most specific matching tool.
   Rule history keeps the page sources of moved rules. An existing shared
   line keeps its origin when the same line also came from a page. Unknown
   origins remain unknown.

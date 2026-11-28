@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-  adoptRulesSetup, previewRulesAdoption, restoreRulesSetup, syncRulesSetup,
+  adoptRulesSetup, previewRulesAdoption, restoreRulesSetup, syncRulesSetup, getRulesDelivery,
   type RulesAdoptionPlan, type RulesSetupNotice, type RulesSetupStatus, type RulesSyncReport,
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
@@ -13,15 +13,15 @@ import { PersonalRuleReview, RulesSetupReviews, SettingsChanges } from "./RulesS
 import { RulesToolsHeader } from "./RulesToolsHeader";
 import { RulesSetupDiff } from "./RulesSetupDiff";
 import { rulesSetupFileLabel, rulesSetupMessage, rulesSetupName, rulesSetupNotice, rulesSetupSkillSource } from "./rulesSetupText";
-import { refreshRulesSetup, useRulesSetup, useRulesSetupReview } from "./useRulesSetup";
+import { RULES_DELIVERY_QUERY_KEY, refreshRulesSetup, useRulesSetup, useRulesSetupReview } from "./useRulesSetup";
 import "./rulesSetup.css";
 
-export function RulesSetupSettings() {
+export function RulesSetupSettings({ skillUpdates, onSkills = false }: { readonly skillUpdates?: number; readonly onSkills?: boolean } = {}) {
   const status = useRulesSetup();
-  return status ? <EnabledRulesSetupSettings status={status} /> : null;
+  return status ? <EnabledRulesSetupSettings status={status} skillUpdates={skillUpdates} onSkills={onSkills} /> : null;
 }
 
-function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStatus }) {
+function EnabledRulesSetupSettings({ status, skillUpdates, onSkills }: { readonly status: RulesSetupStatus; readonly skillUpdates?: number; readonly onSkills: boolean }) {
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const [panel, setPanel] = useState<"status" | "review">("status");
@@ -66,13 +66,19 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
     !!dialog.settings?.files.length || !!dialog.settings?.notice
   );
   const count = review.data?.items.length ?? null;
-  const tools = status.tools ?? [];
+  const delivery = useQuery({ queryKey: RULES_DELIVERY_QUERY_KEY, queryFn: getRulesDelivery, staleTime: 30_000, retry: false });
+  const connected = new Set((delivery.data ?? []).filter((tool) => tool.connected).map((tool) => tool.id));
+  const tools = delivery.isSuccess
+    ? (status.tools ?? []).filter((tool) => connected.has(tool.id))
+    : (status.tools ?? []);
+  const deliveryProblems = new Set((delivery.isSuccess ? delivery.data : []).filter((tool) => tool.connected && ["out_of_date", "blocked", "over_limit", "folder_missing", "setting_off", "isolated_run", "on_request"].includes(tool.state)).map((tool) => tool.id));
+  const problems = tools.filter((tool) => tool.state !== "up_to_date" || deliveryProblems.has(tool.id));
   const lastCheck = status.last_checked_at ? new Date(status.last_checked_at * 1000) : null;
   const list = new Intl.ListFormat(i18n.resolvedLanguage, { type: "unit" });
   return (
     <section className="rules-setup-settings" aria-label={t("rulesSetup.settingsTitle")}>
       <header className="rules-setup-actions">
-        {!status.adopted && status.can_adopt && <Button type="button" disabled={busy} onClick={() => void preview()}>{t("rulesSetup.adoptOpen")}</Button>}
+        {status.can_adopt && (!status.adopted || problems.some((tool) => tool.state === "not_managed")) && <Button type="button" disabled={busy} onClick={() => void preview()}>{t("rulesSetup.adoptOpen")}</Button>}
         <Button type="button" variant={panel === "status" ? "primary" : "secondary"}
           aria-pressed={panel === "status"} onClick={() => setPanel("status")}>{t("rulesSetup.statusTitle")}</Button>
         <Button type="button" variant={panel === "review" ? "primary" : "secondary"}
@@ -81,7 +87,7 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
         </Button>
         {status.can_restore && <Button type="button" disabled={busy} onClick={() => setDialog("restore")}>{t("rulesSetup.restoreOpen")}</Button>}
       </header>
-      <RulesToolsHeader delivers setupOnly reviewCount={count} onReview={() => setPanel("review")} />
+      <RulesToolsHeader delivers setupOnly onSkills={onSkills} skillUpdates={skillUpdates} reviewCount={count} onReview={() => setPanel("review")} />
       {panel === "status" && review.data?.items.map((item) => item.kind === "personal_plan" && item.plan.page_merge
         ? <PersonalRuleReview key={item.id} plan={item.plan} /> : null)}
       {panel === "status" ? <Card>
@@ -89,21 +95,28 @@ function EnabledRulesSetupSettings({ status }: { readonly status: RulesSetupStat
           {lastCheck && <p>{t("rulesSetup.lastCheck", { date: new Intl.DateTimeFormat(i18n.resolvedLanguage, {
             dateStyle: "medium", timeStyle: "short",
           }).format(lastCheck) })}</p>}
-          {tools.length > 0 && <ul className="rules-setup-plan-list">{tools.map((tool) => (
-            <li key={tool.id}>
-              <strong>{rulesSetupName(tool.name) || t("rulesSetup.thisTool")}</strong>
-              <span>{t(`rulesSetup.toolStatus.${tool.state}`)}</span>
-              {tool.state !== "not_managed" && <span>{list.format([
-                t("rulesSetup.ruleCount", { count: tool.counts.rules }),
-                t("rulesSetup.skills", { count: tool.counts.skills }),
-                t("rulesSetup.commandCount", { count: tool.counts.commands }),
-                t("rulesSetup.agentCount", { count: tool.counts.subagents }),
-                t("rulesSetup.mcpCount", { count: tool.counts.mcp }),
-              ])}</span>}
-            </li>
-          ))}</ul>}
+          {tools.length > 0 && (problems.length === 0
+            // Shared rules changed since the last sync: the header already
+            // says a sync is needed, so the card never claims all is current.
+            ? (status.adopted && !status.in_sync ? null
+              : <p className="rules-setup-status-summary">{t("rulesSetup.allToolsUpToDate", { count: tools.length })}</p>)
+            : <ul className="rules-setup-plan-list">{problems.map((tool) => {
+              const counts = [
+                tool.counts.rules && t("rulesSetup.ruleCount", { count: tool.counts.rules }),
+                tool.counts.skills && t("rulesSetup.skills", { count: tool.counts.skills }),
+                tool.counts.commands && t("rulesSetup.commandCount", { count: tool.counts.commands }),
+                tool.counts.subagents && t("rulesSetup.agentCount", { count: tool.counts.subagents }),
+                tool.counts.mcp && t("rulesSetup.mcpCount", { count: tool.counts.mcp }),
+              ].filter((value): value is string => typeof value === "string");
+              return <li key={tool.id} title={counts.length ? list.format(counts) : undefined}>
+                <strong>{rulesSetupName(tool.name) || t("rulesSetup.thisTool")}</strong>
+                <span>{tool.state === "up_to_date" ? t("rulesSetup.statusNotDelivered") : t(`rulesSetup.toolStatus.${tool.state}`)} · {t(tool.state === "needs_review" ? "rulesSetup.statusReviewAction" : tool.state === "not_managed" ? "rulesSetup.statusAdoptAction" : "rulesSetup.statusSyncAction")}</span>
+              </li>;
+            })}</ul>)}
           {status.adopted && <div className="rules-setup-actions">
+            {/* Everything is current: Sync stays available but quiet. */}
             <Button type="button" disabled={busy}
+              {...(status.in_sync && tools.length > 0 && problems.length === 0 ? { variant: "ghost" as const, size: "sm" as const } : {})}
               onClick={() => void run(syncRulesSetup, t("rulesSetup.syncDone"))}>{t("rulesSetup.sync")}</Button>
           </div>}
         </div>

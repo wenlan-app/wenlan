@@ -75,6 +75,22 @@ pub struct PersonalRuleShow {
     pub affected_tools: Vec<String>,
 }
 
+/// The rules every tool gets, and each tool's own lines, as they stand now.
+/// Read-only: changing them is a plan the person applies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonalRulesOverview {
+    pub shared: String,
+    pub tools: Vec<PersonalRuleToolText>,
+}
+
+/// One tool's own lines. `tool` is the tool's agent id (for example
+/// `claude-code`); tools with no lines of their own are left out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonalRuleToolText {
+    pub tool: String,
+    pub text: String,
+}
+
 /// Replacement text for one named layer. A proposal may contain several.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,7 +117,7 @@ pub struct PersonalRulePlanChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonalRulePlan {
     pub id: String,
-    /// Unix time in seconds; the daemon also enforces the in-memory expiry.
+    /// Unix time in seconds; the daemon enforces expiry when loading a plan.
     pub expires_at: i64,
     pub proposer: Option<String>,
     pub changes: Vec<PersonalRulePlanChange>,
@@ -117,6 +133,10 @@ pub struct PersonalRulePlan {
 #[serde(deny_unknown_fields)]
 pub struct PersonalRuleApplyRequest {
     pub plan_id: String,
+    /// The plan exactly as the person saw it. When given, the apply is
+    /// refused unless the waiting plan is still that one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_plan: Option<PersonalRulePlan>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
