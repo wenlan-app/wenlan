@@ -198,8 +198,8 @@ describe("How-I-work page", () => {
     // A tool that asks Wenlan has no file: never shown as delivered.
     tool("cursor", "Cursor", { method: "mcp", state: "on_request" }),
     tool("odd", "Odd", { method: "mcp", state: "delivered" }),
-    tool("windsurf", "Windsurf", { state: "over_limit" }),
-    tool("gemini", "Gemini CLI", { state: "blocked", blocked_reason: "read_only" }),
+    tool("antigravity", "Antigravity", { state: "over_limit" }),
+    tool("gemini-cli", "Gemini CLI", { state: "blocked", blocked_reason: "read_only" }),
     tool("codex", "Codex", { state: "out_of_date" }),
     tool("kiro", "Kiro", { state: "folder_missing" }),
     tool("zed", "Zed", { connected: false, state: "not_connected" }),
@@ -209,7 +209,7 @@ describe("How-I-work page", () => {
     const header = await screen.findByRole("region", { name: "AI tools these rules are used in" });
     const chips = () => [...header.querySelectorAll<HTMLButtonElement>(".rules-tools-chip")].map((chip) => {
       const card = document.getElementById(chip.getAttribute("aria-describedby") ?? "")!;
-      return [chip.querySelector(".rules-tools-name")!.textContent, chip.querySelector(".rules-tools-dot")!.getAttribute("data-dot"), card.querySelector(".rules-tools-card-state")!.textContent];
+      return [chip.querySelector(".rules-tools-name")!.textContent, chip.querySelector(".rules-tools-dot")?.getAttribute("data-dot") ?? null, card.querySelector(".rules-tools-card-state")!.textContent];
     });
     return { header, chips };
   };
@@ -224,17 +224,17 @@ describe("How-I-work page", () => {
     // One row: delivered tools first, then connected only, then the ones
     // whose rules were not delivered, with an amber dot.
     await waitFor(() => expect(chips()).toEqual([
-      ["Claude Code", "delivered", "connected, rules delivered"],
-      ["OpenCode", "delivered", "connected, rules delivered"],
-      ["Cursor", "connected", "connected"],
-      ["Odd", "connected", "connected"],
-      ["Codex", "problem", "connected, not delivered yet"],
-      ["Windsurf", "problem", "connected, too long to deliver"],
+      ["Claude Code", null, "connected, rules delivered"],
+      ["OpenCode", null, "connected, rules delivered"],
+      ["Cursor", null, "connected"],
+      ["ChatGPT · Codex", "problem", "connected, not delivered yet"],
+      ["Antigravity", "problem", "connected, too long to deliver"],
       ["Gemini CLI", "problem", "connected, file can’t be changed"],
-      ["Kiro", "problem", "connected, not delivered"],
     ]));
     expect(header.querySelectorAll(".rules-tools-row")).toHaveLength(1);
-    expect(header.querySelector(".rules-tools-row")).toHaveTextContent(/^Used in/);
+    expect(header.querySelector(".rules-tools-row")).not.toHaveTextContent("Used in");
+    fireEvent.click(within(header).getByRole("button", { name: "+2 other connections" }));
+    expect(header).toHaveTextContent("Odd");
     // A tool that is not connected is not listed, and nothing claims the AI
     // follows or obeys the rules; no path or machine word shows.
     expect(header).not.toHaveTextContent("Zed");
@@ -243,7 +243,11 @@ describe("How-I-work page", () => {
 
   it("UX-SKILL-11, UX-SKILL-8: says only connected on a page whose rules are for its own Space, stopped, or not listed by the daemon", async () => {
     api.delivery.mockResolvedValue(everyState);
-    const onlyConnected = ["Claude Code", "OpenCode", "Cursor", "Odd", "Windsurf", "Gemini CLI", "Codex", "Kiro"].map((name) => [name, "connected", "connected"]);
+    const onlyConnected = [
+      ["Claude Code", null, "connected"], ["Cursor", null, "connected"], ["OpenCode", null, "connected"],
+      ["ChatGPT · Codex", "problem", "connected, not delivered yet"], ["Antigravity", "problem", "connected, too long to deliver"],
+      ["Gemini CLI", "problem", "connected, file can’t be changed"],
+    ];
     // Rules for this Space only: none of them is in any tool's file.
     api.rules.mockResolvedValue(told([
       daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1" }),
@@ -260,7 +264,7 @@ describe("How-I-work page", () => {
     renderPage({ ...page, version: 4, content: content.replace("\n\n", "\n\n<!-- wenlan:not-for-ai-tools -->\n\n") });
     await waitFor(() => expect(api.rules).toHaveBeenCalledTimes(2));
     expect((await headerChips()).chips()).toEqual(onlyConnected);
-    expect(document.body).not.toHaveTextContent("delivered");
+    expect(document.body).not.toHaveTextContent("rules delivered");
   });
 
   it("UX-SKILL-11: says so plainly when no AI tool is connected", async () => {
@@ -284,7 +288,7 @@ describe("How-I-work page", () => {
   it("UX-SKILL-11: each tool chip shows its logo or a short badge, and keyboard focus opens a card with its state, its rules across all Spaces and delivered time", async () => {
     api.delivery.mockResolvedValue([
       tool("claude-code", "Claude Code", { delivered_at: now - 7200, rule_count: 3 }),
-      tool("windsurf", "Windsurf", { state: "over_limit" }),
+      tool("antigravity", "Antigravity", { state: "over_limit" }),
       // Two tools Wenlan has no logo for, whose first letters would read the same.
       tool("vscode", "Mira", { method: "mcp", state: "on_request" }),
       tool("continue", "Muse", { method: "mcp", state: "on_request" }),
@@ -293,8 +297,7 @@ describe("How-I-work page", () => {
     renderPage();
     const claude = await screen.findByRole("button", { name: "Claude Code" });
     expect(claude.querySelector("svg[data-logo='claude-code']")).not.toBeNull();
-    const badges = [...document.querySelectorAll(".rules-tools-chip .rules-tools-badge")].map((badge) => badge.textContent);
-    expect(badges).toEqual(["M", "Mu"]);
+    expect(screen.getByRole("button", { name: "+2 other connections" })).toBeInTheDocument();
     // The card is closed until the chip is hovered or focused, and is the chip's description.
     const card = document.getElementById(claude.getAttribute("aria-describedby")!)!;
     expect(card).toHaveAttribute("role", "tooltip");
@@ -305,10 +308,10 @@ describe("How-I-work page", () => {
     fireEvent.keyDown(claude, { key: "Escape" });
     expect(card).not.toBeVisible();
     fireEvent.blur(claude);
-    const windsurf = screen.getByRole("button", { name: "Windsurf" });
+    const windsurf = screen.getByRole("button", { name: "Antigravity" });
     fireEvent.mouseEnter(windsurf.parentElement!);
     const windsurfCard = screen.getByRole("tooltip");
-    expect(windsurfCard).toHaveTextContent(/^Windsurfconnected, too long to deliver$/);
+    expect(windsurfCard).toHaveTextContent(/^Antigravityconnected, too long to deliver$/);
     expect(windsurfCard.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "problem");
     // Escape closes a card the pointer opened, wherever the focus is.
     fireEvent.keyDown(document.body, { key: "Escape" });
@@ -323,7 +326,7 @@ describe("How-I-work page", () => {
   });
 
   it("UX-SKILL-11: a click or tap pins a chip's card: the click after a hover keeps it open, the next click or a press elsewhere closes it", async () => {
-    api.delivery.mockResolvedValue([tool("claude-code", "Claude Code", {}), tool("windsurf", "Windsurf", { state: "over_limit" })]);
+    api.delivery.mockResolvedValue([tool("claude-code", "Claude Code", {}), tool("antigravity", "Antigravity", { state: "over_limit" })]);
     renderPage();
     const claude = await screen.findByRole("button", { name: "Claude Code" });
     const item = claude.parentElement!;
@@ -347,17 +350,16 @@ describe("How-I-work page", () => {
     api.delivery.mockResolvedValue([
       tool("claude-code", "Claude Code", {}),
       tool("cursor", "Cursor", { method: "mcp", state: "on_request" }),
-      tool("windsurf", "Windsurf", { state: "over_limit" }),
+      tool("antigravity", "Antigravity", { state: "over_limit" }),
     ]);
     api.rules.mockResolvedValue(told([daemonLine("rule-1", "Discuss the approach before writing code", { source_page_id: "page-source-1", general: true })]));
     renderPage();
-    await screen.findByRole("button", { name: "Windsurf" });
+    await screen.findByRole("button", { name: "Antigravity" });
     const marks = Object.fromEntries([...document.querySelectorAll(".rules-tools-chip .rules-tools-dot")].map((dot) => [dot.getAttribute("data-dot"), dot.innerHTML]));
-    expect(Object.keys(marks)).toEqual(["delivered", "connected", "problem"]);
-    expect(new Set(Object.values(marks)).size).toBe(3);
-    expect(marks.delivered).toContain("rules-tools-dot-glyph");
+    expect(Object.keys(marks)).toEqual(["problem"]);
+    expect(marks.delivered).toBeUndefined();
     expect(marks.problem).toContain("rules-tools-dot-glyph");
-    expect(marks.connected).not.toContain("rules-tools-dot-glyph");
+    expect(marks.connected).toBeUndefined();
   });
 
   const entry = (version: number, at: number, edited_by: string, text: string) => ({ version, at, edited_by, text });
@@ -540,8 +542,8 @@ describe("a page kept in a Rules folder", () => {
     // as a rule the person wrote: it is not shown as one.
     expect(list).not.toHaveTextContent("Squash before merging");
     const header = screen.getByRole("region", { name: "AI tools these rules are used in" });
-    await waitFor(() => expect(header.querySelector(".rules-tools-row")).toHaveTextContent(/^Used inClaude Code/));
-    expect(header.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "delivered");
+    await waitFor(() => expect(header.querySelector(".rules-tools-row")).toHaveTextContent(/^Claude Code/));
+    expect(header.querySelector(".rules-tools-chip .rules-tools-dot")).toBeNull();
     expect(screen.getByRole("tooltip", { hidden: true })).toHaveTextContent("connected, rules delivered");
     expect(header.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -552,7 +554,7 @@ describe("a page kept in a Rules folder", () => {
     await waitFor(() => expect(api.rules).toHaveBeenCalledWith("Wenlan"));
     expect(await screen.findByText("written by you")).toBeInTheDocument();
     const header = screen.getByRole("region", { name: "AI tools these rules are used in" });
-    expect(header.querySelector(".rules-tools-dot")).toHaveAttribute("data-dot", "connected");
+    expect(header.querySelector(".rules-tools-chip .rules-tools-dot")).toBeNull();
     expect(screen.getByRole("tooltip", { hidden: true })).toHaveTextContent(/^Claude Codeconnected$/);
     expect(header).not.toHaveTextContent("delivered");
   });

@@ -24,12 +24,28 @@ import { TOOL_LOGOS } from "./toolLogos";
 import { formatTimeAgo } from "../../../lib/dateFormat";
 import { useSavedRulesPageIds } from "./useSavedRulesPages";
 import { SpaceRulesAsk } from "./SpaceRulesAsk";
-import { RULES_DELIVERY_QUERY_KEY, useRulesSetup, useRulesSetupReview } from "./useRulesSetup";
+import { RULES_DELIVERY_QUERY_KEY, useRulesSetup } from "./useRulesSetup";
 import "./howIWork.css";
 import { rulesSetupName } from "./rulesSetupText";
 import "./rulesSetup.css";
 
 export { RULES_DELIVERY_QUERY_KEY } from "./useRulesSetup";
+
+// Chips keep this order on every visit instead of following connection time.
+const MANAGED_ORDER = ["claude-code", "codex", "copilot-cli", "cursor", "gemini-cli", "antigravity", "opencode", "muse-code"];
+const MANAGED_TOOLS = new Set(MANAGED_ORDER);
+const MANAGED_NAMES: Readonly<Record<string, string>> = {
+  "claude-code": "Claude Code", codex: "ChatGPT · Codex", cursor: "Cursor", opencode: "OpenCode",
+  antigravity: "Antigravity", "gemini-cli": "Gemini CLI", "copilot-cli": "GitHub Copilot CLI", "muse-code": "Muse Code",
+};
+/** The name the header shows for a tool id; an unknown id stays as it is. */
+export function toolDisplayName(id: string): string {
+  return MANAGED_NAMES[id] ?? id;
+}
+export function internalClient(id: string): boolean {
+  return /:[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(id) || /(?:-mcp-client|-loop)$/i.test(id)
+    || ["wenlan-setup", "wenlan-cli", "wenlan", "web-ai", "remote-mcp"].includes(id.toLowerCase());
+}
 
 /** What the header may say about a connected tool. It only ever says
  *  "connected" and "delivered" (or not): what Wenlan did, never what the AI
@@ -39,6 +55,10 @@ const STANDING_ORDER: readonly ToolStanding[] = ["delivered", "connected", "pend
 
 export function toolStanding(tool: ToolRulesDelivery): ToolStanding | null {
   if (!tool.connected || tool.state === "not_connected") return null;
+  if (tool.state === "blocked") return "blocked";
+  if (tool.state === "over_limit") return "overLimit";
+  if (tool.state === "out_of_date") return "pending";
+  if (tool.state === "folder_missing" || tool.state === "setting_off" || tool.state === "isolated_run") return "notDelivered";
   // A tool that asks Wenlan for the rules has no file they were written
   // to, so it is never shown as delivered.
   if (tool.method === "mcp") return "connected";
@@ -48,12 +68,6 @@ export function toolStanding(tool: ToolRulesDelivery): ToolStanding | null {
       return "delivered";
     case "on_request":
       return "connected";
-    case "out_of_date":
-      return "pending";
-    case "over_limit":
-      return "overLimit";
-    case "blocked":
-      return "blocked";
     default:
       return "notDelivered";
   }
@@ -119,7 +133,7 @@ type ShownTool = { readonly tool: ToolRulesDelivery; readonly standing: ToolStan
  *  Spaces and when. A click or a tap pins the card open until the next click
  *  or a press elsewhere; Escape closes it however it opened. The pointer can
  *  move into the card, and the card stays inside the window. */
-function ToolChip({ shown, review, onReview }: { readonly shown: ShownTool; readonly review: boolean; readonly onReview?: () => void }) {
+function ToolChip({ shown, review, onReview, onSkills = false }: { readonly shown: ShownTool; readonly review: boolean; readonly onReview?: () => void; readonly onSkills?: boolean }) {
   const { t, i18n } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -192,12 +206,12 @@ function ToolChip({ shown, review, onReview }: { readonly shown: ShownTool; read
       >
         <ToolMark id={tool.id} badge={badge} />
         <span className="rules-tools-name">{name}</span>
-        <ToolDotMark dot={review ? "problem" : dot} />
+        {(review || dot === "problem") && <ToolDotMark dot="problem" />}
       </button>
       <span className="rules-tools-card" id={cardId} role="tooltip" hidden={!open} style={shift ? { transform: `translateX(${shift}px)` } : undefined}>
         <span className="rules-tools-card-surface mem-popover-surface" ref={surfaceRef}>
           <span className="rules-tools-card-head"><ToolMark id={tool.id} badge={badge} />{name}</span>
-          <span className="rules-tools-card-state" data-dot={dot}><ToolDotMark dot={dot} /><span className="rules-tools-card-state-text">{t(`howIWork.tools.${standing}`)}</span></span>
+          <span className="rules-tools-card-state" data-dot={dot}><ToolDotMark dot={dot} /><span className="rules-tools-card-state-text">{t(onSkills && standing === "delivered" ? "howIWork.tools.deliveredSkills" : `howIWork.tools.${standing}`)}</span></span>
           {detail ? <span className="rules-tools-card-detail">{detail}</span> : null}
         </span>
       </span>
@@ -211,8 +225,9 @@ function ToolChip({ shown, review, onReview }: { readonly shown: ShownTool; read
  *  whether this page gives any; without one, each connected tool reads
  *  "connected" and nothing more. Nothing shows until the daemon answers; an
  *  older daemon that cannot answer shows nothing. */
-export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, skillUpdates, onReview }: {
+export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, skillUpdates, onReview, onSkills = false }: {
   readonly delivers: boolean;
+  readonly onSkills?: boolean;
   readonly setupOnly?: boolean;
   readonly reviewCount?: number | null;
   readonly skillUpdates?: number;
@@ -221,7 +236,8 @@ export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, ski
   const { t } = useTranslation();
   const exampleWiki = useExampleWikiActive();
   const setup = useRulesSetup();
-  const review = useRulesSetupReview(!!setup && reviewCount === undefined && !skillUpdates);
+  void reviewCount;
+  const [showOthers, setShowOthers] = useState(false);
   const delivery = useQuery({
     queryKey: RULES_DELIVERY_QUERY_KEY,
     queryFn: getRulesDelivery,
@@ -230,13 +246,19 @@ export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, ski
     retry: false,
   });
   if ((setupOnly && !setup) || (!setup && !delivery.isSuccess)) return null;
-  const listed = (delivery.data ?? [])
+  const connected = (delivery.data ?? [])
     .map((tool) => {
       const own = toolStanding(tool);
-      return { tool, standing: own !== null && !delivers ? "connected" as const : own };
+      const named = MANAGED_NAMES[tool.id] ? { ...tool, display_name: MANAGED_NAMES[tool.id] } : tool;
+      return { tool: named, standing: own !== null && !delivers && (own === "delivered" || own === "connected") ? "connected" as const : own };
     })
     .filter((item): item is { tool: ToolRulesDelivery; standing: ToolStanding } => item.standing !== null)
     .sort((a, b) => STANDING_ORDER.indexOf(a.standing) - STANDING_ORDER.indexOf(b.standing));
+  const listed = connected
+    .filter(({ tool }) => MANAGED_TOOLS.has(tool.id))
+    .sort((a, b) => STANDING_ORDER.indexOf(a.standing) - STANDING_ORDER.indexOf(b.standing)
+      || MANAGED_ORDER.indexOf(a.tool.id) - MANAGED_ORDER.indexOf(b.tool.id));
+  const others = connected.filter(({ tool }) => !MANAGED_TOOLS.has(tool.id) && !internalClient(tool.id));
   // Only a tool with no logo shows a badge, so only those must differ.
   const unmarked = listed.filter((item) => !TOOL_LOGOS[item.tool.id]);
   const badges = new Map(toolBadges(unmarked.map((item) => rulesSetupName(item.tool.display_name) || t("rulesSetup.thisTool"))).map((badge, index) => [unmarked[index].tool.id, badge] as const));
@@ -245,25 +267,19 @@ export function RulesToolsHeader({ delivers, setupOnly = false, reviewCount, ski
     ...Object.values(setup?.review_tools ?? {}).map((tool) => tool.id),
     ...(setup?.tools ?? []).filter((tool) => tool.state === "needs_review").map((tool) => tool.id),
   ]);
-  const pendingCount = reviewCount === undefined ? review.data?.items.length : reviewCount;
-  let line: string | undefined;
-  if (skillUpdates) {
-    line = t("rulesSetup.skillUpdateCount", { count: skillUpdates });
-  } else if (pendingCount) {
-    line = t("rulesSetup.reviewCount", { count: pendingCount });
-  } else if (pendingCount === 0 && setup?.adopted) {
-    line = t(setup.in_sync ? "rulesSetup.inSync" : "rulesSetup.syncNeeded");
-  }
+  const line = skillUpdates ? t("rulesSetup.skillUpdateCount", { count: skillUpdates })
+    : setup?.adopted && !setup.in_sync ? t("rulesSetup.syncNeeded") : undefined;
   return (
     <section className="rules-tools" aria-label={t("howIWork.tools.label")} data-testid="rules-tools">
-      {delivery.isSuccess && (shown.length === 0 ? (
+      {delivery.isSuccess && (shown.length === 0 && others.length === 0 ? (
         <p className="rules-tools-row">{t("howIWork.tools.none")}</p>
       ) : (
         <div className="rules-tools-row">
-          <span className="rules-tools-lead">{t("howIWork.tools.usedIn")}</span>
           <ul className="rules-tools-list">
-            {shown.map((item) => <li key={item.tool.id}><ToolChip shown={item} review={pendingToolIds.has(item.tool.id)} onReview={onReview} /></li>)}
+            {shown.map((item) => <li key={item.tool.id}><ToolChip shown={item} review={pendingToolIds.has(item.tool.id)} onReview={onReview} onSkills={onSkills} /></li>)}
           </ul>
+          {others.length > 0 && <button type="button" className="rules-tools-other" aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>{t("howIWork.tools.otherConnections", { count: others.length })}</button>}
+          {showOthers && <><p className="rules-tools-other-note">{t("howIWork.tools.otherConnectionsNote")}</p><ul className="rules-tools-other-list">{others.map(({ tool }) => <li key={tool.id}>{rulesSetupName(tool.display_name)}</li>)}</ul></>}
         </div>
       ))}
       {setup?.rule_import_finished && <p className="rules-setup-status" role="status">{t("rulesSetup.ruleImportFinished")}</p>}

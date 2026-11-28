@@ -127,6 +127,7 @@
   margin: 4px 0 0;
   list-style: none;
 }
+.rules-setup-status-summary { margin: 4px 0 0; }
 .rules-setup-plan-list li {
   display: flex;
   flex-wrap: wrap;

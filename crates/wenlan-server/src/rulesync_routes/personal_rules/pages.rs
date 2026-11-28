@@ -37,7 +37,7 @@ impl PageRulesState {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct PageRule {
     pub text: String,
     pub source_text: String,
@@ -56,7 +56,7 @@ impl PageRule {
     }
 }
 
-#[derive(Default, Clone, Serialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub(crate) struct PageRuleSnapshot {
     pub rules: Vec<PageRule>,
     pub excluded: BTreeSet<PageRuleLocation>,
@@ -69,7 +69,7 @@ impl PageRuleSnapshot {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) enum PagePlan {
     Merge(PageRuleSnapshot),
     Change {

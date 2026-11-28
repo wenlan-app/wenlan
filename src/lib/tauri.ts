@@ -1323,6 +1323,7 @@ export interface RulesSkillProposal {
 
 export interface PersonalRulePlan {
   id: string;
+  proposer: string | null;
   changes: { diff: string }[];
   blocked_tools: string[];
   page_merge?: {
@@ -1372,7 +1373,9 @@ export interface RulesSyncReport {
 
 export const getRulesSetupStatus = () => invoke<RulesSetupStatus>("rules_setup_status");
 export const getRulesSetupReview = () => invoke<RulesReviewList>("rules_setup_review_list");
-export const applyPersonalRulePlan = (planId: string) => invoke<void>("rules_setup_apply_personal_plan", { planId });
+/** Applies a plan only if the daemon still holds the plan the person saw. */
+export const applyPersonalRulePlan = (plan: PersonalRulePlan) =>
+  invoke<void>("rules_setup_apply_personal_plan", { planId: plan.id, expectedPlan: plan });
 export const declinePageRuleMerge = (planId: string) => invoke<void>("rules_setup_decline_page_merge", { planId });
 export const reviewRulesSkill = (request: RulesSkillReviewRequest) => invoke<RulesSkillReviewResult>("rules_setup_skill_review", { request });
 export const applyRulesSettings = (token: string) => invoke<RulesSyncReport>("rules_setup_settings_apply", { token });

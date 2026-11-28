@@ -1494,7 +1494,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   rules_setup_settings_apply: (a) => post("/api/rules/setup/settings/apply", { token: a.token }, AS_PERSON),
   rules_setup_dismiss_update: (a) => post("/api/rules/setup/review/dismiss-update", { id: a.id }, AS_PERSON),
   // One personal-rule plan, applied only as the person (the daemon checks it).
-  rules_setup_apply_personal_plan: (a) => post("/api/rules/personal/apply", { plan_id: a.planId }, AS_PERSON),
+  rules_setup_apply_personal_plan: (a) => post("/api/rules/personal/apply", { plan_id: a.planId, ...(a.expectedPlan ? { expected_plan: a.expectedPlan } : {}) }, AS_PERSON),
   // The person declines the one-time move of page rules; nothing is moved.
   rules_setup_decline_page_merge: (a) => post("/api/rules/personal/merge-pages", { plan_id: a.planId }, AS_PERSON),
   rules_setup_review_preview: (a) => post("/api/rules/setup/review/preview", a.decision, AS_PERSON),

@@ -57,10 +57,16 @@ export function RulesSetupDiff({ diff, codes = [] }: {
     <div className="rules-setup-diff" dir="auto">
       {rows.map(({ text, change }, index) => (
         <div key={index} data-change={change} dir="auto">
-          {change === "added" ? "+ " : "− "}{rulesSetupDiffText(text, t("rulesSetup.hiddenPath"))}
+          {change === "added" ? "+ " : "− "}{rulesSetupDiffText(withoutBullet(text), t("rulesSetup.hiddenPath"))}
         </div>
       ))}
       {notes.map((note, index) => <div key={index} dir="auto">{note}</div>)}
     </div>
   ) : null;
+}
+
+/** A rule line's own "- " bullet would sit next to the +/− mark and read as a
+ *  second change, so the card shows the rule without it. */
+function withoutBullet(text: string): string {
+  return text.replace(/^[-*] (?=\S)/u, "");
 }

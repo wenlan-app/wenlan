@@ -4376,8 +4376,12 @@ pub async fn rules_setup_review_list(
 pub async fn rules_setup_apply_personal_plan(
     state: tauri::State<'_, State>,
     plan_id: String,
+    expected_plan: Option<wenlan_types::personal_rules::PersonalRulePlan>,
 ) -> Result<(), String> {
-    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest { plan_id };
+    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest {
+        plan_id,
+        expected_plan,
+    };
     let _: wenlan_types::personal_rules::PersonalRuleVersion = daemon_client(&state)
         .await
         .post_json_as_person("/api/rules/personal/apply", &request)
@@ -4390,7 +4394,10 @@ pub async fn rules_setup_decline_page_merge(
     state: tauri::State<'_, State>,
     plan_id: String,
 ) -> Result<(), String> {
-    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest { plan_id };
+    let request = wenlan_types::personal_rules::PersonalRuleApplyRequest {
+        plan_id,
+        expected_plan: None,
+    };
     daemon_client(&state)
         .await
         .post_json_as_person("/api/rules/personal/merge-pages", &request)

@@ -98,7 +98,10 @@ pub(super) async fn list(
     let rows = updates(&home, &skills).await.map_err(conflict)?;
     if super::require_local_person(&headers).is_ok() {
         match super::personal_rules::merge_preview(&state).await {
-            Ok(Some(plan)) => queue.items.insert(0, page_plan_item(plan)),
+            Ok(Some(plan)) if !queue.items.iter().any(|item| item.id == plan.id) => {
+                queue.items.insert(0, page_plan_item(plan))
+            }
+            Ok(Some(_)) => (),
             Ok(None) => (),
             Err(error) => tracing::debug!(%error, "Page-rule move preview is unavailable"),
         }
@@ -115,7 +118,7 @@ pub(super) async fn list(
     Ok(Json(queue))
 }
 
-fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
+pub(super) fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
     let status = setup.status_for_caller(false)?;
     let mut items = status
         .proposals
@@ -133,7 +136,7 @@ fn local_queue(setup: &Setup) -> Result<RulesReviewList> {
         })
         .collect::<Vec<_>>();
     items.extend(
-        super::personal_rules::pending_page_plans(setup)
+        super::personal_rules::pending_page_plans(setup)?
             .into_iter()
             .map(page_plan_item),
     );

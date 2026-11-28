@@ -28,6 +28,16 @@ async fn personal_rule_apply_rejects_named_and_session_ai_callers() {
     let mut person = HeaderMap::new();
     person.insert(CALLER_HEADER, PERSON_CALLER_VALUE.parse().unwrap());
     assert!(require_local_person(&person).is_ok());
+    let without_person = super::apply(
+        State(state.clone()),
+        HeaderMap::new(),
+        Json(PersonalRuleApplyRequest {
+            plan_id: "fixture".into(),
+            expected_plan: None,
+        }),
+    )
+    .await;
+    assert!(without_person.is_err());
     for (header, value) in [
         ("x-agent-name", "codex"),
         (wenlan_types::SESSION_HEADER, "codex:fixture"),
@@ -39,6 +49,7 @@ async fn personal_rule_apply_rejects_named_and_session_ai_callers() {
             headers,
             Json(PersonalRuleApplyRequest {
                 plan_id: "fixture".into(),
+                expected_plan: None,
             }),
         )
         .await;
@@ -109,7 +120,15 @@ fn preview_page_move(
             &fixture_rule_renderer,
         )
         .unwrap();
-    remember_plan(&fixture.setup, prepared, Vec::new(), None, Some(pages))
+    remember_plan(
+        &fixture.setup,
+        prepared,
+        Vec::new(),
+        None,
+        Some(pages),
+        false,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -153,7 +172,13 @@ fn personal_rules_page_merge_preserves_origins_and_round_trips_through_two_tool_
     );
     let version = fixture
         .setup
-        .apply_plan(&plan.id, &generated, Some(snapshot), &fixture_rule_renderer)
+        .apply_plan(
+            &plan.id,
+            None,
+            &generated,
+            Some(snapshot),
+            &fixture_rule_renderer,
+        )
         .unwrap();
     assert_eq!(version.summary.cause, MERGE_CAUSE);
     assert_eq!(version.summary.proposer.as_deref(), Some(PAGES_PROPOSER));
@@ -309,9 +334,10 @@ fn personal_rules_page_merge_stale_refusal_and_decline_keep_legacy_delivery() {
     let plan = preview_page_move(&fixture, snapshot.clone(), &[]);
     let mut changed = snapshot.clone();
     changed.revisions.insert("page".into(), 2);
-    let result = fixture
-        .setup
-        .apply_plan(&plan.id, &[], Some(changed), &fixture_rule_renderer);
+    let result =
+        fixture
+            .setup
+            .apply_plan(&plan.id, None, &[], Some(changed), &fixture_rule_renderer);
     assert!(result
         .unwrap_err()
         .to_string()
@@ -342,7 +368,7 @@ fn personal_rules_page_merge_recovers_only_the_uncommitted_archive() {
     let plan = preview_page_move(&fixture, snapshot.clone(), &[]);
     let version = fixture
         .setup
-        .apply_plan(&plan.id, &[], Some(snapshot), &fixture_rule_renderer)
+        .apply_plan(&plan.id, None, &[], Some(snapshot), &fixture_rule_renderer)
         .unwrap();
     let committed = fixture.setup.load().unwrap().unwrap();
     let files = committed
@@ -1087,13 +1113,94 @@ fn propose_with_origin(
         .setup
         .prepare_rule_plan(&manifest, &edits, &[], proposer, &fixture_rule_renderer)
         .unwrap();
-    remember_plan(&fixture.setup, prepared, edits, restore, None)
+    remember_plan(&fixture.setup, prepared, edits, restore, None, false).unwrap()
 }
 
 fn apply(fixture: &Fixture, plan: &PersonalRulePlan) -> Result<PersonalRuleVersion> {
     fixture
         .setup
         .apply_rule_plan(&plan.id, &[], &fixture_rule_renderer)
+}
+
+#[test]
+fn apply_refuses_a_plan_other_than_the_one_the_person_saw() {
+    let fixture = adopted_fixture();
+    let (edits, shared_before, _) = shared_and_claude_edits(&fixture);
+    let plan = propose(&fixture, edits);
+    let mut shown = plan.clone();
+    shown.changes.truncate(1);
+    let error = fixture
+        .setup
+        .apply_plan(&plan.id, Some(&shown), &[], None, &fixture_rule_renderer)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("not the one you reviewed"),
+        "{error:#}"
+    );
+    let manifest = fixture.setup.load().unwrap().unwrap();
+    assert_eq!(manifest.master.shared, shared_before);
+
+    let plan = propose(&fixture, shared_and_claude_edits(&fixture).0);
+    fixture
+        .setup
+        .apply_plan(&plan.id, Some(&plan), &[], None, &fixture_rule_renderer)
+        .unwrap();
+}
+
+#[test]
+fn a_full_proposal_queue_does_not_stop_the_persons_own_edit() {
+    let fixture = adopted_fixture();
+    let generated = ["One rule.".to_string()];
+    fixture.sync_generated(&generated);
+    let snapshot = PageRuleSnapshot {
+        rules: vec![page_rule(&generated[0], "rule-page", 4)],
+        ..Default::default()
+    };
+    let moved = preview_page_move(&fixture, snapshot.clone(), &generated);
+    fixture
+        .setup
+        .apply_plan(
+            &moved.id,
+            None,
+            &generated,
+            Some(snapshot),
+            &fixture_rule_renderer,
+        )
+        .unwrap();
+    for _ in 0..MAX_PLANS {
+        propose(&fixture, shared_and_claude_edits(&fixture).0);
+    }
+    let text = "Keep the person's confirmed edit.";
+    let confirmed = fixture.setup.change_page_rules(
+        &generated,
+        PageChange {
+            snapshot: PageRuleSnapshot {
+                rules: vec![preference_rule(text, "mem_full", 1)],
+                ..Default::default()
+            },
+            remove: BTreeSet::new(),
+            confirmed: true,
+            proposer: None,
+        },
+        &fixture_rule_renderer,
+    );
+    assert!(confirmed.unwrap().is_none());
+    let manifest = fixture.setup.load().unwrap().unwrap();
+    assert!(manifest.master.shared.contains(text));
+}
+
+#[test]
+fn a_new_page_move_replaces_the_older_one() {
+    let fixture = adopted_fixture();
+    let move_of = |text: &str| PageRuleSnapshot {
+        rules: vec![page_rule(text, "page", 2)],
+        ..Default::default()
+    };
+    let first = preview_page_move(&fixture, move_of("First page rule."), &[]);
+    let second = preview_page_move(&fixture, move_of("Second page rule."), &[]);
+    assert_ne!(first.id, second.id);
+    let (plans, _) = load_plans(&fixture.setup).unwrap();
+    assert_eq!(plans.keys().collect::<Vec<_>>(), vec![&second.id]);
 }
 
 #[test]
@@ -1317,14 +1424,91 @@ fn personal_rule_plan_expiry_requires_a_fresh_preview() {
     let (edits, _, _) = shared_and_claude_edits(&fixture);
     let plan = propose(&fixture, edits);
     let before = fixture.setup.load().unwrap().unwrap();
-    let id = Uuid::parse_str(&plan.id).unwrap();
-    PLANS.lock().unwrap().get_mut(&id).unwrap().created =
-        Instant::now() - PLAN_LIFETIME - Duration::from_secs(1);
+    let (mut plans, seen) = load_plans(&fixture.setup).unwrap();
+    plans.get_mut(&plan.id).unwrap().response.expires_at = chrono::Utc::now().timestamp() - 1;
+    save_plans(&fixture.setup, &plans, &seen).unwrap();
     let error = apply(&fixture, &plan).unwrap_err().to_string();
     assert!(error.contains("expired"), "{error}");
     let after = fixture.setup.load().unwrap().unwrap();
     assert_eq!(after.master.shared, before.master.shared);
     assert_eq!(after.personal_rule_history, before.personal_rule_history);
+}
+
+#[test]
+fn personal_plan_survives_reload_and_appears_in_review() {
+    let fixture = adopted_fixture();
+    let (edits, _, _) = shared_and_claude_edits(&fixture);
+    let plan = propose(&fixture, edits);
+    assert!(plan.expires_at - chrono::Utc::now().timestamp() >= 24 * 60 * 60 - 2);
+    let fresh = Setup::new(fixture.setup.home.clone(), fixture.setup.data.clone());
+    assert_eq!(find_plan(&fresh, &plan.id, false).unwrap().response, plan);
+    let review = super::super::review_list::local_queue(&fresh).unwrap();
+    assert!(review.items.iter().any(|item| matches!(&item.content,
+        wenlan_types::rulesync::RulesReviewContent::PersonalPlan { plan: shown }
+        if shown.id == plan.id && shown.proposer.as_deref() == Some("claude-code"))));
+    fresh
+        .apply_rule_plan(&plan.id, &[], &fixture_rule_renderer)
+        .unwrap();
+}
+
+#[test]
+fn personal_plan_refuses_a_forged_displayed_diff_without_writing_rules() {
+    let fixture = adopted_fixture();
+    let (edits, _, _) = shared_and_claude_edits(&fixture);
+    let plan = propose(&fixture, edits);
+    let claude_before = fixture.text(super::super::tests::CLAUDE);
+    let codex_before = fixture.text(super::super::tests::CODEX);
+    let shared_before = fixture.text(SHARED_RULES);
+    let before = fixture.setup.load().unwrap().unwrap();
+    let path = fixture.setup.data.join(PLANS_FILE);
+    let mut file: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    file[plan.id.as_str()]["response"]["changes"][0]["diff"] = "A harmless change".into();
+    std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+
+    let error = apply(&fixture, &plan).unwrap_err().to_string();
+    assert!(
+        error.contains("The plan changed after it was shown. Propose the change again."),
+        "{error}"
+    );
+    assert_eq!(fixture.text(super::super::tests::CLAUDE), claude_before);
+    assert_eq!(fixture.text(super::super::tests::CODEX), codex_before);
+    assert_eq!(fixture.text(SHARED_RULES), shared_before);
+    let after = fixture.setup.load().unwrap().unwrap();
+    assert_eq!(after.master.shared, before.master.shared);
+    assert_eq!(after.master.overlays, before.master.overlays);
+    assert!(find_plan(&fixture.setup, &plan.id, false).is_err());
+}
+
+#[test]
+fn reloaded_plan_refuses_changed_shared_text() {
+    let fixture = adopted_fixture();
+    let (edits, _, _) = shared_and_claude_edits(&fixture);
+    let plan = propose(&fixture, edits);
+    let mut manifest = fixture.setup.load().unwrap().unwrap();
+    manifest
+        .master
+        .shared
+        .push_str("An independent new rule.\n");
+    fixture.setup.save(&manifest).unwrap();
+    let fresh = Setup::new(fixture.setup.home.clone(), fixture.setup.data.clone());
+    let error = fresh
+        .apply_rule_plan(&plan.id, &[], &fixture_rule_renderer)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("changed after the preview"), "{error}");
+}
+
+#[test]
+fn personal_plan_store_refuses_a_concurrent_write() {
+    let fixture = adopted_fixture();
+    let (edits, _, _) = shared_and_claude_edits(&fixture);
+    let first = propose(&fixture, edits.clone());
+    let (old_plans, old_file) = load_plans(&fixture.setup).unwrap();
+    let second = propose(&fixture, edits);
+    assert!(save_plans(&fixture.setup, &old_plans, &old_file).is_err());
+    assert!(find_plan(&fixture.setup, &first.id, false).is_ok());
+    assert!(find_plan(&fixture.setup, &second.id, false).is_ok());
 }
 
 fn check_personal_rule_batch_rollback() {

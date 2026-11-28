@@ -101,7 +101,7 @@ pub struct PersonalRulePlanChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonalRulePlan {
     pub id: String,
-    /// Unix time in seconds; the daemon also enforces the in-memory expiry.
+    /// Unix time in seconds; the daemon enforces expiry when loading a plan.
     pub expires_at: i64,
     pub proposer: Option<String>,
     pub changes: Vec<PersonalRulePlanChange>,
@@ -117,6 +117,10 @@ pub struct PersonalRulePlan {
 #[serde(deny_unknown_fields)]
 pub struct PersonalRuleApplyRequest {
     pub plan_id: String,
+    /// The plan exactly as the person saw it. When given, the apply is
+    /// refused unless the waiting plan is still that one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_plan: Option<PersonalRulePlan>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

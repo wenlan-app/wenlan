@@ -463,6 +463,7 @@
 .rules-tools-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 0;
   color: var(--mem-text-secondary);
@@ -637,3 +638,7 @@
 .how-i-work-line-source .how-i-work-line-remove:hover { color: var(--mem-text); }
 .how-i-work-line-source .how-i-work-line-remove:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
 .how-i-work-line-remove-note { margin: 0; color: var(--mem-status-warning-text); font: 12px/1.45 var(--mem-font-body); }
+
+.rules-tools-other { border: 0; background: none; color: var(--mem-text-secondary); font: inherit; cursor: pointer; padding: 2px; }
+.rules-tools-other-list { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.rules-tools-other-note { flex-basis: 100%; margin: 0; color: var(--mem-text-secondary); font-size: 12px; }

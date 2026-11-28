@@ -69,10 +69,105 @@ describe("personal rules setup in the section lists", () => {
     enabled: true, adopted: true, can_adopt: true, can_restore: true, in_sync: true, proposals: [], review_tools: {},
   };
 
+  it.each(["rules", "skills"] as const)("summarizes only delivered tools in %s status", async (section) => {
+    const counts = { rules: 2, skills: 0, commands: 0, subagents: 0, mcp: 0 };
+    const status = { ...synced, last_checked_at: 1700000000, tools: [
+      { id: "cursor", name: "Cursor", state: "up_to_date" as const, counts },
+      { id: "codex", name: "Codex", state: "up_to_date" as const, counts },
+      { id: "muse-code", name: "Muse Code", state: "not_managed" as const, counts },
+    ] };
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return status;
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "get_rules_delivery") return { tools: ["cursor", "codex"].map((id) => ({ id, display_name: id, connected: true, method: "file", state: "delivered", rule_count: 2 })) };
+      return undefined;
+    });
+    setup({ section });
+    expect(await screen.findByText("All 2 tools are up to date")).toBeInTheDocument();
+    expect(screen.getByText(/Last check/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync now" })).toBeInTheDocument();
+    expect(screen.queryByText(/0 skills|0 commands|0 subagents|0 MCP/)).toBeNull();
+  });
+
+  it("never says every tool is up to date while shared rules wait for a sync", async () => {
+    const counts = { rules: 2, skills: 0, commands: 0, subagents: 0, mcp: 0 };
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return { ...synced, in_sync: false, tools: [
+        { id: "cursor", name: "Cursor", state: "up_to_date", counts },
+      ] };
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "get_rules_delivery") return { tools: [{ id: "cursor", display_name: "Cursor", connected: true, method: "file", state: "delivered", rule_count: 2 }] };
+      return undefined;
+    });
+    setup({ section: "rules" });
+    expect(await screen.findByRole("button", { name: "Sync now" })).toBeInTheDocument();
+    expect(screen.queryByText(/is up to date|are up to date/)).toBeNull();
+  });
+
+  it.each(["rules", "skills"] as const)("lists only problem tools in %s status", async (section) => {
+    const counts = { rules: 2, skills: 0, commands: 0, subagents: 0, mcp: 0 };
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return { ...synced, tools: [
+        { id: "cursor", name: "Cursor", state: "up_to_date", counts },
+        { id: "codex", name: "Codex", state: "needs_review", counts },
+      ] };
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "get_rules_delivery") return { tools: ["cursor", "codex"].map((id) => ({ id, display_name: id, connected: true, method: "file", state: "delivered", rule_count: 2 })) };
+      return undefined;
+    });
+    setup({ section });
+    expect(await screen.findByText("Needs review · Open To review")).toBeInTheDocument();
+    const row = screen.getByText("Needs review · Open To review").closest("li")!;
+    expect(row).toHaveTextContent("Codex");
+    expect(row).toHaveAttribute("title", "2 rules");
+    expect(screen.queryByText("All 2 tools are up to date")).toBeNull();
+    expect(screen.queryByText(/0 skills|0 commands|0 subagents|0 MCP/)).toBeNull();
+    expect(screen.queryByText("Cursor", { selector: "strong" })).toBeNull();
+  });
+
+  it.each(["rules", "skills"] as const)("shows managed tools and only real other connections on %s", async (section) => {
+    const row = (id: string, display_name = id) => ({ id, display_name, connected: true, method: "mcp", state: "on_request", rule_count: 0 });
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return synced;
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "get_rules_delivery") return { tools: [row("codex", "Codex"), row("example-client", "Example Client"),
+        ...["wenlan", "web-ai", "wenlan-setup", "wenlan-cli", "remote-mcp", "codex-mcp-client", "codex-ulw-loop", "codex:01a10ab0-f674-7092-b309-71f62926e293"].map((id) => row(id))] };
+      return undefined;
+    });
+    setup({ section });
+    const header = await screen.findByTestId("rules-tools");
+    const link = await within(header).findByRole("button", { name: "+1 other connection" });
+    expect(within(header).getByRole("button", { name: "ChatGPT · Codex" })).toBeInTheDocument();
+    expect(header).not.toHaveTextContent("Used in");
+    await userEvent.click(link);
+    expect(header).toHaveTextContent("Example Client");
+    const others = header.querySelector(".rules-tools-other-list");
+    expect(others).toHaveTextContent(/^Example Client$/);
+    expect(header.querySelector(".rules-tools-list")).not.toHaveTextContent(/wenlan|web-ai|remote-mcp|codex-ulw|01a10ab0/i);
+  });
+
+  it.each(["rules", "skills"] as const)("hides the other connections link when %s has only internal clients", async (section) => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "rules_setup_status") return synced;
+      if (command === "rules_setup_review_list") return { items: [], review_tools: {} };
+      if (command === "rules_setup_skill_updates") return [];
+      if (command === "get_rules_delivery") return { tools: ["codex", "wenlan-cli"].map((id) => ({ id, display_name: id, connected: true, method: "mcp", state: "on_request", rule_count: 0 })) };
+      return undefined;
+    });
+    setup({ section });
+    const header = await screen.findByTestId("rules-tools");
+    await within(header).findByRole("button", { name: "ChatGPT · Codex" });
+    expect(within(header).queryByRole("button", { name: /other connection/ })).toBeNull();
+  });
+
   it("UX-SKILL-19: keeps a quiet synced line and checks status without running sync", async () => {
     vi.mocked(invoke).mockImplementation(async (command) => command === "rules_setup_status" ? synced : command === "rules_setup_review_list" ? { items: [], review_tools: {} } : undefined);
     setup({ section: "rules" });
-    expect(await screen.findByText("Rules setup is in sync.")).toHaveAttribute("role", "status");
+    expect(await screen.findByTestId("rules-tools")).not.toHaveTextContent("Rules setup is in sync.");
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     expect(invoke).not.toHaveBeenCalledWith("rules_setup_sync");
   });
@@ -93,7 +188,7 @@ describe("personal rules setup in the section lists", () => {
       if (command === "rules_setup_skill_updates") return [];
       if (command === "get_rules_delivery") return { tools: [
         { id: "cursor", display_name: "Cursor", connected: true, method: "file", state: "delivered", rule_count: 1 },
-        { id: "codex", display_name: "Codex", connected: true, method: "file", state: "delivered", rule_count: 1 },
+        { id: "codex", display_name: "ChatGPT · Codex", connected: true, method: "file", state: "delivered", rule_count: 1 },
       ] };
       return undefined;
     });
@@ -104,12 +199,12 @@ describe("personal rules setup in the section lists", () => {
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     await user.click(chip);
     expect(await screen.findByRole("article", { name: "Cursor changed a rule" })).toBeInTheDocument();
-    expect(screen.getByText("1 change to review")).toBeInTheDocument();
+    expect(screen.queryByText("1 change to review")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "To review 1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Codex" }).querySelector('[data-dot="delivered"]')).toBeVisible();
+    expect(screen.getByRole("button", { name: "ChatGPT · Codex" }).querySelector('.rules-tools-dot')).toBeNull();
     cleanup();
     setup({ section: "skills" });
-    expect(await screen.findByText("1 change to review")).toBeInTheDocument();
+    expect(await screen.findByTestId("rules-tools")).not.toHaveTextContent("1 change to review");
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 
