@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { forwardQuery, isWriteGrant, isWriteToolCall, QUERY_TOOLS, routeDenial, TOOL_UNAVAILABLE_TEXT, tunnelOrigin, WEB_WRITE_TOOLS, WHOLE_LIBRARY_SPACE, type QueryGrant, type ConnectorRoute } from '../src/proxy.ts';
+import { forwardQuery, isWriteGrant, isWriteToolCall, OWNER_READ_TOOLS, QUERY_TOOLS, routeDenial, TOOL_UNAVAILABLE_TEXT, tunnelOrigin, WEB_WRITE_TOOLS, WHOLE_LIBRARY_SPACE, type QueryGrant, type ConnectorRoute } from '../src/proxy.ts';
 
 const QUERY = ['brief', 'recall', 'get_page_sources', 'read_space_rules'];
 const publicOrigin = 'https://relay.example';
@@ -386,5 +386,23 @@ test('relay tool lists match the MCP server profiles', () => {
     return [...body.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
   };
   assert.deepEqual([...QUERY_TOOLS].sort(), list('QUERY_ONLY_TOOL_NAMES'));
-  assert.deepEqual([...QUERY_TOOLS, ...WEB_WRITE_TOOLS].sort(), list('WEB_WRITE_TOOL_NAMES'));
+  assert.deepEqual([...QUERY_TOOLS, ...WEB_WRITE_TOOLS, ...OWNER_READ_TOOLS].sort(), list('WEB_WRITE_TOOL_NAMES'));
+});
+
+test('personal rules are read only through a whole-library write grant', async () => {
+  const statusOf = async (as: QueryGrant, selected: ConnectorRoute, args: object = { layer: { kind: 'shared' } }) => {
+    const state = setup(selected);
+    const response = await forwardQuery(request('tools/call', args, 'read_personal_rules'), as, state.options);
+    return { status: response.status, forwarded: state.calls.length };
+  };
+  const wholeRoute = { ...route, space: WHOLE_LIBRARY_SPACE };
+  const wholeWrite = { ...grant, scopes: ['wenlan:query', 'wenlan:write'], space: WHOLE_LIBRARY_SPACE };
+  assert.deepEqual(await statusOf(wholeWrite, wholeRoute), { status: 200, forwarded: 1 });
+  // A query-only grant, or a grant limited to one Space, never reads them.
+  assert.deepEqual(await statusOf({ ...wholeWrite, scopes: ['wenlan:query'] }, wholeRoute), { status: 403, forwarded: 0 });
+  assert.deepEqual(await statusOf({ ...grant, scopes: ['wenlan:query', 'wenlan:write'] }, route), { status: 403, forwarded: 0 });
+  // Writing them stays on the person's computer.
+  const state = setup(wholeRoute);
+  assert.equal((await forwardQuery(request('tools/call', {}, 'propose_personal_rules'), wholeWrite, state.options)).status, 403);
+  assert.equal(isWriteToolCall(new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'read_personal_rules', arguments: {} } }))), true);
 });
