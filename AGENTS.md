@@ -50,6 +50,15 @@ selected explicitly with `-p wenlan-app`.
 - A missing fixture or unavailable gate is `unchecked`, never a pass. Follow
   `docs/ci-flake-policy.md` before rerunning or quarantining an intermittent CI failure.
 
+## Evidence in reports
+
+- Read the source before claiming how it works; cite only files and lines you inspected.
+- Keep configured, available, exercised, and successful apart, and separate observed
+  facts from proposals and unchecked claims.
+- Before saying something cannot be done, is broken, or must wait, check it yourself.
+- Before giving anyone a command or lines to paste, run them yourself on test data.
+- Pass on what another session or worker reports only after checking it.
+
 ## Writing changes
 
 - A rare case the change cannot handle safely (a crash mid-write, an unusual permission,
