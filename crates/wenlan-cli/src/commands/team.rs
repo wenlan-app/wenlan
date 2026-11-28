@@ -18,6 +18,8 @@ use wenlan_types::team_library::TeamTerminalAction;
 
 #[path = "team_library.rs"]
 mod library;
+#[path = "team_rules.rs"]
+pub mod rules;
 
 #[derive(Subcommand)]
 pub enum TeamCmd {
@@ -176,6 +178,11 @@ pub enum TeamCmd {
         /// computer is on one team.
         #[arg(long, value_name = "TEAM")]
         team: Option<String>,
+    },
+    /// Review the team-wide Rules and each Space's Rules this team host keeps.
+    Rules {
+        #[command(subcommand)]
+        command: rules::TeamRulesCmd,
     },
 }
 
@@ -338,6 +345,7 @@ pub async fn run(
         TeamCmd::Leave { team } => leave(client, format, quiet, team).await,
         TeamCmd::Keys { team } => tool_keys(client, format, quiet, team).await,
         TeamCmd::RevokeKey { id, team } => revoke_tool_key(client, format, quiet, id, team).await,
+        TeamCmd::Rules { command } => rules::run(client, format, quiet, command).await,
     }
 }
 

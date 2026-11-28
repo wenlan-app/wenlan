@@ -2665,7 +2665,7 @@ async fn sync_rules_files(
     db: &MemoryDB,
     page_root: Option<&Path>,
     dirs: &SkillDirs,
-) -> Result<(), ServerError> {
+) -> Result<ToolFiles, ServerError> {
     let home = wenlan_core::config::wenlan_home();
     let (general, mut layers) = rules_by_layer(db, page_root).await?;
     let projected = page_rules::projected_rules(db).await?;
@@ -2674,7 +2674,7 @@ async fn sync_rules_files(
         &home,
         &skill_grow::rules_layer_files(None, projected.as_deref().unwrap_or(&general)),
     );
-    if wenlan_core::rulesync_personal::enabled() {
+    let tool_files = if wenlan_core::rulesync_personal::enabled() {
         // After the move every line reaches tools from shared rules.
         let rules = match &projected {
             Some(_) => Vec::new(),
@@ -2683,18 +2683,33 @@ async fn sync_rules_files(
         let empty = rules.is_empty()
             && crate::rulesync_routes::personal_rules::page_rules_unanswered()?
             && !page_rules::all(db, page_root).await?.has_candidates();
+        use crate::rulesync_routes::PageDelivery;
         match tokio::task::spawn_blocking(move || {
             crate::rulesync_routes::sync_from_pages(&rules, empty)
         })
         .await
         {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::warn!(%error, "[rules setup] automatic delivery stopped"),
-            Err(error) => tracing::warn!(%error, "[rules setup] automatic delivery worker failed"),
+            Ok(Ok(PageDelivery::Synced { waiting: 0 })) => ToolFiles::Updated,
+            Ok(Ok(PageDelivery::Synced { .. })) => ToolFiles::NeedsAttention,
+            Ok(Ok(PageDelivery::NotAdopted)) => ToolFiles::NotUpdated(
+                "the tool setup on this computer is not finished; see `wenlan rules adopt --dry-run`"
+                    .into(),
+            ),
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "[rules setup] automatic delivery stopped");
+                ToolFiles::NotUpdated(format!("the tool files could not be written: {error:#}"))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "[rules setup] automatic delivery worker failed");
+                ToolFiles::NotUpdated("the delivery stopped before it finished".into())
+            }
         }
-    } else if projected.is_none() {
-        sync_tool_rules(db, dirs, &general).await;
-    }
+    } else {
+        if projected.is_none() {
+            sync_tool_rules(db, dirs, &general).await;
+        }
+        ToolFiles::NotUpdated("tool sync is off on this computer".into())
+    };
     let spaces = home.join("spaces");
     // Folders of Spaces that no longer exist still lose the files Wenlan wrote.
     if !has_symlink_below(&home, &spaces) {
@@ -2713,7 +2728,7 @@ async fn sync_rules_files(
             let _ = std::fs::remove_dir(&folder);
         }
     }
-    Ok(())
+    Ok(tool_files)
 }
 
 /// The Space's own approved rules as plain sentences, for the repository
@@ -2746,6 +2761,35 @@ pub(crate) async fn project_rules(
     // Only rules: a decision or a pitfall read as a bare order misleads.
     lines.retain(|line| !line.general && line.kind == wenlan_types::SkillLineKind::Rule);
     Some(lines.into_iter().map(|line| line.text).collect())
+}
+
+/// Whether a sync reached the tool files in the person's repositories, and
+/// in plain words why not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ToolFiles {
+    Updated,
+    /// Written, except some files the person must look at: a home tool
+    /// file or any checkout's, not only the repository at hand.
+    NeedsAttention,
+    NotUpdated(String),
+}
+
+/// Same as [`sync_rules_files_quietly`], answering whether the repositories'
+/// tool files were updated, for a caller that tells the person.
+///
+/// It takes the skills lock itself: never call it while holding that lock.
+pub(crate) async fn sync_rules_files_reporting(
+    db: &MemoryDB,
+    page_root: Option<&Path>,
+) -> ToolFiles {
+    let _serial = SKILLS_MUTATION_LOCK.lock().await;
+    match sync_rules_files(db, page_root, &SkillDirs::system()).await {
+        Ok(tool_files) => tool_files,
+        Err(error) => {
+            tracing::warn!(%error, "[skills] rules files not updated");
+            ToolFiles::NotUpdated(error.to_string())
+        }
+    }
 }
 
 /// Same, for callers that must not fail because a file could not be written.

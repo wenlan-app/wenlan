@@ -428,6 +428,34 @@ pub(crate) fn refresh(
     }
 }
 
+/// The project layers whose repository is `repo_id`, and the team-wide
+/// layers that go with them: a team's section only alongside a matching
+/// project layer of that team.
+pub(crate) fn layers_for_repo(
+    settings: &Path,
+    repo_id: Option<&str>,
+) -> Result<(Vec<TeamRuleLayer>, Vec<TeamRuleLayer>)> {
+    let Some(id) = repo_id else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let project = rulesync_team::load_project_layers(settings)?
+        .into_iter()
+        .filter(|layer| {
+            layer
+                .project
+                .as_ref()
+                .and_then(|project| project.repo_id.as_deref())
+                == Some(id)
+        })
+        .collect::<Vec<_>>();
+    let teams = if project.is_empty() {
+        Vec::new()
+    } else {
+        team_layers_for_projects(rulesync_team::load_layers(settings)?, &project)
+    };
+    Ok((project, teams))
+}
+
 fn team_layers_for_projects(
     teams: Vec<TeamRuleLayer>,
     projects: &[TeamRuleLayer],
@@ -455,22 +483,9 @@ fn refresh_entries(
     let mut result = report("Checked checkout rules");
     for entry in entries {
         let refresh_entry = || -> Result<()> {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                return Ok(());
-            }
-            let leaf = PathBuf::from(entry.file_name());
-            let Some(key) = leaf
-                .file_stem()
-                .and_then(|key| key.to_str())
-                .filter(|key| key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            else {
+            let Some((key, state_path)) = receipt_path(&entry?)? else {
                 return Ok(());
             };
-            if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                return Ok(());
-            }
-            let state_path = Path::new("checkouts").join(&leaf);
             let read_context = || format!("read checkout receipt {}", state_path.display());
             let state = root.read(&state_path, false).with_context(read_context)?;
             let Snapshot::File { bytes, .. } = &state else {
@@ -516,6 +531,86 @@ fn refresh_entries(
         }
     }
     Ok(result)
+}
+
+/// The receipt a `checkouts` folder entry is, as its key and its path in
+/// Wenlan's rules data; `None` for anything else in that folder.
+fn receipt_path(entry: &std::fs::DirEntry) -> Result<Option<(String, PathBuf)>> {
+    if !entry.file_type()?.is_file() {
+        return Ok(None);
+    }
+    let leaf = PathBuf::from(entry.file_name());
+    let Some(key) = leaf
+        .file_stem()
+        .and_then(|key| key.to_str())
+        .filter(|key| key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    else {
+        return Ok(None);
+    };
+    if leaf.extension().and_then(|ext| ext.to_str()) != Some("json") {
+        return Ok(None);
+    }
+    Ok(Some((key.to_string(), Path::new("checkouts").join(&leaf))))
+}
+
+/// Whether the approved Rules of the team Space `space` (the team-wide page
+/// for [`rulesync_team::SPACE`]) go into a checkout this computer keeps a
+/// receipt for. It reads the receipts the way [`refresh`] does.
+pub(crate) fn space_reaches_a_checkout(
+    setup: &Setup,
+    settings: &Path,
+    space: &str,
+) -> Result<bool> {
+    let entries = match std::fs::read_dir(setup.data.join("checkouts")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let root = setup.data_files()?;
+    for entry in entries {
+        let Some((_, state_path)) = receipt_path(&entry?)? else {
+            continue;
+        };
+        let Snapshot::File { bytes, .. } = root.read(&state_path, false)? else {
+            continue;
+        };
+        let checkout = read_checkout(&bytes)?;
+        let repo_id = repo_wiki::origin_url(&checkout.repo)
+            .as_deref()
+            .and_then(rulesync_team::repo_identity);
+        let (project, teams) = layers_for_repo(settings, repo_id.as_deref())?;
+        let reaches = if space == rulesync_team::SPACE {
+            !teams.is_empty()
+        } else {
+            project.iter().any(|layer| {
+                layer
+                    .project
+                    .as_ref()
+                    .is_some_and(|project| project.space == space)
+            })
+        };
+        if reaches {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Records `repo` as a checkout on this computer, as `wenlan wiki rules
+/// checkout` leaves it before its first delivery.
+#[cfg(test)]
+pub(crate) fn record_checkout_for_test(setup: &Setup, repo: &Path) {
+    let key = fingerprint(&repo.to_path_buf()).unwrap();
+    let path = setup.data.join(format!("checkouts/{key}.json"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let record = CheckoutRecord {
+        format: CHECKOUT_FORMAT,
+        checkout: Checkout {
+            repo: repo.to_path_buf(),
+            ..Checkout::default()
+        },
+    };
+    std::fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
 }
 
 struct Job<'a> {
@@ -571,25 +666,7 @@ impl Job<'_> {
             .and_then(|_| repo_wiki::origin_url(&checkout.repo))
             .as_deref()
             .and_then(rulesync_team::repo_identity);
-        let project = match repo_id {
-            Some(id) => rulesync_team::load_project_layers(&self.settings)?
-                .into_iter()
-                .filter(|layer| {
-                    layer
-                        .project
-                        .as_ref()
-                        .and_then(|project| project.repo_id.as_ref())
-                        == Some(&id)
-                })
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
-        let teams = match master {
-            Some(_) if !project.is_empty() => {
-                team_layers_for_projects(rulesync_team::load_layers(&self.settings)?, &project)
-            }
-            _ => Vec::new(),
-        };
+        let (project, teams) = layers_for_repo(&self.settings, repo_id.as_deref())?;
         let skills = ProjectSkills::from_layers(&project)?;
         let authorized: BTreeMap<_, _> = project
             .iter()

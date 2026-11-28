@@ -1178,6 +1178,55 @@ Options:
 
 - `--team <TEAM>`: The team's name or its server's address. Not needed when this computer is on one team.
 
+#### `wenlan team rules`
+
+Review the team-wide Rules and each Space's Rules this team host keeps.
+
+```text
+wenlan team rules [OPTIONS] <COMMAND>
+```
+
+##### `wenlan team rules proposals`
+
+List the changes to the team's Rules waiting for review.
+
+```text
+wenlan team rules proposals [OPTIONS] [COMMAND]
+```
+
+###### `wenlan team rules proposals decide`
+
+Show one change, then accept or reject it after you type yes.
+
+```text
+wenlan team rules proposals decide [OPTIONS] <--accept|--reject> <ID>
+```
+
+Arguments:
+
+- `<ID>`: The change's ID, from `wenlan team rules proposals`.
+
+Options:
+
+- `--accept`: Make this text the Space's Rules.
+- `--reject`: Keep the current Rules and record the refusal.
+
+##### `wenlan team rules propose`
+
+Propose new text for a Rules page this team host keeps.
+
+```text
+wenlan team rules propose [OPTIONS] --space <NAME> <FILE>
+```
+
+Arguments:
+
+- `<FILE>`: A Markdown file with the whole new Rules text.
+
+Options:
+
+- `--space <NAME>`: The Space whose Rules change, or `everyone` for the team-wide Rules.
+
 ### `wenlan login`
 
 Connect an AI tool on this computer to a team with a short code you allow in a browser.

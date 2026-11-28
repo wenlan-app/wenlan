@@ -258,4 +258,4 @@ pub(crate) fn test_key() -> &'static str {
 
 #[cfg(test)]
 #[path = "person_key_test.rs"]
-mod person_key_test;
+pub(crate) mod person_key_test;

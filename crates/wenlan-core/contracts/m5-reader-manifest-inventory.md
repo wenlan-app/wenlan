@@ -735,6 +735,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/team/joined/library` | main | yes | automatic | `none` | `handle_joined_library` | JoinedTeamLibraries contains remote team page titles and publisher metadata; unreachable teams carry only a typed reason. |
 | `GET` | `/api/team/joined/{team_id}/pages/{page_id}` | main | yes | automatic | `none` | `handle_joined_page` | JoinedTeamPage contains the selected team page body and server-filtered sources; private citations carry no source text. |
 | `GET` | `/api/team/library/draft` | main | yes | automatic | `none` | `draft` | The person-key-gated draft contains the selected personal page or memory text and its reviewable cited personal sources. |
+| `POST` | `/api/team/rules/proposals` | main | yes | automatic | `none` | `rulesync_team::host_proposals` | pending authored versions of the team host's own Rules pages, team-wide and per Space |
+| `POST` | `/api/team/rules/propose` | main | no | not_applicable | `none` | — | proposal identifier from authoring the team host's Rules |
+| `POST` | `/api/team/rules/proposals/{id}/decision` | main | no | not_applicable | `none` | — | receipt for the team host's Rules version decision |
 | `GET` | `/api/team/library/spaces` | main | no | not_applicable | `none` | `spaces` | The person-key-gated read lists hosted team-library Spaces by their public names and group settings, without page text. |
 | `POST` | `/api/team/join` | main | no | not_applicable | `none` | — | status only: the team server's address, this member's id and name and the Space names they may use; no page text |
 | `POST` | `/api/team/start` | main | no | not_applicable | `none` | — | status only: the team now started on this computer, its member names and Spaces, the team listener address and the address in invite links; no key, no page text |

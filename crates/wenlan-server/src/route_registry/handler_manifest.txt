@@ -385,6 +385,9 @@ main|post|/api/team/spaces|wenlan_server::team_routes::handle_host_space
 main|get|/api/team/library/draft|wenlan_server::team_routes::library::draft
 main|get|/api/team/library/spaces|wenlan_server::team_routes::library::spaces
 main|post|/api/team/library/terminal|wenlan_server::team_routes::library::terminal
+main|post|/api/team/rules/proposals|wenlan_server::team_routes::rules::proposals
+main|post|/api/team/rules/proposals/{id}/decision|wenlan_server::team_routes::rules::decide
+main|post|/api/team/rules/propose|wenlan_server::team_routes::rules::propose
 main|get|/api/team/joined/library|wenlan_server::team_routes::handle_joined_library
 main|get|/api/team/joined/{team_id}/pages/{page_id}|wenlan_server::team_routes::handle_joined_page
 main|post|/api/team/join|wenlan_server::team_routes::handle_join

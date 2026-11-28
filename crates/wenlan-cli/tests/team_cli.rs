@@ -37,6 +37,9 @@ fn team_subcommands_help_exits_zero() {
         &["team", "new-key", "--help"][..],
         &["team", "host", "--help"][..],
         &["team", "join", "--help"][..],
+        &["team", "rules", "proposals", "--help"][..],
+        &["team", "rules", "propose", "--help"][..],
+        &["team", "rules", "proposals", "decide", "--help"][..],
     ] {
         cli().args(args).assert().success();
     }
@@ -56,6 +59,167 @@ fn team_help_points_people_to_publication_commands() {
     ] {
         assert!(help.contains(line), "missing {line:?} in {help}");
     }
+}
+
+/// PR5 design test 5 (CLI half): an AI tool's terminal is refused before
+/// the CLI contacts any daemon (port 1 never answers).
+#[test]
+fn team_rules_refuse_an_ai_tool_before_the_daemon() {
+    let rules = std::env::temp_dir().join("wenlan-team-rules-cli-test.md");
+    std::fs::write(&rules, "- A rule").unwrap();
+    let rules = rules.to_str().unwrap();
+    for (name, value) in [
+        ("WENLAN_SESSION", "codex:fixture"),
+        ("WENLAN_AGENT_NAME", "codex"),
+    ] {
+        for args in [
+            &["team", "rules", "proposals"][..],
+            &["team", "rules", "propose", "--space", "Roadmap", rules][..],
+            &["team", "rules", "proposals", "decide", "abc", "--accept"][..],
+        ] {
+            let out = cli()
+                .env("WENLAN_HOST", "http://127.0.0.1:1")
+                .env(name, value)
+                .args(args)
+                .assert()
+                .failure();
+            let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+            assert!(
+                stderr.contains("Only you can review the team's Rules"),
+                "{name} {args:?}: {stderr}"
+            );
+        }
+    }
+}
+
+/// The person's list names the Space, the text, who proposed it and when;
+/// `propose` sends the Space and the file's whole text.
+#[test]
+fn team_rules_list_and_propose_use_the_host_routes() {
+    let data_root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        wenlan_types::person_key::path_in(data_root.path()),
+        "ab".repeat(32),
+    )
+    .unwrap();
+    let health =
+        json!({"status":"ok","db_initialized":true,"version":"test","data_root":data_root.path()});
+    let (host, requests) = common::spawn_stub(vec![
+        ("GET /api/health", health.to_string()),
+        (
+            "POST /api/team/rules/proposals",
+            json!([{
+                "space": "Roadmap",
+                "author_name": "Amy",
+                "id": "p1",
+                "author": "member-1",
+                "markdown": "- Ship behind a flag.",
+                "base": "b1",
+                "proposed_at": "2026-11-27T00:00:00Z"
+            }, {
+                "space": "everyone",
+                "id": "p2",
+                "author": "member-2",
+                "markdown": "- Write the test first.",
+                "base": "b2",
+                "proposed_at": "2026-11-27T01:00:00Z"
+            }])
+            .to_string(),
+        ),
+    ]);
+    let (ok, stdout, stderr) =
+        run_with_data_root(&host, &["team", "rules", "proposals"], data_root.path());
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains(
+            "p1  Roadmap  proposed by Amy  2026-11-27T00:00:00Z\n    - Ship behind a flag."
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("p2  everyone  proposed by unknown"),
+        "{stdout}"
+    );
+    assert!(served(&requests)
+        .iter()
+        .any(|(line, _)| line == "POST /api/team/rules/proposals"));
+
+    let file = data_root.path().join("rules.md");
+    std::fs::write(&file, "- Ship behind a flag.\n").unwrap();
+    let (host, requests) = common::spawn_stub(vec![
+        ("GET /api/health", health.to_string()),
+        ("POST /api/team/rules/propose", json!("p3").to_string()),
+    ]);
+    let (ok, stdout, stderr) = run_with_data_root(
+        &host,
+        &[
+            "team",
+            "rules",
+            "propose",
+            "--space",
+            "Roadmap",
+            file.to_str().unwrap(),
+        ],
+        data_root.path(),
+    );
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("p3"), "{stdout}");
+    let sent = served(&requests);
+    let (_, body) = sent
+        .iter()
+        .find(|(line, _)| line == "POST /api/team/rules/propose")
+        .expect("propose was sent");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(body).unwrap(),
+        json!({"space":"Roadmap","markdown":"- Ship behind a flag.\n"})
+    );
+}
+
+/// The strict `WENLAN_SPACE` pin refuses every team Rules command before
+/// the daemon is asked (port 1 never answers), `propose --space` included.
+#[test]
+fn team_rules_refuse_a_wenlan_space_pin() {
+    let rules = std::env::temp_dir().join("wenlan-team-rules-pin-test.md");
+    std::fs::write(&rules, "- A rule").unwrap();
+    let rules = rules.to_str().unwrap();
+    for args in [
+        &["team", "rules", "proposals"][..],
+        &["team", "rules", "propose", "--space", "Roadmap", rules][..],
+        &["team", "rules", "proposals", "decide", "abc", "--accept"][..],
+    ] {
+        let out = cli()
+            .env("WENLAN_HOST", "http://127.0.0.1:1")
+            .env("WENLAN_SPACE", "Roadmap")
+            .args(args)
+            .assert()
+            .failure();
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        assert!(
+            stderr.contains("Run without WENLAN_SPACE"),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+/// `decide` needs a person at a terminal to type yes.
+#[test]
+fn team_rules_decide_needs_a_terminal() {
+    let out = cli()
+        .env("WENLAN_HOST", "http://127.0.0.1:1")
+        .args(["team", "rules", "proposals", "decide", "abc", "--reject"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("answer y at its \"Type y to go on\" prompt"),
+        "{stderr}"
+    );
+    let out = cli()
+        .args(["team", "rules", "proposals", "decide", "abc"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("--accept|--reject"), "{stderr}");
 }
 
 #[test]

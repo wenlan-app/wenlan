@@ -333,7 +333,7 @@ pub(super) async fn review_saved_skill(
 ) -> Result<()> {
     ensure!(
         std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
-        "Run this command in your own terminal and type yes when asked."
+        "{NEEDS_A_TERMINAL}"
     );
     let accept = matches!(action, SkillReviewChoice::Accept);
     ensure!(
@@ -914,6 +914,10 @@ fn require_the_person_at_a_terminal(
     }
     Ok(())
 }
+
+/// The refusal when no one is at a terminal to answer [`person_says_yes`].
+pub(super) const NEEDS_A_TERMINAL: &str =
+    "Run this command in your own terminal and answer y at its \"Type y to go on\" prompt.";
 
 /// Ask one question; a trimmed, case-insensitive `y` or `yes` means yes.
 pub(super) fn person_says_yes(

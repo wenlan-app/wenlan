@@ -338,6 +338,8 @@ pub async fn global_routes_enforce_scope_contracts() {
         (Method::Get, "/api/team/joined/library"),
         (Method::Get, "/api/team/library/draft"),
         (Method::Get, "/api/team/library/spaces"),
+        (Method::Post, "/api/team/rules/proposals"),
+        (Method::Post, "/api/team/rules/propose"),
         (Method::Post, "/api/rules/setup/settings/apply"),
         (Method::Post, "/api/rules/setup/checkout"),
         (Method::Post, "/api/skills/registry/save"),
@@ -354,6 +356,9 @@ pub async fn global_routes_enforce_scope_contracts() {
                 Some(serde_json::json!({"action":"withdraw","item_id":"fixture"}))
             }
             "/api/rules/personal/apply" => Some(serde_json::json!({"plan_id":"fixture"})),
+            "/api/team/rules/propose" => {
+                Some(serde_json::json!({"space":"fixture","markdown":"- fixture"}))
+            }
             _ => None,
         };
         let baseline = response_parts(
@@ -394,6 +399,31 @@ pub async fn global_routes_enforce_scope_contracts() {
         .await;
         assert_eq!(selected, baseline, "Global route honored Space: {uri}");
         executed.push((Method::Get, "/api/team/joined/{team_id}/pages/{page_id}"));
+    }
+    // The team host's Rules decision is person-only: without the local
+    // person key it refuses before reading any Rules, whatever Space is sent.
+    {
+        let uri = "/api/team/rules/proposals/missing-proposal/decision";
+        let body = Some(serde_json::json!({"accept": false}));
+        let baseline = response_parts(
+            fixture
+                .send(HttpMethod::POST, uri, body.clone(), None)
+                .await,
+        )
+        .await;
+        assert!(
+            baseline.0.is_client_error(),
+            "team Rules decision ran without the person's key: {}",
+            baseline.0
+        );
+        let selected = response_parts(
+            fixture
+                .send(HttpMethod::POST, uri, body, Some("missing-space"))
+                .await,
+        )
+        .await;
+        assert_eq!(selected, baseline, "Global route honored Space: {uri}");
+        executed.push((Method::Post, "/api/team/rules/proposals/{id}/decision"));
     }
     // Local personal-rule reads and proposals do not pick a Space. Use an
     // empty proposal and missing ids so these probes never change any rules.

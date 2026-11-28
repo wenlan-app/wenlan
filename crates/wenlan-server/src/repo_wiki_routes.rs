@@ -103,7 +103,7 @@ async fn project_rule_space(
         .ok_or_else(|| ServerError::NotFound("Space not found".into()))
 }
 
-fn require_project_review(headers: &HeaderMap) -> Result<(), ServerError> {
+pub(crate) fn require_project_review(headers: &HeaderMap) -> Result<(), ServerError> {
     crate::rulesync_routes::require_local_person(headers)?;
     if !wenlan_core::rulesync_personal::enabled() {
         return Err(ServerError::Conflict("WENLAN_RULESYNC is off".into()));
@@ -224,7 +224,7 @@ async fn handle_shared_rule_decision(
     Ok(Json(()))
 }
 
-fn team_rule_error(error: rulesync_team::ReviewError) -> wenlan_core::WenlanError {
+pub(crate) fn team_rule_error(error: rulesync_team::ReviewError) -> wenlan_core::WenlanError {
     match error {
         rulesync_team::ReviewError::Forbidden => {
             wenlan_core::WenlanError::Validation(error.to_string())

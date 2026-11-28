@@ -332,6 +332,10 @@ pub enum TeamTerminalReply {
     },
     Space {
         space: TeamGroup,
+        /// Set when the Space's Rules page could not be made yet; the
+        /// first proposal makes it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rules_note: Option<String>,
     },
     Done,
 }

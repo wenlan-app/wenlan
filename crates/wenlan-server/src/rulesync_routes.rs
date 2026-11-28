@@ -751,24 +751,35 @@ async fn execute(
         .map_err(|error| ServerError::Conflict(format!("{error:#}")))
 }
 
-pub(crate) fn sync_from_pages(generated: &[String], empty: bool) -> Result<()> {
+/// What [`sync_from_pages`] did for the tool files.
+pub(crate) enum PageDelivery {
+    /// The tool setup on this computer was never adopted, so nothing is written.
+    NotAdopted,
+    /// The files were synced; `waiting` of them wait for local review.
+    Synced { waiting: usize },
+}
+
+pub(crate) fn sync_from_pages(generated: &[String], empty: bool) -> Result<PageDelivery> {
     let setup = Setup::system()?;
     if empty {
         setup.mark_empty_page_rules()?;
     }
-    if setup
+    if !setup
         .load_if_present()?
         .is_some_and(|manifest| manifest.adopted)
     {
-        let report = setup.sync_for_caller(generated, SyncCaller::Background)?;
-        if !report.blocked.is_empty() {
-            tracing::warn!(
-                files = report.blocked.len(),
-                "[rules setup] some deliveries are waiting for local review"
-            );
-        }
+        return Ok(PageDelivery::NotAdopted);
     }
-    Ok(())
+    let report = setup.sync_for_caller(generated, SyncCaller::Background)?;
+    if !report.blocked.is_empty() {
+        tracing::warn!(
+            files = report.blocked.len(),
+            "[rules setup] some deliveries are waiting for local review"
+        );
+    }
+    Ok(PageDelivery::Synced {
+        waiting: report.blocked.len(),
+    })
 }
 
 pub(crate) struct DeliveryStatus {
