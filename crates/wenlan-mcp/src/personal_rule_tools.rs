@@ -104,11 +104,9 @@ impl WenlanMcpServer {
         &self,
         params: ReadPersonalRulesParams,
     ) -> Result<CallToolResult, McpError> {
-        // Reading is also open to the owner's own web AI app (web-write
-        // profile), so cloud sessions follow the same rules. Never a team member.
-        let web_owner = self.tool_profile == super::ToolProfile::WebWrite
-            && self.agent_identity.team_member().is_none();
-        if self.transport != super::TransportMode::Stdio && !web_owner {
+        // Reading is also open to the owner's own whole-library web AI app,
+        // so cloud sessions follow the same rules.
+        if self.transport != super::TransportMode::Stdio && !self.owner_web_reads_personal_rules() {
             return Err(McpError::invalid_params(
                 "Personal rules are available only through local stdio MCP.",
                 None,
@@ -443,6 +441,21 @@ mod tests {
             })
             .await;
         assert!(proposal.is_err());
+        // A web connection limited to one Space never reads them.
+        let pinned = server(&mock.uri(), TransportMode::Http)
+            .with_tool_profile(crate::tools::ToolProfile::WebWrite)
+            .with_space_pin("Design".into());
+        assert!(!pinned
+            .visible_tools()
+            .iter()
+            .any(|tool| tool.name == "read_personal_rules"));
+        assert!(pinned.local_only_refusal("read_personal_rules").is_some());
+        assert!(pinned
+            .read_personal_rules_impl(ReadPersonalRulesParams {
+                layer: PersonalRuleLayerParam::Shared,
+            })
+            .await
+            .is_err());
         // Other remote profiles keep refusing the read before any request.
         for profile in [
             crate::tools::ToolProfile::Standard,

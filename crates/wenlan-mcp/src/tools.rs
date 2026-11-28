@@ -8712,7 +8712,12 @@ impl WenlanMcpServer {
                 }
             }
             ToolProfile::WebWrite => {
-                tools.retain(|tool| WEB_WRITE_TOOL_NAMES.contains(&tool.name.as_ref()));
+                let personal = self.owner_web_reads_personal_rules();
+                tools.retain(|tool| {
+                    let name = tool.name.as_ref();
+                    WEB_WRITE_TOOL_NAMES.contains(&name)
+                        && (name != "read_personal_rules" || personal)
+                });
                 for tool in &mut tools {
                     let name = tool.name.as_ref();
                     if QUERY_ONLY_TOOL_NAMES.contains(&name) {
@@ -8743,6 +8748,16 @@ impl WenlanMcpServer {
         tools
     }
 
+    /// The person's own rules belong to no Space, so only the owner's
+    /// whole-library web connection reads them: never a team member, and
+    /// never a connection pinned or locked to one Space.
+    pub(crate) fn owner_web_reads_personal_rules(&self) -> bool {
+        self.tool_profile == ToolProfile::WebWrite
+            && self.agent_identity.team_member().is_none()
+            && self.space_pin.is_none()
+            && !crate::lock_state::is_locked()
+    }
+
     /// Refuse a `LOCAL_ONLY_TOOL_NAMES` tool reaching this server over HTTP.
     /// Unlike `visible_tools()`, which only hides the name from `list_tools`,
     /// this is consulted by `call_tool` before dispatch, so a name added to
@@ -8750,7 +8765,8 @@ impl WenlanMcpServer {
     /// rather than merely unlisted.
     fn local_only_refusal(&self, name: &str) -> Option<CallToolResult> {
         let lifted = self.tool_profile == ToolProfile::WebWrite
-            && WEB_WRITE_LIFTED_TOOL_NAMES.contains(&name);
+            && WEB_WRITE_LIFTED_TOOL_NAMES.contains(&name)
+            && (name != "read_personal_rules" || self.owner_web_reads_personal_rules());
         (self.transport == TransportMode::Http && LOCAL_ONLY_TOOL_NAMES.contains(&name) && !lifted)
             .then(|| {
                 CallToolResult::error(vec![ContentBlock::text(
