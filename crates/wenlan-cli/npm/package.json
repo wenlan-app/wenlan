@@ -1,6 +1,6 @@
 {
   "name": "wenlan",
-  "version": "0.22.9",
+  "version": "0.22.10",
   "description": "Wenlan CLI and daemon: docs, skills and rules your AI tools keep current and work from.",
   "keywords": [
     "ai-memory",
