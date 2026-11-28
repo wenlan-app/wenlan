@@ -38,26 +38,11 @@ selected explicitly with `-p wenlan-app`.
   default. Do not rerun an unchanged, trustworthy receipt without a concrete reason.
 - Eval quality runs, live GPU smokes, and deployed checks are measurement lanes. Run
   them only when the change or requested evidence requires them.
-- Green tests do not verify a change to what a person sees or does (a screen, wording,
-  a flow). Open the product, walk the changed screens as the user would, screenshot
-  them, have an independent agent review the screenshots, fix what it finds, then
-  report. Use the browser preview (`preview/AGENTS.md`) unless the thing exists only
-  in the native app (window, tray, install/update, system file picker, native
-  permissions; `.claude/skills/run-wenlan-app/SKILL.md`). Use test data, never the
-  user's real data or accounts, and never publish, share, invite, send, delete, or
-  press a person-only confirm during the check. A change nobody sees (backend, CI,
-  docs, internal logic) opens no screen; decide by need, not habit.
+- A change to what a person sees (a screen, wording, a flow) is not done on green tests:
+  walk the changed screens with test data, screenshot them, and have an independent
+  agent review the shots before reporting. Changes nobody sees need no screen.
 - A missing fixture or unavailable gate is `unchecked`, never a pass. Follow
   `docs/ci-flake-policy.md` before rerunning or quarantining an intermittent CI failure.
-
-## Evidence in reports
-
-- Read the source before claiming how it works; cite only files and lines you inspected.
-- Keep configured, available, exercised, and successful apart, and separate observed
-  facts from proposals and unchecked claims.
-- Before saying something cannot be done, is broken, or must wait, check it yourself.
-- Before giving anyone a command or lines to paste, run them yourself on test data.
-- Pass on what another session or worker reports only after checking it.
 
 ## Writing changes
 
